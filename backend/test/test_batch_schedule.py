@@ -2,6 +2,7 @@ import unittest
 from datetime import UTC, datetime
 
 from app.services.batch_schedule import (
+    build_jittered_batch_schedule,
     has_future_batch_window,
     is_batch_window_expired,
     is_datetime_in_batch_window,
@@ -10,6 +11,22 @@ from app.services.batch_schedule import (
 
 
 class BatchScheduleTest(unittest.TestCase):
+    def test_build_jittered_batch_schedule_spreads_actual_count_across_window(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=6,
+            scheduled_dates=["2026-05-04"],
+            window_start_time="09:00",
+            window_end_time="18:00",
+            emails_per_window=20,
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=UTC),
+            jitter_ratio=0,
+        )
+
+        self.assertEqual(len(result), 6)
+        self.assertEqual(result[0], datetime(2026, 5, 4, 9, 45, tzinfo=UTC))
+        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 15, tzinfo=UTC))
+        self.assertEqual(result, sorted(result))
+
     def test_normalize_scheduled_dates_sorts_and_deduplicates_dates(self) -> None:
         result = normalize_scheduled_dates(
             ["2026-05-04", "2026-04-28", "2026-05-04"],
