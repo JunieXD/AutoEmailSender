@@ -121,8 +121,8 @@ def build_jittered_batch_schedule(
         count_for_day = min(remaining, emails_per_window)
         scheduled.extend(
             _build_day_schedule(
-                window_start.replace(tzinfo=timezone),
-                window_end.replace(tzinfo=timezone),
+                window_start.replace(tzinfo=timezone).astimezone(UTC),
+                window_end.replace(tzinfo=timezone).astimezone(UTC),
                 count_for_day,
                 jitter_ratio=jitter_ratio,
                 max_jitter=max_jitter,

@@ -31,6 +31,7 @@ from app.services.batch_schedule import (
     has_future_batch_window,
     is_batch_window_expired,
     is_datetime_in_batch_window,
+    normalize_scheduled_dates,
 )
 from app.services.mail_runtime import MailAttachment, ReceivedEmail
 from app.services.materials import (
@@ -276,7 +277,28 @@ async def expire_batch_task_if_needed(
         return False
 
     canceled_count = 0
-    now_utc = datetime.now(UTC)
+    now_utc = local_now.astimezone(UTC)
+    if any(
+        _has_future_scheduled_at(
+            email_task.scheduled_at,
+            now_utc,
+            scheduled_dates=batch_task.scheduled_dates,
+            local_timezone=local_now.tzinfo,
+        )
+        for email_task in batch_task.email_tasks
+        if email_task.status
+        in {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+            EmailTaskStatus.GENERATING_DRAFT.value,
+            EmailTaskStatus.DRAFT_FAILED.value,
+            EmailTaskStatus.REVIEW_REQUIRED.value,
+            EmailTaskStatus.APPROVED.value,
+            EmailTaskStatus.SCHEDULED.value,
+        }
+    ):
+        return False
+
     for email_task in batch_task.email_tasks:
         if email_task.status in {
             EmailTaskStatus.DISCOVERED.value,
@@ -311,6 +333,26 @@ async def expire_batch_task_if_needed(
         },
     )
     return True
+
+
+def _has_future_scheduled_at(
+    scheduled_at: datetime | None,
+    now_utc: datetime,
+    *,
+    scheduled_dates: list[str] | None,
+    local_timezone: tzinfo | None,
+) -> bool:
+    if scheduled_at is None:
+        return False
+    if scheduled_at.tzinfo is None:
+        scheduled_at_utc = scheduled_at.replace(tzinfo=UTC)
+    else:
+        scheduled_at_utc = scheduled_at.astimezone(UTC)
+    timezone = local_timezone or UTC
+    scheduled_date = scheduled_at_utc.astimezone(timezone).date().isoformat()
+    if scheduled_date not in set(normalize_scheduled_dates(scheduled_dates)):
+        return False
+    return scheduled_at_utc > now_utc
 
 
 async def _batch_task_sent_count_on_date(

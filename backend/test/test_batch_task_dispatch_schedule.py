@@ -372,6 +372,40 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
 
+    def test_dispatch_due_tasks_keeps_future_scheduled_items_after_window_end(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(
+            self._set_task_scheduled_at(
+                task_id,
+                datetime(2026, 5, 4, 19, 0, tzinfo=UTC),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 18, 0, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(processed, 0)
+        mocked_send.assert_not_called()
+        self.assertEqual(
+            self._run_async(self._get_batch_task_status_by_email_task_id(task_id)),
+            BatchTaskStatus.RUNNING.value,
+        )
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+
     def test_expiring_batch_preserves_final_item_statuses(self) -> None:
         sent_task_id, failed_task_id, pending_task_id = self._run_async(
             self._create_batch_task_with_final_and_pending_tasks(

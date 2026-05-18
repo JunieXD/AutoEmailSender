@@ -1,6 +1,7 @@
 import random
 import unittest
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from app.services.batch_schedule import (
     build_jittered_batch_schedule,
@@ -58,6 +59,20 @@ class BatchScheduleTest(unittest.TestCase):
         self.assertEqual(result[0], datetime(2026, 5, 4, 14, 30, tzinfo=UTC))
         self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 30, tzinfo=UTC))
         self.assertTrue(all(item >= datetime(2026, 5, 4, 14, 0, tzinfo=UTC) for item in result))
+
+    def test_build_jittered_batch_schedule_stores_local_window_times_as_utc(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=1,
+            scheduled_dates=["2026-05-04"],
+            window_start_time="09:00",
+            window_end_time="11:00",
+            emails_per_window=1,
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            jitter_ratio=0,
+        )
+
+        self.assertEqual(result, [datetime(2026, 5, 4, 2, 0, tzinfo=UTC)])
+        self.assertIs(result[0].tzinfo, UTC)
 
     def test_build_jittered_batch_schedule_skips_expired_today_window(self) -> None:
         result = build_jittered_batch_schedule(
