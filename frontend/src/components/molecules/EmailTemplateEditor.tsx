@@ -76,14 +76,14 @@ const getLineHeightLabel = (value: string | null | undefined) =>
   )?.label ?? "行距";
 
 const getFirstDroppedFile = (event: Event) => {
-  if (!(event instanceof DragEvent)) {
+  if (!("dataTransfer" in event)) {
     return null;
   }
   return event.dataTransfer?.files?.[0] ?? null;
 };
 
 const isFileDragEvent = (event: Event) => {
-  if (!(event instanceof DragEvent)) {
+  if (!("dataTransfer" in event)) {
     return false;
   }
 
@@ -156,7 +156,6 @@ export const EmailTemplateEditor = ({
   onFileDrop,
 }: EmailTemplateEditorProps) => {
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
-  const [isEditorEmpty, setIsEditorEmpty] = useState(true);
   const lastLocalHtmlRef = useRef<string | null>(null);
   const onFileDropRef = useRef<typeof onFileDrop>(onFileDrop);
 
@@ -227,7 +226,6 @@ export const EmailTemplateEditor = ({
     onUpdate: ({ editor: currentEditor }) => {
       const nextHtml = serializeTemplatePlaceholderHtml(currentEditor.getHTML());
       lastLocalHtmlRef.current = nextHtml;
-      setIsEditorEmpty(currentEditor.isEmpty);
       onChange({
         html: nextHtml,
         text: deriveTextFromEmailHtml(nextHtml),
@@ -242,9 +240,6 @@ export const EmailTemplateEditor = ({
     }
     if (editor && !areTemplatePlaceholderHtmlEquivalent(preparedHtml, editor.getHTML())) {
       editor.commands.setContent(preparedHtml, false);
-    }
-    if (editor) {
-      setIsEditorEmpty(editor.isEmpty);
     }
   }, [editor, html]);
 
@@ -263,6 +258,7 @@ export const EmailTemplateEditor = ({
   const currentLineHeight = getLineHeightLabel(paragraphAttributes.lineHeight);
   const currentIndent =
     paragraphAttributes.firstLineIndent === "2em" ? "首行缩进 2 字符" : "首行缩进";
+  const isEditorEmpty = editor.isEmpty;
   const tableActive =
     editor.isActive("table") || editor.isActive("tableCell") || editor.isActive("tableHeader");
 

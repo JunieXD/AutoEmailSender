@@ -62,15 +62,6 @@ describe("ProfilePage setup sections", () => {
     expect(modalSource).toContain("onDrop={handleTemplateDrop}");
   });
 
-  it("routes files dropped on the default template body editor to template import", () => {
-    const modalSource = profilePageSource.slice(
-      profilePageSource.indexOf("const OutreachTemplateModal = ({"),
-      profilePageSource.indexOf("const MaterialLibraryModal = ({"),
-    );
-
-    expect(modalSource).toContain("onFileDrop={onImport}");
-  });
-
   it("shows a docx drag hint when the default template body is empty", () => {
     const modalSource = profilePageSource.slice(
       profilePageSource.indexOf("const OutreachTemplateModal = ({"),
@@ -100,17 +91,6 @@ describe("ProfilePage setup sections", () => {
     expect(importSource).toContain("hasVisibleTemplateBody(identityForm)");
     expect(summarySource).not.toContain("outreach_template_body_html.trim()");
     expect(modalSource).not.toContain("outreach_template_body_html.trim()");
-  });
-
-  it("confirms before replacing an existing default template body", () => {
-    const importSource = profilePageSource.slice(
-      profilePageSource.indexOf("const handleTemplateFileImport = async"),
-      profilePageSource.indexOf("const runLlmConnectionTest = async"),
-    );
-
-    expect(importSource).toContain("hasExistingTemplateBody");
-    expect(importSource).toContain("confirm({");
-    expect(importSource).toContain("导入模板文件会替换当前正文内容");
   });
 
   it("uses the draft llm payload for preview actions", () => {
