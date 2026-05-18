@@ -1,3 +1,4 @@
+import random
 import unittest
 from datetime import UTC, datetime
 
@@ -26,6 +27,79 @@ class BatchScheduleTest(unittest.TestCase):
         self.assertEqual(result[0], datetime(2026, 5, 4, 9, 45, tzinfo=UTC))
         self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 15, tzinfo=UTC))
         self.assertEqual(result, sorted(result))
+
+    def test_build_jittered_batch_schedule_fills_dates_in_order(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=30,
+            scheduled_dates=["2026-05-04", "2026-05-05", "2026-05-06"],
+            window_start_time="09:00",
+            window_end_time="18:00",
+            emails_per_window=20,
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=UTC),
+            jitter_ratio=0,
+        )
+
+        dates = [item.date().isoformat() for item in result]
+        self.assertEqual(dates.count("2026-05-04"), 20)
+        self.assertEqual(dates.count("2026-05-05"), 10)
+        self.assertEqual(dates.count("2026-05-06"), 0)
+
+    def test_build_jittered_batch_schedule_uses_remaining_window_for_today(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=4,
+            scheduled_dates=["2026-05-04"],
+            window_start_time="09:00",
+            window_end_time="18:00",
+            emails_per_window=20,
+            now=datetime(2026, 5, 4, 14, 0, tzinfo=UTC),
+            jitter_ratio=0,
+        )
+
+        self.assertEqual(result[0], datetime(2026, 5, 4, 14, 30, tzinfo=UTC))
+        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 30, tzinfo=UTC))
+        self.assertTrue(all(item >= datetime(2026, 5, 4, 14, 0, tzinfo=UTC) for item in result))
+
+    def test_build_jittered_batch_schedule_skips_expired_today_window(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=2,
+            scheduled_dates=["2026-05-04", "2026-05-05"],
+            window_start_time="09:00",
+            window_end_time="18:00",
+            emails_per_window=20,
+            now=datetime(2026, 5, 4, 18, 30, tzinfo=UTC),
+            jitter_ratio=0,
+        )
+
+        self.assertEqual({item.date().isoformat() for item in result}, {"2026-05-05"})
+
+    def test_build_jittered_batch_schedule_keeps_jitter_inside_window(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=12,
+            scheduled_dates=["2026-05-04"],
+            window_start_time="09:00",
+            window_end_time="10:00",
+            emails_per_window=12,
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=UTC),
+            random_source=random.Random(42),
+        )
+
+        window_start = datetime(2026, 5, 4, 9, 0, tzinfo=UTC)
+        window_end = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+        self.assertEqual(len(result), 12)
+        self.assertEqual(result, sorted(result))
+        self.assertTrue(all(window_start <= item <= window_end for item in result))
+
+    def test_build_jittered_batch_schedule_rejects_insufficient_capacity(self) -> None:
+        with self.assertRaisesRegex(ValueError, "不足以覆盖全部任务"):
+            build_jittered_batch_schedule(
+                task_count=5,
+                scheduled_dates=["2026-05-04"],
+                window_start_time="09:00",
+                window_end_time="18:00",
+                emails_per_window=4,
+                now=datetime(2026, 5, 3, 12, 0, tzinfo=UTC),
+                jitter_ratio=0,
+            )
 
     def test_normalize_scheduled_dates_sorts_and_deduplicates_dates(self) -> None:
         result = normalize_scheduled_dates(
