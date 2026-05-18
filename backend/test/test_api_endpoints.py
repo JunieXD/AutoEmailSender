@@ -1899,6 +1899,39 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(all(value is not None for value in scheduled_values))
         self.assertEqual(scheduled_values, sorted(scheduled_values))
 
+    def test_create_scheduled_batch_task_rejects_insufficient_schedule_capacity(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_ids = [item["id"] for item in self.client.get("/api/professors").json()[:2]]
+        tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
+
+        response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "容量不足定时发送",
+                "professor_ids": professor_ids,
+                "schedule_type": "scheduled",
+                "scheduled_dates": [tomorrow],
+                "window_start_time": "09:00",
+                "window_end_time": "18:00",
+                "emails_per_window": 1,
+                "primary_material_id": None,
+                "email_subject": "Hello {{导师姓名}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{导师姓名}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("不足以覆盖全部任务", response.json()["detail"])
+
     def test_create_scheduled_batch_task_rejects_expired_windows(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
