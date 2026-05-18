@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
   type TransitionEvent,
 } from "react";
@@ -220,6 +221,11 @@ const shouldSyncImapHost = (smtpHost: string, imapHost: string) => {
   return trimmedImapHost === inferImapHost(smtpHost);
 };
 
+const hasVisibleTemplateBody = ({
+  outreach_template_body_text,
+}: Pick<IdentityFormState, "outreach_template_body_text">) =>
+  Boolean(outreach_template_body_text.trim());
+
 const getTemplateValidationMessage = ({
   outreach_template_subject,
   outreach_template_body_text,
@@ -313,8 +319,9 @@ const toIdentityPayload = (form: IdentityFormState): IdentityPayload => {
     outreach_template_subject: form.outreach_template_subject.trim() || null,
     outreach_template_body_text:
       form.outreach_template_body_text.trim() || null,
-    outreach_template_body_html:
-      form.outreach_template_body_html.trim() || null,
+    outreach_template_body_html: hasVisibleTemplateBody(form)
+      ? form.outreach_template_body_html.trim() || null
+      : null,
     daily_send_limit: form.daily_send_limit
       ? Number(form.daily_send_limit)
       : null,
@@ -994,10 +1001,7 @@ const OutreachTemplateSummaryCard = ({
   onOpen: () => void;
 }) => {
   const hasSubject = Boolean(form.outreach_template_subject.trim());
-  const hasTemplateBody = Boolean(
-    form.outreach_template_body_text.trim() ||
-    form.outreach_template_body_html.trim(),
-  );
+  const hasTemplateBody = hasVisibleTemplateBody(form);
 
   return (
     <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(135deg,#fffdfa,#fff7ee_58%,#fff2e4)] p-5 shadow-sm shadow-stone-200/70">
@@ -1064,6 +1068,8 @@ const OutreachTemplateModal = ({
   onSubjectChange: (value: string) => void;
   onBodyChange: (value: { html: string; text: string }) => void;
 }) => {
+  const [isTemplateDropActive, setIsTemplateDropActive] = useState(false);
+
   if (!open) {
     return null;
   }
@@ -1071,6 +1077,36 @@ const OutreachTemplateModal = ({
   const templateEditorHtml =
     form.outreach_template_body_html ||
     textToEmailHtml(form.outreach_template_body_text);
+
+  const handleTemplateDragOver = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!importingTemplateFile) {
+      setIsTemplateDropActive(true);
+    }
+  };
+
+  const handleTemplateDragLeave = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsTemplateDropActive(false);
+  };
+
+  const handleTemplateDrop = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsTemplateDropActive(false);
+
+    if (importingTemplateFile) {
+      return;
+    }
+
+    const file = event.dataTransfer.files?.[0];
+    if (!file) {
+      return;
+    }
+    onImport(file);
+  };
 
   return (
     <div
@@ -1125,24 +1161,39 @@ const OutreachTemplateModal = ({
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
                   正文（必填）：
-                  {form.outreach_template_body_text.trim() ||
-                  form.outreach_template_body_html.trim()
-                    ? "已填写"
-                    : "未填写"}
+                  {hasVisibleTemplateBody(form) ? "已填写" : "未填写"}
                 </span>
               </div>
             </div>
 
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:text-stone-900">
+            <label
+              onDragOver={handleTemplateDragOver}
+              onDragLeave={handleTemplateDragLeave}
+              onDrop={handleTemplateDrop}
+              aria-busy={importingTemplateFile}
+              className={clsx(
+                "inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-dashed bg-white px-4 py-3 text-sm font-medium shadow-sm transition",
+                importingTemplateFile
+                  ? "cursor-wait border-stone-200 text-stone-400"
+                  : isTemplateDropActive
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-stone-200 text-stone-700 hover:border-stone-300 hover:text-stone-900",
+              )}
+            >
               {importingTemplateFile ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Upload className="h-4 w-4" />
               )}
-              导入默认模板文件
+              {importingTemplateFile
+                ? "正在导入模板文件"
+                : isTemplateDropActive
+                  ? "松开即可导入模板"
+                  : "点击或拖拽导入默认模板"}
               <input
                 type="file"
                 accept={TEMPLATE_FILE_ACCEPT}
+                disabled={importingTemplateFile}
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -1229,6 +1280,8 @@ const OutreachTemplateModal = ({
               <EmailTemplateEditor
                 label="默认模板正文"
                 html={templateEditorHtml}
+                placeholder="可将套磁信docx拖到此处导入"
+                onFileDrop={onImport}
                 onChange={onBodyChange}
               />
             </div>
@@ -2027,7 +2080,26 @@ export const ProfilePage = () => {
   };
 
   const handleTemplateFileImport = async (file: File) => {
+    if (importingTemplateFile) {
+      return;
+    }
+
     const importTargetEditorId = identityEditorId;
+    const hasExistingTemplateBody = hasVisibleTemplateBody(identityForm);
+
+    if (hasExistingTemplateBody) {
+      const shouldReplaceTemplateBody = await confirm({
+        title: "确认覆盖默认模板正文？",
+        description: "导入模板文件会替换当前正文内容，主题不会被修改。",
+        confirmLabel: "覆盖并导入",
+        cancelLabel: "取消",
+        tone: "danger",
+      });
+
+      if (!shouldReplaceTemplateBody) {
+        return;
+      }
+    }
 
     setImportingTemplateFile(true);
     try {
