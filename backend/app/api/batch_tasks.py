@@ -27,7 +27,11 @@ from app.schemas.batch_task import (
     BatchTaskItemRead,
     CreateBatchTaskRequest,
 )
-from app.services.batch_schedule import has_future_batch_window, normalize_scheduled_dates
+from app.services.batch_schedule import (
+    build_jittered_batch_schedule,
+    has_future_batch_window,
+    normalize_scheduled_dates,
+)
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_templates import (
@@ -122,6 +126,22 @@ async def create_batch_task(
     if len(professors) != len(set(payload.professor_ids)):
         raise HTTPException(status_code=404, detail="部分导师不存在或已被移入回收站")
 
+    scheduled_at_values: list[datetime | None] = [None] * len(professors)
+    if payload.schedule_type == "scheduled":
+        try:
+            scheduled_at_values = list(
+                build_jittered_batch_schedule(
+                    task_count=len(professors),
+                    scheduled_dates=scheduled_dates,
+                    window_start_time=payload.window_start_time or "",
+                    window_end_time=payload.window_end_time or "",
+                    emails_per_window=payload.emails_per_window or 0,
+                    now=datetime.now().astimezone(),
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     material_map = {material.id: material for material in identity.materials}
     primary_material_id = payload.primary_material_id or identity.current_primary_material_id
     if primary_material_id is not None:
@@ -179,7 +199,7 @@ async def create_batch_task(
     await session.flush()
 
     created_email_tasks: list[EmailTask] = []
-    for professor in professors:
+    for index, professor in enumerate(professors):
         generated_subject = None
         generated_body_text = None
         generated_body_html = None
@@ -221,6 +241,7 @@ async def create_batch_task(
             approved_body_text=generated_body_text,
             approved_body_html=generated_body_html,
             approved_at=approved_at,
+            scheduled_at=scheduled_at_values[index],
             selected_material_ids=selected_material_ids,
         )
         session.add(email_task)
