@@ -9,13 +9,40 @@ from app.services.file_storage import (
 )
 
 
-TERMINAL_MATERIAL_REFERENCING_STATUSES = {
+MATERIAL_REFERENCE_BLOCKING_STATUSES = {
+    EmailTaskStatus.GENERATING_DRAFT.value,
+    EmailTaskStatus.APPROVED.value,
+    EmailTaskStatus.SCHEDULED.value,
+    EmailTaskStatus.SENDING.value,
+}
+
+MATERIAL_REFERENCE_DETACHABLE_STATUSES = {
+    EmailTaskStatus.DISCOVERED.value,
+    EmailTaskStatus.MATCHED.value,
     EmailTaskStatus.DRAFT_FAILED.value,
+    EmailTaskStatus.REVIEW_REQUIRED.value,
     EmailTaskStatus.SENT.value,
     EmailTaskStatus.SEND_FAILED.value,
     EmailTaskStatus.REPLY_DETECTED.value,
     EmailTaskStatus.CANCELED.value,
 }
+
+MATERIAL_REFERENCE_RESET_DRAFT_STATUSES = {
+    EmailTaskStatus.REVIEW_REQUIRED.value,
+    EmailTaskStatus.SEND_FAILED.value,
+}
+
+
+def material_reference_fallback_status(task) -> str:
+    if (
+        task.match_score is not None
+        or bool(task.match_reason)
+        or bool(task.fit_points)
+        or bool(task.risk_points)
+        or bool(task.match_keywords)
+    ):
+        return EmailTaskStatus.MATCHED.value
+    return EmailTaskStatus.DISCOVERED.value
 
 
 def material_can_be_primary(material: IdentityMaterial) -> bool:

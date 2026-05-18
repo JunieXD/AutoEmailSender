@@ -1391,6 +1391,193 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(len(refreshed_identity["materials"]), 0)
 
+    def test_delete_material_detaches_discovered_and_matched_primary_material_references(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research background is in information extraction.",
+            material_type="resume",
+        )
+        discovered_professor_id = self._create_professor(email="discovered-material-delete@example.edu")
+        matched_professor_id = self._create_professor(email="matched-material-delete@example.edu")
+        discovered_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=discovered_professor_id,
+            status="discovered",
+            primary_material_id=material_id,
+        )
+        matched_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=matched_professor_id,
+            status="matched",
+            primary_material_id=material_id,
+            match_score=82,
+            match_reason="方向匹配",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        self.assertEqual(self._get_email_task_delete_state(discovered_task_id)["status"], "discovered")
+        self.assertEqual(self._get_email_task_delete_state(matched_task_id)["status"], "matched")
+        self.assertIsNone(self._get_task_material_references(discovered_task_id)[0])
+        self.assertIsNone(self._get_task_material_references(matched_task_id)[0])
+
+    def test_delete_material_resets_review_required_primary_material_draft(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research background is in information extraction.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="review-material-delete@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            generated_subject="旧草稿主题",
+            generated_content_text="旧草稿正文",
+            generated_content_html="<p>旧草稿正文</p>",
+            approved_subject="已审核主题",
+            approved_body_text="已审核正文",
+            approved_body_html="<p>已审核正文</p>",
+            match_score=88,
+            match_reason="方向匹配",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        state = self._get_email_task_delete_state(task_id)
+        self.assertEqual(state["status"], "matched")
+        self.assertIsNone(state["primary_material_id"])
+        self.assertIsNone(state["generated_subject"])
+        self.assertIsNone(state["generated_content_text"])
+        self.assertIsNone(state["generated_content_html"])
+        self.assertIsNone(state["approved_subject"])
+        self.assertIsNone(state["approved_body_text"])
+        self.assertIsNone(state["approved_body_html"])
+        self.assertIsNone(state["approved_at"])
+
+    def test_delete_material_removes_review_required_attachment_and_requires_review(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        deleted_material_id = self._upload_material(
+            identity_id,
+            filename="portfolio.pdf",
+            content=b"portfolio",
+            material_type="portfolio",
+        )
+        remaining_material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"resume",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="review-attachment-delete@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            selected_material_ids=[deleted_material_id, remaining_material_id],
+            generated_subject="保留草稿主题",
+            generated_content_text="保留草稿正文",
+            generated_content_html="<p>保留草稿正文</p>",
+            approved_subject="清空审核主题",
+            approved_body_text="清空审核正文",
+            approved_body_html="<p>清空审核正文</p>",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        state = self._get_email_task_delete_state(task_id)
+        self.assertEqual(state["status"], "review_required")
+        self.assertEqual(state["selected_material_ids"], [remaining_material_id])
+        self.assertEqual(state["generated_subject"], "保留草稿主题")
+        self.assertIsNone(state["approved_subject"])
+        self.assertIsNone(state["approved_body_text"])
+        self.assertIsNone(state["approved_body_html"])
+        self.assertIsNone(state["approved_at"])
+
+    def test_delete_material_resets_send_failed_primary_material(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"resume",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="send-failed-primary-delete@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="send_failed",
+            primary_material_id=material_id,
+            generated_subject="旧主题",
+            generated_content_text="旧正文",
+            generated_content_html="<p>旧正文</p>",
+            approved_subject="发送失败主题",
+            approved_body_text="发送失败正文",
+            approved_body_html="<p>发送失败正文</p>",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        state = self._get_email_task_delete_state(task_id)
+        self.assertEqual(state["status"], "discovered")
+        self.assertIsNone(state["primary_material_id"])
+        self.assertIsNone(state["generated_subject"])
+        self.assertIsNone(state["approved_subject"])
+        self.assertIsNone(state["last_error"])
+
+    def test_delete_material_turns_send_failed_attachment_into_review_required(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        deleted_material_id = self._upload_material(
+            identity_id,
+            filename="attachment.pdf",
+            content=b"attachment",
+            material_type="portfolio",
+        )
+        professor_id = self._create_professor(email="send-failed-attachment-delete@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="send_failed",
+            primary_material_id=None,
+            selected_material_ids=[deleted_material_id],
+            generated_subject="保留主题",
+            generated_content_text="保留正文",
+            generated_content_html="<p>保留正文</p>",
+            approved_subject="清空主题",
+            approved_body_text="清空正文",
+            approved_body_html="<p>清空正文</p>",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        state = self._get_email_task_delete_state(task_id)
+        self.assertEqual(state["status"], "review_required")
+        self.assertEqual(state["selected_material_ids"], [])
+        self.assertEqual(state["generated_subject"], "保留主题")
+        self.assertIsNone(state["approved_subject"])
+
     def test_delete_material_clears_draft_failed_primary_material_reference(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -1528,6 +1715,70 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(primary_material_id, material_id)
         self.assertEqual(selected_material_ids, [material_id])
 
+    def test_delete_material_does_not_partially_detach_when_blocked_task_exists(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"resume",
+            material_type="resume",
+        )
+        detachable_professor_id = self._create_professor(email="detachable-blocked-delete@example.edu")
+        blocked_professor_id = self._create_professor(email="approved-blocked-delete@example.edu")
+        detachable_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=detachable_professor_id,
+            status="matched",
+            primary_material_id=material_id,
+        )
+        blocked_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=blocked_professor_id,
+            status="approved",
+            primary_material_id=material_id,
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 400)
+        self.assertEqual(delete_response.json()["detail"], "当前材料仍被已批准、定时或发送中的任务使用")
+        self.assertEqual(self._get_task_material_references(detachable_task_id)[0], material_id)
+        self.assertEqual(self._get_task_material_references(blocked_task_id)[0], material_id)
+
+    def test_delete_material_clears_primary_and_attachment_reference_together(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"resume",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="primary-and-attachment-delete@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            selected_material_ids=[material_id],
+            generated_subject="旧主题",
+            generated_content_text="旧正文",
+            generated_content_html="<p>旧正文</p>",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        state = self._get_email_task_delete_state(task_id)
+        self.assertEqual(state["status"], "discovered")
+        self.assertIsNone(state["primary_material_id"])
+        self.assertEqual(state["selected_material_ids"], [])
+        self.assertIsNone(state["generated_subject"])
+
     def test_delete_material_still_blocks_active_primary_material_reference(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -1542,14 +1793,14 @@ class ApiEndpointTests(unittest.TestCase):
             identity_id=identity_id,
             llm_id=llm_id,
             professor_id=professor_id,
-            status="review_required",
+            status="approved",
             primary_material_id=material_id,
         )
 
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 400)
-        self.assertEqual(delete_response.json()["detail"], "当前材料仍被未完成任务作为默认材料使用")
+        self.assertEqual(delete_response.json()["detail"], "当前材料仍被已批准、定时或发送中的任务使用")
         primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
         self.assertEqual(primary_material_id, material_id)
         self.assertIsNone(selected_material_ids)
@@ -1576,7 +1827,7 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 400)
-        self.assertEqual(delete_response.json()["detail"], "当前材料仍被未完成任务选为随信材料")
+        self.assertEqual(delete_response.json()["detail"], "当前材料仍被已批准、定时或发送中的任务使用")
         primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [material_id])
@@ -5527,16 +5778,32 @@ class ApiEndpointTests(unittest.TestCase):
         status: str,
         primary_material_id: int | None,
         selected_material_ids: list[int] | None = None,
+        generated_subject: str | None = None,
+        generated_content_text: str | None = None,
+        generated_content_html: str | None = None,
+        approved_subject: str | None = None,
+        approved_body_text: str | None = None,
+        approved_body_html: str | None = None,
+        match_score: int | None = None,
+        match_reason: str | None = None,
     ) -> int:
         connection = sqlite3.connect(self.db_path)
         try:
+            approved_at = (
+                "datetime('now')"
+                if approved_subject is not None or approved_body_text is not None or approved_body_html is not None
+                else "NULL"
+            )
             task_id = connection.execute(
-                """
+                f"""
                 INSERT INTO email_tasks (
                     identity_id, llm_profile_id, professor_id,
-                    status, primary_material_id, selected_material_ids, last_error
+                    status, primary_material_id, selected_material_ids, last_error,
+                    generated_subject, generated_content_text, generated_content_html,
+                    approved_subject, approved_body_text, approved_body_html,
+                    approved_at, match_score, match_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {approved_at}, ?, ?)
                 RETURNING id
                 """,
                 (
@@ -5547,6 +5814,14 @@ class ApiEndpointTests(unittest.TestCase):
                     primary_material_id,
                     json.dumps(selected_material_ids) if selected_material_ids is not None else None,
                     "失败任务错误" if status in {"draft_failed", "send_failed"} else None,
+                    generated_subject,
+                    generated_content_text,
+                    generated_content_html,
+                    approved_subject,
+                    approved_body_text,
+                    approved_body_html,
+                    match_score,
+                    match_reason,
                 ),
             ).fetchone()[0]
             connection.commit()
@@ -5565,6 +5840,36 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         selected_material_ids = json.loads(row[1]) if row[1] is not None else None
         return row[0], selected_material_ids
+
+    def _get_email_task_delete_state(self, task_id: int) -> dict[str, object | None]:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT status, primary_material_id, selected_material_ids,
+                       generated_subject, generated_content_text, generated_content_html,
+                       approved_subject, approved_body_text, approved_body_html,
+                       approved_at, last_error
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        return {
+            "status": row[0],
+            "primary_material_id": row[1],
+            "selected_material_ids": json.loads(row[2]) if row[2] is not None else None,
+            "generated_subject": row[3],
+            "generated_content_text": row[4],
+            "generated_content_html": row[5],
+            "approved_subject": row[6],
+            "approved_body_text": row[7],
+            "approved_body_html": row[8],
+            "approved_at": row[9],
+            "last_error": row[10],
+        }
 
     def _insert_batch_task_with_material(
         self,

@@ -11,7 +11,15 @@ from sqlalchemy.orm import selectinload
 
 from app.api.identity_serializers import serialize_material
 from app.core.database import get_async_session
-from app.models import BatchTask, BatchTaskStatus, EmailTask, IdentityMaterial, IdentityMaterialType, IdentityProfile
+from app.models import (
+    BatchTask,
+    BatchTaskStatus,
+    EmailTask,
+    EmailTaskStatus,
+    IdentityMaterial,
+    IdentityMaterialType,
+    IdentityProfile,
+)
 from app.schemas.identity import IdentityMaterialRead
 from app.services.file_storage import (
     build_display_name,
@@ -19,9 +27,12 @@ from app.services.file_storage import (
     save_upload,
 )
 from app.services.materials import (
-    TERMINAL_MATERIAL_REFERENCING_STATUSES,
+    MATERIAL_REFERENCE_BLOCKING_STATUSES,
+    MATERIAL_REFERENCE_DETACHABLE_STATUSES,
+    MATERIAL_REFERENCE_RESET_DRAFT_STATUSES,
     build_material_download_name,
     material_can_be_primary,
+    material_reference_fallback_status,
 )
 from app.services.operation_logs import record_operation_log
 
@@ -103,21 +114,32 @@ async def delete_material(
     identity = material.identity
     is_current_primary = identity.current_primary_material_id == material.id
 
-    active_tasks = list(
+    candidate_tasks = list(
         (
             await session.execute(
                 select(EmailTask).where(
                     EmailTask.identity_id == material.identity_id,
-                    EmailTask.status.not_in(TERMINAL_MATERIAL_REFERENCING_STATUSES),
                 ),
             )
         ).scalars()
     )
-    for task in active_tasks:
-        if task.primary_material_id == material.id:
-            raise HTTPException(status_code=400, detail="当前材料仍被未完成任务作为默认材料使用")
-        if material.id in (task.selected_material_ids or []):
-            raise HTTPException(status_code=400, detail="当前材料仍被未完成任务选为随信材料")
+    blocking_tasks = [
+        task
+        for task in candidate_tasks
+        if task.status in MATERIAL_REFERENCE_BLOCKING_STATUSES and _task_references_material(task, material.id)
+    ]
+    if blocking_tasks:
+        raise HTTPException(status_code=400, detail="当前材料仍被已批准、定时或发送中的任务使用")
+
+    unknown_referencing_tasks = [
+        task
+        for task in candidate_tasks
+        if task.status not in MATERIAL_REFERENCE_BLOCKING_STATUSES
+        and task.status not in MATERIAL_REFERENCE_DETACHABLE_STATUSES
+        and _task_references_material(task, material.id)
+    ]
+    if unknown_referencing_tasks:
+        raise HTTPException(status_code=400, detail="当前材料仍被未完成任务使用")
 
     continuable_batch_tasks = list(
         (
@@ -130,33 +152,22 @@ async def delete_material(
         ).scalars()
     )
     for batch_task in continuable_batch_tasks:
-        if batch_task.primary_material_id == material.id or material.id in (batch_task.selected_material_ids or []):
+        if _batch_task_references_material(batch_task, material.id):
             raise HTTPException(status_code=400, detail="当前材料仍被可继续批量任务使用")
 
-    referencing_tasks = list(
-        (
-            await session.execute(
-                select(EmailTask).where(
-                    EmailTask.identity_id == material.identity_id,
-                    EmailTask.status.in_(TERMINAL_MATERIAL_REFERENCING_STATUSES),
-                ),
-            )
-        ).scalars()
-    )
-    for task in referencing_tasks:
-        task_updated = False
-        if task.primary_material_id == material.id:
-            task.primary_material_id = None
-            task_updated = True
-        if material.id in (task.selected_material_ids or []):
-            task.selected_material_ids = [
-                selected_material_id
-                for selected_material_id in task.selected_material_ids or []
-                if selected_material_id != material.id
-            ]
-            task_updated = True
-        if task_updated:
-            task.updated_at = datetime.now(UTC)
+    detached_primary_task_ids: list[int] = []
+    removed_attachment_task_ids: list[int] = []
+    reset_draft_task_ids: list[int] = []
+    for task in candidate_tasks:
+        if task.status not in MATERIAL_REFERENCE_DETACHABLE_STATUSES:
+            continue
+        detached_primary, removed_attachment, reset_draft = _detach_material_from_email_task(task, material.id)
+        if detached_primary:
+            detached_primary_task_ids.append(task.id)
+        if removed_attachment:
+            removed_attachment_task_ids.append(task.id)
+        if reset_draft:
+            reset_draft_task_ids.append(task.id)
 
     referencing_batch_tasks = list(
         (
@@ -168,34 +179,31 @@ async def delete_material(
             )
         ).scalars()
     )
+    detached_batch_task_ids: list[int] = []
     for batch_task in referencing_batch_tasks:
-        batch_task_updated = False
-        if batch_task.primary_material_id == material.id:
-            batch_task.primary_material_id = None
-            batch_task_updated = True
-        if material.id in (batch_task.selected_material_ids or []):
-            batch_task.selected_material_ids = [
-                selected_material_id
-                for selected_material_id in batch_task.selected_material_ids or []
-                if selected_material_id != material.id
-            ]
-            batch_task_updated = True
-        if batch_task_updated:
-            batch_task.updated_at = datetime.now(UTC)
+        if _detach_material_from_batch_task(batch_task, material.id):
+            detached_batch_task_ids.append(batch_task.id)
 
     if is_current_primary:
         identity.current_primary_material_id = None
         identity.updated_at = datetime.now(UTC)
 
+    material_file_path = material.file_path
     await _record_material_log(
         session,
         material,
         "identity_material.deleted",
-        metadata={"was_primary": is_current_primary},
+        metadata={
+            "was_primary": is_current_primary,
+            "detached_primary_task_ids": detached_primary_task_ids,
+            "removed_attachment_task_ids": removed_attachment_task_ids,
+            "reset_draft_task_ids": reset_draft_task_ids,
+            "detached_batch_task_ids": detached_batch_task_ids,
+        },
     )
-    delete_file(material.file_path)
     await session.delete(material)
     await session.commit()
+    delete_file(material_file_path)
 
 
 @router.get("/materials/{material_id}/open")
@@ -253,6 +261,82 @@ async def _get_material(session: AsyncSession, material_id: int) -> IdentityMate
     if not material:
         raise HTTPException(status_code=404, detail="未找到材料")
     return material
+
+
+def _task_references_material(task: EmailTask, material_id: int) -> bool:
+    return task.primary_material_id == material_id or material_id in (task.selected_material_ids or [])
+
+
+def _batch_task_references_material(task: BatchTask, material_id: int) -> bool:
+    return task.primary_material_id == material_id or material_id in (task.selected_material_ids or [])
+
+
+def _clear_generated_draft(task: EmailTask) -> None:
+    task.generated_subject = None
+    task.generated_content_text = None
+    task.generated_content_html = None
+
+
+def _clear_approved_draft(task: EmailTask) -> None:
+    task.approved_subject = None
+    task.approved_body_text = None
+    task.approved_body_html = None
+    task.approved_at = None
+    task.scheduled_at = None
+
+
+def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple[bool, bool, bool]:
+    detached_primary = False
+    removed_attachment = False
+    reset_draft = False
+
+    if task.primary_material_id == material_id:
+        task.primary_material_id = None
+        detached_primary = True
+        if task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES:
+            _clear_generated_draft(task)
+            _clear_approved_draft(task)
+            task.status = material_reference_fallback_status(task)
+            task.last_error = None
+            reset_draft = True
+        elif task.status == EmailTaskStatus.DRAFT_FAILED.value:
+            task.status = material_reference_fallback_status(task)
+            task.last_error = None
+
+    if material_id in (task.selected_material_ids or []):
+        task.selected_material_ids = [
+            selected_material_id
+            for selected_material_id in task.selected_material_ids or []
+            if selected_material_id != material_id
+        ]
+        removed_attachment = True
+        if not detached_primary and task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES:
+            _clear_approved_draft(task)
+            task.status = EmailTaskStatus.REVIEW_REQUIRED.value
+            task.last_error = None
+            reset_draft = True
+
+    if detached_primary or removed_attachment or reset_draft:
+        task.updated_at = datetime.now(UTC)
+
+    return detached_primary, removed_attachment, reset_draft
+
+
+def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
+    updated = False
+    if task.primary_material_id == material_id:
+        task.primary_material_id = None
+        updated = True
+    if material_id in (task.selected_material_ids or []):
+        task.selected_material_ids = [
+            selected_material_id
+            for selected_material_id in task.selected_material_ids or []
+            if selected_material_id != material_id
+        ]
+        updated = True
+    if updated:
+        task.updated_at = datetime.now(UTC)
+    return updated
 
 
 def _normalize_material_type(material_type: str) -> str:
