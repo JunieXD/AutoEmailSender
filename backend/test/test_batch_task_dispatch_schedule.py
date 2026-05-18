@@ -142,6 +142,36 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
 
+    def test_dispatch_due_tasks_skips_batch_task_before_scheduled_at_inside_window(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(
+            self._set_task_scheduled_at(
+                task_id,
+                datetime(2026, 5, 4, 10, 30, tzinfo=UTC),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(processed, 0)
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+        mocked_send.assert_not_called()
+
     def test_dispatch_email_task_skips_task_no_longer_dispatchable(self) -> None:
         task_id = self._run_async(self._create_manual_approved_task())
         self._run_async(self._set_task_status(task_id, EmailTaskStatus.REVIEW_REQUIRED.value))
@@ -851,6 +881,14 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task.status = EmailTaskStatus.SENDING.value
             task.last_send_attempt_at = last_send_attempt_at
             task.updated_at = last_send_attempt_at
+            await session.commit()
+
+    async def _set_task_scheduled_at(self, task_id: int, scheduled_at: datetime) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            task.scheduled_at = scheduled_at
+            task.updated_at = datetime.now(UTC)
             await session.commit()
 
     def _build_email_task(
