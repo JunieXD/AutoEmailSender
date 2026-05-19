@@ -76,6 +76,12 @@ export type DesktopBackendStatus =
       detail?: string;
     };
 
+export type DesktopStartupAtLoginStatus = {
+  supported: boolean;
+  enabled: boolean;
+  message?: string;
+};
+
 declare global {
   interface Window {
     autoEmailSender?: {
@@ -88,6 +94,8 @@ declare global {
         data: ArrayBuffer;
       } | null>;
       openMaterial?: (request: { materialId: number }) => Promise<DesktopMaterialOpenResult>;
+      getStartupAtLoginStatus?: () => Promise<DesktopStartupAtLoginStatus>;
+      setStartupAtLoginEnabled?: (enabled: boolean) => Promise<DesktopStartupAtLoginStatus>;
       checkForUpdate: () => Promise<DesktopUpdateStatus>;
       downloadUpdate: (options?: { mode?: DesktopUpdateDownloadMode }) => Promise<DesktopUpdateStatus>;
       switchToFullDownload: () => Promise<DesktopUpdateStatus>;

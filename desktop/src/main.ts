@@ -1,9 +1,10 @@
-﻿import { app, BrowserWindow, Menu, Tray, dialog, ipcMain } from "electron";
+﻿import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
 import { registerFileSelectionIpc } from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
+import { getStartupAtLoginStatus, setStartupAtLoginEnabled } from "./startup.js";
 import { checkForUpdatesOnStartup, registerUpdateIpc } from "./updates.js";
 import {
   restoreExistingWindow,
@@ -11,7 +12,7 @@ import {
   startWindowCreationOnce,
 } from "./windowLifecycle.js";
 import { getWindowIconPath } from "./windowIcon.js";
-import type { BackendController, BackendExit, BackendStatus } from "./types.js";
+import type { BackendController, BackendExit, BackendStatus, StartupAtLoginStatus } from "./types.js";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -20,9 +21,11 @@ let restartingBackend = false;
 let isQuitting = false;
 let backendStopPromise: Promise<void> | null = null;
 let currentBackendStatus: BackendStatus = createInitialBackendStatus();
+let currentStartupAtLoginStatus: StartupAtLoginStatus | null = null;
 const windowCreationState = { pendingCreation: null as Promise<void> | null };
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
+const launchedAtStartup = process.argv.includes("--startup");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -56,6 +59,65 @@ function stopBackendAndExit(exitCode: number): void {
   });
 }
 
+function getStartupInput() {
+  return {
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    executablePath: process.execPath,
+  };
+}
+
+function refreshTrayContextMenu(): void {
+  tray?.setContextMenu(buildTrayContextMenu());
+}
+
+function buildTrayContextMenu() {
+  const startupStatus = currentStartupAtLoginStatus;
+  const startupMenuItem: MenuItemConstructorOptions = {
+    label: startupStatus === null ? "开机自启动（读取中）" : "开机自启动",
+    type: "checkbox",
+    checked: Boolean(startupStatus?.supported && startupStatus.enabled),
+    enabled: Boolean(startupStatus?.supported),
+    click: (menuItem) => {
+      void updateStartupAtLoginFromTray(menuItem.checked);
+    },
+  };
+
+  return Menu.buildFromTemplate([
+    { label: "打开窗口", click: showMainWindow },
+    { type: "separator" },
+    startupMenuItem,
+    { type: "separator" },
+    { label: "退出", click: quitFromTray },
+  ]);
+}
+
+async function loadStartupAtLoginForTray(): Promise<void> {
+  try {
+    currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
+  } catch (error) {
+    currentStartupAtLoginStatus = {
+      supported: false,
+      enabled: false,
+      message: getErrorMessage(error),
+    };
+  } finally {
+    refreshTrayContextMenu();
+  }
+}
+
+async function updateStartupAtLoginFromTray(enabled: boolean): Promise<void> {
+  try {
+    currentStartupAtLoginStatus = await setStartupAtLoginEnabled(getStartupInput(), enabled);
+  } catch (error) {
+    dialog.showErrorBox("开机自启动设置失败", getErrorMessage(error));
+    await loadStartupAtLoginForTray();
+    return;
+  }
+
+  refreshTrayContextMenu();
+}
+
 function ensureTray(): void {
   if (tray !== null) {
     return;
@@ -69,13 +131,8 @@ function ensureTray(): void {
     }),
   );
   tray.setToolTip("Auto Email Sender");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "打开窗口", click: showMainWindow },
-      { type: "separator" },
-      { label: "退出", click: quitFromTray },
-    ]),
-  );
+  refreshTrayContextMenu();
+  void loadStartupAtLoginForTray();
   tray.on("click", showMainWindow);
 }
 
@@ -89,6 +146,7 @@ async function createWindow(): Promise<void> {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
+    show: !launchedAtStartup,
     autoHideMenuBar: true,
     icon: getWindowIconPath({
       isPackaged: app.isPackaged,
@@ -209,7 +267,25 @@ function createInitialBackendStatus(): BackendStatus {
   };
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 ipcMain.handle("app:get-version", () => app.getVersion());
+ipcMain.handle("startup:get-status", async () => {
+  currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
+  refreshTrayContextMenu();
+  return currentStartupAtLoginStatus;
+});
+ipcMain.handle("startup:set-enabled", async (_event, enabled: unknown) => {
+  if (typeof enabled !== "boolean") {
+    throw new Error("Invalid startup setting.");
+  }
+
+  currentStartupAtLoginStatus = await setStartupAtLoginEnabled(getStartupInput(), enabled);
+  refreshTrayContextMenu();
+  return currentStartupAtLoginStatus;
+});
 registerUpdateIpc(() => mainWindow);
 registerFileSelectionIpc();
 registerMaterialOpenIpc({

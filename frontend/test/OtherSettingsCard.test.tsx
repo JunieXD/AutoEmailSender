@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
 
@@ -36,6 +36,11 @@ vi.mock("@/lib/api/runtimeSettings", () => ({
 }));
 
 describe("OtherSettingsCard", () => {
+  beforeEach(() => {
+    window.autoEmailSender = undefined;
+    vi.clearAllMocks();
+  });
+
   const chooseSelectOption = (label: string, optionName: string) => {
     fireEvent.click(screen.getByRole("button", { name: label }));
     fireEvent.click(screen.getByRole("option", { name: optionName }));
@@ -168,4 +173,51 @@ describe("OtherSettingsCard", () => {
     chooseSelectOption("模板保留度", "更重内容表达");
     expect(screen.getAllByText(/优先重组内容/).length).toBeGreaterThan(0);
   });
+
+  it("shows startup at login as unavailable outside the desktop app", async () => {
+    render(<OtherSettingsCard />);
+
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+
+    expect(await screen.findByText("开机自启动")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /开机自启动/ })).toBeDisabled();
+    expect(screen.getByText("仅安装后的 Windows 桌面版支持开机自启动。")).toBeInTheDocument();
+  });
+
+  it("loads and updates startup at login in the desktop app", async () => {
+    const setStartupAtLoginEnabled = vi.fn(async (enabled: boolean) => ({
+      supported: true,
+      enabled,
+    }));
+    window.autoEmailSender = buildDesktopApi({
+      getStartupAtLoginStatus: vi.fn(async () => ({ supported: true, enabled: true })),
+      setStartupAtLoginEnabled,
+    });
+
+    render(<OtherSettingsCard />);
+
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    const startupCheckbox = await screen.findByRole("checkbox", { name: /开机自启动/ });
+    await waitFor(() => expect(startupCheckbox).toBeChecked());
+
+    fireEvent.click(startupCheckbox);
+
+    await waitFor(() => {
+      expect(setStartupAtLoginEnabled).toHaveBeenCalledWith(false);
+    });
+    await waitFor(() => expect(startupCheckbox).not.toBeChecked());
+  });
 });
+
+function buildDesktopApi(overrides: Partial<NonNullable<typeof window.autoEmailSender>> = {}) {
+  return {
+    backendBaseUrl: "http://127.0.0.1:48123",
+    getVersion: async () => "0.1.0",
+    checkForUpdate: async () => ({ state: "idle", version: "0.1.0" }) as const,
+    downloadUpdate: async () => ({ state: "idle", version: "0.1.0" }) as const,
+    switchToFullDownload: async () => ({ state: "idle", version: "0.1.0" }) as const,
+    quitAndInstall: async () => undefined,
+    onUpdateStatus: () => () => undefined,
+    ...overrides,
+  };
+}

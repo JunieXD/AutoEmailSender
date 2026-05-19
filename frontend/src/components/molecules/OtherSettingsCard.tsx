@@ -10,6 +10,7 @@ import {
   type RuntimeSettingsDTO,
   type RuntimeSettingsUpdateDTO,
 } from "@/lib/api/runtimeSettings";
+import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
 type NumberSettingsKey = {
@@ -178,6 +179,10 @@ export function OtherSettingsCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [startupStatus, setStartupStatus] = useState<DesktopStartupAtLoginStatus | null>(null);
+  const [startupLoading, setStartupLoading] = useState(false);
+  const [startupSaving, setStartupSaving] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -199,6 +204,35 @@ export function OtherSettingsCard() {
     }
     void loadSettings();
   }, [error, loadSettings, loading, open, updatedAt]);
+
+  const loadStartupStatus = useCallback(async () => {
+    const api = window.autoEmailSender;
+    if (!api?.getStartupAtLoginStatus || !api.setStartupAtLoginEnabled) {
+      setStartupStatus({
+        supported: false,
+        enabled: false,
+        message: "仅安装后的 Windows 桌面版支持开机自启动。",
+      });
+      return;
+    }
+
+    setStartupLoading(true);
+    setStartupError(null);
+    try {
+      setStartupStatus(await api.getStartupAtLoginStatus());
+    } catch (statusError) {
+      setStartupError(getErrorMessage(statusError, "读取开机自启动状态失败"));
+    } finally {
+      setStartupLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open || startupLoading || startupStatus !== null) {
+      return;
+    }
+    void loadStartupStatus();
+  }, [loadStartupStatus, open, startupLoading, startupStatus]);
 
   const summary = useMemo(() => {
     const matchConcurrency = form.match_analysis_job_item_concurrency || "3";
@@ -258,6 +292,24 @@ export function OtherSettingsCard() {
       setError(getErrorMessage(saveError, "保存其他设置失败"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleStartupChange = async (enabled: boolean) => {
+    const api = window.autoEmailSender;
+    if (!api?.setStartupAtLoginEnabled) {
+      setStartupError("当前环境不支持开机自启动设置");
+      return;
+    }
+
+    setStartupSaving(true);
+    setStartupError(null);
+    try {
+      setStartupStatus(await api.setStartupAtLoginEnabled(enabled));
+    } catch (saveError) {
+      setStartupError(getErrorMessage(saveError, "保存开机自启动设置失败"));
+    } finally {
+      setStartupSaving(false);
     }
   };
 
@@ -394,6 +446,45 @@ export function OtherSettingsCard() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="space-y-3 border-t border-stone-200 pt-5">
+                  <div>
+                    <h3 className="text-base font-semibold text-stone-900">系统设置</h3>
+                    <p className="mt-1 text-sm leading-6 text-stone-600">
+                      控制桌面端与系统集成相关的选项。
+                    </p>
+                  </div>
+                  <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(startupStatus?.supported && startupStatus.enabled)}
+                      disabled={
+                        startupLoading ||
+                        startupSaving ||
+                        !startupStatus?.supported ||
+                        !window.autoEmailSender?.setStartupAtLoginEnabled
+                      }
+                      onChange={(event) => void handleStartupChange(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-stone-900">开机自启动</span>
+                      <span className="mt-1 block text-xs leading-5 text-stone-500">
+                        {startupLoading
+                          ? "正在读取开机自启动状态..."
+                          : startupSaving
+                            ? "正在保存开机自启动设置..."
+                            : startupStatus?.message ??
+                              "开启后，Auto Email Sender 会在 Windows 登录后自动启动并停留在托盘。"}
+                      </span>
+                    </span>
+                  </label>
+                  {startupError ? (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {startupError}
+                    </div>
+                  ) : null}
                 </div>
 
                 {error ? (

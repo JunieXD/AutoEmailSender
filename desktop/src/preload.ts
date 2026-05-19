@@ -1,5 +1,5 @@
 ﻿import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { BackendStatus, MaterialOpenResult, UpdateStatus } from "./types.js";
+import type { BackendStatus, MaterialOpenResult, StartupAtLoginStatus, UpdateStatus } from "./types.js";
 
 const markDesktopRuntime = (): void => {
   document.documentElement.dataset.runtime = "desktop";
@@ -44,6 +44,10 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
     } | null>,
   openMaterial: (request: { materialId: number }) =>
     ipcRenderer.invoke("materials:open", request) as Promise<MaterialOpenResult>,
+  getStartupAtLoginStatus: () =>
+    ipcRenderer.invoke("startup:get-status") as Promise<StartupAtLoginStatus>,
+  setStartupAtLoginEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("startup:set-enabled", enabled) as Promise<StartupAtLoginStatus>,
   checkForUpdate: () => ipcRenderer.invoke("update:check") as Promise<UpdateStatus>,
   downloadUpdate: (options?: { mode?: "differential" | "full" }) =>
     ipcRenderer.invoke("update:download", options) as Promise<UpdateStatus>,

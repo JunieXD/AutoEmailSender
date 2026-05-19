@@ -108,3 +108,9 @@ export type MaterialOpenResult =
         | "MaterialOpenSystemFailed";
       message: string;
     };
+
+export type StartupAtLoginStatus = {
+  supported: boolean;
+  enabled: boolean;
+  message?: string;
+};
