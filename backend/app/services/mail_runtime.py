@@ -425,11 +425,9 @@ def _fetch_message_by_uid_sync(
         body_html = strip_quoted_reply_html(parsed_parts.body_html or "") or None
         if not body_text and body_html:
             body_text = strip_quoted_reply_text(convert_html_to_text(body_html))
-    elif not _headers_indicate_multipart(raw_headers):
+    else:
         raw_body = _fetch_message_body_by_uid(client, uid)
         body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
-    else:
-        body_text, body_html = None, None
     received_at = _extract_received_at_from_fetch_payload(header_payload)
     return _parse_fetched_headers(uid, raw_headers, body_text, body_html, received_at)
 

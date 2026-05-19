@@ -129,6 +129,49 @@ class _MultipartBase64ImapClient(_FakeImapClient):
         return "OK", []
 
 
+class _MultipartFallbackImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "OK", [self.search_data]
+        if command != "FETCH":
+            return "NO", []
+
+        query = str(args[-1])
+        if "HEADER" in query:
+            return "OK", [
+                (
+                    b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {256}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: Re: hello\r\n"
+                    b"Message-ID: <reply-fallback@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n"
+                    b"Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+                ),
+            ]
+        if "BODYSTRUCTURE" in query:
+            return "OK", [(b'1 (BODYSTRUCTURE ("APPLICATION" "OCTET-STREAM" NIL NIL NIL "BASE64" 8 NIL NIL NIL))',)]
+        if "BODY.PEEK[TEXT]" in query:
+            return "OK", [
+                (
+                    b"1 (BODY[TEXT] {256}",
+                    b"--mix\r\n"
+                    b"Content-Type: text/plain; charset=utf-8\r\n"
+                    b"Content-Transfer-Encoding: base64\r\n\r\n"
+                    b"5L2g5aW9\r\n"
+                    b"--mix\r\n"
+                    b"Content-Type: application/pdf\r\n"
+                    b"Content-Disposition: attachment; filename=\"cv.pdf\"\r\n\r\n"
+                    b"ignored attachment\r\n"
+                    b"--mix--\r\n",
+                ),
+            ]
+        return "OK", []
+
+
 def _build_identity() -> IdentityProfile:
     return IdentityProfile(
         name="测试身份",
@@ -222,6 +265,22 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertIn("BODY.PEEK[1.MIME]", serialized_commands)
         self.assertIn("BODY.PEEK[1]", serialized_commands)
         self.assertNotIn("BODY.PEEK[2", serialized_commands)
+        self.assertNotIn("RFC822", serialized_commands)
+
+    def test_incremental_fetch_falls_back_to_decoded_body_when_bodystructure_finds_no_text(self) -> None:
+        client = _MultipartFallbackImapClient(search_data=b"1")
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            _, messages = asyncio.run(
+                fetch_incremental_inbox_messages(_build_identity(), None),
+            )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body_text, "\u4f60\u597d")
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("BODYSTRUCTURE", serialized_commands)
+        self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
+        self.assertNotIn("ignored attachment", messages[0].body_text)
         self.assertNotIn("RFC822", serialized_commands)
 
     def test_parse_received_email_strips_quoted_original_message_from_plain_text(self) -> None:
