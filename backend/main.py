@@ -13,21 +13,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import (
-    batch_tasks_router,
-    crawl_jobs_router,
-    diagnostics_router,
-    email_tasks_router,
-    identities_router,
-    llm_profiles_router,
-    materials_router,
-    match_analysis_jobs_router,
-    professors_router,
-    runtime_settings_router,
-    test_compose_router,
-    token_usage_router,
-    workspaces_router,
-)
+from app.api.routers import API_ROUTERS
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.migrations import ensure_database_schema
@@ -247,19 +233,8 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RequestContextMiddleware)
 
-    app.include_router(identities_router)
-    app.include_router(materials_router)
-    app.include_router(match_analysis_jobs_router)
-    app.include_router(llm_profiles_router)
-    app.include_router(professors_router)
-    app.include_router(test_compose_router)
-    app.include_router(crawl_jobs_router)
-    app.include_router(diagnostics_router)
-    app.include_router(batch_tasks_router)
-    app.include_router(email_tasks_router)
-    app.include_router(workspaces_router)
-    app.include_router(token_usage_router)
-    app.include_router(runtime_settings_router)
+    for router in API_ROUTERS:
+        app.include_router(router)
 
     @app.get("/api/ping")
     async def ping() -> dict[str, str]:
