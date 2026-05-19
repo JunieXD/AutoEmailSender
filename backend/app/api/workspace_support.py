@@ -482,6 +482,12 @@ def _serialize_workspace_message(log: EmailLog) -> WorkspaceMessageRead:
 
 
 def _resolve_task_outreach_config(identity: IdentityProfile, task: EmailTask):
+    if task.batch_task_id is None:
+        return resolve_outreach_template_config(
+            identity,
+            generation_mode=task.outreach_generation_mode,
+        )
+
     return resolve_outreach_template_config(
         identity,
         generation_mode=task.outreach_generation_mode,

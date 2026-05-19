@@ -527,7 +527,7 @@ async def generate_task_draft(
         batch_task = task.batch_task
 
         try:
-            outreach_config = _resolve_task_outreach_config(task)
+            outreach_config = _resolve_draft_generation_outreach_config(task)
             if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
                 template_subject = _normalize_nullable_text(outreach_config.subject_template)
                 template_body = _normalize_nullable_text(outreach_config.body_text_template)
@@ -851,7 +851,7 @@ async def preview_task_draft(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
 
-        outreach_config = _resolve_task_outreach_config(task)
+        outreach_config = _resolve_draft_generation_outreach_config(task)
         if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
             raise ValueError("模板模式不需要 AI 草稿预览")
         if task.primary_material is None:
@@ -1939,6 +1939,16 @@ def _resolve_task_outreach_config(task: EmailTask):
         subject_template=task.outreach_template_subject,
         body_text_template=task.outreach_template_body_text,
         body_html_template=task.outreach_template_body_html,
+    )
+
+
+def _resolve_draft_generation_outreach_config(task: EmailTask):
+    if task.batch_task_id is not None:
+        return _resolve_task_outreach_config(task)
+
+    return resolve_outreach_template_config(
+        task.identity,
+        generation_mode=task.outreach_generation_mode,
     )
 
 
