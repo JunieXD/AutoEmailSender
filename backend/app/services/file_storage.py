@@ -7,7 +7,6 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import UploadFile
-from markitdown import MarkItDown
 
 from app.core.config import get_settings
 
@@ -158,5 +157,7 @@ def _hash_bytes(content: bytes) -> str:
     return sha256(content).hexdigest()
 
 @lru_cache(maxsize=1)
-def _get_markitdown() -> MarkItDown:
+def _get_markitdown():
+    from markitdown import MarkItDown
+
     return MarkItDown(enable_plugins=False)

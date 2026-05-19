@@ -10,7 +10,6 @@ import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.agents.faculty_crawler_agent import build_faculty_crawler_model, run_faculty_crawler_agent
 from app.core.config import get_settings
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, LLMProfile
 from app.services.crawler_debug import append_crawler_debug_event
@@ -228,6 +227,7 @@ async def run_queued_crawl_jobs_once(
                         trace_callback=trace_callback,
                     )
                 else:
+                    run_faculty_crawler_agent = _get_run_faculty_crawler_agent()
                     await run_faculty_crawler_agent(
                         entry_ctx,
                         llm_profile,
@@ -496,6 +496,7 @@ async def _invoke_direct_structured_llm(
     result_model: type[Any],
     empty_response_error: str,
 ) -> Any:
+    build_faculty_crawler_model = _get_build_faculty_crawler_model()
     model = build_faculty_crawler_model(
         llm_profile,
         extra_body=ctx.thinking_extra_body,
@@ -1345,6 +1346,28 @@ def _extract_model_message_content(response: object) -> str:
         joined = "".join(pieces).strip()
         return joined
     return ""
+
+
+def build_faculty_crawler_model(*args: Any, **kwargs: Any) -> Any:
+    factory = _get_build_faculty_crawler_model()
+    return factory(*args, **kwargs)
+
+
+async def run_faculty_crawler_agent(*args: Any, **kwargs: Any) -> Any:
+    runner = _get_run_faculty_crawler_agent()
+    return await runner(*args, **kwargs)
+
+
+def _get_build_faculty_crawler_model():
+    from app.agents.faculty_crawler_agent import build_faculty_crawler_model
+
+    return build_faculty_crawler_model
+
+
+def _get_run_faculty_crawler_agent():
+    from app.agents.faculty_crawler_agent import run_faculty_crawler_agent
+
+    return run_faculty_crawler_agent
 
 
 def _derive_candidate_save_failure(agent_trace: Any) -> str:
