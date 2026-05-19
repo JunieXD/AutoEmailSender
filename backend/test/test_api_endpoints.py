@@ -1715,6 +1715,45 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(primary_material_id, material_id)
         self.assertEqual(selected_material_ids, [material_id])
 
+    def test_delete_material_detaches_soft_deleted_running_batch_task_reference(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        deleted_material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research background is in information extraction.",
+            material_type="resume",
+        )
+        remaining_material_id = self._upload_material(
+            identity_id,
+            filename="portfolio.pdf",
+            content=b"Portfolio content",
+            material_type="portfolio",
+        )
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=deleted_material_id,
+            selected_material_ids=[deleted_material_id, remaining_material_id],
+            deleted=True,
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        self.assertIsNone(primary_material_id)
+        self.assertEqual(selected_material_ids, [remaining_material_id])
+
+        restore_response = self.client.post(f"/api/batch-tasks/{batch_task_id}/restore")
+        self.assertEqual(restore_response.status_code, 200, msg=restore_response.text)
+        restored_task = restore_response.json()["task"]
+        self.assertEqual(restored_task["status"], "stopped")
+        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        self.assertIsNone(primary_material_id)
+        self.assertEqual(selected_material_ids, [remaining_material_id])
+
     def test_delete_material_does_not_partially_detach_when_blocked_task_exists(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -5879,6 +5918,7 @@ class ApiEndpointTests(unittest.TestCase):
         status: str,
         primary_material_id: int | None,
         selected_material_ids: list[int] | None = None,
+        deleted: bool = False,
     ) -> int:
         connection = sqlite3.connect(self.db_path)
         try:
@@ -5886,9 +5926,9 @@ class ApiEndpointTests(unittest.TestCase):
                 """
                 INSERT INTO batch_tasks (
                     identity_id, llm_profile_id, name, status,
-                    primary_material_id, selected_material_ids, target_count
+                    primary_material_id, selected_material_ids, target_count, deleted_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)
                 RETURNING id
                 """,
                 (
@@ -5899,6 +5939,7 @@ class ApiEndpointTests(unittest.TestCase):
                     primary_material_id,
                     json.dumps(selected_material_ids) if selected_material_ids is not None else None,
                     1,
+                    1 if deleted else 0,
                 ),
             ).fetchone()[0]
             connection.commit()

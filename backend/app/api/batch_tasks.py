@@ -17,6 +17,7 @@ from app.models import (
     EmailTaskCancellationReason,
     EmailTaskSource,
     EmailTaskStatus,
+    IdentityMaterial,
     IdentityProfile,
     LLMProfile,
     Professor,
@@ -399,6 +400,7 @@ async def restore_batch_task(
     task = await _get_batch_task(session, task_id)
     previous_deleted_at = task.deleted_at
     if task.deleted_at is not None:
+        await _sanitize_batch_task_material_references_before_restore(session, task)
         task.deleted_at = None
         task.updated_at = datetime.now(UTC)
     await _record_batch_task_action(
@@ -479,6 +481,41 @@ def _serialize_batch_task_item(email_task: EmailTask) -> BatchTaskItemRead:
         is_replied=email_task.is_replied,
         updated_at=email_task.updated_at,
     )
+
+
+async def _sanitize_batch_task_material_references_before_restore(session: AsyncSession, task: BatchTask) -> None:
+    material_ids = set(task.selected_material_ids or [])
+    if task.primary_material_id is not None:
+        material_ids.add(task.primary_material_id)
+    if not material_ids:
+        return
+
+    existing_material_ids = set(
+        await session.scalars(
+            select(IdentityMaterial.id).where(
+                IdentityMaterial.identity_id == task.identity_id,
+                IdentityMaterial.id.in_(material_ids),
+            ),
+        ),
+    )
+    removed_primary = task.primary_material_id is not None and task.primary_material_id not in existing_material_ids
+    updated = False
+    if removed_primary:
+        task.primary_material_id = None
+        if task.status not in BATCH_TASK_DELETABLE_STATUSES:
+            task.status = BatchTaskStatus.STOPPED.value
+        updated = True
+    if task.selected_material_ids is not None:
+        filtered_material_ids = [
+            material_id
+            for material_id in task.selected_material_ids
+            if material_id in existing_material_ids
+        ]
+        if filtered_material_ids != task.selected_material_ids:
+            task.selected_material_ids = filtered_material_ids
+            updated = True
+    if updated:
+        task.updated_at = datetime.now(UTC)
 
 
 def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:

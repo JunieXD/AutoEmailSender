@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -146,6 +146,7 @@ async def delete_material(
             await session.execute(
                 select(BatchTask).where(
                     BatchTask.identity_id == material.identity_id,
+                    BatchTask.deleted_at.is_(None),
                     BatchTask.status.not_in(NON_CONTINUABLE_BATCH_TASK_STATUSES),
                 ),
             )
@@ -174,7 +175,10 @@ async def delete_material(
             await session.execute(
                 select(BatchTask).where(
                     BatchTask.identity_id == material.identity_id,
-                    BatchTask.status.in_(NON_CONTINUABLE_BATCH_TASK_STATUSES),
+                    or_(
+                        BatchTask.status.in_(NON_CONTINUABLE_BATCH_TASK_STATUSES),
+                        BatchTask.deleted_at.is_not(None),
+                    ),
                 ),
             )
         ).scalars()
@@ -324,8 +328,10 @@ def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple
 
 def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
     updated = False
+    detached_primary = False
     if task.primary_material_id == material_id:
         task.primary_material_id = None
+        detached_primary = True
         updated = True
     if material_id in (task.selected_material_ids or []):
         task.selected_material_ids = [
@@ -333,6 +339,13 @@ def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
             for selected_material_id in task.selected_material_ids or []
             if selected_material_id != material_id
         ]
+        updated = True
+    if (
+        detached_primary
+        and task.deleted_at is not None
+        and task.status not in NON_CONTINUABLE_BATCH_TASK_STATUSES
+    ):
+        task.status = BatchTaskStatus.STOPPED.value
         updated = True
     if updated:
         task.updated_at = datetime.now(UTC)
