@@ -11,6 +11,18 @@ import main
 
 
 class StartupRuntimeTest(unittest.TestCase):
+    def test_startup_phase_log_writes_without_full_settings(self) -> None:
+        from app.core.startup_logging import write_startup_phase_log
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict("os.environ", {"AUTO_EMAIL_SENDER_DATA_DIR": temp_dir}):
+                write_startup_phase_log("desktop_entry.start", detail="port=48120")
+
+            log_text = (Path(temp_dir) / "logs" / "startup.log").read_text(encoding="utf-8")
+
+        self.assertIn("desktop_entry.start", log_text)
+        self.assertIn("port=48120", log_text)
+
     def test_initialize_runtime_retries_transient_database_lock(self) -> None:
         attempts = 0
 

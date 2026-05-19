@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.migrations import ensure_database_schema
 from app.core.request_context import RequestContextMiddleware
+from app.core.startup_logging import write_startup_phase_log
 from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 from app.services.operation_logs import cleanup_old_operation_logs
 from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
@@ -222,6 +223,7 @@ def log_runtime_initialization_failure(task: asyncio.Task[None]) -> None:
 
 
 def create_app() -> FastAPI:
+    write_startup_phase_log("main.create_app.start")
     app = FastAPI(title="Auto Email Agent API", version="3.0", lifespan=lifespan)
 
     app.add_middleware(
@@ -264,6 +266,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail="后端初始化中")
         return {"status": "ready"}
 
+    write_startup_phase_log("main.create_app.ready", detail=f"routers={len(API_ROUTERS)}")
     return app
 
 
