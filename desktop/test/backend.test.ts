@@ -338,6 +338,44 @@ describe("desktop backend helpers", () => {
     expect(observed).toEqual(["starting", "ready"]);
   });
 
+  it("fails startup polling immediately when the backend process exits", async () => {
+    const child = createRunningChildProcess();
+    const server = createServer((request, response) => {
+      if (request.url === "/startup-status") {
+        response.writeHead(503, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: "temporarily unavailable" }));
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+
+    try {
+      setTimeout(() => {
+        Object.assign(child, { exitCode: 1 });
+        child.emit("exit", 1, null);
+      }, 10);
+
+      await expect(
+        waitForStartupStatus(`http://127.0.0.1:${address.port}`, {
+          child,
+          getStderr: () => "startup failed",
+          onStatus: () => undefined,
+          pollIntervalMs: 5,
+          hardTimeoutMs: 500,
+        }),
+      ).rejects.toThrow("后端进程已退出：startup failed");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("fails startup polling when startup status reports error", async () => {
     await withStartupServer(
       [
