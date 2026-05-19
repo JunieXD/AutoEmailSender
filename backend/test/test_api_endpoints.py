@@ -1715,6 +1715,48 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(primary_material_id, material_id)
         self.assertEqual(selected_material_ids, [material_id])
 
+    def test_delete_material_allows_completed_batch_task_with_stale_running_status(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research background is in information extraction.",
+            material_type="resume",
+        )
+        remaining_material_id = self._upload_material(
+            identity_id,
+            filename="portfolio.pdf",
+            content=b"Portfolio content",
+            material_type="portfolio",
+        )
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+            selected_material_ids=[material_id, remaining_material_id],
+        )
+        professor_id = self._create_professor(email="completed-batch-material-delete@example.edu")
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="sent",
+            primary_material_id=material_id,
+            selected_material_ids=[material_id, remaining_material_id],
+            batch_task_id=batch_task_id,
+            source="batch",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        self.assertEqual(self._get_batch_task_status(batch_task_id), "completed")
+        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        self.assertIsNone(primary_material_id)
+        self.assertEqual(selected_material_ids, [remaining_material_id])
+
     def test_delete_material_detaches_soft_deleted_running_batch_task_reference(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -5884,6 +5926,8 @@ class ApiEndpointTests(unittest.TestCase):
         status: str,
         primary_material_id: int | None,
         selected_material_ids: list[int] | None = None,
+        batch_task_id: int | None = None,
+        source: str = "manual",
         generated_subject: str | None = None,
         generated_content_text: str | None = None,
         generated_content_html: str | None = None,
@@ -5903,16 +5947,18 @@ class ApiEndpointTests(unittest.TestCase):
             task_id = connection.execute(
                 f"""
                 INSERT INTO email_tasks (
-                    identity_id, llm_profile_id, professor_id,
+                    source, batch_task_id, identity_id, llm_profile_id, professor_id,
                     status, primary_material_id, selected_material_ids, last_error,
                     generated_subject, generated_content_text, generated_content_html,
                     approved_subject, approved_body_text, approved_body_html,
                     approved_at, match_score, match_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {approved_at}, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {approved_at}, ?, ?)
                 RETURNING id
                 """,
                 (
+                    source,
+                    batch_task_id,
                     identity_id,
                     llm_id,
                     professor_id,
@@ -5934,6 +5980,16 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
         return task_id
+
+    def _get_batch_task_status(self, batch_task_id: int) -> str:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            return connection.execute(
+                "SELECT status FROM batch_tasks WHERE id = ?",
+                (batch_task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
 
     def _get_task_material_references(self, task_id: int) -> tuple[int | None, list[int] | None]:
         connection = sqlite3.connect(self.db_path)

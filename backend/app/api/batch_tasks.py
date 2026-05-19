@@ -33,6 +33,7 @@ from app.services.batch_schedule import (
     has_future_batch_window,
     normalize_scheduled_dates,
 )
+from app.services.batch_task_status import count_completed_batch_task_items, sync_batch_task_completion
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_templates import (
@@ -71,6 +72,8 @@ async def list_batch_tasks(
         raise HTTPException(status_code=400, detail="未知任务视图")
 
     tasks = list((await session.execute(statement)).scalars().unique())
+    if any(sync_batch_task_completion(task) for task in tasks):
+        await session.commit()
     return [_serialize_batch_task(task) for task in tasks]
 
 
@@ -272,6 +275,8 @@ async def create_batch_task(
         for email_task_id in created_email_task_ids:
             await dispatch_email_task(session_factory, email_task_id)
     refreshed_batch_task = await _load_batch_task_for_serialization(session, batch_task.id)
+    if refreshed_batch_task is not None and sync_batch_task_completion(refreshed_batch_task):
+        await session.commit()
     return _serialize_batch_task(refreshed_batch_task)
 
 
@@ -371,6 +376,7 @@ async def delete_batch_task(
     session: AsyncSession = Depends(get_async_session),
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
+    sync_batch_task_completion(task)
     serialized = _serialize_batch_task(task)
     if serialized.status not in BATCH_TASK_DELETABLE_STATUSES:
         raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
@@ -521,24 +527,8 @@ async def _sanitize_batch_task_material_references_before_restore(session: Async
 def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
     status_counter = Counter(email_task.status for email_task in task.email_tasks)
 
-    completed_count = sum(
-        1
-        for email_task in task.email_tasks
-        if email_task.status in {
-            EmailTaskStatus.SENT.value,
-            EmailTaskStatus.REPLY_DETECTED.value,
-        }
-    )
+    completed_count = count_completed_batch_task_items(task)
     status = task.status
-    if (
-        task.target_count > 0
-        and completed_count >= task.target_count
-        and task.status not in {
-            BatchTaskStatus.STOPPED.value,
-            BatchTaskStatus.EXPIRED.value,
-        }
-    ):
-        status = BatchTaskStatus.COMPLETED.value
 
     pending_generation_count = sum(
         status_counter.get(item, 0)

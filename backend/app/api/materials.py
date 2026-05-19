@@ -26,6 +26,7 @@ from app.services.file_storage import (
     delete_file,
     save_upload,
 )
+from app.services.batch_task_status import sync_batch_task_completion
 from app.services.materials import (
     MATERIAL_REFERENCE_BLOCKING_STATUSES,
     MATERIAL_REFERENCE_DETACHABLE_STATUSES,
@@ -148,13 +149,19 @@ async def delete_material(
                     BatchTask.identity_id == material.identity_id,
                     BatchTask.deleted_at.is_(None),
                     BatchTask.status.not_in(NON_CONTINUABLE_BATCH_TASK_STATUSES),
-                ),
+                ).options(selectinload(BatchTask.email_tasks)),
             )
         ).scalars()
     )
+    completed_batch_task_updated = False
     for batch_task in continuable_batch_tasks:
+        completed_batch_task_updated = sync_batch_task_completion(batch_task) or completed_batch_task_updated
+        if batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES:
+            continue
         if _batch_task_references_material(batch_task, material.id):
             raise HTTPException(status_code=400, detail="当前材料仍被可继续批量任务使用")
+    if completed_batch_task_updated:
+        await session.flush()
 
     detached_primary_task_ids: list[int] = []
     removed_attachment_task_ids: list[int] = []
