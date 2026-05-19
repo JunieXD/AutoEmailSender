@@ -77,36 +77,28 @@ const selectionContextValue = {
   refreshSelections: vi.fn(),
 };
 
-const dashboardProfessors: ProfessorDashboardItemDTO[] = [
-  {
-    id: 11,
-    name: "张明",
-    email: "zhang@example.edu",
-    title: "教授",
-    university: "示例大学",
-    school: "计算机学院",
-    department: "人工智能系",
-    research_direction: "自然语言处理",
-    recent_papers: ["Paper A"],
-    match_score: null,
-    sent_count: 0,
-    status: "not_contacted",
-  },
-  {
-    id: 12,
-    name: "李敏",
-    email: "li@example.edu",
-    title: "副教授",
-    university: "示例大学",
-    school: "软件学院",
-    department: "软件工程系",
-    research_direction: "软件工程",
-    recent_papers: ["Paper B"],
-    match_score: null,
-    sent_count: 0,
-    status: "ready_to_send",
-  },
-];
+const createDashboardProfessor = (
+  id: number,
+  name = `导师 ${id}`,
+): ProfessorDashboardItemDTO => ({
+  id,
+  name,
+  email: `professor-${id}@example.edu`,
+  title: id % 2 === 0 ? "教授" : "副教授",
+  university: "示例大学",
+  school: id % 2 === 0 ? "计算机学院" : "软件学院",
+  department: "人工智能系",
+  research_direction: "自然语言处理",
+  recent_papers: [`Paper ${id}`],
+  match_score: null,
+  sent_count: 0,
+  status: "not_contacted",
+});
+
+const dashboardProfessors: ProfessorDashboardItemDTO[] = Array.from(
+  { length: 11 },
+  (_, index) => createDashboardProfessor(index + 11),
+);
 
 const managementProfessors: ProfessorManagementItemDTO[] =
   dashboardProfessors.map((professor) => ({
@@ -200,41 +192,59 @@ describe("selection controls", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the home select-current-results action with the list selection area", async () => {
+  it("selects all filtered home results across pages", async () => {
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     );
 
-    const selectCurrentResults = await screen.findByRole("button", {
-      name: "选择当前结果",
+    const selectFilteredResults = await screen.findByRole("button", {
+      name: "选择全部筛选结果",
     });
 
     expect(
       screen.queryByRole("button", { name: "清空选择" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(selectCurrentResults);
+    fireEvent.click(selectFilteredResults);
 
     expect(
-      await screen.findByText("已选中 2 位导师"),
+      await screen.findByText("已选中 11 位导师"),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "清空选择" }),
     ).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "取消选择当前结果" }),
+      screen.getByRole("button", { name: "取消选择全部筛选结果" }),
     );
 
-    expect(screen.queryByText("已选中 2 位导师")).not.toBeInTheDocument();
+    expect(screen.queryByText("已选中 11 位导师")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "清空选择" }),
     ).not.toBeInTheDocument();
   });
 
-  it("moves the management select-current-page action into the selection column header", async () => {
+  it("paginates home professors with ten items per page", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+    expect(screen.getByText("导师 20")).toBeInTheDocument();
+    expect(screen.queryByText("导师 21")).not.toBeInTheDocument();
+    expect(screen.getByText(/第 1 \/ 2 页/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    expect(await screen.findByText("导师 21")).toBeInTheDocument();
+    expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
+  });
+
+  it("selects all filtered management results across pages", async () => {
     render(
       <MemoryRouter>
         <ProfessorsPage />
@@ -242,18 +252,22 @@ describe("selection controls", () => {
     );
 
     const tableHeader = await screen.findByTestId("professor-table-header");
-    const selectCurrentPage = within(tableHeader).getByRole("button", {
-      name: "选择当前页筛选结果",
+    const selectFilteredResults = within(tableHeader).getByRole("button", {
+      name: "选择全部筛选结果",
     });
+
+    expect(screen.getByText("导师 11")).toBeInTheDocument();
+    expect(screen.getByText("导师 20")).toBeInTheDocument();
+    expect(screen.queryByText("导师 21")).not.toBeInTheDocument();
 
     expect(
       screen.queryByRole("button", { name: "清空选择" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(selectCurrentPage);
+    fireEvent.click(selectFilteredResults);
 
     expect(
-      await screen.findByText("已选中 2 位导师"),
+      await screen.findByText("已选中 11 位导师"),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "清空选择" }),

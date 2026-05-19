@@ -296,7 +296,9 @@ describe("HomePage onboarding", () => {
     );
     expect(selectButton).toHaveClass("h-6", "w-6");
     expect(
-      screen.getByRole("button", { name: "选择当前结果" }).closest("section"),
+      screen
+        .getByRole("button", { name: "选择全部筛选结果" })
+        .closest("section"),
     ).toHaveClass("overflow-hidden");
     expect(
       screen.queryByRole("checkbox", { name: "选择 王教授" }),

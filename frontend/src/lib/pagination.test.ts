@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { getPageItems, getTotalPages, PAGE_SIZE } from './pagination';
 
 describe('pagination', () => {
+  it('uses ten items as the default page size', () => {
+    expect(PAGE_SIZE).toBe(10);
+  });
+
   it('returns at least one page for empty collections', () => {
     expect(getTotalPages(0)).toBe(1);
   });

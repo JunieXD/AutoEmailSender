@@ -74,7 +74,7 @@ type CrawlerJobFormState = {
 };
 type IntakeActionTone = "primary" | "amber" | "stone";
 
-const PROFESSORS_PER_PAGE = 20;
+const PROFESSORS_PER_PAGE = 10;
 const ALL_PROFESSOR_FILTER_VALUE = "__all__";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
@@ -464,29 +464,33 @@ export const ProfessorsPage = () => {
     }
     return !professor.archived_at;
   };
-  const currentPageSelectableIds = paginatedProfessors
+  const filteredSelectableIds = filteredProfessors
     .filter(isProfessorSelectable)
     .map((professor) => professor.id);
-  const currentPageSelectedCount = currentPageSelectableIds.filter((id) =>
+  const filteredSelectedCount = filteredSelectableIds.filter((id) =>
     selectedIds.has(id),
   ).length;
-  const someCurrentPageSelected = currentPageSelectedCount > 0;
-  const allCurrentPageSelected =
-    currentPageSelectableIds.length > 0 &&
-    currentPageSelectedCount === currentPageSelectableIds.length;
+  const someFilteredSelected = filteredSelectedCount > 0;
+  const allFilteredSelected =
+    filteredSelectableIds.length > 0 &&
+    filteredSelectedCount === filteredSelectableIds.length;
   const openCreateModal = () => {
     setEditingProfessor(null);
     setFormState(emptyProfessorForm());
     setUpsertModalOpen(true);
   };
 
-  const handleToggleSelectCurrentPage = () => {
+  const handleToggleFilteredSelection = () => {
     setSelectedIds((previous) => {
       const next = new Set(previous);
-      if (allCurrentPageSelected) {
-        currentPageSelectableIds.forEach((id) => next.delete(id));
+      const allSelected =
+        filteredSelectableIds.length > 0 &&
+        filteredSelectableIds.every((id) => previous.has(id));
+
+      if (allSelected) {
+        filteredSelectableIds.forEach((id) => next.delete(id));
       } else {
-        currentPageSelectableIds.forEach((id) => next.add(id));
+        filteredSelectableIds.forEach((id) => next.add(id));
       }
       return next;
     });
@@ -998,29 +1002,28 @@ export const ProfessorsPage = () => {
       <section className="mt-6 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           <div className="text-sm text-stone-600">
-            共 {filteredProfessors.length} 位导师，第 {safeCurrentPage} /{" "}
-            {totalPages} 页，每页最多 {PROFESSORS_PER_PAGE} 位
+            共 {filteredProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，每页最多 {PROFESSORS_PER_PAGE} 位
           </div>
-          {currentPageSelectableIds.length > 0 ? (
+          {filteredSelectableIds.length > 0 ? (
             <button
               type="button"
               aria-label={
-                allCurrentPageSelected
-                  ? "取消选择当前页筛选结果"
-                  : "选择当前页筛选结果"
+                allFilteredSelected
+                  ? "取消选择全部筛选结果"
+                  : "选择全部筛选结果"
               }
-              aria-pressed={allCurrentPageSelected}
-              onClick={handleToggleSelectCurrentPage}
+              aria-pressed={allFilteredSelected}
+              onClick={handleToggleFilteredSelection}
               className="inline-flex min-h-10 w-fit items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-sm font-medium text-stone-700 transition hover:border-primary/40 hover:bg-white hover:text-primary lg:hidden"
             >
-              {allCurrentPageSelected ? (
+              {allFilteredSelected ? (
                 <SquareCheck className="h-4 w-4" />
-              ) : someCurrentPageSelected ? (
+              ) : someFilteredSelected ? (
                 <SquareMinus className="h-4 w-4" />
               ) : (
                 <Square className="h-4 w-4" />
               )}
-              {allCurrentPageSelected ? "取消选择当前页" : "选择当前页筛选结果"}
+              {allFilteredSelected ? "取消选择全部筛选结果" : "选择全部筛选结果"}
             </button>
           ) : null}
         </div>
@@ -1042,23 +1045,23 @@ export const ProfessorsPage = () => {
             <button
               type="button"
               aria-label={
-                allCurrentPageSelected
-                  ? "取消选择当前页筛选结果"
-                  : "选择当前页筛选结果"
+                allFilteredSelected
+                  ? "取消选择全部筛选结果"
+                  : "选择全部筛选结果"
               }
-              aria-pressed={allCurrentPageSelected}
-              onClick={handleToggleSelectCurrentPage}
-              disabled={currentPageSelectableIds.length === 0}
+              aria-pressed={allFilteredSelected}
+              onClick={handleToggleFilteredSelection}
+              disabled={filteredSelectableIds.length === 0}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-45"
               title={
-                allCurrentPageSelected
-                  ? "取消选择当前页筛选结果"
-                  : "选择当前页筛选结果"
+                allFilteredSelected
+                  ? "取消选择全部筛选结果"
+                  : "选择全部筛选结果"
               }
             >
-              {allCurrentPageSelected ? (
+              {allFilteredSelected ? (
                 <SquareCheck className="h-4 w-4" />
-              ) : someCurrentPageSelected ? (
+              ) : someFilteredSelected ? (
                 <SquareMinus className="h-4 w-4" />
               ) : (
                 <Square className="h-4 w-4" />
@@ -1212,8 +1215,7 @@ export const ProfessorsPage = () => {
         {!loading && filteredProfessors.length > 0 ? (
           <div className="flex flex-col gap-3 border-t border-stone-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-stone-500">
-              当前页 {paginatedProfessors.length} 位导师，已选中{" "}
-              {selectedIds.size} 位
+              共 {filteredProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，已选中 {selectedIds.size} 位
             </div>
             <div className="flex items-center gap-2">
               <button

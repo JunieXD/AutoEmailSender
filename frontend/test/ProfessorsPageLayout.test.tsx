@@ -260,7 +260,9 @@ describe("ProfessorsPage layout", () => {
 
     expect(screen.queryByText("李教授")).not.toBeInTheDocument();
     expect(screen.getByText("王教授")).toBeInTheDocument();
-    expect(screen.getByText("共 1 位导师，第 1 / 1 页，每页最多 20 位")).toBeInTheDocument();
+    expect(
+      screen.getByText("共 1 位符合筛选条件，当前第 1 / 1 页，每页最多 10 位"),
+    ).toBeInTheDocument();
 
     const resetButton = screen.getByRole("button", { name: "重置筛选" });
     expect(resetButton).toHaveClass("ui-select-shell", "rounded-3xl");

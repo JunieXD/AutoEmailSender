@@ -260,14 +260,14 @@ describe("CreateTaskPage", () => {
     );
 
     expect(await screen.findByText("导师1")).toBeInTheDocument();
-    expect(screen.getByText("导师8")).toBeInTheDocument();
-    expect(screen.queryByText("导师9")).not.toBeInTheDocument();
+    expect(screen.getByText("导师10")).toBeInTheDocument();
+    expect(screen.queryByText("导师11")).not.toBeInTheDocument();
     expect(screen.getByText("1 / 2 页")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
 
     expect(screen.queryByText("导师1")).not.toBeInTheDocument();
-    expect(screen.getByText("导师9")).toBeInTheDocument();
+    expect(screen.getByText("导师11")).toBeInTheDocument();
     expect(screen.getByText("导师13")).toBeInTheDocument();
   });
 });

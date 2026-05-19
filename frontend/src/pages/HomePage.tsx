@@ -43,6 +43,7 @@ import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { listProfessors } from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
+import { getPageItems, getTotalPages, PAGE_SIZE } from "@/lib/pagination";
 import type {
   ProfessorDashboardItemDTO,
   ProfessorDashboardStatus,
@@ -224,6 +225,7 @@ export const HomePage = () => {
   );
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [sortKey, setSortKey] = useState<ProfessorDashboardSortKey>("latest");
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const [bulkScoring, setBulkScoring] = useState(false);
@@ -429,30 +431,41 @@ export const HomePage = () => {
     filteredProfessors,
     sortKey,
   );
-  const visibleProfessorIds = visibleProfessors.map((item) => item.id);
-  const visibleSelectedCount = visibleProfessorIds.filter((id) =>
+  const totalPages = getTotalPages(visibleProfessors.length, PAGE_SIZE);
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pagedProfessors = getPageItems(
+    visibleProfessors,
+    safeCurrentPage,
+    PAGE_SIZE,
+  );
+  const filteredProfessorIds = visibleProfessors.map((item) => item.id);
+  const filteredSelectedCount = filteredProfessorIds.filter((id) =>
     selectedIds.has(id),
   ).length;
-  const allVisibleProfessorsSelected =
-    visibleProfessorIds.length > 0 &&
-    visibleSelectedCount === visibleProfessorIds.length;
+  const allFilteredProfessorsSelected =
+    filteredProfessorIds.length > 0 &&
+    filteredSelectedCount === filteredProfessorIds.length;
 
-  const handleToggleVisibleProfessors = () => {
+  const handleToggleFilteredProfessors = () => {
     setSelectedIds((previous) => {
       const next = new Set(previous);
-      const allVisibleSelected =
-        visibleProfessorIds.length > 0 &&
-        visibleProfessorIds.every((id) => previous.has(id));
+      const allFilteredSelected =
+        filteredProfessorIds.length > 0 &&
+        filteredProfessorIds.every((id) => previous.has(id));
 
-      if (allVisibleSelected) {
-        visibleProfessorIds.forEach((id) => next.delete(id));
+      if (allFilteredSelected) {
+        filteredProfessorIds.forEach((id) => next.delete(id));
       } else {
-        visibleProfessorIds.forEach((id) => next.add(id));
+        filteredProfessorIds.forEach((id) => next.add(id));
       }
 
       return next;
     });
   };
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters, sortKey, professorsRequestKey]);
 
   const toggleSelection = (professorId: number) => {
     setSelectedIds((previous) => {
@@ -898,26 +911,26 @@ export const HomePage = () => {
               <button
                 type="button"
                 aria-label={
-                  allVisibleProfessorsSelected
-                    ? "取消选择当前结果"
-                    : "选择当前结果"
+                  allFilteredProfessorsSelected
+                    ? "取消选择全部筛选结果"
+                    : "选择全部筛选结果"
                 }
-                aria-pressed={allVisibleProfessorsSelected}
-                onClick={handleToggleVisibleProfessors}
+                aria-pressed={allFilteredProfessorsSelected}
+                onClick={handleToggleFilteredProfessors}
                 className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border px-3 text-sm font-medium transition hover:border-primary/40 hover:bg-white hover:text-primary ${
-                  allVisibleProfessorsSelected
+                  allFilteredProfessorsSelected
                     ? "border-primary/30 bg-primary/5 text-primary"
                     : "border-stone-200 bg-stone-50 text-stone-700"
                 }`}
               >
-                {allVisibleProfessorsSelected ? (
+                {allFilteredProfessorsSelected ? (
                   <SquareCheck className="h-4 w-4" />
                 ) : (
                   <Square className="h-4 w-4" />
                 )}
-                {allVisibleProfessorsSelected
-                  ? "取消选择当前结果"
-                  : "选择当前结果"}
+                {allFilteredProfessorsSelected
+                  ? "取消选择全部筛选结果"
+                  : "选择全部筛选结果"}
               </button>
             ) : null}
             <div className="text-sm text-stone-600">
@@ -943,7 +956,7 @@ export const HomePage = () => {
             </div>
           ) : (
             <div className="divide-y divide-stone-100">
-              {visibleProfessors.map((professor) => (
+              {pagedProfessors.map((professor) => (
                 <DashboardProfessorRow
                   key={professor.id}
                   professor={professor}
@@ -961,6 +974,31 @@ export const HomePage = () => {
               ))}
             </div>
           )}
+          {!loading && visibleProfessors.length > 0 ? (
+            <div className="flex flex-col gap-3 border-t border-stone-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-stone-500">
+                共 {visibleProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，已选择 {selectedIds.size} 位
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(safeCurrentPage - 1)}
+                  disabled={safeCurrentPage <= 1}
+                  className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(safeCurrentPage + 1)}
+                  disabled={safeCurrentPage >= totalPages}
+                  className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         {selectedIds.size > 0 ? (
