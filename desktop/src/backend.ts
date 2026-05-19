@@ -170,7 +170,7 @@ async function waitForReady(
     stderr += chunk.toString("utf8");
   });
 
-  await waitForHealth(baseUrl, child, () => stderr);
+  await waitForHealth(baseUrl, child, () => stderr, { onStatus });
   try {
     await waitForStartupStatus(baseUrl, { onStatus });
   } catch (error) {
@@ -181,24 +181,51 @@ async function waitForReady(
   }
 }
 
-async function waitForHealth(
+export async function waitForHealth(
   baseUrl: string,
   child: ChildProcessWithoutNullStreams,
   getStderr: () => string,
+  options: {
+    onStatus?: (status: BackendStatus) => void;
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+    slowStartupMs?: number;
+  } = {},
 ): Promise<void> {
-  const deadline = Date.now() + 30_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 400;
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const slowStartupMs = options.slowStartupMs ?? 30_000;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let slowStatusEmitted = false;
 
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`Backend exited before health check succeeded: ${getStderr().slice(-800)}`);
     }
+    const elapsedMs = Date.now() - startedAt;
+    if (!slowStatusEmitted && elapsedMs >= slowStartupMs) {
+      slowStatusEmitted = true;
+      const elapsedSeconds = Math.round(elapsedMs / 1000);
+      options.onStatus?.({
+        state: "starting",
+        phase: "starting",
+        message: "首次启动可能较慢，正在继续等待本地服务",
+        elapsedSeconds,
+        slowStartup: true,
+        verySlowStartup: elapsedSeconds >= 120,
+      });
+    }
     if (await isEndpointOk(`${baseUrl}/health`)) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  throw new Error(`Backend health check timed out: ${getStderr().slice(-800)}`);
+  const waitedSeconds = Math.round((Date.now() - startedAt) / 1000);
+  throw new Error(
+    `Backend health check timed out after ${waitedSeconds}s; processExited=${child.exitCode !== null}: ${getStderr().slice(-800)}`,
+  );
 }
 
 export async function waitForStartupStatus(

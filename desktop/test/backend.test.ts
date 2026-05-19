@@ -10,6 +10,7 @@ import {
   notifyBackendExit,
   normalizePort,
   stopBackend,
+  waitForHealth,
   waitForStartupStatus,
 } from "../src/backend.js";
 
@@ -60,6 +61,13 @@ async function withStartupServer(
       });
     });
   }
+}
+
+function createRunningChildProcess(): ChildProcessWithoutNullStreams {
+  return Object.assign(new EventEmitter(), {
+    exitCode: null,
+    stderr: new EventEmitter(),
+  }) as unknown as ChildProcessWithoutNullStreams;
 }
 
 describe("desktop backend helpers", () => {
@@ -200,6 +208,44 @@ describe("desktop backend helpers", () => {
     );
 
     expect(terminatedPids).toEqual([1234]);
+  });
+
+  it("keeps waiting after slow health startup threshold", async () => {
+    const observed: string[] = [];
+    const child = createRunningChildProcess();
+    const server = createServer((request, response) => {
+      if (request.url === "/health") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+
+    try {
+      await expect(
+        waitForHealth(`http://127.0.0.1:${address.port}`, child, () => "", {
+          pollIntervalMs: 1,
+          timeoutMs: 1_000,
+          slowStartupMs: 0,
+          onStatus: (status) => {
+            if (status.state === "starting") {
+              observed.push(status.message);
+            }
+          },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+
+    expect(observed).toContain("首次启动可能较慢，正在继续等待本地服务");
   });
 
   it("polls startup status until the backend is ready", async () => {
