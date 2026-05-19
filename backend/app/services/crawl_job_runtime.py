@@ -227,7 +227,6 @@ async def run_queued_crawl_jobs_once(
                         trace_callback=trace_callback,
                     )
                 else:
-                    run_faculty_crawler_agent = _get_run_faculty_crawler_agent()
                     await run_faculty_crawler_agent(
                         entry_ctx,
                         llm_profile,
@@ -496,7 +495,6 @@ async def _invoke_direct_structured_llm(
     result_model: type[Any],
     empty_response_error: str,
 ) -> Any:
-    build_faculty_crawler_model = _get_build_faculty_crawler_model()
     model = build_faculty_crawler_model(
         llm_profile,
         extra_body=ctx.thinking_extra_body,

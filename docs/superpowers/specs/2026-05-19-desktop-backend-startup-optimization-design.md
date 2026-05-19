@@ -262,10 +262,10 @@ PyInstaller 可能因为懒加载而漏收集某些动态导入依赖。
 
 ## 实施验证记录
 
-- `import main` 优化前：约 3.796 秒；优化后：约 1.960 秒。
+- `import main` 优化前：约 3.796 秒；优化后：约 1.702 秒。
 - 导入边界测试：`cd backend && uv run python -m unittest test.test_api_import_boundaries`，PASS。
 - 启动日志测试：`cd backend && uv run python -m unittest test.test_startup_runtime`，PASS。
 - 懒加载重点回归：`cd backend && uv run python -m unittest test.test_crawl_job_runtime.CrawlJobThinkingAdaptationIntegrationTests.test_thinking_adaptation_failure_marks_job_failed_and_skips_run test.test_crawl_jobs_api.CrawlJobsApiTests.test_enrich_selected_candidates_returns_summary test.test_operation_log_integration.OperationLogIntegrationTests.test_smtp_test_records_result_without_sensitive_fields`，PASS。
 - 桌面端测试：`cd desktop && npm.cmd run test -- backend.test.ts`，14 个测试 PASS。
 - 桌面端类型检查：`cd desktop && npm.cmd run typecheck`，PASS。
-- 后端完整测试：`cd backend && uv run python -m unittest discover test` 出现测试间隔离相关失败；单独重跑失败用例通过，需后续单独治理完整套件的全局状态污染。
+- 后端完整测试：`cd backend && uv run python -m unittest discover test`，564 个测试 PASS。
