@@ -72,7 +72,10 @@ async def list_batch_tasks(
         raise HTTPException(status_code=400, detail="未知任务视图")
 
     tasks = list((await session.execute(statement)).scalars().unique())
-    if any(sync_batch_task_completion(task) for task in tasks):
+    completed_batch_task_updated = False
+    for task in tasks:
+        completed_batch_task_updated = sync_batch_task_completion(task) or completed_batch_task_updated
+    if completed_batch_task_updated:
         await session.commit()
     return [_serialize_batch_task(task) for task in tasks]
 

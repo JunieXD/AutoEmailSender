@@ -4809,6 +4809,42 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(task_payload["draft_failed_count"], 1)
         self.assertEqual(task_payload["pending_generation_count"], 1)
 
+    def test_list_batch_tasks_syncs_all_stale_completed_tasks(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        first_batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        second_batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        for index, batch_task_id in enumerate([first_batch_task_id, second_batch_task_id], start=1):
+            professor_id = self._create_professor(email=f"stale-completed-batch-{index}@example.edu")
+            self._insert_email_task_with_material(
+                identity_id=identity_id,
+                llm_id=llm_id,
+                professor_id=professor_id,
+                status="sent",
+                primary_material_id=None,
+                batch_task_id=batch_task_id,
+                source="batch",
+            )
+
+        response = self.client.get("/api/batch-tasks")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload_by_id = {item["id"]: item for item in response.json()}
+        self.assertEqual(payload_by_id[first_batch_task_id]["status"], "completed")
+        self.assertEqual(payload_by_id[second_batch_task_id]["status"], "completed")
+        self.assertEqual(self._get_batch_task_status(first_batch_task_id), "completed")
+        self.assertEqual(self._get_batch_task_status(second_batch_task_id), "completed")
+
     def test_template_scheduled_batch_task_creates_approved_items_without_review(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
