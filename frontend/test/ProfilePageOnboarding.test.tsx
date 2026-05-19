@@ -2,13 +2,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfilePage } from "@/pages/ProfilePage";
-import { updateIdentity } from "@/lib/api/identities";
+import { testIdentitySmtp, updateIdentity } from "@/lib/api/identities";
 import type { IdentityDTO, LLMProfileDTO } from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedUseDesktopBackend = vi.hoisted(() => vi.fn());
 const mockedGetTestComposeThread = vi.hoisted(() => vi.fn());
 const mockedGetTestComposeStatus = vi.hoisted(() => vi.fn());
+const mockedNotifyError = vi.hoisted(() => vi.fn());
+const mockedNotifySuccess = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
@@ -20,9 +22,9 @@ vi.mock("@/context/DesktopBackendContext", () => ({
 
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => ({
-    notifyError: vi.fn(),
+    notifyError: mockedNotifyError,
     notifyFormErrors: vi.fn(),
-    notifySuccess: vi.fn(),
+    notifySuccess: mockedNotifySuccess,
   }),
 }));
 
@@ -468,6 +470,30 @@ describe("ProfilePage onboarding", () => {
     expect(
       screen.getByRole("button", { name: "测试 IMAP" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows smtp test failures as failures when the backend returns ok false", async () => {
+    vi.mocked(testIdentitySmtp).mockResolvedValueOnce({
+      ok: false,
+      message: "SMTP 连接失败: (535, b'Error: authentication failed')",
+      host: "smtp.example.com",
+    });
+
+    renderPage();
+    openSetupSection("发件身份");
+
+    fireEvent.click(screen.getByRole("button", { name: "测试 SMTP" }));
+
+    expect(await screen.findByText(/上次测试：SMTP 失败/)).toBeInTheDocument();
+    expect(
+      screen.getByText("SMTP 连接失败: (535, b'Error: authentication failed')"),
+    ).toBeInTheDocument();
+    expect(mockedNotifyError).toHaveBeenCalledTimes(1);
+    expect(mockedNotifyError.mock.calls[0]?.[0]).toContain("SMTP");
+    expect(mockedNotifyError.mock.calls[0]?.[1]).toBe(
+      "SMTP 连接失败: (535, b'Error: authentication failed')",
+    );
+    expect(mockedNotifySuccess).not.toHaveBeenCalled();
   });
 
   it("opens the material library modal from the reordered materials section", async () => {

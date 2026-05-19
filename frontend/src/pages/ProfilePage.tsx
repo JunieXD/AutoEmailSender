@@ -2051,6 +2051,15 @@ export const ProfilePage = () => {
         kind === "smtp"
           ? await testIdentitySmtp(editingIdentity.id)
           : await testIdentityImap(editingIdentity.id);
+      if (!result.ok) {
+        setLastIdentityConnectionResult({
+          kind,
+          status: "error",
+          message: result.message,
+        });
+        notifyError(`${kind.toUpperCase()} 连接测试失败`, result.message);
+        return;
+      }
       setLastIdentityConnectionResult({
         kind,
         status: "success",
