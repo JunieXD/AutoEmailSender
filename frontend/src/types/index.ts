@@ -629,6 +629,9 @@ export interface WorkspaceTaskSummaryDTO {
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
+  rendered_template_subject: string | null;
+  rendered_template_body_text: string | null;
+  rendered_template_body_html: string | null;
   match_score: number | null;
   match_reason: string | null;
   fit_points: string[];

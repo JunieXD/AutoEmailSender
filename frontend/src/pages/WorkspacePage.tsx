@@ -212,28 +212,6 @@ const hasMeaningfulBody = ({
   contentHtml: string | null;
 }) => Boolean(deriveBodyTextFromDraft({ content, contentHtml }).trim());
 
-const renderTemplateValue = (
-  value: string | null | undefined,
-  thread: WorkspaceThreadDTO,
-) => {
-  const professor = thread.professor;
-  const identity = thread.identity;
-  const context: Record<string, string | null | undefined> = {
-    name: professor.name,
-    email: professor.email,
-    title: professor.title,
-    university: professor.university,
-    school: professor.school,
-    research_direction: professor.research_direction,
-    sender_name: identity.sender_name,
-    sender_email: identity.email_address,
-  };
-
-  return (value ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) =>
-    context[key] ?? '',
-  );
-};
-
 const normalizeComposerText = (value: string | null | undefined) =>
   (value ?? '').replace(/\s+/g, ' ').trim();
 
@@ -422,16 +400,9 @@ export const WorkspacePage = () => {
     const hasDraftRecord = Boolean(
       draftSubject.trim() || draftContentText.trim() || draftContentHtml?.trim(),
     );
-    const templateContentHtml = currentTask?.outreach_template_body_html ?? null;
-    const templateContentText = deriveBodyTextFromDraft({
-      content: currentTask?.outreach_template_body_text ?? '',
-      contentHtml: templateContentHtml,
-    });
-    const renderedTemplateSubject = renderTemplateValue(
-      currentTask?.outreach_template_subject,
-      data,
-    );
-    const renderedTemplateContentText = renderTemplateValue(templateContentText, data);
+    const renderedTemplateSubject = currentTask?.rendered_template_subject ?? '';
+    const renderedTemplateContentText = currentTask?.rendered_template_body_text ?? '';
+    const renderedTemplateContentHtml = currentTask?.rendered_template_body_html ?? null;
     const shouldUseDraftRecord =
       hasDraftRecord &&
       (currentTask?.outreach_generation_mode !== 'template' ||
@@ -450,7 +421,7 @@ export const WorkspacePage = () => {
       ? null
       : shouldUseDraftRecord
         ? draftContentHtml
-        : templateContentHtml;
+        : renderedTemplateContentHtml;
     const nextContentText = blockedDraftActions
       ? ''
       : shouldUseDraftRecord
@@ -459,7 +430,7 @@ export const WorkspacePage = () => {
     const sendableDraftContent = shouldUseDraftRecord
       ? { content: draftContentText, contentHtml: draftContentHtml }
       : currentTask?.outreach_generation_mode === 'template'
-        ? { content: renderedTemplateContentText, contentHtml: templateContentHtml }
+        ? { content: renderedTemplateContentText, contentHtml: renderedTemplateContentHtml }
         : { content: '', contentHtml: null };
 
     setSubject(nextSubject);

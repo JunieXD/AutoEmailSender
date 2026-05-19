@@ -30,7 +30,13 @@ from app.schemas.workspace import (
 from app.services import llm_runtime
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_templates import get_identity_sender_name, resolve_outreach_template_config
+from app.services.outreach_templates import (
+    OUTREACH_GENERATION_MODE_TEMPLATE,
+    RenderedOutreachTemplate,
+    get_identity_sender_name,
+    render_outreach_template,
+    resolve_outreach_template_config,
+)
 from app.services.task_runtime import _create_manual_child_task
 
 
@@ -57,6 +63,11 @@ async def build_workspace_thread(
         _resolve_task_outreach_config(identity, current_task)
         if current_task is not None
         else resolve_outreach_template_config(identity)
+    )
+    rendered_template = _render_workspace_template_summary(
+        identity,
+        professor,
+        current_task_outreach,
     )
 
     message_filters = [
@@ -158,6 +169,9 @@ async def build_workspace_thread(
             outreach_template_subject=current_task_outreach.subject_template,
             outreach_template_body_text=current_task_outreach.body_text_template,
             outreach_template_body_html=current_task_outreach.body_html_template,
+            rendered_template_subject=rendered_template.subject if rendered_template else None,
+            rendered_template_body_text=rendered_template.body_text if rendered_template else None,
+            rendered_template_body_html=rendered_template.body_html if rendered_template else None,
             match_score=match_task.match_score if match_task else None,
             match_reason=match_task.match_reason if match_task else None,
             fit_points=(match_task.fit_points or []) if match_task else [],
@@ -481,10 +495,39 @@ def _serialize_workspace_message(log: EmailLog) -> WorkspaceMessageRead:
     )
 
 
+def _render_workspace_template_summary(
+    identity: IdentityProfile,
+    professor: Professor,
+    outreach_config,
+) -> RenderedOutreachTemplate | None:
+    if outreach_config.generation_mode != OUTREACH_GENERATION_MODE_TEMPLATE:
+        return None
+
+    try:
+        return render_outreach_template(
+            identity,
+            professor,
+            subject_template=outreach_config.subject_template,
+            body_text_template=outreach_config.body_text_template,
+            body_html_template=outreach_config.body_html_template,
+        )
+    except ValueError:
+        return None
+
+
 def _resolve_task_outreach_config(identity: IdentityProfile, task: EmailTask):
+    if task.batch_task_id is None:
+        return resolve_outreach_template_config(
+            identity,
+            generation_mode=task.outreach_generation_mode,
+        )
+
     return resolve_outreach_template_config(
         identity,
         generation_mode=task.outreach_generation_mode,
+        subject_template=task.outreach_template_subject,
+        body_text_template=task.outreach_template_body_text,
+        body_html_template=task.outreach_template_body_html,
     )
 
 

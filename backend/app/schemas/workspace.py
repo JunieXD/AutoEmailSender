@@ -46,6 +46,9 @@ class WorkspaceTaskSummaryRead(BaseModel):
     outreach_template_subject: str | None
     outreach_template_body_text: str | None
     outreach_template_body_html: str | None
+    rendered_template_subject: str | None
+    rendered_template_body_text: str | None
+    rendered_template_body_html: str | None
     match_score: int | None
     match_reason: str | None
     fit_points: list[str]
