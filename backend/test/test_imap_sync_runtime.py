@@ -165,6 +165,45 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), "new content")
 
+    def test_existing_reply_raw_mime_content_is_replaced(self) -> None:
+        async def scenario() -> str:
+            identity_id, professor_id, task_id = await self._create_reply_task(
+                status=EmailTaskStatus.SENT.value,
+            )
+            async with self.session_factory() as session:
+                session.add(
+                    EmailLog(
+                        email_task_id=task_id,
+                        identity_id=identity_id,
+                        llm_profile_id=1,
+                        professor_id=professor_id,
+                        direction=EmailDirection.RECEIVED.value,
+                        subject="old subject",
+                        content=(
+                            "---=_Part_1\r\n"
+                            "Content-Type: text/plain; charset=utf-8\r\n"
+                            "Content-Transfer-Encoding: base64\r\n\r\n"
+                            "5L2g5aW9"
+                        ),
+                        rfc_message_id="<reply@example.edu>",
+                    ),
+                )
+                await session.commit()
+
+            await process_imap_fetched_messages(
+                self.session_factory,
+                identity_id,
+                [self._build_fetched_message(message_id="<reply@example.edu>", content="你好")],
+            )
+
+            async with self.session_factory() as session:
+                log = await session.scalar(
+                    select(EmailLog).where(EmailLog.rfc_message_id == "<reply@example.edu>"),
+                )
+                return log.content
+
+        self.assertEqual(self._run_async(scenario()), "你好")
+
     def test_canceled_task_is_marked_replied_when_reply_is_found(self) -> None:
         async def scenario() -> tuple[str, bool]:
             identity_id, _, task_id = await self._create_reply_task(

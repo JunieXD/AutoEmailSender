@@ -1633,10 +1633,13 @@ def _backfill_existing_reply(
     reply_created_at: datetime,
 ) -> bool:
     changed = False
-    if not existing.content and message.content:
+    if (not existing.content or _looks_like_raw_mime_content(existing.content)) and message.content:
         existing.content = message.content
         changed = True
-    if not existing.content_html and message.content_html:
+    if (
+        (not existing.content_html or _looks_like_raw_mime_content(existing.content_html))
+        and message.content_html
+    ):
         existing.content_html = message.content_html
         changed = True
     if not existing.reply_headers and message.headers:
@@ -1646,6 +1649,17 @@ def _backfill_existing_reply(
         existing.created_at = reply_created_at
         changed = True
     return changed
+
+
+def _looks_like_raw_mime_content(content: str | None) -> bool:
+    if not content:
+        return False
+    normalized = content[:2000].lower()
+    return (
+        "content-transfer-encoding:" in normalized
+        or "content-type:" in normalized and "---=" in normalized
+        or "body[section" in normalized
+    )
 
 
 def _get_reply_created_at(message: mail_runtime.ReceivedEmail) -> datetime:

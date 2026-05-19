@@ -24,6 +24,8 @@ from app.core.config import get_settings
 from app.models import IdentityProfile, Professor
 from app.services.imap_message_fetcher import (
     ImapFetchedMessage,
+    fetch_message_headers_payload_by_uid,
+    fetch_text_body_parts_by_uid,
     parse_text_parts_from_message,
     search_uids_from_sender,
     search_uids_since,
@@ -413,13 +415,21 @@ def _fetch_message_by_uid_sync(
     client: IMAP4 | IMAP4_SSL,
     uid: int,
 ) -> ImapFetchedMessage | None:
-    header_payload = _fetch_message_header_payload_by_uid(client, uid)
+    header_payload = fetch_message_headers_payload_by_uid(client, uid)
     raw_headers = _extract_message_bytes_from_fetch_payload(header_payload)
     if not raw_headers:
         return None
-    client.uid("FETCH", str(uid), "(BODYSTRUCTURE)")
-    raw_body = _fetch_message_body_by_uid(client, uid)
-    body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
+    parsed_parts = fetch_text_body_parts_by_uid(client, uid)
+    if parsed_parts.body_text or parsed_parts.body_html:
+        body_text = strip_quoted_reply_text(parsed_parts.body_text or "")
+        body_html = strip_quoted_reply_html(parsed_parts.body_html or "") or None
+        if not body_text and body_html:
+            body_text = strip_quoted_reply_text(convert_html_to_text(body_html))
+    elif not _headers_indicate_multipart(raw_headers):
+        raw_body = _fetch_message_body_by_uid(client, uid)
+        body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
+    else:
+        body_text, body_html = None, None
     received_at = _extract_received_at_from_fetch_payload(header_payload)
     return _parse_fetched_headers(uid, raw_headers, body_text, body_html, received_at)
 
@@ -465,6 +475,11 @@ def _parse_fetched_body(raw_headers: bytes, raw_body: bytes) -> tuple[str | None
         fallback_charset = parsed.get_content_charset() or "utf-8"
         body_text = strip_quoted_reply_text(raw_body.decode(fallback_charset, errors="replace"))
     return body_text, body_html
+
+
+def _headers_indicate_multipart(raw_headers: bytes) -> bool:
+    parsed = BytesParser(policy=policy.default).parsebytes(raw_headers)
+    return parsed.get_content_maintype().lower() == "multipart"
 
 
 def _parse_fetched_headers(

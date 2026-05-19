@@ -59,10 +59,10 @@ class _FakeImapClient:
             return "OK", [self.search_data]
         if command == "FETCH":
             query = str(args[-1])
-            if "HEADER.FIELDS" in query:
+            if "HEADER" in query:
                 return "OK", [
                     (
-                        b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER.FIELDS] {128}',
+                        b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {128}',
                         b"From: teacher@example.com\r\n"
                         b"To: sender@example.com\r\n"
                         b"Subject: Re: hello\r\n"
@@ -81,6 +81,52 @@ class _FakeImapClient:
 
     def logout(self):
         return "OK", [b"logout"]
+
+
+class _MultipartBase64ImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "OK", [self.search_data]
+        if command != "FETCH":
+            return "NO", []
+
+        query = str(args[-1])
+        if "HEADER" in query:
+            return "OK", [
+                (
+                    b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {256}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: Re: hello\r\n"
+                    b"Message-ID: <reply-base64@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n"
+                    b"Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+                ),
+            ]
+        if "BODYSTRUCTURE" in query:
+            return "OK", [
+                (
+                    b'1 (BODYSTRUCTURE (("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "BASE64" 12 1 NIL NIL NIL NIL)'
+                    b'("APPLICATION" "PDF" NIL NIL NIL "BASE64" 999 NIL ("ATTACHMENT" ("FILENAME" "cv.pdf")) NIL NIL) '
+                    b'"MIXED" ("BOUNDARY" "mix") NIL NIL))',
+                ),
+            ]
+        if "BODY.PEEK[1.MIME]" in query:
+            return "OK", [
+                (
+                    b"1 (BODY[1.MIME] {96}",
+                    b"Content-Type: text/plain; charset=utf-8\r\n"
+                    b"Content-Transfer-Encoding: base64\r\n\r\n",
+                ),
+            ]
+        if "BODY.PEEK[1]" in query:
+            return "OK", [(b"1 (BODY[1] {12}", b"5L2g5aW9\r\n")]
+        if "BODY.PEEK[2" in query:
+            raise AssertionError("attachment part should not be fetched")
+        return "OK", []
 
 
 def _build_identity() -> IdentityProfile:
@@ -159,6 +205,23 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertEqual(messages[0].received_at, datetime(2026, 5, 8, 12, 30, tzinfo=UTC))
         serialized_commands = " ".join(client.commands)
         self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
+        self.assertNotIn("RFC822", serialized_commands)
+
+    def test_incremental_fetch_decodes_base64_text_part_without_fetching_attachment(self) -> None:
+        client = _MultipartBase64ImapClient(search_data=b"1")
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            _, messages = asyncio.run(
+                fetch_incremental_inbox_messages(_build_identity(), None),
+            )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body_text, "\u4f60\u597d")
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("BODYSTRUCTURE", serialized_commands)
+        self.assertIn("BODY.PEEK[1.MIME]", serialized_commands)
+        self.assertIn("BODY.PEEK[1]", serialized_commands)
+        self.assertNotIn("BODY.PEEK[2", serialized_commands)
         self.assertNotIn("RFC822", serialized_commands)
 
     def test_parse_received_email_strips_quoted_original_message_from_plain_text(self) -> None:
