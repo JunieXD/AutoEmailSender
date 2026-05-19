@@ -5345,7 +5345,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("{{name}}您好", draft["body_html"])
         self.assertIn("{{sender_name}}", draft["body_html"])
 
-    def test_batch_task_outreach_snapshot_is_independent_from_identity_defaults(self) -> None:
+    def test_batch_task_workspace_uses_latest_identity_template_defaults(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -5418,10 +5418,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(workspace.status_code, 200, msg=workspace.text)
         payload = workspace.json()
         self.assertEqual(payload["current_task"]["outreach_generation_mode"], "template")
-        self.assertEqual(payload["current_task"]["outreach_template_subject"], "批量主题 {{name}}")
-        self.assertEqual(payload["current_task"]["outreach_template_body_text"], "批量正文 {{name}}")
+        self.assertEqual(payload["current_task"]["outreach_template_subject"], "后来改掉的主题")
+        self.assertEqual(payload["current_task"]["outreach_template_body_text"], "后来改掉的正文 {{name}}")
 
-    def test_llm_batch_task_prefers_outreach_template_fields_for_snapshot_and_draft(self) -> None:
+    def test_llm_batch_task_uses_latest_identity_template_for_draft_generation(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5495,14 +5495,14 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(workspace_before_generate.status_code, 200, msg=workspace_before_generate.text)
         task_before_generate = workspace_before_generate.json()["current_task"]
-        self.assertEqual(task_before_generate["outreach_template_subject"], batch_subject)
-        self.assertEqual(task_before_generate["outreach_template_body_text"], batch_body_text)
-        self.assertEqual(task_before_generate["outreach_template_body_html"], batch_body_html)
+        self.assertEqual(task_before_generate["outreach_template_subject"], "身份默认主题 {{name}}")
+        self.assertEqual(task_before_generate["outreach_template_body_text"], "身份默认正文 {{name}}")
+        self.assertEqual(task_before_generate["outreach_template_body_html"], "<p>身份默认正文 {{name}}</p>")
 
         async def _fake_generate_draft_content(**kwargs):
-            self.assertEqual(kwargs["custom_subject"], batch_subject)
-            self.assertEqual(kwargs["custom_body"], batch_body_text)
-            self.assertEqual(kwargs["custom_body_html"], batch_body_html)
+            self.assertEqual(kwargs["custom_subject"], "身份默认主题 {{name}}")
+            self.assertEqual(kwargs["custom_body"], "身份默认正文 {{name}}")
+            self.assertEqual(kwargs["custom_body_html"], "<p>身份默认正文 {{name}}</p>")
             self.assertEqual(kwargs["max_tokens"], 6000)
             return self._build_draft_generation_result(
                 subject=f"润色后: {kwargs['custom_subject']}",
@@ -5520,8 +5520,8 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
         generated_task = generate_response.json()["current_task"]
-        self.assertEqual(generated_task["generated_subject"], f"润色后: {batch_subject}")
-        self.assertEqual(generated_task["generated_content_text"], f"润色后正文: {batch_body_text}")
+        self.assertEqual(generated_task["generated_subject"], "润色后: 身份默认主题 {{name}}")
+        self.assertEqual(generated_task["generated_content_text"], "润色后正文: 身份默认正文 {{name}}")
         mocked_generate.assert_awaited_once()
 
     def test_identity_missing_returns_utf8_detail_message(self) -> None:

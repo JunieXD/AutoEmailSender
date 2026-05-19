@@ -212,6 +212,45 @@ const hasMeaningfulBody = ({
   contentHtml: string | null;
 }) => Boolean(deriveBodyTextFromDraft({ content, contentHtml }).trim());
 
+const renderTemplateValue = (
+  value: string | null | undefined,
+  thread: WorkspaceThreadDTO,
+) => {
+  const professor = thread.professor;
+  const identity = thread.identity;
+  const context: Record<string, string | null | undefined> = {
+    name: professor.name,
+    email: professor.email,
+    title: professor.title,
+    university: professor.university,
+    school: professor.school,
+    research_direction: professor.research_direction,
+    sender_name: identity.sender_name,
+    sender_email: identity.email_address,
+  };
+
+  return (value ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) =>
+    context[key] ?? '',
+  );
+};
+
+const normalizeComposerText = (value: string | null | undefined) =>
+  (value ?? '').replace(/\s+/g, ' ').trim();
+
+const draftMatchesTemplate = ({
+  draftSubject,
+  draftContentText,
+  templateSubject,
+  templateContentText,
+}: {
+  draftSubject: string;
+  draftContentText: string;
+  templateSubject: string;
+  templateContentText: string;
+}) =>
+  normalizeComposerText(draftSubject) === normalizeComposerText(templateSubject) &&
+  normalizeComposerText(draftContentText) === normalizeComposerText(templateContentText);
+
 const ScheduleSendDialog = ({
   open,
   professorEmail,
@@ -388,25 +427,39 @@ export const WorkspacePage = () => {
       content: currentTask?.outreach_template_body_text ?? '',
       contentHtml: templateContentHtml,
     });
+    const renderedTemplateSubject = renderTemplateValue(
+      currentTask?.outreach_template_subject,
+      data,
+    );
+    const renderedTemplateContentText = renderTemplateValue(templateContentText, data);
+    const shouldUseDraftRecord =
+      hasDraftRecord &&
+      (currentTask?.outreach_generation_mode !== 'template' ||
+        draftMatchesTemplate({
+          draftSubject,
+          draftContentText,
+          templateSubject: renderedTemplateSubject,
+          templateContentText: renderedTemplateContentText,
+        }));
     const nextSubject = blockedDraftActions
       ? ''
-      : hasDraftRecord
+      : shouldUseDraftRecord
         ? draftSubject
-        : currentTask?.outreach_template_subject ?? '';
+        : renderedTemplateSubject;
     const nextContentHtml = blockedDraftActions
       ? null
-      : hasDraftRecord
+      : shouldUseDraftRecord
         ? draftContentHtml
         : templateContentHtml;
     const nextContentText = blockedDraftActions
       ? ''
-      : hasDraftRecord
+      : shouldUseDraftRecord
         ? draftContentText
-        : templateContentText;
-    const sendableDraftContent = hasDraftRecord
+        : renderedTemplateContentText;
+    const sendableDraftContent = shouldUseDraftRecord
       ? { content: draftContentText, contentHtml: draftContentHtml }
       : currentTask?.outreach_generation_mode === 'template'
-        ? { content: templateContentText, contentHtml: templateContentHtml }
+        ? { content: renderedTemplateContentText, contentHtml: templateContentHtml }
         : { content: '', contentHtml: null };
 
     setSubject(nextSubject);

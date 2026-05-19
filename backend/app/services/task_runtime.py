@@ -1943,9 +1943,6 @@ def _resolve_task_outreach_config(task: EmailTask):
 
 
 def _resolve_draft_generation_outreach_config(task: EmailTask):
-    if task.batch_task_id is not None:
-        return _resolve_task_outreach_config(task)
-
     return resolve_outreach_template_config(
         task.identity,
         generation_mode=task.outreach_generation_mode,
