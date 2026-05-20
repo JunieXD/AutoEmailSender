@@ -638,7 +638,7 @@ describe("batch task send queue copy", () => {
     expect(getBatchTaskWaitingSendCount(task)).toBe(5);
   });
 
-  it("explains scheduled template items without asking users to process each one", () => {
+  it("flags scheduled batch items that lost their planned send time", () => {
     const action = buildBatchPendingItemAction(
       buildBatchItem({ status: "approved", scheduled_at: null }),
       buildBatchTask({ schedule_type: "scheduled" }),
@@ -646,7 +646,7 @@ describe("batch task send queue copy", () => {
 
     expect(action).toEqual({
       kind: "message",
-      text: "等待批量定时窗口自动发送",
+      text: "计划时间缺失，请重新安排发送",
     });
   });
 

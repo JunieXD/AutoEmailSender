@@ -31,7 +31,7 @@ export const buildBatchPendingItemAction = (
     return { kind: "link", text: "审核草稿" };
   }
   if (task.schedule_type === "scheduled" && item.status === "approved" && !item.scheduled_at) {
-    return { kind: "message", text: "等待批量定时窗口自动发送" };
+    return { kind: "message", text: "计划时间缺失，请重新安排发送" };
   }
   if (item.status === "scheduled") {
     return { kind: "message", text: "等待计划时间自动发送" };
