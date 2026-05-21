@@ -14,6 +14,7 @@ import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { DashboardProfessorRow } from "@/components/molecules/DashboardProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
+import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
@@ -43,7 +44,12 @@ import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { listProfessors } from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
-import { getPageItems, getTotalPages, PAGE_SIZE } from "@/lib/pagination";
+import {
+  getPageItems,
+  getStoredPageSize,
+  getTotalPages,
+  setStoredPageSize,
+} from "@/lib/pagination";
 import type {
   ProfessorDashboardItemDTO,
   ProfessorDashboardStatus,
@@ -51,6 +57,7 @@ import type {
 
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
+const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -226,6 +233,9 @@ export const HomePage = () => {
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [sortKey, setSortKey] = useState<ProfessorDashboardSortKey>("latest");
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() =>
+    getStoredPageSize(HOME_PAGE_SIZE_STORAGE_KEY),
+  );
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const [bulkScoring, setBulkScoring] = useState(false);
@@ -431,12 +441,12 @@ export const HomePage = () => {
     filteredProfessors,
     sortKey,
   );
-  const totalPages = getTotalPages(visibleProfessors.length, PAGE_SIZE);
+  const totalPages = getTotalPages(visibleProfessors.length, pageSize);
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pagedProfessors = getPageItems(
     visibleProfessors,
     safeCurrentPage,
-    PAGE_SIZE,
+    pageSize,
   );
   const filteredProfessorIds = visibleProfessors.map((item) => item.id);
   const filteredSelectedCount = filteredProfessorIds.filter((id) =>
@@ -466,6 +476,12 @@ export const HomePage = () => {
   useEffect(() => {
     setCurrentPage(1);
   }, [filters, sortKey, professorsRequestKey]);
+
+  const handlePageSizeChange = (nextPageSize: number) => {
+    setPageSize(nextPageSize);
+    setStoredPageSize(HOME_PAGE_SIZE_STORAGE_KEY, nextPageSize);
+    setCurrentPage(1);
+  };
 
   const toggleSelection = (professorId: number) => {
     setSelectedIds((previous) => {
@@ -979,7 +995,11 @@ export const HomePage = () => {
               <div className="text-sm text-stone-500">
                 共 {visibleProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，已选择 {selectedIds.size} 位
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <PageSizeSelector
+                  value={pageSize}
+                  onChange={handlePageSizeChange}
+                />
                 <button
                   type="button"
                   onClick={() => setCurrentPage(safeCurrentPage - 1)}

@@ -27,9 +27,16 @@ import {
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
+import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
+import {
+  getPageItems,
+  getStoredPageSize,
+  getTotalPages,
+  setStoredPageSize,
+} from "@/lib/pagination";
 import {
   extractProfessorTitleTags,
   matchesProfessorTitleTag,
@@ -74,7 +81,7 @@ type CrawlerJobFormState = {
 };
 type IntakeActionTone = "primary" | "amber" | "stone";
 
-const PROFESSORS_PER_PAGE = 10;
+const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
 const ALL_PROFESSOR_FILTER_VALUE = "__all__";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
@@ -314,6 +321,9 @@ export const ProfessorsPage = () => {
     ALL_PROFESSOR_FILTER_VALUE,
   );
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() =>
+    getStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY),
+  );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
@@ -447,14 +457,12 @@ export const ProfessorsPage = () => {
     }
   }, [schoolPairFilter, schoolPairOptions]);
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredProfessors.length / PROFESSORS_PER_PAGE),
-  );
+  const totalPages = getTotalPages(filteredProfessors.length, pageSize);
   const safeCurrentPage = Math.min(currentPage, totalPages);
-  const paginatedProfessors = filteredProfessors.slice(
-    (safeCurrentPage - 1) * PROFESSORS_PER_PAGE,
-    safeCurrentPage * PROFESSORS_PER_PAGE,
+  const paginatedProfessors = getPageItems(
+    filteredProfessors,
+    safeCurrentPage,
+    pageSize,
   );
   const isProfessorSelectable = (professor: ProfessorManagementItemDTO) => {
     if (archiveFilter === "archived") {
@@ -476,6 +484,12 @@ export const ProfessorsPage = () => {
     setEditingProfessor(null);
     setFormState(emptyProfessorForm());
     setUpsertModalOpen(true);
+  };
+
+  const handlePageSizeChange = (nextPageSize: number) => {
+    setPageSize(nextPageSize);
+    setStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY, nextPageSize);
+    setCurrentPage(1);
   };
 
   const handleToggleFilteredSelection = () => {
@@ -1000,7 +1014,7 @@ export const ProfessorsPage = () => {
       <section className="mt-6 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           <div className="text-sm text-stone-600">
-            共 {filteredProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，每页最多 {PROFESSORS_PER_PAGE} 位
+            共 {filteredProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，每页最多 {pageSize} 位
           </div>
           {filteredSelectableIds.length > 0 ? (
             <button
@@ -1215,7 +1229,11 @@ export const ProfessorsPage = () => {
             <div className="text-sm text-stone-500">
               共 {filteredProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，已选中 {selectedIds.size} 位
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <PageSizeSelector
+                value={pageSize}
+                onChange={handlePageSizeChange}
+              />
               <button
                 type="button"
                 onClick={() => setCurrentPage(safeCurrentPage - 1)}
