@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -226,6 +227,40 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(dispatch_email_task(self.session_factory, task_id))
+
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+        mocked_send.assert_not_awaited()
+
+    def test_dispatch_email_task_claim_skips_task_rescheduled_during_claim(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        reschedule_once = True
+
+        def reschedule_before_claim(conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal reschedule_once
+            if not reschedule_once:
+                return
+            if not statement.lstrip().upper().startswith("UPDATE EMAIL_TASKS"):
+                return
+            reschedule_once = False
+            conn.exec_driver_sql(
+                "UPDATE email_tasks SET scheduled_at = ? WHERE id = ?",
+                ((datetime.now(UTC) + timedelta(hours=1)).isoformat(), task_id),
+            )
+
+        event.listen(self.engine.sync_engine, "before_cursor_execute", reschedule_before_claim)
+        try:
+            with patch(
+                "app.services.task_runtime.mail_runtime.send_email",
+                AsyncMock(return_value=self._build_send_result()),
+            ) as mocked_send:
+                self._run_async(dispatch_email_task(self.session_factory, task_id))
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", reschedule_before_claim)
 
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
         mocked_send.assert_not_awaited()

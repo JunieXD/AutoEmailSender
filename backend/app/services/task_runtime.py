@@ -1270,6 +1270,10 @@ async def dispatch_email_task(
             .where(
                 EmailTask.id == task_id,
                 EmailTask.status.in_(DISPATCHABLE_EMAIL_TASK_STATUSES),
+                or_(
+                    EmailTask.scheduled_at.is_(None),
+                    EmailTask.scheduled_at <= claimed_at,
+                ),
             )
             .values(
                 status=EmailTaskStatus.SENDING.value,
