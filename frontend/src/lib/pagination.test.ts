@@ -19,7 +19,7 @@ describe('pagination', () => {
   });
 
   it('defines supported fixed page size options', () => {
-    expect(PAGE_SIZE_OPTIONS).toEqual([5, 10, 20]);
+    expect(PAGE_SIZE_OPTIONS).toEqual([10, 20, 50]);
   });
 
   it('returns at least one page for empty collections', () => {

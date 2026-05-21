@@ -34,6 +34,11 @@ export const PageSizeSelector = ({
   }, [value, valueMatchesFixedOption]);
 
   const applyCustomValue = () => {
+    if (customValue.trim() === "") {
+      setCustomValue(String(value));
+      return;
+    }
+
     const numericValue = Number(customValue);
     if (!Number.isFinite(numericValue)) {
       setCustomValue(String(value));

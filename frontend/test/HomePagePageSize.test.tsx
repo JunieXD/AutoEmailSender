@@ -95,12 +95,13 @@ describe("HomePage page size", () => {
     expect(await screen.findByText("导师 10")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "每页数量" }));
-    fireEvent.click(screen.getByRole("option", { name: "5" }));
+    fireEvent.click(screen.getByRole("option", { name: "20" }));
 
-    expect(screen.queryByText("导师 6")).not.toBeInTheDocument();
+    expect(screen.getByText("导师 11")).toBeInTheDocument();
+    expect(screen.getByText("导师 12")).toBeInTheDocument();
     expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 3 页，已选择 0 位"),
+      screen.getByText("共 12 位符合筛选条件，当前第 1 / 1 页，已选择 0 位"),
     ).toBeInTheDocument();
-    expect(localStorage.getItem("home-dashboard:page-size")).toBe("5");
+    expect(localStorage.getItem("home-dashboard:page-size")).toBe("20");
   });
 });

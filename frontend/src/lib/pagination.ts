@@ -1,5 +1,5 @@
 export const PAGE_SIZE = 10;
-export const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
+export const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 export const MIN_PAGE_SIZE = 1;
 export const MAX_PAGE_SIZE = 100;
 

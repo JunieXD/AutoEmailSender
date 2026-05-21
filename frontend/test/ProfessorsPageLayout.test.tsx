@@ -344,13 +344,14 @@ describe("ProfessorsPage layout", () => {
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "每页数量" }));
-    fireEvent.click(screen.getByRole("option", { name: "5" }));
+    fireEvent.click(screen.getByRole("option", { name: "20" }));
 
-    expect(screen.queryByText("导师 6")).not.toBeInTheDocument();
+    expect(screen.getByText("导师 11")).toBeInTheDocument();
+    expect(screen.getByText("导师 12")).toBeInTheDocument();
     expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 3 页，每页最多 5 位"),
+      screen.getByText("共 12 位符合筛选条件，当前第 1 / 1 页，每页最多 20 位"),
     ).toBeInTheDocument();
-    expect(localStorage.getItem("professors-management:page-size")).toBe("5");
+    expect(localStorage.getItem("professors-management:page-size")).toBe("20");
     expect(localStorage.getItem("home-dashboard:page-size")).toBeNull();
   });
 
