@@ -44,19 +44,6 @@ export function getFrontendIndexPath(input: BackendPathInput): string {
   return path.join(input.repoRoot, "frontend", "dist", "index.html");
 }
 
-export function getUvExecutablePath(repoRoot: string): string {
-  const bundledUvPath = path.join(
-    repoRoot,
-    ".uv-bootstrap",
-    "bin",
-    process.platform === "win32" ? "uv.exe" : "uv",
-  );
-  if (existsSync(bundledUvPath)) {
-    return bundledUvPath;
-  }
-  return "uv";
-}
-
 export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
   const browsersPath = input.isPackaged
     ? path.join(input.resourcesPath, "ms-playwright")
@@ -89,7 +76,6 @@ export async function startBackend(options: {
   const port = await findAvailablePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const backendPath = getBackendExecutablePath(options);
-  const uvPath = getUvExecutablePath(options.repoRoot);
 
   if (!existsSync(backendPath)) {
     throw new Error(`Backend executable not found: ${backendPath}`);
@@ -97,7 +83,6 @@ export async function startBackend(options: {
 
   const child = spawnBackend({
     backendPath,
-    uvPath,
     isPackaged: options.isPackaged,
     port,
     env: buildBackendEnv({
@@ -152,7 +137,6 @@ export function notifyBackendExit(
 
 function spawnBackend(input: {
   backendPath: string;
-  uvPath: string;
   isPackaged: boolean;
   port: number;
   env: NodeJS.ProcessEnv;
@@ -166,7 +150,7 @@ function spawnBackend(input: {
   }
 
   return spawn(
-    input.uvPath,
+    "uv",
     ["run", "python", "desktop_entry.py", "--host", "127.0.0.1", "--port", String(input.port)],
     {
       cwd: path.join(input.repoRoot, "backend"),
