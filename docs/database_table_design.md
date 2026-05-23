@@ -285,3 +285,33 @@ LLM 配置表。
 - 候选 `extra_body` 列表见 `app/services/thinking_adaptation.py` 的 `THINKING_DISABLE_CANDIDATES`（当前覆盖 `thinking={"type":"disabled"}` / `enable_thinking=False` / `reasoning={"effort":"off"}` / `thinking_budget=0`）。
 - 如果候选列表全部用尽仍失败，会抛 `ThinkingAdaptationFailed`，抓取任务被标 FAILED，并在 `error_message` 中提示用户在 GitHub 上报。
 - 抓取过程中如果 LangChain 内部仍然吐出协议错（极端边角场景），`_mark_job_failed` 与 `_complete_running_job` 两条路径都会调用 `adapt_failure_message_for_thinking_error`，给用户拼一段引导提示。
+
+
+## `crawl_page_chunks`
+
+列表页 chunk 处理状态表，用于让抓取 Agent 每次只处理一个页面片段，避免重复处理完整页面。
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `id` | INTEGER | 主键 |
+| `job_id` | INTEGER | 抓取任务 ID |
+| `page_id` | INTEGER NULL | 来源页面 ID |
+| `source_url` | TEXT | 来源页面 URL |
+| `page_fingerprint` | TEXT | 页面内容指纹 |
+| `chunk_id` | TEXT | 单任务内稳定 chunk 标识 |
+| `parent_chunk_id` | TEXT NULL | 父 chunk ID |
+| `chunk_index` | INTEGER | 同级顺序 |
+| `chunk_hash` | TEXT | chunk 内容指纹 |
+| `status` | TEXT | `pending`、`processing`、`completed`、`no_candidates`、`split_required`、`superseded`、`failed` |
+| `content` | TEXT | 链接增强文本 |
+| `token_estimate` | INTEGER | token 估算 |
+| `text_start_offset` | INTEGER NULL | 页面文本起始位置 |
+| `text_end_offset` | INTEGER NULL | 页面文本结束位置 |
+| `overlap_prefix` | BOOLEAN | 是否包含前向 overlap |
+| `overlap_suffix` | BOOLEAN | 是否包含后向 overlap |
+| `split_depth` | INTEGER | 拆分深度 |
+| `split_reason` | TEXT NULL | 拆分原因 |
+| `attempt_count` | INTEGER | 处理尝试次数 |
+| `last_error` | TEXT NULL | 最近错误 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |

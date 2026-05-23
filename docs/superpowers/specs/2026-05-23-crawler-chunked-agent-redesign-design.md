@@ -764,3 +764,8 @@ chunk 过小会增加模型调用次数。第一版使用 `target_tokens=2000`�
 - 本设计把列表页候选发现和详情页补全分开处理，符合详情页通常只对应单个老师的事实。
 
 
+
+
+## 实现备注
+
+第一版实现参数：`target_tokens=2000`、`soft_max_tokens=2800`、`hard_max_tokens=3200`、`overlap_tokens=180`、`min_split_tokens=500`、`max_split_depth=4`。
