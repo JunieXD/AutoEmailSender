@@ -7,6 +7,7 @@ import {
   buildBackendEnv,
   getBackendExecutablePath,
   getFrontendIndexPath,
+  getUvExecutablePath,
   notifyBackendExit,
   normalizePort,
   stopBackend,
@@ -89,6 +90,12 @@ describe("desktop backend helpers", () => {
         repoRoot: "C:\\Repo",
       }),
     ).toBe("C:\\Repo\\backend\\desktop_entry.py");
+  });
+
+  it("prefers bundled uv executable in dev mode", () => {
+    expect(getUvExecutablePath("D:\\AutoEmailSender")).toBe(
+      "D:\\AutoEmailSender\\.uv-bootstrap\\bin\\uv.exe",
+    );
   });
 
   it("resolves packaged frontend index path", () => {

@@ -29,6 +29,7 @@ class RuntimeSettingsRead(BaseModel):
     draft_rewrite_length: DraftRewriteLength
     draft_rewrite_specificity: DraftRewriteSpecificity
     draft_template_preservation: DraftTemplatePreservation
+    draft_custom_instruction: str
     updated_at: datetime
 
 
@@ -47,3 +48,4 @@ class RuntimeSettingsUpdate(BaseModel):
     draft_rewrite_length: DraftRewriteLength
     draft_rewrite_specificity: DraftRewriteSpecificity
     draft_template_preservation: DraftTemplatePreservation
+    draft_custom_instruction: str = Field(max_length=2000)

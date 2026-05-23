@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, String, text
+from sqlalchemy import DateTime, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -92,4 +92,9 @@ class AppSetting(Base):
         String(32),
         nullable=False,
         server_default=text("'structure_first'"),
+    )
+    draft_custom_instruction: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("''"),
     )

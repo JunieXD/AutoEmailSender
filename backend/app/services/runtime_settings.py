@@ -26,6 +26,7 @@ def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
         draft_rewrite_length=settings.draft_rewrite_length,
         draft_rewrite_specificity=settings.draft_rewrite_specificity,
         draft_template_preservation=settings.draft_template_preservation,
+        draft_custom_instruction=settings.draft_custom_instruction,
         updated_at=settings.updated_at,
     )
 

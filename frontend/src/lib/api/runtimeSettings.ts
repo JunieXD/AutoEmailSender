@@ -22,6 +22,7 @@ export interface RuntimeSettingsDTO {
   draft_rewrite_length: DraftRewriteLength;
   draft_rewrite_specificity: DraftRewriteSpecificity;
   draft_template_preservation: DraftTemplatePreservation;
+  draft_custom_instruction: string;
   updated_at: string;
 }
 
