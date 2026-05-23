@@ -14,6 +14,10 @@ from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from app.models import LLMProfile
+from app.services.crawler_chunk_runtime import (
+    claim_next_page_chunk as claim_chunk_runtime,
+    submit_chunk_candidates as submit_chunk_candidates_runtime,
+)
 from app.services.crawler_tools import (
     CandidateBatchFailure,
     CandidateBatchSaveResult,
@@ -39,6 +43,8 @@ CONTROLLED_CRAWLER_TOOL_NAMES = frozenset(
     {
         "crawl_page",
         "investigate_with_browser",
+        "claim_next_page_chunk",
+        "submit_chunk_candidates",
         "save_professor_candidates",
     }
 )
@@ -57,6 +63,10 @@ FACULTY_CRAWLER_SYSTEM_PROMPT = """你是 AutoEmailSender 的受控高校导师�
 
 工具策略：
 - 使用 crawl_page 抓取普通页面。
+- 列表页候选抽取优先调用 claim_next_page_chunk 领取后端分配的页面片段。
+- 每次只处理当前 chunk，最多通过 submit_chunk_candidates 提交 10 个候选。
+- 不要根据记忆重复提交其他 chunk 或已处理页面中的候选。
+- 只有在探索新 URL 时才调用 crawl_page；如果页面已生成 chunk，应改为领取 chunk。
 - 仅当普通抓取内容明显不足、页面疑似动态渲染或需要围绕具体目标调查时，使用 investigate_with_browser。
 - 只在有明确网页证据时调用 save_professor_candidates。
 - 列表页阶段优先提取姓名、邮箱、基础职称和 profile_url；研究方向、近期论文等详情字段允许留空。
@@ -498,6 +508,36 @@ def create_faculty_crawler_agent(
         return snapshot.model_dump()
 
     @tool
+    async def claim_next_page_chunk() -> dict[str, Any]:
+        """领取下一个待处理的列表页片段；如果没有待处理片段，会返回 empty。"""
+        claimed = await claim_chunk_runtime(ctx.session_factory, job_id=ctx.job_id)
+        return {
+            "status": claimed.status,
+            "chunk_id": claimed.chunk_id,
+            "source_url": claimed.source_url,
+            "chunk_index": claimed.chunk_index,
+            "content": claimed.content,
+            "max_candidates": claimed.max_candidates,
+            "message": claimed.message,
+        }
+
+    @tool
+    async def submit_chunk_candidates(
+        chunk_id: str,
+        chunk_status: str,
+        has_more_candidates_in_chunk: bool,
+        candidates: list[dict[str, object]],
+    ) -> dict[str, Any]:
+        """提交当前 chunk 中识别出的候选；单次最多 10 个。"""
+        return await submit_chunk_candidates_runtime(
+            ctx,
+            chunk_id=chunk_id,
+            chunk_status=chunk_status,
+            has_more_candidates_in_chunk=has_more_candidates_in_chunk,
+            candidates=candidates,
+        )
+
+    @tool
     async def save_professor_candidates(
         candidates: list[dict[str, object]],
     ) -> dict[str, Any]:
@@ -532,6 +572,8 @@ def create_faculty_crawler_agent(
         tools=[
             crawl_page,
             investigate_with_browser,
+            claim_next_page_chunk,
+            submit_chunk_candidates,
             save_professor_candidates,
         ],
         system_prompt=FACULTY_CRAWLER_SYSTEM_PROMPT,

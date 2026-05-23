@@ -7,6 +7,7 @@ from unittest.mock import patch
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agents.faculty_crawler_agent import (
+    CONTROLLED_CRAWLER_TOOL_NAMES,
     FACULTY_CRAWLER_SYSTEM_PROMPT,
     SaveHistoryCompactionMiddleware,
     build_faculty_crawler_model,
@@ -231,6 +232,10 @@ class FacultyCrawlerAgentCompactionTests(unittest.TestCase):
 
 
 class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
+    def test_controlled_tool_names_include_chunk_tools(self) -> None:
+        self.assertIn("claim_next_page_chunk", CONTROLLED_CRAWLER_TOOL_NAMES)
+        self.assertIn("submit_chunk_candidates", CONTROLLED_CRAWLER_TOOL_NAMES)
+
     def test_save_history_compaction_middleware_overrides_messages(self) -> None:
         original_messages = [
             HumanMessage(content="入口任务"),
