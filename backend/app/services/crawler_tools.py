@@ -205,14 +205,19 @@ class CandidateBatchSaveResult(TypedDict):
     batch_status: Literal["saved", "rejected"]
     attempted_count: int
     saved_count: int
+    merged_count: int
+    skipped_duplicate_count: int
+    rejected_count: int
     failed_count: int
     failed_items: list[CandidateBatchFailure]
+    rejected_items: list[CandidateBatchFailure]
     total_saved_count: int
     retry_allowed: NotRequired[bool]
     failure_fingerprint: NotRequired[str | None]
     consecutive_same_batch_failures: NotRequired[int]
     total_save_failures: NotRequired[int]
     terminal_reason: NotRequired[str | None]
+    next_instruction: NotRequired[str]
 
 
 class SaveFailureBudgetFields(TypedDict):
@@ -230,10 +235,34 @@ class SaveFailureBudgetState:
     total_save_failures: int = 0
     last_save_failure_summary: str | None = None
 
+@dataclass(frozen=True)
+class CandidatePersistenceResult:
+    saved: list[CrawlCandidate]
+    merged_count: int = 0
+    skipped_duplicate_count: int = 0
+
 
 def _normalize_page_cache_url(url: str) -> str:
     parsed = urlparse(url.strip())
     return parsed._replace(fragment="").geturl()
+
+
+def normalize_candidate_profile_url(value: object, *, base_url: str | None = None) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    absolute = urljoin(base_url or "", raw) if base_url else raw
+    parsed = urlparse(absolute)
+    normalized = parsed._replace(fragment="").geturl().rstrip("/")
+    return normalized or None
+
+
+def _candidate_missing_contact_path(payload: dict[str, Any]) -> bool:
+    email = str(payload.get("email") or "").strip()
+    profile_url = str(payload.get("profile_url") or "").strip()
+    return not email and not profile_url
 
 
 @dataclass(frozen=True)
@@ -1337,22 +1366,44 @@ async def save_candidate_batch(
             "batch_status": "rejected",
             "attempted_count": len(candidates),
             "saved_count": 0,
+            "merged_count": 0,
+            "skipped_duplicate_count": 0,
+            "rejected_count": 0,
             "failed_count": len(failed_items),
             "failed_items": failed_items,
+            "rejected_items": [],
             "total_saved_count": await count_saved_candidates(ctx),
             **budget_fields,
         }
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return result
 
-    saved = await _save_normalized_candidate_payloads(ctx, payloads)
+    accepted_payloads: list[dict[str, Any]] = []
+    rejected_items: list[CandidateBatchFailure] = []
+    for index, payload in enumerate(payloads):
+        if _candidate_missing_contact_path(payload):
+            rejected_items.append(
+                {
+                    "index": index,
+                    "name": _clean_optional(payload.get("name")),
+                    "reason": "缺少邮箱和详情页链接，无法用于联系或后续补全",
+                }
+            )
+            continue
+        accepted_payloads.append(payload)
+
+    persistence = await _save_normalized_candidate_payloads(ctx, accepted_payloads)
     record_save_batch_success(ctx)
     result = {
         "batch_status": "saved",
         "attempted_count": len(candidates),
-        "saved_count": len(saved),
+        "saved_count": len(persistence.saved),
+        "merged_count": persistence.merged_count,
+        "skipped_duplicate_count": persistence.skipped_duplicate_count,
+        "rejected_count": len(rejected_items),
         "failed_count": 0,
         "failed_items": [],
+        "rejected_items": rejected_items,
         "total_saved_count": await count_saved_candidates(ctx),
         "retry_allowed": True,
         "failure_fingerprint": None,
@@ -1375,33 +1426,50 @@ async def count_saved_candidates(ctx: CrawlToolContext) -> int:
 async def _save_normalized_candidate_payloads(
     ctx: CrawlToolContext,
     payloads: Sequence[dict[str, Any]],
-) -> list[CrawlCandidate]:
+) -> CandidatePersistenceResult:
     saved: list[CrawlCandidate] = []
+    skipped_duplicate_count = 0
     async with ctx.session_factory() as session:
         if await _is_crawl_job_stopped(session, ctx.job_id):
-            return []
+            return CandidatePersistenceResult(saved=[])
 
         existing_emails = await _load_existing_candidate_emails(session, ctx.job_id)
+        existing_profile_urls = await _load_existing_candidate_profile_urls(session, ctx.job_id)
         seen_emails = set(existing_emails)
+        seen_profile_urls = set(existing_profile_urls)
         for payload in payloads:
             email = payload["email"]
-            if email and str(email).lower() in seen_emails:
+            normalized_email = str(email).lower() if email else None
+            normalized_profile_url = normalize_candidate_profile_url(
+                payload.get("profile_url"),
+                base_url=ctx.start_url,
+            )
+            if normalized_profile_url:
+                payload["profile_url"] = normalized_profile_url
+
+            if normalized_email and normalized_email in seen_emails:
+                skipped_duplicate_count += 1
+                continue
+            if normalized_profile_url and normalized_profile_url in seen_profile_urls:
+                skipped_duplicate_count += 1
                 continue
 
             row = CrawlCandidate(job_id=ctx.job_id, **payload)
             session.add(row)
             saved.append(row)
-            if email:
-                seen_emails.add(str(email).lower())
+            if normalized_email:
+                seen_emails.add(normalized_email)
+            if normalized_profile_url:
+                seen_profile_urls.add(normalized_profile_url)
 
         if await _is_crawl_job_stopped(session, ctx.job_id):
             await session.rollback()
-            return []
+            return CandidatePersistenceResult(saved=[])
 
         await session.commit()
         for row in saved:
             await session.refresh(row)
-    return saved
+    return CandidatePersistenceResult(saved=saved, skipped_duplicate_count=skipped_duplicate_count)
 
 
 async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) -> CrawlPage | None:
@@ -1553,6 +1621,20 @@ async def _load_existing_candidate_emails(session: AsyncSession, job_id: int) ->
         )
     )
     return {email.lower() for email in result if email}
+
+
+async def _load_existing_candidate_profile_urls(session: AsyncSession, job_id: int) -> set[str]:
+    result = await session.scalars(
+        select(CrawlCandidate.profile_url).where(
+            CrawlCandidate.job_id == job_id,
+            CrawlCandidate.profile_url.is_not(None),
+        )
+    )
+    return {
+        normalized
+        for profile_url in result
+        if (normalized := normalize_candidate_profile_url(profile_url))
+    }
 
 
 async def ensure_crawl_job_can_continue(session: AsyncSession, job_id: int) -> None:

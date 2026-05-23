@@ -1027,6 +1027,71 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(result["terminal_reason"])
             self.assertNotIn("candidates", result)
 
+    async def test_save_candidate_batch_rejects_candidate_without_email_or_profile_url(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            result = await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        email=None,
+                        profile_url=None,
+                        source_url="https://cs.example.edu/faculty",
+                    )
+                ],
+            )
+
+            self.assertEqual(result["saved_count"], 0)
+            self.assertEqual(result["rejected_count"], 1)
+            self.assertIn("缺少邮箱和详情页链接", result["rejected_items"][0]["reason"])
+            self.assertEqual(await harness.count_rows(CrawlCandidate), 0)
+
+    async def test_save_candidate_batch_skips_duplicate_profile_url_without_email(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            first_result = await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url="https://cs.example.edu/teachers/zhang#bio",
+                        source_url="https://cs.example.edu/faculty",
+                    )
+                ],
+            )
+            second_result = await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url="https://cs.example.edu/teachers/zhang",
+                        source_url="https://cs.example.edu/faculty?page=1",
+                    )
+                ],
+            )
+
+            self.assertEqual(first_result["saved_count"], 1)
+            self.assertEqual(second_result["saved_count"], 0)
+            self.assertEqual(second_result["skipped_duplicate_count"], 1)
+            self.assertEqual(await harness.count_rows(CrawlCandidate), 1)
+
     async def test_save_candidate_batch_rejects_entire_batch_when_one_item_fails(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:
             job_id = await harness.create_job()
