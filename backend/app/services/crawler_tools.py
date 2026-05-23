@@ -288,6 +288,37 @@ def _merge_json_dict(current: object, incoming: object) -> dict[str, object]:
         merged.update(incoming)
     return merged
 
+_SOURCE_PRIORITY = {"profile_page": 3, "list_chunk": 2, None: 1}
+
+
+def should_replace_field(
+    *,
+    old_value: object,
+    new_value: object,
+    old_source_kind: str | None,
+    new_source_kind: str | None,
+    old_confidence: float | None,
+    new_confidence: float | None,
+    old_boundary_risk: bool,
+    new_boundary_risk: bool,
+) -> bool:
+    if new_value in (None, ""):
+        return False
+    if old_value in (None, ""):
+        return True
+    if _SOURCE_PRIORITY.get(new_source_kind, 1) > _SOURCE_PRIORITY.get(old_source_kind, 1):
+        return True
+    if old_boundary_risk and not new_boundary_risk:
+        return True
+    return (new_confidence or 0) > (old_confidence or 0) + 0.2
+
+
+def _field_confidence(value: object, field_name: str) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    raw = value.get(field_name)
+    return float(raw) if isinstance(raw, (int, float)) else None
+
 
 def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) -> bool:
     changed = False
@@ -296,7 +327,20 @@ def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) 
         if new_value in (None, ""):
             continue
         old_value = getattr(existing, field_name)
-        if old_value in (None, ""):
+        if field_name == "email":
+            replace = should_replace_field(
+                old_value=old_value,
+                new_value=new_value,
+                old_source_kind=getattr(existing, "source_kind", None),
+                new_source_kind=payload.get("source_kind"),
+                old_confidence=_field_confidence(existing.field_confidence, "email"),
+                new_confidence=_field_confidence(payload.get("field_confidence"), "email"),
+                old_boundary_risk=bool(getattr(existing, "boundary_risk", False)),
+                new_boundary_risk=bool(payload.get("boundary_risk")),
+            )
+        else:
+            replace = old_value in (None, "")
+        if replace:
             setattr(existing, field_name, new_value)
             changed = True
     if payload.get("recent_papers") and not existing.recent_papers:
