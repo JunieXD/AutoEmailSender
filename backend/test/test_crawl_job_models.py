@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.models.crawl_chunk import CrawlPageChunkStatus
 from app.models.crawl_job import (
     CrawlCandidateReviewStatus,
     CrawlJobEntryType,
@@ -33,6 +34,15 @@ class CrawlJobModelTests(unittest.TestCase):
     def test_page_status_constants_are_stable(self) -> None:
         self.assertEqual(CrawlPageStatus.SUCCEEDED.value, "succeeded")
         self.assertEqual(CrawlPageStatus.FAILED.value, "failed")
+
+    def test_chunk_status_constants_are_stable(self) -> None:
+        self.assertEqual(CrawlPageChunkStatus.PENDING.value, "pending")
+        self.assertEqual(CrawlPageChunkStatus.PROCESSING.value, "processing")
+        self.assertEqual(CrawlPageChunkStatus.COMPLETED.value, "completed")
+        self.assertEqual(CrawlPageChunkStatus.NO_CANDIDATES.value, "no_candidates")
+        self.assertEqual(CrawlPageChunkStatus.SPLIT_REQUIRED.value, "split_required")
+        self.assertEqual(CrawlPageChunkStatus.SUPERSEDED.value, "superseded")
+        self.assertEqual(CrawlPageChunkStatus.FAILED.value, "failed")
 
 
 if __name__ == "__main__":

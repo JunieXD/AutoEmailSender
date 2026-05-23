@@ -1,6 +1,7 @@
 from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.models.batch_task import BatchTask, BatchTaskStatus
+from app.models.crawl_chunk import CrawlPageChunk, CrawlPageChunkStatus
 from app.models.crawl_job import (
     CrawlCandidate,
     CrawlCandidateReviewStatus,
@@ -49,6 +50,8 @@ __all__ = [
     "CrawlJobRun",
     "CrawlJobStatus",
     "CrawlPage",
+    "CrawlPageChunk",
+    "CrawlPageChunkStatus",
     "CrawlPageStatus",
     "EmailDirection",
     "EmailLog",

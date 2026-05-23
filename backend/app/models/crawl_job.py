@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -197,6 +197,13 @@ class CrawlCandidate(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
     field_confidence: Mapped[dict[str, float] | None] = mapped_column(JSON, nullable=True)
     evidence: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    source_chunk_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    source_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    boundary_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
+    identity_key: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)
+    merge_history: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
+    field_sources: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    conflicts: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     review_status: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
