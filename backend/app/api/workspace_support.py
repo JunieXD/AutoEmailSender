@@ -520,7 +520,7 @@ def _render_workspace_template_summary(
 
 
 def _resolve_task_outreach_config(identity: IdentityProfile, task: EmailTask):
-    if task.batch_task_id is None:
+    if task.batch_task_id is None or task.outreach_generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
         return resolve_outreach_template_config(
             identity,
             generation_mode=task.outreach_generation_mode,

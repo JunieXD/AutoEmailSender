@@ -10,6 +10,7 @@ import ipaddress
 import platform
 import re
 import socket
+from datetime import datetime, timezone
 from typing import Any, Literal, NotRequired, TypedDict
 from urllib.parse import urljoin, urlparse
 
@@ -130,6 +131,13 @@ class ProfessorCandidatePayload(BaseModel):
         default=None,
         validation_alias=AliasChoices("evidence", "证据"),
     )
+    source_chunk_id: str | None = None
+    source_kind: str | None = None
+    boundary_risk: bool = False
+    identity_key: str | None = None
+    merge_history: list[dict[str, object]] | None = None
+    field_sources: dict[str, object] | None = None
+    conflicts: dict[str, object] | None = None
 
     @field_validator("research_direction", mode="before")
     @classmethod
@@ -288,6 +296,23 @@ def _merge_json_dict(current: object, incoming: object) -> dict[str, object]:
         merged.update(incoming)
     return merged
 
+
+def _append_json_list(current: object, item: dict[str, object], *, limit: int = 20) -> list[dict[str, object]]:
+    entries = list(current) if isinstance(current, list) else []
+    entries.append(item)
+    return entries[-limit:]
+
+
+def _field_source_entry(payload: dict[str, Any], field_name: str) -> dict[str, object]:
+    return {
+        "source_kind": payload.get("source_kind"),
+        "source_chunk_id": payload.get("source_chunk_id"),
+        "source_url": payload.get("source_url"),
+        "confidence": _field_confidence(payload.get("field_confidence"), field_name),
+        "boundary_risk": bool(payload.get("boundary_risk")),
+    }
+
+
 _SOURCE_PRIORITY = {"profile_page": 3, "list_chunk": 2, None: 1}
 
 
@@ -322,35 +347,80 @@ def _field_confidence(value: object, field_name: str) -> float | None:
 
 def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) -> bool:
     changed = False
+    field_sources = dict(existing.field_sources) if isinstance(existing.field_sources, dict) else {}
+    conflicts = dict(existing.conflicts) if isinstance(existing.conflicts, dict) else {}
+    merge_event: dict[str, object] = {
+        "merged_at": datetime.now(timezone.utc).isoformat(),
+        "source_kind": payload.get("source_kind"),
+        "source_chunk_id": payload.get("source_chunk_id"),
+        "source_url": payload.get("source_url"),
+        "updated_fields": [],
+        "conflict_fields": [],
+    }
+
     for field_name in _MERGEABLE_TEXT_FIELDS:
         new_value = payload.get(field_name)
         if new_value in (None, ""):
             continue
         old_value = getattr(existing, field_name)
-        if field_name == "email":
-            replace = should_replace_field(
-                old_value=old_value,
-                new_value=new_value,
-                old_source_kind=getattr(existing, "source_kind", None),
-                new_source_kind=payload.get("source_kind"),
-                old_confidence=_field_confidence(existing.field_confidence, "email"),
-                new_confidence=_field_confidence(payload.get("field_confidence"), "email"),
-                old_boundary_risk=bool(getattr(existing, "boundary_risk", False)),
-                new_boundary_risk=bool(payload.get("boundary_risk")),
-            )
-        else:
-            replace = old_value in (None, "")
+        replace = should_replace_field(
+            old_value=old_value,
+            new_value=new_value,
+            old_source_kind=getattr(existing, "source_kind", None),
+            new_source_kind=payload.get("source_kind"),
+            old_confidence=_field_confidence(existing.field_confidence, field_name),
+            new_confidence=_field_confidence(payload.get("field_confidence"), field_name),
+            old_boundary_risk=bool(getattr(existing, "boundary_risk", False)),
+            new_boundary_risk=bool(payload.get("boundary_risk")),
+        )
         if replace:
             setattr(existing, field_name, new_value)
+            field_sources[field_name] = _field_source_entry(payload, field_name)
+            merge_event["updated_fields"].append(field_name)  # type: ignore[index]
             changed = True
+        elif field_name != "source_url" and old_value not in (None, "") and old_value != new_value:
+            conflicts[field_name] = {
+                "kept": old_value,
+                "incoming": new_value,
+                "incoming_source": _field_source_entry(payload, field_name),
+            }
+            merge_event["conflict_fields"].append(field_name)  # type: ignore[index]
+            changed = True
+
     if payload.get("recent_papers") and not existing.recent_papers:
         existing.recent_papers = payload["recent_papers"]
+        field_sources["recent_papers"] = _field_source_entry(payload, "recent_papers")
+        merge_event["updated_fields"].append("recent_papers")  # type: ignore[index]
         changed = True
     if payload.get("field_confidence"):
         existing.field_confidence = _merge_json_dict(existing.field_confidence, payload["field_confidence"])
         changed = True
     if payload.get("evidence"):
         existing.evidence = _merge_json_dict(existing.evidence, payload["evidence"])
+        changed = True
+
+    if (
+        payload.get("source_kind")
+        and payload.get("source_kind") != existing.source_kind
+        and _SOURCE_PRIORITY.get(payload.get("source_kind"), 1) >= _SOURCE_PRIORITY.get(existing.source_kind, 1)
+    ):
+        existing.source_kind = payload["source_kind"]
+        changed = True
+    if payload.get("source_chunk_id") and not existing.source_chunk_id:
+        existing.source_chunk_id = payload["source_chunk_id"]
+        changed = True
+    if bool(existing.boundary_risk) and not bool(payload.get("boundary_risk")):
+        existing.boundary_risk = False
+        changed = True
+
+    if field_sources != (existing.field_sources or {}):
+        existing.field_sources = field_sources
+        changed = True
+    if conflicts != (existing.conflicts or {}):
+        existing.conflicts = conflicts
+        changed = True
+    if merge_event["updated_fields"] or merge_event["conflict_fields"]:
+        existing.merge_history = _append_json_list(existing.merge_history, merge_event)
         changed = True
     return changed
 
@@ -787,6 +857,13 @@ def normalize_candidate_payload(
         "confidence": _clamp_confidence(candidate.confidence),
         "field_confidence": field_confidence,
         "evidence": candidate.evidence,
+        "source_chunk_id": getattr(candidate, "source_chunk_id", None),
+        "source_kind": getattr(candidate, "source_kind", None),
+        "boundary_risk": bool(getattr(candidate, "boundary_risk", False)),
+        "identity_key": getattr(candidate, "identity_key", None),
+        "merge_history": getattr(candidate, "merge_history", None),
+        "field_sources": getattr(candidate, "field_sources", None),
+        "conflicts": getattr(candidate, "conflicts", None),
     }
 
 
@@ -1587,6 +1664,15 @@ async def _save_normalized_candidate_payloads(
                 else:
                     skipped_duplicate_count += 1
                 continue
+
+            if not payload.get("identity_key"):
+                payload["identity_key"] = normalized_email or normalized_profile_url
+            if not payload.get("field_sources"):
+                payload["field_sources"] = {
+                    field_name: _field_source_entry(payload, field_name)
+                    for field_name in (*_MERGEABLE_TEXT_FIELDS, "recent_papers")
+                    if payload.get(field_name) not in (None, "", [])
+                }
 
             row = CrawlCandidate(job_id=ctx.job_id, **payload)
             session.add(row)

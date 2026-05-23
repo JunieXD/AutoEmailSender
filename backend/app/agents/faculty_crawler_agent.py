@@ -380,6 +380,11 @@ def _format_save_batch_result_for_model(result: CandidateBatchSaveResult) -> dic
         "total_saved_count": result["total_saved_count"],
     }
     for key in (
+        "merged_count",
+        "skipped_duplicate_count",
+        "rejected_count",
+        "rejected_items",
+        "next_instruction",
         "retry_allowed",
         "failure_fingerprint",
         "consecutive_same_batch_failures",

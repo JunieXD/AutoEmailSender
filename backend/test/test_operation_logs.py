@@ -251,6 +251,34 @@ class OperationLogTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(scenario()), ["new.event", "recent.event"])
 
+
+    def test_cleanup_old_operation_logs_handles_loaded_sqlite_naive_datetimes(self) -> None:
+        from app.core.database import get_session_factory
+        from app.models import OperationLog
+        from app.services.operation_logs import cleanup_old_operation_logs
+
+        now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
+
+        async def scenario() -> int:
+            async with get_session_factory()() as session:
+                session.add(
+                    OperationLog(
+                        category="backend",
+                        event_name="old.event",
+                        created_at=now - timedelta(days=31),
+                    ),
+                )
+                await session.commit()
+
+            async with get_session_factory()() as session:
+                loaded = (await session.scalars(select(OperationLog))).one()
+                self.assertIsNone(loaded.created_at.tzinfo)
+                deleted = await cleanup_old_operation_logs(session, retention_days=30, now=now)
+                await session.commit()
+                return deleted
+
+        self.assertEqual(asyncio.run(scenario()), 1)
+
     def test_operation_log_retention_can_be_disabled_by_env(self) -> None:
         os.environ["OPERATION_LOG_RETENTION_DAYS"] = "0"
 

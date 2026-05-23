@@ -103,7 +103,9 @@ async def cleanup_old_operation_logs(
     resolved_now = now or datetime.now(UTC)
     cutoff = resolved_now - timedelta(days=resolved_retention_days)
     result = await session.execute(
-        delete(OperationLog).where(OperationLog.created_at < cutoff),
+        delete(OperationLog)
+        .where(OperationLog.created_at < cutoff)
+        .execution_options(synchronize_session=False),
     )
     return int(result.rowcount or 0)
 

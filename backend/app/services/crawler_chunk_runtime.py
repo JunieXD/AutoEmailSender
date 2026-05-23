@@ -72,6 +72,26 @@ async def claim_next_page_chunk(
     job_id: int,
 ) -> ClaimedChunk:
     async with session_factory() as session:
+        processing_chunk = await session.scalar(
+            select(CrawlPageChunk)
+            .where(
+                CrawlPageChunk.job_id == job_id,
+                CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
+            )
+            .order_by(CrawlPageChunk.id.asc())
+            .limit(1)
+        )
+        if processing_chunk is not None:
+            return ClaimedChunk(
+                status="ok",
+                chunk_id=processing_chunk.chunk_id,
+                source_url=processing_chunk.source_url,
+                chunk_index=processing_chunk.chunk_index,
+                content=processing_chunk.content,
+                max_candidates=10,
+                message="继续处理上次已领取但尚未提交的页面片段。",
+            )
+
         chunk = await session.scalar(
             select(CrawlPageChunk)
             .where(
@@ -143,8 +163,17 @@ async def submit_chunk_candidates(
             "rejected_count": 0,
         }
 
+    enriched_candidates = [
+        {
+            **candidate,
+            "source_chunk_id": chunk_id,
+            "source_kind": "list_chunk",
+            "boundary_risk": bool(candidate.get("boundary_risk", False)),
+        }
+        for candidate in candidates
+    ]
     try:
-        payloads = [ProfessorCandidatePayload.model_validate(candidate) for candidate in candidates]
+        payloads = [ProfessorCandidatePayload.model_validate(candidate) for candidate in enriched_candidates]
     except ValidationError as exc:
         return {"chunk_status": "failed", "message": str(exc)}
 
@@ -182,6 +211,14 @@ async def _mark_chunk_split_required(ctx: CrawlToolContext, chunk_id: str, reaso
             }
         child_count = await _split_chunk_in_session(session, ctx.job_id, chunk, reason)
         await session.commit()
+        if child_count <= 0:
+            return {
+                "chunk_status": CrawlPageChunkStatus.FAILED.value,
+                "split_reason": reason,
+                "created_child_chunks": 0,
+                "last_error": chunk.last_error,
+                "next_instruction": "该 chunk 无法继续拆分，请跳过当前 chunk，获取下一个页面片段。",
+            }
         return {
             "chunk_status": CrawlPageChunkStatus.SPLIT_REQUIRED.value,
             "split_reason": reason,

@@ -510,6 +510,31 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(runs[1]["status"], "queued")
         self.assertEqual(self._get_job_current_run_id(job_id), runs[1]["id"])
 
+
+    def test_retry_crawl_job_clear_existing_data_removes_page_chunks(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._seed_page_candidate_and_chunk(job_id)
+        self._set_job_status(job_id, "failed")
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/retry",
+            json={"clear_existing_data": True},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["status"], "queued")
+        self.assertEqual(self._count_page_chunks(job_id), 0)
+
     def test_crawl_job_events_include_status_trace_page_and_candidate_messages(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -1032,6 +1057,75 @@ class CrawlJobsApiTests(unittest.TestCase):
                 await session.commit()
 
         asyncio.run(_seed())
+
+
+    def _seed_page_candidate_and_chunk(self, job_id: int) -> None:
+        async def _seed() -> None:
+            from app.core.database import get_session_factory
+            from app.models import CrawlCandidate, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageStatus
+
+            async with get_session_factory()() as session:
+                page = CrawlPage(
+                    job_id=job_id,
+                    url="https://example.edu/faculty",
+                    parent_url=None,
+                    fetch_method="http",
+                    page_type="faculty_list",
+                    status=CrawlPageStatus.SUCCEEDED.value,
+                    title="Faculty",
+                    text_excerpt="Faculty page",
+                    error_message=None,
+                )
+                session.add(page)
+                await session.flush()
+                session.add(
+                    CrawlCandidate(
+                        job_id=job_id,
+                        name="旧导师",
+                        email="old@example.edu",
+                        title="Professor",
+                        university="示例大学",
+                        school="计算机学院",
+                        department="CS",
+                        research_direction="旧方向",
+                        recent_papers=[],
+                        profile_url="https://example.edu/old",
+                        source_url="https://example.edu/faculty",
+                        confidence=0.8,
+                    ),
+                )
+                session.add(
+                    CrawlPageChunk(
+                        job_id=job_id,
+                        page_id=page.id,
+                        source_url="https://example.edu/faculty",
+                        page_fingerprint="fp-old",
+                        chunk_id="old-chunk",
+                        chunk_index=0,
+                        chunk_hash="hash-old",
+                        status=CrawlPageChunkStatus.COMPLETED.value,
+                        content="旧 chunk",
+                        token_estimate=10,
+                    ),
+                )
+                await session.commit()
+
+        asyncio.run(_seed())
+
+    def _count_page_chunks(self, job_id: int) -> int:
+        async def _count() -> int:
+            from sqlalchemy import func, select
+
+            from app.core.database import get_session_factory
+            from app.models import CrawlPageChunk
+
+            async with get_session_factory()() as session:
+                count = await session.scalar(
+                    select(func.count()).select_from(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id),
+                )
+                return int(count or 0)
+
+        return asyncio.run(_count())
 
     def _set_job_status(self, job_id: int, status: str) -> None:
         async def _set_status() -> None:

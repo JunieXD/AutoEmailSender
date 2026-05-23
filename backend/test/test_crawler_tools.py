@@ -1233,6 +1233,55 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 row = (await session.scalars(select(CrawlCandidate))).one()
                 self.assertEqual(row.email, "zhang@example.com.cn")
 
+
+    async def test_profile_page_research_direction_overrides_list_boundary_value(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url="https://cs.example.edu/zhang",
+                        source_url="https://cs.example.edu/faculty",
+                        research_direction="人工智能",
+                        field_confidence={"research_direction": 0.4},
+                        source_kind="list_chunk",
+                        boundary_risk=True,
+                    )
+                ],
+            )
+
+            result = await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url="https://cs.example.edu/zhang",
+                        source_url="https://cs.example.edu/zhang",
+                        research_direction="自然语言处理与知识图谱",
+                        field_confidence={"research_direction": 0.95},
+                        source_kind="profile_page",
+                    )
+                ],
+            )
+
+            self.assertEqual(result["merged_count"], 1)
+            async with harness.session_factory() as session:
+                row = (await session.scalars(select(CrawlCandidate))).one()
+                self.assertEqual(row.research_direction, "自然语言处理与知识图谱")
+                self.assertFalse(row.boundary_risk)
+                self.assertEqual(row.source_kind, "profile_page")
+                self.assertIn("research_direction", row.field_sources)
+                self.assertTrue(row.merge_history)
+
     async def test_save_candidate_batch_rejects_entire_batch_when_one_item_fails(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:
             job_id = await harness.create_job()

@@ -17,6 +17,7 @@ from app.models import (
     CrawlJob,
     CrawlJobStatus,
     CrawlPage,
+    CrawlPageChunk,
     LLMProfile,
     Professor,
 )
@@ -575,6 +576,9 @@ async def retry_crawl_job(
     if payload.clear_existing_data:
         await session.execute(
             delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id),
+        )
+        await session.execute(
+            delete(CrawlPageChunk).where(CrawlPageChunk.job_id == job.id),
         )
         await session.execute(
             delete(CrawlPage).where(CrawlPage.job_id == job.id),

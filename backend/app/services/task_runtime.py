@@ -1310,7 +1310,8 @@ async def dispatch_email_task(
                 last_send_attempt_at=claimed_at,
                 retry_count=func.coalesce(EmailTask.retry_count, 0) + 1,
                 updated_at=claimed_at,
-            ),
+            )
+            .execution_options(synchronize_session=False),
         )
         if claim_result.rowcount != 1:
             await session.rollback()
