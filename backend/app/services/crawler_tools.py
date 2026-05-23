@@ -1399,9 +1399,9 @@ async def save_candidates(
         )
         for candidate in candidates
     ]
-    saved = await _save_normalized_candidate_payloads(ctx, payloads)
+    persistence = await _save_normalized_candidate_payloads(ctx, payloads)
     await _ensure_crawl_job_can_continue_for_context(ctx)
-    return saved
+    return persistence.saved
 
 
 async def save_candidate_batch(
@@ -1787,3 +1787,4 @@ def _final_url_rejected_snapshot(final_url: str, fetch_method: str) -> PageSnaps
         fetch_method=fetch_method,
         error_message="最终 URL 不在允许范围内，已拒绝抓取结果",
     )
+

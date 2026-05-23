@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from urllib.parse import urljoin
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -14,7 +15,9 @@ from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from app.models import LLMProfile
+from app.services.crawl_job_runtime import create_chunks_for_successful_page_snapshot
 from app.services.crawler_chunk_runtime import (
+    has_chunks_for_source_url,
     claim_next_page_chunk as claim_chunk_runtime,
     submit_chunk_candidates as submit_chunk_candidates_runtime,
 )
@@ -498,7 +501,25 @@ def create_faculty_crawler_agent(
     @tool
     async def crawl_page(url: str) -> dict[str, Any]:
         """抓取入口 URL 同域内的页面并返回规范化页面快照；本轮已判定无关的 URL 会被直接跳过。"""
+        absolute_url = urljoin(ctx.start_url, url)
+        if await has_chunks_for_source_url(
+            ctx.session_factory,
+            job_id=ctx.job_id,
+            source_url=absolute_url,
+        ):
+            return {
+                "status": "chunked",
+                "url": absolute_url,
+                "message": "该页面已生成待处理片段，请调用 claim_next_page_chunk。",
+            }
         snapshot = await crawl_page_with_crawl4ai(ctx, url)
+        if snapshot.status == "succeeded":
+            await create_chunks_for_successful_page_snapshot(
+                ctx.session_factory,
+                job_id=ctx.job_id,
+                page_id=None,
+                snapshot=snapshot,
+            )
         return snapshot.model_dump()
 
     @tool

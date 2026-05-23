@@ -248,3 +248,21 @@ async def _split_chunk_in_session(
         )
         created += 1
     return created
+
+
+async def has_chunks_for_source_url(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    job_id: int,
+    source_url: str,
+) -> bool:
+    async with session_factory() as session:
+        chunk_id = await session.scalar(
+            select(CrawlPageChunk.id)
+            .where(
+                CrawlPageChunk.job_id == job_id,
+                CrawlPageChunk.source_url == source_url,
+            )
+            .limit(1)
+        )
+        return chunk_id is not None

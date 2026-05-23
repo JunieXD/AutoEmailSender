@@ -13,9 +13,10 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import Base, CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, LLMProfile
+from app.models import Base, CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, LLMProfile
 from app.services import crawl_job_runtime
 from app.services.crawl_job_runtime import (
+    create_chunks_for_successful_page_snapshot,
     _enrich_saved_candidates,
     enrich_selected_crawl_candidates,
     enrich_candidate_profile_with_llm,
@@ -36,6 +37,45 @@ from app.services.crawler_tools import (
 
 
 class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_successful_directory_page_snapshot_creates_chunks(self) -> None:
+        async with self.session_factory() as session:
+            job = CrawlJob(
+                university="示例大学",
+                school="计算机学院",
+                start_url="https://cs.example.edu/faculty",
+                status=CrawlJobStatus.RUNNING.value,
+            )
+            page = CrawlPage(
+                job=job,
+                url="https://cs.example.edu/faculty",
+                fetch_method="http",
+                status="succeeded",
+            )
+            session.add_all([job, page])
+            await session.commit()
+            await session.refresh(job)
+            await session.refresh(page)
+
+        snapshot = PageSnapshot(
+            url="https://cs.example.edu/faculty",
+            title="师资队伍",
+            text="张三\n李四",
+            html="<main><p><a href='/zhang.htm'>张三</a></p><p><a href='/li.htm'>李四</a></p></main>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+        created = await create_chunks_for_successful_page_snapshot(
+            self.session_factory,
+            job_id=job.id,
+            page_id=page.id,
+            snapshot=snapshot,
+        )
+
+        self.assertGreaterEqual(created, 1)
+        async with self.session_factory() as session:
+            self.assertGreaterEqual(len(list(await session.scalars(select(CrawlPageChunk)))), 1)
+
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self.temp_dir.name) / "crawl_job_runtime.db"
