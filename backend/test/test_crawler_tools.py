@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage
@@ -1091,6 +1092,77 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(second_result["saved_count"], 0)
             self.assertEqual(second_result["skipped_duplicate_count"], 1)
             self.assertEqual(await harness.count_rows(CrawlCandidate), 1)
+
+    async def test_save_candidate_batch_merges_more_complete_duplicate_profile(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url="https://cs.example.edu/teachers/zhang",
+                        source_url="https://cs.example.edu/faculty",
+                    )
+                ],
+            )
+            result = await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url="https://cs.example.edu/teachers/zhang",
+                        source_url="https://cs.example.edu/faculty#chunk2",
+                        research_direction="数据库与大数据管理",
+                        evidence={"summary": "后续 chunk 提供研究方向"},
+                    )
+                ],
+            )
+
+            self.assertEqual(result["saved_count"], 0)
+            self.assertEqual(result["merged_count"], 1)
+            async with harness.session_factory() as session:
+                row = (await session.scalars(select(CrawlCandidate))).one()
+                self.assertEqual(row.research_direction, "数据库与大数据管理")
+                self.assertIn("后续 chunk", str(row.evidence))
+
+    async def test_save_candidate_batch_does_not_replace_existing_email_with_empty_value(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            await save_candidate_batch(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="李四",
+                        email="li@example.edu",
+                        profile_url="https://cs.example.edu/li",
+                    )
+                ],
+            )
+            await save_candidate_batch(
+                ctx,
+                [ProfessorCandidatePayload(name="李四", email=None, profile_url="https://cs.example.edu/li")],
+            )
+
+            async with harness.session_factory() as session:
+                row = (await session.scalars(select(CrawlCandidate).where(CrawlCandidate.name == "李四"))).one()
+                self.assertEqual(row.email, "li@example.edu")
 
     async def test_save_candidate_batch_rejects_entire_batch_when_one_item_fails(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:

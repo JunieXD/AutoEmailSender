@@ -264,6 +264,76 @@ def _candidate_missing_contact_path(payload: dict[str, Any]) -> bool:
     profile_url = str(payload.get("profile_url") or "").strip()
     return not email and not profile_url
 
+_MERGEABLE_TEXT_FIELDS = (
+    "email",
+    "title",
+    "university",
+    "school",
+    "department",
+    "research_direction",
+    "profile_url",
+    "source_url",
+)
+
+
+def _merge_json_dict(current: object, incoming: object) -> dict[str, object]:
+    merged: dict[str, object] = {}
+    if isinstance(current, dict):
+        merged.update(current)
+    if isinstance(incoming, dict):
+        merged.update(incoming)
+    return merged
+
+
+def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) -> bool:
+    changed = False
+    for field_name in _MERGEABLE_TEXT_FIELDS:
+        new_value = payload.get(field_name)
+        if new_value in (None, ""):
+            continue
+        old_value = getattr(existing, field_name)
+        if old_value in (None, ""):
+            setattr(existing, field_name, new_value)
+            changed = True
+    if payload.get("recent_papers") and not existing.recent_papers:
+        existing.recent_papers = payload["recent_papers"]
+        changed = True
+    if payload.get("field_confidence"):
+        existing.field_confidence = _merge_json_dict(existing.field_confidence, payload["field_confidence"])
+        changed = True
+    if payload.get("evidence"):
+        existing.evidence = _merge_json_dict(existing.evidence, payload["evidence"])
+        changed = True
+    return changed
+
+
+async def _find_existing_candidate_for_payload(
+    session: AsyncSession,
+    *,
+    job_id: int,
+    email: str | None,
+    profile_url: str | None,
+) -> CrawlCandidate | None:
+    if email:
+        row = await session.scalar(
+            select(CrawlCandidate).where(
+                CrawlCandidate.job_id == job_id,
+                func.lower(CrawlCandidate.email) == email.lower(),
+            )
+        )
+        if row is not None:
+            return row
+    if profile_url:
+        row = await session.scalar(
+            select(CrawlCandidate).where(
+                CrawlCandidate.job_id == job_id,
+                CrawlCandidate.profile_url == profile_url,
+            )
+        )
+        if row is not None:
+            return row
+    return None
+
 
 @dataclass(frozen=True)
 class CrawlToolContext:
@@ -1428,15 +1498,12 @@ async def _save_normalized_candidate_payloads(
     payloads: Sequence[dict[str, Any]],
 ) -> CandidatePersistenceResult:
     saved: list[CrawlCandidate] = []
+    merged_count = 0
     skipped_duplicate_count = 0
     async with ctx.session_factory() as session:
         if await _is_crawl_job_stopped(session, ctx.job_id):
             return CandidatePersistenceResult(saved=[])
 
-        existing_emails = await _load_existing_candidate_emails(session, ctx.job_id)
-        existing_profile_urls = await _load_existing_candidate_profile_urls(session, ctx.job_id)
-        seen_emails = set(existing_emails)
-        seen_profile_urls = set(existing_profile_urls)
         for payload in payloads:
             email = payload["email"]
             normalized_email = str(email).lower() if email else None
@@ -1447,20 +1514,22 @@ async def _save_normalized_candidate_payloads(
             if normalized_profile_url:
                 payload["profile_url"] = normalized_profile_url
 
-            if normalized_email and normalized_email in seen_emails:
-                skipped_duplicate_count += 1
-                continue
-            if normalized_profile_url and normalized_profile_url in seen_profile_urls:
-                skipped_duplicate_count += 1
+            existing = await _find_existing_candidate_for_payload(
+                session,
+                job_id=ctx.job_id,
+                email=normalized_email,
+                profile_url=normalized_profile_url,
+            )
+            if existing is not None:
+                if _merge_candidate_payload(existing, payload):
+                    merged_count += 1
+                else:
+                    skipped_duplicate_count += 1
                 continue
 
             row = CrawlCandidate(job_id=ctx.job_id, **payload)
             session.add(row)
             saved.append(row)
-            if normalized_email:
-                seen_emails.add(normalized_email)
-            if normalized_profile_url:
-                seen_profile_urls.add(normalized_profile_url)
 
         if await _is_crawl_job_stopped(session, ctx.job_id):
             await session.rollback()
@@ -1469,7 +1538,11 @@ async def _save_normalized_candidate_payloads(
         await session.commit()
         for row in saved:
             await session.refresh(row)
-    return CandidatePersistenceResult(saved=saved, skipped_duplicate_count=skipped_duplicate_count)
+    return CandidatePersistenceResult(
+        saved=saved,
+        merged_count=merged_count,
+        skipped_duplicate_count=skipped_duplicate_count,
+    )
 
 
 async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) -> CrawlPage | None:
