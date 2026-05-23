@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlPageChunk, CrawlPageChunkStatus
-from app.services.crawler_chunking import PageChunkDraft
+from app.services.crawler_chunking import ChunkingConfig, PageChunkDraft, split_chunk_content
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_batch
 
 
@@ -174,8 +174,77 @@ async def _mark_chunk_split_required(ctx: CrawlToolContext, chunk_id: str, reaso
                 CrawlPageChunk.chunk_id == chunk_id,
             )
         )
-        if chunk is not None:
-            chunk.status = CrawlPageChunkStatus.SPLIT_REQUIRED.value
-            chunk.split_reason = reason
-            await session.commit()
-    return {"chunk_status": CrawlPageChunkStatus.SPLIT_REQUIRED.value, "split_reason": reason}
+        if chunk is None:
+            return {
+                "chunk_status": "failed",
+                "split_reason": reason,
+                "created_child_chunks": 0,
+            }
+        child_count = await _split_chunk_in_session(session, ctx.job_id, chunk, reason)
+        await session.commit()
+        return {
+            "chunk_status": CrawlPageChunkStatus.SPLIT_REQUIRED.value,
+            "split_reason": reason,
+            "created_child_chunks": child_count,
+        }
+
+
+async def _split_chunk_in_session(
+    session: AsyncSession,
+    job_id: int,
+    chunk: CrawlPageChunk,
+    reason: str,
+) -> int:
+    config = ChunkingConfig()
+    if chunk.split_depth >= config.max_split_depth:
+        chunk.status = CrawlPageChunkStatus.FAILED.value
+        chunk.last_error = f"超过最大拆分深度：{reason}"
+        return 0
+
+    drafts = split_chunk_content(
+        source_url=chunk.source_url,
+        content=chunk.content,
+        parent_chunk_id=chunk.chunk_id,
+        page_fingerprint=chunk.page_fingerprint,
+        split_depth=chunk.split_depth + 1,
+        config=config,
+    )
+    if not drafts:
+        chunk.status = CrawlPageChunkStatus.FAILED.value
+        chunk.last_error = f"chunk 太小，无法继续拆分：{reason}"
+        return 0
+
+    chunk.status = CrawlPageChunkStatus.SUPERSEDED.value
+    chunk.split_reason = reason
+    created = 0
+    for draft in drafts:
+        exists = await session.scalar(
+            select(CrawlPageChunk.id).where(
+                CrawlPageChunk.job_id == job_id,
+                CrawlPageChunk.chunk_id == draft.chunk_id,
+            )
+        )
+        if exists is not None:
+            continue
+        session.add(
+            CrawlPageChunk(
+                job_id=job_id,
+                page_id=chunk.page_id,
+                source_url=draft.source_url,
+                page_fingerprint=draft.page_fingerprint,
+                chunk_id=draft.chunk_id,
+                parent_chunk_id=draft.parent_chunk_id,
+                chunk_index=draft.chunk_index,
+                chunk_hash=draft.chunk_hash,
+                status=CrawlPageChunkStatus.PENDING.value,
+                content=draft.content,
+                token_estimate=draft.token_estimate,
+                text_start_offset=draft.text_start_offset,
+                text_end_offset=draft.text_end_offset,
+                overlap_prefix=draft.overlap_prefix,
+                overlap_suffix=draft.overlap_suffix,
+                split_depth=draft.split_depth,
+            )
+        )
+        created += 1
+    return created
