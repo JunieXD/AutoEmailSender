@@ -1164,6 +1164,29 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 row = (await session.scalars(select(CrawlCandidate).where(CrawlCandidate.name == "李四"))).one()
                 self.assertEqual(row.email, "li@example.edu")
 
+    async def test_repeated_duplicate_submissions_return_duplicate_loop(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            candidate = ProfessorCandidatePayload(
+                name="张三",
+                profile_url="https://cs.example.edu/zhang",
+                source_url="https://cs.example.edu/faculty",
+            )
+
+            await save_candidate_batch(ctx, [candidate])
+            await save_candidate_batch(ctx, [candidate])
+            await save_candidate_batch(ctx, [candidate])
+            third = await save_candidate_batch(ctx, [candidate])
+
+            self.assertEqual(third["batch_status"], "duplicate_loop")
+
     async def test_save_candidate_batch_rejects_entire_batch_when_one_item_fails(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:
             job_id = await harness.create_job()

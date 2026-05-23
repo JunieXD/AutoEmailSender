@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, LLMProfile
+from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services.crawler_debug import append_crawler_debug_event
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
@@ -51,6 +51,29 @@ NO_LLM_PROFILE_ERROR = "请先配置可用的 LLM Profile"
 WORKER_CANCELLED_ERROR = "抓取任务被后台 worker 取消"
 INTERRUPTED_JOB_ERROR = "抓取任务因桌面端进程中断而停止"
 NO_CANDIDATES_SAVED_ERROR = "抓取结束但未成功保存任何候选导师"
+
+
+async def crawl_job_has_pending_work(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    job_id: int,
+) -> bool:
+    async with session_factory() as session:
+        pending_chunk = await session.scalar(
+            select(CrawlPageChunk.id)
+            .where(
+                CrawlPageChunk.job_id == job_id,
+                CrawlPageChunk.status.in_(
+                    [
+                        CrawlPageChunkStatus.PENDING.value,
+                        CrawlPageChunkStatus.PROCESSING.value,
+                        CrawlPageChunkStatus.SPLIT_REQUIRED.value,
+                    ]
+                ),
+            )
+            .limit(1)
+        )
+        return pending_chunk is not None
 
 
 async def create_chunks_for_successful_page_snapshot(

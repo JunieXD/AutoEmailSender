@@ -13,9 +13,10 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import Base, CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, LLMProfile
+from app.models import Base, CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services import crawl_job_runtime
 from app.services.crawl_job_runtime import (
+    crawl_job_has_pending_work,
     create_chunks_for_successful_page_snapshot,
     _enrich_saved_candidates,
     enrich_selected_crawl_candidates,
@@ -37,6 +38,38 @@ from app.services.crawler_tools import (
 
 
 class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_crawl_job_has_pending_work_tracks_pending_chunks(self) -> None:
+        async with self.session_factory() as session:
+            job = CrawlJob(
+                university="示例大学",
+                school="计算机学院",
+                start_url="https://cs.example.edu/faculty",
+                status=CrawlJobStatus.RUNNING.value,
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+
+        self.assertFalse(await crawl_job_has_pending_work(self.session_factory, job_id=job.id))
+
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageChunk(
+                    job_id=job.id,
+                    page_id=None,
+                    source_url="https://cs.example.edu/faculty",
+                    page_fingerprint="page",
+                    chunk_id="chunk-1",
+                    chunk_index=0,
+                    chunk_hash="hash",
+                    status=CrawlPageChunkStatus.PENDING.value,
+                    content="张三",
+                )
+            )
+            await session.commit()
+
+        self.assertTrue(await crawl_job_has_pending_work(self.session_factory, job_id=job.id))
+
     async def test_successful_directory_page_snapshot_creates_chunks(self) -> None:
         async with self.session_factory() as session:
             job = CrawlJob(

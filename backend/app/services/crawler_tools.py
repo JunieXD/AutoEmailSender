@@ -202,7 +202,7 @@ class CandidateBatchFailure(TypedDict):
 
 
 class CandidateBatchSaveResult(TypedDict):
-    batch_status: Literal["saved", "rejected"]
+    batch_status: Literal["saved", "rejected", "duplicate_loop"]
     attempted_count: int
     saved_count: int
     merged_count: int
@@ -240,6 +240,10 @@ class CandidatePersistenceResult:
     saved: list[CrawlCandidate]
     merged_count: int = 0
     skipped_duplicate_count: int = 0
+
+@dataclass
+class DuplicateSaveLoopState:
+    consecutive_duplicate_batches: int = 0
 
 
 def _normalize_page_cache_url(url: str) -> str:
@@ -345,6 +349,7 @@ class CrawlToolContext:
     http_blocked_hosts: set[str] = field(default_factory=set)
     denied_urls: dict[str, str] = field(default_factory=dict)
     save_failure_budget: SaveFailureBudgetState = field(default_factory=SaveFailureBudgetState)
+    duplicate_save_loop: DuplicateSaveLoopState = field(default_factory=DuplicateSaveLoopState)
     page_snapshot_cache: OrderedDict[str, PageSnapshot] = field(default_factory=OrderedDict)
     thinking_extra_body: dict[str, object] | None = None
 
@@ -1481,6 +1486,18 @@ async def save_candidate_batch(
         "total_save_failures": ctx.save_failure_budget.total_save_failures,
         "terminal_reason": None,
     }
+    if (
+        result["saved_count"] == 0
+        and result["merged_count"] == 0
+        and result["skipped_duplicate_count"] > 0
+    ):
+        ctx.duplicate_save_loop.consecutive_duplicate_batches += 1
+    else:
+        ctx.duplicate_save_loop.consecutive_duplicate_batches = 0
+
+    if ctx.duplicate_save_loop.consecutive_duplicate_batches >= 3:
+        result["batch_status"] = "duplicate_loop"
+        result["next_instruction"] = "连续多个批次均为重复候选，请停止保存当前内容，获取下一个 chunk 或结束任务。"
     await _ensure_crawl_job_can_continue_for_context(ctx)
     return result
 
