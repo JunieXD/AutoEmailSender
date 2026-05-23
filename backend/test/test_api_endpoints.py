@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from openpyxl import Workbook, load_workbook
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from test.migrated_database import create_migrated_sqlite_database
 
 
@@ -2436,6 +2437,713 @@ class ApiEndpointTests(unittest.TestCase):
 
         repeated_restore = self.client.post(f"/api/batch-tasks/{task_id}/restore")
         self.assertEqual(repeated_restore.status_code, 200, msg=repeated_restore.text)
+
+    def test_remove_batch_task_item_soft_deletes_single_draft_and_updates_target_count(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professors = self.client.get("/api/professors").json()
+        professor_ids = [item["id"] for item in professors[:2]]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "逐项移除批量草稿",
+                "professor_ids": professor_ids,
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{导师姓名}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{导师姓名}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        self.assertEqual(created.json()["target_count"], 2)
+
+        items = self.client.get(f"/api/batch-tasks/{task_id}/items")
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        removed_item_id = items.json()[0]["id"]
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'review_required',
+                    generated_subject = '待审核主题',
+                    generated_content_text = '待审核正文'
+                WHERE id = ?
+                """,
+                (removed_item_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{removed_item_id}/delete")
+
+        self.assertEqual(removed.status_code, 200, msg=removed.text)
+        self.assertEqual(removed.json()["task"]["target_count"], 1)
+        refreshed_items = self.client.get(f"/api/batch-tasks/{task_id}/items")
+        self.assertEqual(refreshed_items.status_code, 200, msg=refreshed_items.text)
+        self.assertEqual([item["id"] for item in refreshed_items.json()], [items.json()[1]["id"]])
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT status, cancellation_reason, batch_task_id, scheduled_at, draft_generation_previous_status
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (removed_item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "canceled")
+        self.assertEqual(row[1], "user_removed")
+        self.assertEqual(row[2], task_id)
+        self.assertIsNone(row[3])
+        self.assertIsNone(row[4])
+
+    def test_remove_batch_task_item_rejects_sent_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_id = self.client.get("/api/professors").json()[0]["id"]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "禁止移除已发送项",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{导师姓名}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{导师姓名}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET status = 'sent' WHERE id = ?", (item_id,))
+            connection.commit()
+        finally:
+            connection.close()
+
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+
+        self.assertEqual(removed.status_code, 400)
+        self.assertIn("不能从批量任务中移除", removed.json()["detail"])
+
+    def test_remove_batch_task_item_rejects_scheduled_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_id = self.client.get("/api/professors").json()[0]["id"]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "reject scheduled removal",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{name}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE email_tasks SET status = 'scheduled', scheduled_at = datetime('now', '+1 day') WHERE id = ?",
+                (item_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+
+        self.assertEqual(removed.status_code, 400)
+        self.assertIn("不能从批量任务中移除", removed.json()["detail"])
+
+    def test_remove_batch_task_item_does_not_overwrite_concurrent_schedule(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_id = self.client.get("/api/professors").json()[0]["id"]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "reject stale delete after schedule",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{name}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (item_id,))
+            connection.commit()
+        finally:
+            connection.close()
+
+        from app.core.database import get_engine
+
+        schedule_once = True
+
+        def schedule_before_delete(conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal schedule_once
+            if not schedule_once:
+                return
+            if not statement.lstrip().upper().startswith("UPDATE EMAIL_TASKS"):
+                return
+            if "CANCELLATION_REASON" not in statement.upper():
+                return
+            schedule_once = False
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    "UPDATE email_tasks SET status = 'scheduled', scheduled_at = datetime('now', '+1 day') WHERE id = ?",
+                    (item_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        engine = get_engine()
+        event.listen(engine.sync_engine, "before_cursor_execute", schedule_before_delete)
+        try:
+            removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", schedule_before_delete)
+
+        self.assertEqual(removed.status_code, 400, msg=removed.text)
+        self.assertIn("不能从批量任务中移除", removed.json()["detail"])
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT email_tasks.status, email_tasks.cancellation_reason, batch_tasks.target_count
+                FROM email_tasks
+                JOIN batch_tasks ON batch_tasks.id = email_tasks.batch_task_id
+                WHERE email_tasks.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("scheduled", None, 1))
+
+    def test_stop_batch_task_keeps_user_removed_item_hidden(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professors = self.client.get("/api/professors").json()
+        professor_ids = [item["id"] for item in professors[:2]]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "keep removed item hidden",
+                "professor_ids": professor_ids,
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{name}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        items = self.client.get(f"/api/batch-tasks/{task_id}/items").json()
+        removed_item_id = items[0]["id"]
+        kept_item_id = items[1]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (removed_item_id,))
+            connection.commit()
+        finally:
+            connection.close()
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{removed_item_id}/delete")
+        self.assertEqual(removed.status_code, 200, msg=removed.text)
+
+        stopped = self.client.post(f"/api/batch-tasks/{task_id}/stop")
+        self.assertEqual(stopped.status_code, 200, msg=stopped.text)
+
+        refreshed_items = self.client.get(f"/api/batch-tasks/{task_id}/items")
+        self.assertEqual(refreshed_items.status_code, 200, msg=refreshed_items.text)
+        self.assertEqual([item["id"] for item in refreshed_items.json()], [kept_item_id])
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT status, cancellation_reason FROM email_tasks WHERE id = ?",
+                (removed_item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("canceled", "user_removed"))
+
+    def test_workspace_ignores_user_removed_batch_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_id = self.client.get("/api/professors").json()[0]["id"]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "workspace ignores removed",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{name}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (item_id,))
+            connection.commit()
+        finally:
+            connection.close()
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+        self.assertEqual(removed.status_code, 200, msg=removed.text)
+
+        workspace = self.client.get(
+            f"/api/workspaces/{professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+        )
+
+        self.assertEqual(workspace.status_code, 200, msg=workspace.text)
+        payload = workspace.json()
+        self.assertNotEqual(payload["current_task"]["id"], item_id)
+        if payload["current_task"]["id"] is not None:
+            self.assertIsNone(payload["current_task"]["batch_task_id"])
+
+    def test_professor_dashboard_ignores_user_removed_batch_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"AI agents and information extraction",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="dashboard-user-removed@example.edu")
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "dashboard ignores removed",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": material_id,
+                "email_subject": "Hello {{name}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'review_required',
+                    match_score = 91,
+                    match_reason = 'removed item should not count'
+                WHERE id = ?
+                """,
+                (item_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+        self.assertEqual(removed.status_code, 200, msg=removed.text)
+
+        dashboard = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_profile_id, "ids": str(professor_id)},
+        )
+
+        self.assertEqual(dashboard.status_code, 200, msg=dashboard.text)
+        professor = dashboard.json()[0]
+        self.assertEqual(professor["status"], "not_contacted")
+        self.assertIsNone(professor["match_score"])
+
+    def test_removed_batch_item_does_not_reappear_when_generation_finishes(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"AI agents and information extraction",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="removed-generation-race@example.edu")
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "removed generation race",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "window_start_time": None,
+                "window_end_time": None,
+                "emails_per_window": None,
+                "primary_material_id": material_id,
+                "email_subject": None,
+                "email_body": None,
+                "selected_material_ids": None,
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body {{research_direction}}",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        async def _remove_item_before_generation_returns(**_kwargs):
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    """
+                    UPDATE email_tasks
+                    SET status = 'canceled',
+                        cancellation_reason = 'user_removed',
+                        scheduled_at = NULL,
+                        draft_generation_previous_status = NULL
+                    WHERE id = ?
+                    """,
+                    (item_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            return self._build_draft_generation_result(
+                subject="Should not reappear",
+                body_text="This generated draft should be discarded.",
+                body_html="<p>This generated draft should be discarded.</p>",
+            )
+
+        from app.core.database import get_session_factory
+        from app.services.task_runtime import generate_task_draft
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=_remove_item_before_generation_returns),
+        ):
+            self._run_async(generate_task_draft(get_session_factory(), item_id, force=True))
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT status, cancellation_reason, generated_subject, generated_content_text
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row[0], "canceled")
+        self.assertEqual(row[1], "user_removed")
+        self.assertNotEqual(row[2], "Should not reappear")
+        self.assertNotEqual(row[3], "This generated draft should be discarded.")
+
+        items = self.client.get(f"/api/batch-tasks/{task_id}/items")
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        self.assertEqual(items.json(), [])
+
+    def test_removed_batch_item_stays_removed_when_generation_fails(self) -> None:
+        from app.services import llm_runtime
+
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"AI agents and information extraction",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="removed-generation-failure@example.edu")
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "removed generation failure",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "window_start_time": None,
+                "window_end_time": None,
+                "emails_per_window": None,
+                "primary_material_id": material_id,
+                "email_subject": None,
+                "email_body": None,
+                "selected_material_ids": None,
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body {{research_direction}}",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        item_id = self.client.get(f"/api/batch-tasks/{created.json()['id']}/items").json()[0]["id"]
+
+        async def _remove_item_then_fail(**_kwargs):
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    """
+                    UPDATE email_tasks
+                    SET status = 'canceled',
+                        cancellation_reason = 'user_removed',
+                        scheduled_at = NULL,
+                        draft_generation_previous_status = NULL
+                    WHERE id = ?
+                    """,
+                    (item_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            raise llm_runtime.LLMRuntimeError("generation failed after removal")
+
+        from app.core.database import get_session_factory
+        from app.services.task_runtime import generate_task_draft
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=_remove_item_then_fail),
+        ):
+            with self.assertRaises(llm_runtime.LLMRuntimeError):
+                self._run_async(generate_task_draft(get_session_factory(), item_id, force=True))
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT status, cancellation_reason FROM email_tasks WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("canceled", "user_removed"))
+
+    def test_removed_batch_item_stays_removed_when_automatic_generation_is_canceled(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"AI agents and information extraction",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="removed-generation-canceled@example.edu")
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "removed generation canceled",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "window_start_time": None,
+                "window_end_time": None,
+                "emails_per_window": None,
+                "primary_material_id": material_id,
+                "email_subject": None,
+                "email_body": None,
+                "selected_material_ids": None,
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body {{research_direction}}",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        item_id = self.client.get(f"/api/batch-tasks/{created.json()['id']}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'generating_draft',
+                    draft_generation_previous_status = 'matched'
+                WHERE id = ?
+                """,
+                (item_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        async def _remove_item_then_cancel(**_kwargs):
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    """
+                    UPDATE email_tasks
+                    SET status = 'canceled',
+                        cancellation_reason = 'user_removed',
+                        scheduled_at = NULL,
+                        draft_generation_previous_status = NULL
+                    WHERE id = ?
+                    """,
+                    (item_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            raise asyncio.CancelledError()
+
+        from app.core.database import get_session_factory
+        from app.services.task_runtime import generate_task_draft
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=_remove_item_then_cancel),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                self._run_async(
+                    generate_task_draft(
+                        get_session_factory(),
+                        item_id,
+                        force=True,
+                        automatic_batch=True,
+                        require_running_batch=True,
+                    ),
+                )
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT status, cancellation_reason FROM email_tasks WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("canceled", "user_removed"))
+
+    def test_remove_last_batch_task_item_marks_task_completed(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_id = self.client.get("/api/professors").json()[0]["id"]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "删除最后一封草稿",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{导师姓名}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{导师姓名}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (item_id,))
+            connection.commit()
+        finally:
+            connection.close()
+
+        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+
+        self.assertEqual(removed.status_code, 200, msg=removed.text)
+        self.assertEqual(removed.json()["task"]["target_count"], 0)
+        self.assertEqual(removed.json()["task"]["status"], "completed")
 
     def test_create_and_list_match_analysis_jobs(self) -> None:
         identity_id = self._create_identity(with_imap=False)

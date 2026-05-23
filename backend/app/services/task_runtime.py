@@ -90,6 +90,13 @@ MANUAL_DRAFT_CLAIMABLE_STATUSES = {
 }
 
 
+def _is_user_removed_batch_item(email_task: EmailTask) -> bool:
+    return (
+        email_task.status == EmailTaskStatus.CANCELED.value
+        and email_task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value
+    )
+
+
 def _has_professor_match_evidence(professor: Professor) -> bool:
     return bool((professor.research_direction or "").strip()) or any(
         str(paper).strip() for paper in professor.recent_papers or []
@@ -297,6 +304,7 @@ async def expire_batch_task_if_needed(
             local_timezone=local_now.tzinfo,
         )
         for email_task in batch_task.email_tasks
+        if not _is_user_removed_batch_item(email_task)
         if email_task.status
         in {
             EmailTaskStatus.DISCOVERED.value,
@@ -311,6 +319,8 @@ async def expire_batch_task_if_needed(
         return False
 
     for email_task in batch_task.email_tasks:
+        if _is_user_removed_batch_item(email_task):
+            continue
         if email_task.status in {
             EmailTaskStatus.DISCOVERED.value,
             EmailTaskStatus.MATCHED.value,
@@ -627,6 +637,9 @@ async def generate_task_draft(
                         return task.professor_id, task.identity_id, task.llm_profile_id
         except asyncio.CancelledError:
             if automatic_batch:
+                await session.refresh(task)
+                if _is_user_removed_batch_item(task):
+                    raise
                 batch_status = (
                     await session.scalar(select(BatchTask.status).where(BatchTask.id == task.batch_task_id))
                     if task.batch_task_id is not None
@@ -636,6 +649,9 @@ async def generate_task_draft(
                 await session.commit()
             raise
         except llm_runtime.LLMRuntimeError as exc:
+            await session.refresh(task)
+            if _is_user_removed_batch_item(task):
+                raise
             task.last_error = str(exc)
             if automatic_batch:
                 task.status = EmailTaskStatus.DRAFT_FAILED.value
@@ -649,6 +665,9 @@ async def generate_task_draft(
                 return task.professor_id, task.identity_id, task.llm_profile_id
             raise
         except ValueError as exc:
+            await session.refresh(task)
+            if _is_user_removed_batch_item(task):
+                raise
             task.last_error = str(exc)
             if automatic_batch:
                 task.status = EmailTaskStatus.DRAFT_FAILED.value
@@ -661,6 +680,13 @@ async def generate_task_draft(
             if automatic_batch:
                 return task.professor_id, task.identity_id, task.llm_profile_id
             raise
+
+        await session.refresh(task)
+        if (
+            task.status != EmailTaskStatus.GENERATING_DRAFT.value
+            or task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value
+        ):
+            return task_identity
 
         task.generated_subject = subject
         task.generated_content_text = body_text
@@ -1075,6 +1101,7 @@ async def approve_and_send_task(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_allows_approval(task)
         _ensure_batch_task_has_future_window(task)
         await _snapshot_approval(session, task, payload)
         task.status = EmailTaskStatus.APPROVED.value
@@ -1104,6 +1131,7 @@ async def approve_draft_task(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_allows_approval(task)
         _ensure_batch_task_has_future_window(task)
         await _snapshot_approval(session, task, payload)
         if _is_scheduled_batch_task(task) and task.scheduled_at is not None:
@@ -1131,6 +1159,7 @@ async def approve_and_schedule_task(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_allows_approval(task)
         _ensure_batch_task_has_future_window(task)
         await _snapshot_approval(session, task, payload)
         task.status = EmailTaskStatus.SCHEDULED.value
@@ -2139,6 +2168,16 @@ def _ensure_task_allows_legacy_manual_actions(task: EmailTask) -> None:
         and task.cancellation_reason == EmailTaskCancellationReason.BATCH_STOPPED.value
     ):
         raise ValueError("该任务已因批量任务停止而取消，请先“作为单独联系继续”后再执行此操作")
+
+
+def _ensure_task_allows_approval(task: EmailTask) -> None:
+    if (
+        task.status == EmailTaskStatus.CANCELED.value
+        and task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value
+    ):
+        raise ValueError("该草稿已从批量任务中移除，不能再审核或发送")
+    if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
+        raise ValueError("草稿正在生成，请稍后再审核")
 
 
 def extract_message_ids(*headers: str | None) -> set[str]:

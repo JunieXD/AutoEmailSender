@@ -208,6 +208,67 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertIsNotNone(actual_scheduled_at)
         self.assertEqual(actual_scheduled_at.replace(tzinfo=UTC), scheduled_at)
 
+    def test_approve_draft_rejects_generating_draft_task(self) -> None:
+        scheduled_date = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+        task_id = self._run_async(
+            self._create_batch_task_with_review_required_task(
+                scheduled_dates=[scheduled_date],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(self._set_task_status(task_id, EmailTaskStatus.GENERATING_DRAFT.value))
+
+        with self.assertRaisesRegex(ValueError, "草稿正在生成"):
+            self._run_async(
+                approve_draft_task(
+                    self.session_factory,
+                    task_id,
+                    EmailTaskApprovalRequest(
+                        subject="申请交流",
+                        body_text="老师您好。",
+                        body_html=None,
+                        selected_material_ids=[],
+                    ),
+                ),
+            )
+
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.GENERATING_DRAFT.value)
+
+    def test_approve_and_send_rejects_user_removed_task_without_sending(self) -> None:
+        scheduled_date = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+        task_id = self._run_async(
+            self._create_batch_task_with_review_required_task(
+                scheduled_dates=[scheduled_date],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(self._mark_task_user_removed(task_id))
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            with self.assertRaisesRegex(ValueError, "已从批量任务中移除"):
+                self._run_async(
+                    approve_and_send_task(
+                        self.session_factory,
+                        task_id,
+                        EmailTaskApprovalRequest(
+                            subject="申请交流",
+                            body_text="老师您好。",
+                            body_html=None,
+                            selected_material_ids=[],
+                        ),
+                    ),
+                )
+
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.CANCELED.value)
+        self.assertEqual(
+            self._run_async(self._get_task_cancellation_reason(task_id)),
+            EmailTaskCancellationReason.USER_REMOVED.value,
+        )
+        mocked_send.assert_not_awaited()
+
     def test_dispatch_email_task_skips_future_scheduled_task(self) -> None:
         task_id = self._run_async(
             self._create_batch_task_with_approved_task(
@@ -1034,6 +1095,16 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task = await session.get(EmailTask, task_id)
             assert task is not None
             task.status = status
+            task.updated_at = datetime.now(UTC)
+            await session.commit()
+
+    async def _mark_task_user_removed(self, task_id: int) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            task.status = EmailTaskStatus.CANCELED.value
+            task.cancellation_reason = EmailTaskCancellationReason.USER_REMOVED.value
+            task.scheduled_at = None
             task.updated_at = datetime.now(UTC)
             await session.commit()
 

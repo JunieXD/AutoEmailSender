@@ -124,9 +124,11 @@ const getLatestDraftMessage = (messages: WorkspaceMessageDTO[]) => {
 
 const shouldBlockDirectDraftActions = (task: WorkspaceTaskSummaryDTO | null) =>
   Boolean(
-    task?.can_continue_manually ||
+      task?.can_continue_manually ||
       task?.can_write_follow_up ||
       task?.status === 'canceled' ||
+      task?.status === 'generating_draft' ||
+      task?.status === 'sending' ||
       task?.sent_at ||
       task?.is_replied,
   );

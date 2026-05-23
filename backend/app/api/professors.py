@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
-from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, Professor
+from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus, Professor
 from app.schemas.professor import (
     ProfessorActionResult,
     ProfessorBulkArchivePayload,
@@ -65,6 +65,10 @@ async def list_professors(
             .where(
                 EmailTask.identity_id == identity_id,
                 EmailTask.professor_id.in_(professor_ids),
+                ~(
+                    (EmailTask.status == EmailTaskStatus.CANCELED.value)
+                    & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
+                ),
             )
             .order_by(EmailTask.created_at.desc(), EmailTask.id.desc()),
         )

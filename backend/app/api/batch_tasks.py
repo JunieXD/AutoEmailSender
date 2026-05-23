@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import UTC, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,7 +33,7 @@ from app.services.batch_schedule import (
     has_future_batch_window,
     normalize_scheduled_dates,
 )
-from app.services.batch_task_status import count_completed_batch_task_items, sync_batch_task_completion
+from app.services.batch_task_status import sync_batch_task_completion
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_templates import (
@@ -295,7 +295,13 @@ async def list_batch_task_items(
     statement = (
         select(EmailTask)
         .options(selectinload(EmailTask.professor))
-        .where(EmailTask.batch_task_id == task_id)
+        .where(
+            EmailTask.batch_task_id == task_id,
+            ~(
+                (EmailTask.status == EmailTaskStatus.CANCELED.value)
+                & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
+            ),
+        )
         .order_by(EmailTask.created_at.asc(), EmailTask.id.asc())
     )
     email_tasks = list((await session.execute(statement)).scalars().unique())
@@ -312,6 +318,8 @@ async def pause_batch_task(
     task.status = BatchTaskStatus.PAUSED.value
     task.updated_at = datetime.now(UTC)
     for email_task in task.email_tasks:
+        if _is_user_removed_batch_item(email_task):
+            continue
         if email_task.status == EmailTaskStatus.GENERATING_DRAFT.value:
             email_task.status = email_task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
             email_task.draft_generation_previous_status = None
@@ -349,6 +357,8 @@ async def stop_batch_task(
     task.status = BatchTaskStatus.STOPPED.value
     task.updated_at = datetime.now(UTC)
     for email_task in task.email_tasks:
+        if _is_user_removed_batch_item(email_task):
+            continue
         if email_task.status not in {
             EmailTaskStatus.SENDING.value,
             EmailTaskStatus.SENT.value,
@@ -423,6 +433,109 @@ async def restore_batch_task(
     await session.commit()
     await session.refresh(task, attribute_names=["email_tasks"])
     return BatchTaskActionResponse(ok=True, task=_serialize_batch_task(task))
+
+
+@router.post("/{task_id}/items/{item_id}/delete", response_model=BatchTaskActionResponse)
+async def delete_batch_task_item(
+    task_id: int,
+    item_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> BatchTaskActionResponse:
+    task = await _get_batch_task(session, task_id)
+    item = next((email_task for email_task in task.email_tasks if email_task.id == item_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="未找到批量任务项")
+    previous_status = item.status
+    previous_cancellation_reason = item.cancellation_reason
+    now = datetime.now(UTC)
+
+    delete_result = await session.execute(
+        update(EmailTask)
+        .where(
+            EmailTask.id == item_id,
+            EmailTask.batch_task_id == task_id,
+            EmailTask.status.in_(BATCH_TASK_ITEM_REMOVABLE_STATUSES),
+        )
+        .values(
+            status=EmailTaskStatus.CANCELED.value,
+            cancellation_reason=EmailTaskCancellationReason.USER_REMOVED.value,
+            scheduled_at=None,
+            draft_generation_previous_status=None,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False),
+    )
+    if delete_result.rowcount != 1:
+        await session.rollback()
+        current_item = await session.scalar(
+            select(EmailTask).where(
+                EmailTask.id == item_id,
+                EmailTask.batch_task_id == task_id,
+            ),
+        )
+        if current_item is None or _is_user_removed_batch_item(current_item):
+            raise HTTPException(status_code=404, detail="未找到批量任务项")
+        if current_item.status in {
+            EmailTaskStatus.SENDING.value,
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+        }:
+            raise HTTPException(status_code=400, detail="已发送或正在发送的邮件不能从批量任务中移除")
+        raise HTTPException(status_code=400, detail="已批准、已排程或正在处理的邮件不能从批量任务中移除")
+
+    await session.execute(
+        update(BatchTask)
+        .where(BatchTask.id == task_id)
+        .values(
+            target_count=case(
+                (BatchTask.target_count > 0, BatchTask.target_count - 1),
+                else_=0,
+            ),
+            status=case(
+                (BatchTask.target_count <= 1, BatchTaskStatus.COMPLETED.value),
+                else_=BatchTask.status,
+            ),
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False),
+    )
+    task = await _load_batch_task_for_serialization(session, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="未找到批量任务")
+    await _record_batch_task_action(
+        session,
+        task,
+        "batch_task.item_deleted",
+        extra_metadata={
+            "email_task_id": item_id,
+            "previous_status": previous_status,
+            "previous_cancellation_reason": previous_cancellation_reason,
+            "target_count": task.target_count,
+        },
+    )
+    sync_batch_task_completion(task)
+    await session.commit()
+    await session.refresh(task, attribute_names=["email_tasks"])
+    return BatchTaskActionResponse(ok=True, task=_serialize_batch_task(task))
+
+
+BATCH_TASK_ITEM_REMOVABLE_STATUSES = {
+    EmailTaskStatus.DISCOVERED.value,
+    EmailTaskStatus.MATCHED.value,
+    EmailTaskStatus.DRAFT_FAILED.value,
+    EmailTaskStatus.REVIEW_REQUIRED.value,
+}
+
+
+def _is_user_removed_batch_item(email_task: EmailTask) -> bool:
+    return (
+        email_task.status == EmailTaskStatus.CANCELED.value
+        and email_task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value
+    )
+
+
+def _visible_batch_email_tasks(task: BatchTask) -> list[EmailTask]:
+    return [email_task for email_task in task.email_tasks if not _is_user_removed_batch_item(email_task)]
 
 
 async def _get_batch_task(session: AsyncSession, task_id: int) -> BatchTask:
@@ -528,9 +641,17 @@ async def _sanitize_batch_task_material_references_before_restore(session: Async
 
 
 def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
-    status_counter = Counter(email_task.status for email_task in task.email_tasks)
+    visible_email_tasks = _visible_batch_email_tasks(task)
+    status_counter = Counter(email_task.status for email_task in visible_email_tasks)
 
-    completed_count = count_completed_batch_task_items(task)
+    completed_count = sum(
+        1
+        for email_task in visible_email_tasks
+        if email_task.status in {
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+        }
+    )
     status = task.status
 
     pending_generation_count = sum(

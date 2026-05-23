@@ -24,10 +24,11 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
-import { approveAndSend, approveDraft } from "@/lib/api/emailTasksApi";
+import { approveAndSend, approveDraft, regenerateDraft } from "@/lib/api/emailTasksApi";
 import { openWorkspaceThread } from "@/features/workspace/client/openWorkspaceThread";
 import {
   deleteBatchTask,
+  deleteBatchTaskItem,
   listBatchTasks,
   listBatchTaskItems,
   pauseBatchTask,
@@ -99,6 +100,8 @@ import {
 
 type TasksTab = "batch" | "crawl" | "match";
 type TaskListViews = Record<TasksTab, TaskListView>;
+type BatchReviewItemActionType = "regenerate" | "delete" | "submit";
+type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
 
 const CRAWL_JOB_STATUS_LABELS: Record<CrawlJobStatusDTO, string> = {
   queued: "排队中",
@@ -656,7 +659,8 @@ export const TasksPage = () => {
   const [batchReviewThread, setBatchReviewThread] =
     useState<WorkspaceThreadDTO | null>(null);
   const [batchReviewLoading, setBatchReviewLoading] = useState(false);
-  const [batchReviewActing, setBatchReviewActing] = useState(false);
+  const [batchReviewItemActions, setBatchReviewItemActions] =
+    useState<BatchReviewItemActions>({});
   const [batchReviewSubject, setBatchReviewSubject] = useState("");
   const [batchReviewContentText, setBatchReviewContentText] = useState("");
   const [batchReviewContentHtml, setBatchReviewContentHtml] = useState("");
@@ -821,6 +825,15 @@ export const TasksPage = () => {
   );
   const reviewRequiredBatchTaskItems = useMemo(
     () => selectedBatchTaskItems.filter((item) => item.status === "review_required"),
+    [selectedBatchTaskItems],
+  );
+  const batchReviewQueueItems = useMemo(
+    () =>
+      selectedBatchTaskItems.filter(
+        (item) =>
+          item.status === "review_required" ||
+          item.status === "generating_draft",
+      ),
     [selectedBatchTaskItems],
   );
   const activeBatchReviewItem = useMemo(
@@ -1784,7 +1797,7 @@ const selectedCrawlJobCanReview =
     setBatchReviewItemId(null);
     setBatchReviewThread(null);
     setBatchReviewLoading(false);
-    setBatchReviewActing(false);
+    setBatchReviewItemActions({});
     setBatchReviewSubject("");
     setBatchReviewContentText("");
     setBatchReviewContentHtml("");
@@ -1850,6 +1863,64 @@ const selectedCrawlJobCanReview =
     selected_material_ids: batchReviewSelectedMaterialIds,
   });
 
+  const setBatchReviewItemAction = (
+    itemId: number,
+    type: BatchReviewItemActionType,
+  ) => {
+    setBatchReviewItemActions((current) => ({ ...current, [itemId]: type }));
+  };
+
+  const clearBatchReviewItemAction = (
+    itemId: number,
+    type: BatchReviewItemActionType,
+  ) => {
+    setBatchReviewItemActions((current) => {
+      if (current[itemId] !== type) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[itemId];
+      return next;
+    });
+  };
+
+  const handleRegenerateBatchDraft = async () => {
+    const taskId = batchReviewThread?.current_task.id;
+    const itemId = batchReviewItemId;
+    if (!taskId || itemId === null) {
+      return;
+    }
+    const confirmed = await confirm({
+      title: "确认重新生成草稿？",
+      description: "重新生成后会覆盖当前草稿内容，原草稿将无法保留。",
+      confirmLabel: "确认重新生成",
+      cancelLabel: "先不重新生成",
+    });
+    if (!confirmed) {
+      return;
+    }
+    setBatchReviewItemAction(itemId, "regenerate");
+    try {
+      const thread = await regenerateDraft(taskId);
+      setBatchReviewItemId((currentItemId) => {
+        if (currentItemId === itemId) {
+          syncBatchDraftReview(thread);
+        }
+        return currentItemId;
+      });
+      notifySuccess("草稿已重新生成");
+      if (selectedBatchTask) {
+        await loadBatchTaskDetails(selectedBatchTask.id);
+      }
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "重新生成草稿失败";
+      notifyError("重新生成草稿失败", message);
+    } finally {
+      clearBatchReviewItemAction(itemId, "regenerate");
+    }
+  };
+
   const handleApproveBatchDraft = async () => {
     const taskId = batchReviewThread?.current_task.id;
     if (!taskId || !selectedBatchTask || !activeBatchReviewItem) {
@@ -1858,7 +1929,8 @@ const selectedCrawlJobCanReview =
     const nextItem =
       reviewRequiredBatchTaskItems.find((item) => item.id !== activeBatchReviewItem.id) ??
       null;
-    setBatchReviewActing(true);
+    const itemId = activeBatchReviewItem.id;
+    setBatchReviewItemAction(itemId, "submit");
     try {
       await approveDraft(taskId, buildBatchReviewPayload());
       notifySuccess("草稿已审核通过");
@@ -1880,7 +1952,46 @@ const selectedCrawlJobCanReview =
         actionError instanceof Error ? actionError.message : "审核草稿失败";
       notifyError("审核草稿失败", message);
     } finally {
-      setBatchReviewActing(false);
+      clearBatchReviewItemAction(itemId, "submit");
+    }
+  };
+
+  const handleDeleteBatchDraftItem = async (item: BatchTaskItemDTO) => {
+    if (!selectedBatchTask) {
+      return;
+    }
+    const confirmed = await confirm({
+      title: "从批量任务中删除这封草稿？",
+      description: "删除后会从当前批量任务中彻底移除这位导师和对应草稿记录。",
+      confirmLabel: "删除草稿",
+      cancelLabel: "先保留",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+    const nextItem =
+      reviewRequiredBatchTaskItems.find((candidate) => candidate.id !== item.id) ??
+      null;
+    setBatchReviewItemAction(item.id, "delete");
+    try {
+      const result = await deleteBatchTaskItem(selectedBatchTask.id, item.id);
+      notifySuccess("草稿已从批量任务中移除");
+      setSelectedBatchTask(result.task);
+      await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+      if (batchReviewItemId === item.id) {
+        if (nextItem) {
+          await openBatchDraftReview(nextItem);
+        } else {
+          resetBatchDraftReview();
+        }
+      }
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "删除草稿失败";
+      notifyError("删除草稿失败", message);
+    } finally {
+      clearBatchReviewItemAction(item.id, "delete");
     }
   };
 
@@ -1902,7 +2013,8 @@ const selectedCrawlJobCanReview =
       return;
     }
 
-    setBatchReviewActing(true);
+    const itemId = activeBatchReviewItem.id;
+    setBatchReviewItemAction(itemId, "submit");
     try {
       await approveAndSend(taskId, buildBatchReviewPayload());
       notifySuccess("邮件已提交发送");
@@ -1918,7 +2030,7 @@ const selectedCrawlJobCanReview =
         actionError instanceof Error ? actionError.message : "发送邮件失败";
       notifyError("发送邮件失败", message);
     } finally {
-      setBatchReviewActing(false);
+      clearBatchReviewItemAction(itemId, "submit");
     }
   };
 
@@ -2060,6 +2172,10 @@ const selectedCrawlJobCanReview =
         batchReviewContentText.trim() ||
         deriveBatchReviewText("", batchReviewContentHtml).trim(),
     );
+  const activeBatchReviewAction =
+    batchReviewItemId !== null
+      ? batchReviewItemActions[batchReviewItemId] ?? null
+      : null;
   const canSendBatchReviewImmediately =
     selectedBatchTask?.schedule_type === "immediate";
 
@@ -2589,7 +2705,7 @@ const selectedCrawlJobCanReview =
                           待审核队列
                         </h3>
                         <p className="mt-1 text-xs text-stone-500">
-                          {reviewRequiredBatchTaskItems.length} 封草稿等待处理
+                          {batchReviewQueueItems.length} 封草稿等待处理
                         </p>
                       </div>
                       {batchReviewLoading ? (
@@ -2597,36 +2713,66 @@ const selectedCrawlJobCanReview =
                       ) : null}
                     </div>
                     <div className="mt-4 space-y-2">
-                      {reviewRequiredBatchTaskItems.map((item) => (
-                        <button
+                      {batchReviewQueueItems.map((item) => {
+                        const itemGeneratingDraft =
+                          item.status === "generating_draft";
+                        const itemAction = batchReviewItemActions[item.id] ?? null;
+                        const itemDeleting = itemAction === "delete";
+                        const itemRegenerating = itemAction === "regenerate";
+                        const itemBusyGenerating =
+                          itemGeneratingDraft || itemRegenerating;
+                        return (
+                        <div
                           key={item.id}
-                          type="button"
-                          onClick={() => void openBatchDraftReview(item)}
                           className={
                             item.id === batchReviewItemId
-                              ? "w-full rounded-2xl border border-primary/25 bg-white px-4 py-3 text-left shadow-sm"
-                              : "w-full rounded-2xl border border-stone-200 bg-white/70 px-4 py-3 text-left transition hover:border-primary/20 hover:bg-white"
+                              ? "flex w-full items-stretch overflow-hidden rounded-2xl border border-primary/25 bg-white shadow-sm"
+                              : "flex w-full items-stretch overflow-hidden rounded-2xl border border-stone-200 bg-white/70 transition hover:border-primary/20 hover:bg-white"
                           }
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-stone-900">
-                                {item.professor_name}
+                          <button
+                            type="button"
+                            onClick={() => void openBatchDraftReview(item)}
+                            disabled={itemBusyGenerating}
+                            className="min-w-0 flex-1 px-4 py-3 text-left disabled:cursor-wait"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate text-sm font-semibold text-stone-900">
+                                    {item.professor_name}
+                                  </span>
+                                  {itemBusyGenerating ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      重新生成中
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="mt-1 truncate text-xs text-stone-500">
+                                  {[item.professor_title, item.professor_school]
+                                    .filter(Boolean)
+                                    .join(" / ") || "暂无补充信息"}
+                                </div>
                               </div>
-                              <div className="mt-1 truncate text-xs text-stone-500">
-                                {[item.professor_title, item.professor_school]
-                                  .filter(Boolean)
-                                  .join(" / ") || "暂无补充信息"}
-                              </div>
+                              {item.match_score !== null ? (
+                                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                                  {item.match_score}
+                                </span>
+                              ) : null}
                             </div>
-                            {item.match_score !== null ? (
-                              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-                                {item.match_score}
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-                      ))}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="删除草稿"
+                            onClick={() => void handleDeleteBatchDraftItem(item)}
+                            disabled={itemDeleting || itemBusyGenerating}
+                            className="flex w-11 shrink-0 items-center justify-center border-l border-stone-100 text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )})}
                     </div>
                   </aside>
 
@@ -2736,8 +2882,17 @@ const selectedCrawlJobCanReview =
                             <div className="mt-4 flex flex-col gap-2">
                               <button
                                 type="button"
+                                onClick={() => void handleRegenerateBatchDraft()}
+                                disabled={Boolean(activeBatchReviewAction) || !batchReviewThread}
+                                className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <RotateCcw className="h-4 w-4" />
+                                重新生成
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => void handleApproveBatchDraft()}
-                                disabled={batchReviewActing || !batchReviewCanSubmit}
+                                disabled={Boolean(activeBatchReviewAction) || !batchReviewCanSubmit}
                                 className="ui-btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 <CheckCircle2 className="h-4 w-4" />
@@ -2747,7 +2902,7 @@ const selectedCrawlJobCanReview =
                                 <button
                                   type="button"
                                   onClick={() => void handleSendBatchDraftNow()}
-                                  disabled={batchReviewActing || !batchReviewCanSubmit}
+                                  disabled={Boolean(activeBatchReviewAction) || !batchReviewCanSubmit}
                                   className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   <Mail className="h-4 w-4" />

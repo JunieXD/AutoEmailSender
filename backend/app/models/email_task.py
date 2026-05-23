@@ -41,6 +41,7 @@ class EmailTaskSource(StrEnum):
 class EmailTaskCancellationReason(StrEnum):
     BATCH_STOPPED = "batch_stopped"
     SCHEDULE_EXPIRED = "schedule_expired"
+    USER_REMOVED = "user_removed"
 
 
 class EmailTask(Base):

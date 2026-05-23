@@ -30,6 +30,14 @@ export const createBatchTask = (payload: CreateBatchTaskRequestDTO) =>
 export const listBatchTaskItems = (taskId: number) =>
   apiFetch<BatchTaskItemDTO[]>(`/api/batch-tasks/${taskId}/items`);
 
+export const deleteBatchTaskItem = (taskId: number, itemId: number) =>
+  apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(
+    `/api/batch-tasks/${taskId}/items/${itemId}/delete`,
+    {
+      method: 'POST',
+    },
+  );
+
 export const pauseBatchTask = (taskId: number) =>
   apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(`/api/batch-tasks/${taskId}/pause`, {
     method: 'POST',
