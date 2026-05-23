@@ -19,9 +19,15 @@ STATUS_MESSAGES = {
 TOOL_MESSAGES = {
     "crawl_page": "Agent 调用 crawl_page 抓取页面",
     "investigate_with_browser": "Agent 调用浏览器调查页面",
+    "claim_next_page_chunk": "Agent 领取待处理页面片段",
+    "submit_chunk_candidates": "Agent 提交页面片段候选",
     "save_professor_candidates": "Agent 保存候选导师",
 }
 KNOWN_TOOL_NAMES = frozenset(TOOL_MESSAGES)
+EVENT_TYPE_MESSAGES = {
+    "chunk_split_required": "页面片段候选过密，已触发拆分",
+    "duplicate_loop": "候选重复提交循环，已要求停止当前保存",
+}
 GENERIC_AGENT_MESSAGES = {
     "Agent 事件：updates",
     "Agent 事件：dict",
@@ -146,6 +152,8 @@ def summarize_agent_trace_event(event: dict[str, object]) -> str:
         return TOOL_MESSAGES.get(name, f"Agent 调用 {name}")
 
     event_type = _trace_event_type(event)
+    if event_type in EVENT_TYPE_MESSAGES:
+        return EVENT_TYPE_MESSAGES[event_type]
     if event_type:
         return f"Agent 事件：{event_type}"
 

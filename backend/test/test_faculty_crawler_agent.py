@@ -11,6 +11,7 @@ from app.agents.faculty_crawler_agent import (
     FACULTY_CRAWLER_SYSTEM_PROMPT,
     SaveHistoryCompactionMiddleware,
     build_faculty_crawler_model,
+    build_trace_event,
     compact_save_tool_history,
     _format_save_batch_result_for_model,
     _validate_professor_candidate_batch,
@@ -232,6 +233,12 @@ class FacultyCrawlerAgentCompactionTests(unittest.TestCase):
 
 
 class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
+    def test_build_trace_event_truncates_large_chunk_content(self) -> None:
+        event = {"data": {"tools": {"messages": [{"content": "x" * 2000}]}}}
+        trace = build_trace_event(event)
+        self.assertNotIn("x" * 1500, str(trace))
+        self.assertIn("chunk 内容已截断", str(trace))
+
     def test_controlled_tool_names_include_chunk_tools(self) -> None:
         self.assertIn("claim_next_page_chunk", CONTROLLED_CRAWLER_TOOL_NAMES)
         self.assertIn("submit_chunk_candidates", CONTROLLED_CRAWLER_TOOL_NAMES)

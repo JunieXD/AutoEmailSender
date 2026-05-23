@@ -12,6 +12,11 @@ from app.services.crawl_job_events import (
 
 
 class CrawlJobEventsTests(unittest.TestCase):
+    def test_chunk_tool_events_are_human_readable(self) -> None:
+        self.assertEqual(summarize_agent_trace_event({"name": "claim_next_page_chunk"}), "Agent 领取待处理页面片段")
+        self.assertEqual(summarize_agent_trace_event({"name": "submit_chunk_candidates"}), "Agent 提交页面片段候选")
+        self.assertEqual(summarize_agent_trace_event({"event_type": "chunk_split_required"}), "页面片段候选过密，已触发拆分")
+
     def test_build_events_includes_status_trace_page_and_candidate(self) -> None:
         job = CrawlJob(
             id=1,

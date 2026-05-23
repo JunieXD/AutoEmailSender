@@ -427,6 +427,20 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
+
+def _redact_large_chunk_content(value: object) -> object:
+    if isinstance(value, dict):
+        redacted: dict[str, object] = {}
+        for key, item in value.items():
+            if key == "content" and isinstance(item, str) and len(item) > 1000:
+                redacted[key] = f"{item[:1000]}...（chunk 内容已截断，原始长度 {len(item)} 字符）"
+            else:
+                redacted[key] = _redact_large_chunk_content(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_large_chunk_content(item) for item in value]
+    return value
+
 def build_trace_event(event: Any) -> dict[str, object]:
     """Convert LangGraph stream events into bounded JSON-safe dictionaries."""
     try:
@@ -439,6 +453,8 @@ def build_trace_event(event: Any) -> dict[str, object]:
         }
 
     trace_event: dict[str, object]
+    parsed = _redact_large_chunk_content(parsed)
+
     if isinstance(parsed, dict):
         trace_event = parsed
     else:
