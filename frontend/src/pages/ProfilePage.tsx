@@ -36,6 +36,7 @@ import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
 import { textToEmailHtml } from "@/lib/richEmail";
+import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import {
   createIdentity,
   deleteIdentity,
@@ -1066,6 +1067,13 @@ const OutreachTemplateModal = ({
   onBodyChange: (value: { html: string; text: string }) => void;
 }) => {
   const [isTemplateDropActive, setIsTemplateDropActive] = useState(false);
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } =
+    useDismissableLayerClick(onClose);
 
   if (!open) {
     return null;
@@ -1108,11 +1116,13 @@ const OutreachTemplateModal = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/35 p-4 backdrop-blur-md sm:items-center"
-      onClick={onClose}
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
     >
       <div
         className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-stone-200/80 bg-[linear-gradient(180deg,#fffdfa,#fff7ee_18%,#ffffff_40%)] shadow-[0_30px_90px_-28px_rgba(41,37,36,0.45)]"
-        onClick={(event) => event.stopPropagation()}
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
       >
         <div className="border-b border-stone-200/80 bg-white/75 px-6 py-5 backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1345,6 +1355,14 @@ const MaterialLibraryModal = ({
   onSetPrimary: (material: IdentityMaterialDTO) => void;
   onDelete: (material: IdentityMaterialDTO) => void;
 }) => {
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } =
+    useDismissableLayerClick(onClose);
+
   if (!open) {
     return null;
   }
@@ -1360,11 +1378,13 @@ const MaterialLibraryModal = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/35 p-4 backdrop-blur-md sm:items-center"
-      onClick={onClose}
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
     >
       <div
         className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-stone-200/80 bg-[linear-gradient(180deg,#fffdfa,#fff7ee_18%,#ffffff_40%)] shadow-[0_30px_90px_-28px_rgba(41,37,36,0.45)]"
-        onClick={(event) => event.stopPropagation()}
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
       >
         <div className="border-b border-stone-200/80 bg-white/75 px-6 py-5 backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
