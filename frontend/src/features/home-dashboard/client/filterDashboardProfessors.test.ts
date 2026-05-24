@@ -5,6 +5,7 @@ import {
   createDefaultDashboardFilters,
   getActiveDashboardFilterCount,
   filterDashboardProfessors,
+  pruneDashboardFilters,
   type DashboardFilterState,
 } from "./filterDashboardProfessors";
 
@@ -137,6 +138,118 @@ describe("filterDashboardProfessors", () => {
     });
 
     expect(options.schools).toEqual(["AI Institute", "School of Engineering"]);
+  });
+
+  it("limits department options to the selected universities and schools", () => {
+    const mitOptions = buildDashboardFilterOptions(professors, {
+      ...createDefaultDashboardFilters(),
+      universities: ["MIT"],
+    });
+
+    expect(mitOptions.departments).toEqual(["EECS", "Robotics"]);
+
+    const instituteOptions = buildDashboardFilterOptions(professors, {
+      ...createDefaultDashboardFilters(),
+      universities: ["MIT"],
+      schools: ["AI Institute"],
+    });
+
+    expect(instituteOptions.departments).toEqual(["Robotics"]);
+  });
+
+  it("prunes filters when upstream organization selections change", () => {
+    const pruned = pruneDashboardFilters(professors, {
+      ...createDefaultDashboardFilters(),
+      universities: ["MIT", "Unknown"],
+      schools: ["AI Institute", "School of Medicine"],
+      departments: ["EECS", "Unknown"],
+      titles: ["教授", "不存在"],
+    });
+
+    expect(pruned.universities).toEqual(["MIT"]);
+    expect(pruned.schools).toEqual(["AI Institute"]);
+    expect(pruned.departments).toEqual([]);
+    expect(pruned.titles).toEqual(["教授"]);
+
+    const schoolPruned = pruneDashboardFilters(professors, {
+      ...createDefaultDashboardFilters(),
+      universities: ["MIT"],
+      schools: ["AI Institute"],
+      departments: ["EECS", "Robotics"],
+    });
+
+    expect(schoolPruned.departments).toEqual(["Robotics"]);
+  });
+
+  it("matches selected options against trimmed dashboard fields", () => {
+    const professorsWithWhitespace = [
+      buildProfessor({
+        id: 4,
+        name: "Whitespace",
+        title: " 教授 ",
+        university: " MIT ",
+        school: " AI Institute ",
+        department: " Robotics ",
+      }),
+    ];
+
+    expect(
+      namesFor(professorsWithWhitespace, {
+        universities: ["MIT"],
+        schools: ["AI Institute"],
+        departments: ["Robotics"],
+        titles: ["教授"],
+      }),
+    ).toEqual(["Whitespace"]);
+
+    const options = buildDashboardFilterOptions(professorsWithWhitespace, {
+      universities: ["MIT"],
+      schools: ["AI Institute"],
+    });
+
+    expect(options.schools).toEqual(["AI Institute"]);
+    expect(options.departments).toEqual(["Robotics"]);
+  });
+
+  it("splits composite title options by explicit separators and keeps unsplit titles whole", () => {
+    const professorsWithCompositeTitles = [
+      buildProfessor({
+        id: 4,
+        name: "Professor Supervisor",
+        title: "教授、博导",
+      }),
+      buildProfessor({
+        id: 5,
+        name: "Associate Supervisor",
+        title: "副教授/硕导",
+      }),
+      buildProfessor({
+        id: 6,
+        name: "English Title",
+        title: "Assistant Professor",
+      }),
+    ];
+
+    const options = buildDashboardFilterOptions(professorsWithCompositeTitles);
+
+    expect(options.titles).toEqual([
+      "博导",
+      "副教授",
+      "教授",
+      "硕导",
+      "Assistant Professor",
+    ]);
+    expect(namesFor(professorsWithCompositeTitles, { titles: ["博导"] })).toEqual([
+      "Professor Supervisor",
+    ]);
+    expect(
+      namesFor(professorsWithCompositeTitles, {
+        titles: ["Assistant Professor"],
+      }),
+    ).toEqual(["English Title"]);
+    expect(namesFor(professorsWithCompositeTitles, { titles: ["Assistant"] })).toEqual(
+      [],
+    );
   });
 
   it("counts active advanced filters", () => {
