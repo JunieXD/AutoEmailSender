@@ -68,6 +68,7 @@ _DEFAULT_BROWSER_WAIT_FOR = object()
 
 
 class PageSnapshot(BaseModel):
+    page_id: int | None = None
     url: str
     title: str | None = None
     text: str = ""
@@ -1715,6 +1716,7 @@ async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) ->
 
         await session.commit()
         await session.refresh(row)
+        snapshot.page_id = row.id
         return row
 
 
@@ -1934,4 +1936,3 @@ def _final_url_rejected_snapshot(final_url: str, fetch_method: str) -> PageSnaps
         fetch_method=fetch_method,
         error_message="最终 URL 不在允许范围内，已拒绝抓取结果",
     )
-

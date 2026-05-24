@@ -200,6 +200,54 @@ class CrawlerChunkRuntimeTests(unittest.TestCase):
                 self.assertTrue(all(row.status == CrawlPageChunkStatus.PENDING.value for row in rows[1:]))
         asyncio.run(run())
 
+    def test_submit_exactly_ten_candidates_without_more_marks_completed(self) -> None:
+        async def run() -> None:
+            session_factory = await _session_factory()
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu", status=CrawlJobStatus.RUNNING.value)
+                page = CrawlPage(job=job, url="https://cs.example.edu/faculty", fetch_method="http", status="succeeded")
+                session.add_all([job, page])
+                await session.commit()
+                await session.refresh(job)
+                await session.refresh(page)
+            content = "\n".join(f"教师{i} [详情](https://cs.example.edu/t{i}.htm)" for i in range(10))
+            drafts = build_page_chunks(source_url="https://cs.example.edu/faculty", html="", text=content, config=ChunkingConfig())
+            await create_chunks_for_page(session_factory, job_id=job.id, page_id=page.id, drafts=drafts)
+            claimed = await claim_next_page_chunk(session_factory, job_id=job.id)
+            ctx = CrawlToolContext(job_id=job.id, start_url="https://cs.example.edu", university="示例大学", school="计算机学院", session_factory=session_factory)
+            candidates = [{"name": f"教师{i}", "profile_url": f"https://cs.example.edu/t{i}.htm", "source_url": "https://cs.example.edu/faculty"} for i in range(10)]
+
+            result = await submit_chunk_candidates(ctx, chunk_id=claimed.chunk_id or "", chunk_status="completed", has_more_candidates_in_chunk=False, candidates=candidates)
+
+            self.assertEqual(result["chunk_status"], CrawlPageChunkStatus.COMPLETED.value)
+            async with session_factory() as session:
+                rows = list(await session.scalars(select(CrawlPageChunk).order_by(CrawlPageChunk.id)))
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0].status, CrawlPageChunkStatus.COMPLETED.value)
+        asyncio.run(run())
+
+    def test_submit_unclaimed_pending_chunk_is_rejected(self) -> None:
+        async def run() -> None:
+            session_factory = await _session_factory()
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu", status=CrawlJobStatus.RUNNING.value)
+                page = CrawlPage(job=job, url="https://cs.example.edu/faculty", fetch_method="http", status="succeeded")
+                session.add_all([job, page])
+                await session.commit()
+                await session.refresh(job)
+                await session.refresh(page)
+            drafts = build_page_chunks(source_url="https://cs.example.edu/faculty", html="<p>张三</p>", text="张三", config=ChunkingConfig())
+            await create_chunks_for_page(session_factory, job_id=job.id, page_id=page.id, drafts=drafts)
+            ctx = CrawlToolContext(job_id=job.id, start_url="https://cs.example.edu", university="示例大学", school="计算机学院", session_factory=session_factory)
+
+            result = await submit_chunk_candidates(ctx, chunk_id=drafts[0].chunk_id, chunk_status="no_candidates", has_more_candidates_in_chunk=False, candidates=[])
+
+            self.assertEqual(result["chunk_status"], "failed")
+            async with session_factory() as session:
+                row = (await session.scalars(select(CrawlPageChunk))).one()
+                self.assertEqual(row.status, CrawlPageChunkStatus.PENDING.value)
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()

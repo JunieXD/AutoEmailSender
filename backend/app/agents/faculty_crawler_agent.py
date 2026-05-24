@@ -538,7 +538,7 @@ def create_faculty_crawler_agent(
             await create_chunks_for_successful_page_snapshot(
                 ctx.session_factory,
                 job_id=ctx.job_id,
-                page_id=None,
+                page_id=snapshot.page_id,
                 snapshot=snapshot,
             )
         return snapshot.model_dump()

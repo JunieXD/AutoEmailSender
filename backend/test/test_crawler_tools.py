@@ -150,6 +150,34 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIsNone(ctx.get_cached_page_snapshot(second.url))
         self.assertIs(ctx.get_cached_page_snapshot(third.url), third)
 
+    def test_record_page_snapshot_sets_snapshot_page_id(self) -> None:
+        async def run() -> None:
+            async with _RealCrawlerSessionHarness() as harness:
+                job_id = await harness.create_job()
+                ctx = CrawlToolContext(
+                    job_id=job_id,
+                    start_url="https://cs.example.edu/faculty",
+                    university="示例大学",
+                    school="计算机学院",
+                    session_factory=harness.session_factory,
+                )
+                snapshot = PageSnapshot(
+                    url="https://cs.example.edu/faculty",
+                    title="师资队伍",
+                    text="张三",
+                    html="<p>张三</p>",
+                    links=[],
+                    fetch_method="http",
+                    status="succeeded",
+                )
+
+                row = await record_page_snapshot(ctx, snapshot)
+
+                self.assertIsNotNone(row)
+                self.assertEqual(snapshot.page_id, row.id if row is not None else None)
+
+        asyncio.run(run())
+
     def test_record_save_batch_failure_trips_same_batch_limit_on_second_failure(self) -> None:
         ctx = self._budget_test_ctx()
         candidates = [{"name": "张三", "email": "zhang@example.edu"}]

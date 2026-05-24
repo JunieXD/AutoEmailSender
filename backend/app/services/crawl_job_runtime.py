@@ -11,7 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
+from app.models import CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services.crawler_debug import append_crawler_debug_event
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
@@ -59,21 +59,25 @@ async def crawl_job_has_pending_work(
     job_id: int,
 ) -> bool:
     async with session_factory() as session:
-        pending_chunk = await session.scalar(
-            select(CrawlPageChunk.id)
-            .where(
-                CrawlPageChunk.job_id == job_id,
-                CrawlPageChunk.status.in_(
-                    [
-                        CrawlPageChunkStatus.PENDING.value,
-                        CrawlPageChunkStatus.PROCESSING.value,
-                        CrawlPageChunkStatus.SPLIT_REQUIRED.value,
-                    ]
-                ),
-            )
-            .limit(1)
+        return await _crawl_job_has_pending_work_in_session(session, job_id=job_id)
+
+
+async def _crawl_job_has_pending_work_in_session(session: AsyncSession, *, job_id: int) -> bool:
+    pending_chunk = await session.scalar(
+        select(CrawlPageChunk.id)
+        .where(
+            CrawlPageChunk.job_id == job_id,
+            CrawlPageChunk.status.in_(
+                [
+                    CrawlPageChunkStatus.PENDING.value,
+                    CrawlPageChunkStatus.PROCESSING.value,
+                    CrawlPageChunkStatus.SPLIT_REQUIRED.value,
+                ]
+            ),
         )
-        return pending_chunk is not None
+        .limit(1)
+    )
+    return pending_chunk is not None
 
 
 async def create_chunks_for_successful_page_snapshot(
@@ -371,6 +375,16 @@ async def _recover_interrupted_crawl_job(
         if job is None or job.status != CrawlJobStatus.RUNNING.value:
             return
 
+        if await _crawl_job_has_pending_work_in_session(session, job_id=job_id):
+            now = datetime.now(UTC)
+            job.updated_at = now
+            if job.current_run_id is not None:
+                run = await session.get(CrawlJobRun, job.current_run_id)
+                if run is not None and run.status == CrawlJobStatus.RUNNING.value:
+                    run.updated_at = now
+            await session.commit()
+            return
+
         candidate_count = await session.scalar(
             select(func.count()).select_from(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
         )
@@ -488,6 +502,16 @@ async def _complete_running_job(
     async with session_factory() as session:
         job = await session.get(CrawlJob, job_id)
         if job is None or job.status != CrawlJobStatus.RUNNING.value:
+            return
+
+        if await _crawl_job_has_pending_work_in_session(session, job_id=job_id):
+            now = datetime.now(UTC)
+            job.updated_at = now
+            if job.current_run_id is not None:
+                run = await session.get(CrawlJobRun, job.current_run_id)
+                if run is not None and run.status == CrawlJobStatus.RUNNING.value:
+                    run.updated_at = now
+            await session.commit()
             return
 
         candidate_count = await session.scalar(

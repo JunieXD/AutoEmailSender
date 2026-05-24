@@ -109,6 +109,51 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         async with self.session_factory() as session:
             self.assertGreaterEqual(len(list(await session.scalars(select(CrawlPageChunk)))), 1)
 
+    async def test_run_keeps_job_running_when_chunks_remain_after_candidate_save(self) -> None:
+        job_id = await self._create_default_profile_and_job()
+
+        async def fake_run(
+            ctx: CrawlToolContext,
+            llm_profile: LLMProfile,
+            trace_callback=None,
+            **kwargs,
+        ) -> dict[str, object]:
+            _ = llm_profile, trace_callback, kwargs
+            async with ctx.session_factory() as session:
+                session.add(
+                    CrawlCandidate(
+                        job_id=ctx.job_id,
+                        name="张三",
+                        university=ctx.university,
+                        school=ctx.school,
+                        profile_url="https://example.edu/zhang.htm",
+                    )
+                )
+                session.add(
+                    CrawlPageChunk(
+                        job_id=ctx.job_id,
+                        page_id=None,
+                        source_url="https://example.edu/faculty",
+                        page_fingerprint="page",
+                        chunk_id="chunk-1",
+                        chunk_index=0,
+                        chunk_hash="hash",
+                        status=CrawlPageChunkStatus.PENDING.value,
+                        content="李四",
+                    )
+                )
+                await session.commit()
+            return {}
+
+        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run):
+            processed = await run_queued_crawl_jobs_once(self.session_factory)
+
+        self.assertEqual(processed, 1)
+        job = await self._get_job(job_id)
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        current_run = await self._get_current_run(job_id)
+        self.assertEqual(current_run.status, CrawlJobStatus.RUNNING.value)
+
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self.temp_dir.name) / "crawl_job_runtime.db"

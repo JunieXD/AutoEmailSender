@@ -143,6 +143,8 @@ async def submit_chunk_candidates(
             CrawlPageChunkStatus.SUPERSEDED.value,
         }:
             return {"chunk_status": "already_processed", "message": "该页面片段已处理，请获取下一个未处理 chunk。"}
+        if chunk.status != CrawlPageChunkStatus.PROCESSING.value:
+            return {"chunk_status": "failed", "message": "该页面片段尚未领取或当前不可提交，请先调用 claim_next_page_chunk。"}
 
     if chunk_status == "no_candidates":
         async with ctx.session_factory() as session:
@@ -178,7 +180,7 @@ async def submit_chunk_candidates(
         return {"chunk_status": "failed", "message": str(exc)}
 
     save_result = await save_candidate_batch(ctx, payloads)
-    if len(candidates) == 10 or has_more_candidates_in_chunk or chunk_status == "too_many_candidates":
+    if has_more_candidates_in_chunk or chunk_status == "too_many_candidates":
         split_result = await _mark_chunk_split_required(ctx, chunk_id, "too_many_candidates")
         return {**save_result, **split_result}
 
