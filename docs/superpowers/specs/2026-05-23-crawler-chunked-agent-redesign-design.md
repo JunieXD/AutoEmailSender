@@ -290,7 +290,7 @@ pending -> processing -> failed
 - 模型输出被截断或 JSON 无效，且 chunk 文本或链接密度较高。
 - 保守策略下，`candidates.length == 10` 且 chunk token 估算超过阈值。
 
-第一版可以采用更简单的策略：只要返回 10 个候选，就拆分该 chunk，避免漏掉第 11 个及之后的候选。
+第一版采用条件拆分策略：如果返回 10 个候选且模型明确 `has_more_candidates_in_chunk = false`，后端可以将该 chunk 标记为 `completed`；只有模型提示仍有更多候选、返回 `too_many_candidates`，或 chunk token 估算超过阈值时，才拆分该 chunk，避免无意义的重复处理。
 
 ### 拆分流程
 
@@ -678,7 +678,7 @@ chunk 机制不替代页面探索。Agent 仍需要发现可能的列表页和�
 
 ### 第四阶段：自动拆分与循环控制
 
-- 支持候选数达到 10 时自动拆分 chunk。
+- 支持候选数达到 10 且存在截断风险时自动拆分 chunk；如果模型明确无更多候选，可直接完成当前 chunk。
 - 支持父子 chunk 状态和递归拆分限制。
 - 增加 duplicate loop 熔断。
 - 完善调试日志导出。
@@ -719,7 +719,7 @@ chunk 机制不替代页面探索。Agent 仍需要发现可能的列表页和�
 
 ### 自动拆分测试
 
-- 返回 10 个候选时触发 `split_required`。
+- 返回 10 个候选且 `has_more_candidates_in_chunk = true`、`chunk_status = "too_many_candidates"` 或 chunk token 估算超过阈值时触发 `split_required`。
 - 父 chunk 被标记为 `superseded`。
 - 子 chunk 进入 `pending` 队列。
 - 子 chunk 重复抽取父 chunk 已保存候选时只 `merged` 或 `skipped_duplicate`。
