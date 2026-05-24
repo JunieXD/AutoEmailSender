@@ -59,6 +59,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(payload["draft_rewrite_length"], "default")
         self.assertEqual(payload["draft_rewrite_specificity"], "balanced")
         self.assertEqual(payload["draft_template_preservation"], "structure_first")
+        self.assertEqual(payload["draft_custom_instruction"], "")
 
     def test_patch_runtime_settings_updates_values_and_records_log(self) -> None:
         response = self.client.patch(
@@ -78,6 +79,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "draft_rewrite_length": "more_detailed",
                 "draft_rewrite_specificity": "detailed",
                 "draft_template_preservation": "content_first",
+                "draft_custom_instruction": "请少用套话，结尾保持简短。",
             },
         )
 
@@ -91,6 +93,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["draft_rewrite_length"], "more_detailed")
         self.assertEqual(response.json()["draft_rewrite_specificity"], "detailed")
         self.assertEqual(response.json()["draft_template_preservation"], "content_first")
+        self.assertEqual(response.json()["draft_custom_instruction"], "请少用套话，结尾保持简短。")
         logs = self.client.get(
             "/api/diagnostics/operation-logs",
             params={"event_name": "runtime_settings.updated"},
@@ -116,6 +119,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "draft_rewrite_length": "default",
                 "draft_rewrite_specificity": "balanced",
                 "draft_template_preservation": "structure_first",
+                "draft_custom_instruction": "",
             },
         )
 
@@ -139,6 +143,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "draft_rewrite_length": "default",
                 "draft_rewrite_specificity": "balanced",
                 "draft_template_preservation": "structure_first",
+                "draft_custom_instruction": "",
             },
         )
 
@@ -162,6 +167,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "draft_rewrite_length": "default",
                 "draft_rewrite_specificity": "balanced",
                 "draft_template_preservation": "structure_first",
+                "draft_custom_instruction": "",
             },
         )
 
@@ -185,6 +191,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "draft_rewrite_length": "default",
                 "draft_rewrite_specificity": "balanced",
                 "draft_template_preservation": "structure_first",
+                "draft_custom_instruction": "",
             },
         )
 

@@ -13,10 +13,13 @@ import {
 import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
+type TextSettingsKey = {
+  [Key in RuntimeSettingsKey]: RuntimeSettingsUpdateDTO[Key] extends string ? Key : never;
+}[RuntimeSettingsKey];
 type NumberSettingsKey = {
   [Key in RuntimeSettingsKey]: RuntimeSettingsUpdateDTO[Key] extends number ? Key : never;
 }[RuntimeSettingsKey];
-type PreferenceSettingsKey = Exclude<RuntimeSettingsKey, NumberSettingsKey>;
+type PreferenceSettingsKey = Exclude<TextSettingsKey, "draft_custom_instruction">;
 type FormState = Record<RuntimeSettingsKey, string>;
 
 const numberFields: Array<{
@@ -169,6 +172,7 @@ const emptyForm = [...numberFields, ...preferenceFields].reduce((state, field) =
   state[field.key] = "";
   return state;
 }, {} as FormState);
+emptyForm.draft_custom_instruction = "";
 
 export function OtherSettingsCard() {
   const [open, setOpen] = useState(false);
@@ -429,6 +433,44 @@ export function OtherSettingsCard() {
                     ))}
                   </div>
 
+                  <label className="block rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
+                    <span className="text-sm font-semibold text-stone-900">
+                      AI 草稿补充要求
+                    </span>
+                    <textarea
+                      value={form.draft_custom_instruction}
+                      maxLength={2000}
+                      onChange={(event) =>
+                        handleChange("draft_custom_instruction", event.target.value)
+                      }
+                      className="mt-3 min-h-32 w-full resize-y rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm leading-6 text-stone-800 outline-none transition placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      placeholder="例如：少用套话，语气自然一点；结尾保持简短，不要显得过度热情。"
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                      <span className="text-xs leading-5 text-stone-500">
+                        这段内容会作为补充要求注入到系统提示词中，不会覆盖模板保护、输出格式和安全约束。
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs leading-5 text-stone-500">
+                          {form.draft_custom_instruction.length}/2000
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handleSubmit()}
+                          disabled={saving}
+                          className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {saving ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                          保存补充要求
+                        </button>
+                      </div>
+                    </div>
+                  </label>
+
                   <div className="rounded-2xl border border-stone-200 bg-white px-4 py-4">
                     <h4 className="text-sm font-semibold text-stone-900">示例效果</h4>
                     <div className="mt-3 space-y-3 text-sm leading-6">
@@ -536,6 +578,7 @@ function toFormState(settings: RuntimeSettingsDTO): FormState {
   for (const field of preferenceFields) {
     state[field.key] = getPreferenceSetting(settings, field.key);
   }
+  state.draft_custom_instruction = settings.draft_custom_instruction ?? "";
   return state;
 }
 
@@ -570,6 +613,7 @@ function toUpdatePayload(form: FormState): RuntimeSettingsUpdateDTO {
       : defaultValue;
     preferencePayload[field.key] = value as RuntimeSettingsUpdateDTO[PreferenceSettingsKey];
   }
+  payload.draft_custom_instruction = form.draft_custom_instruction.trim();
   return payload;
 }
 

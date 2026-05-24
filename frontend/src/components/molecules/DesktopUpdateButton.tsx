@@ -12,6 +12,7 @@ import {
   onDesktopUpdateStatus,
   switchDesktopUpdateToFullDownload,
 } from "@/lib/desktopApi";
+import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import type { DesktopUpdateDownloadMode, DesktopUpdateStatus } from "@/types/desktop";
 
 const PENDING_UPDATE_KEY = "desktop_pending_update_version";
@@ -298,6 +299,14 @@ function DesktopUpdateReleaseNotesDialog({
   onClose: () => void;
   onStartDownload: (mode: DesktopUpdateDownloadMode) => void;
 }) {
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } =
+    useDismissableLayerClick(onClose);
+
   if (status === null) {
     return null;
   }
@@ -308,14 +317,16 @@ function DesktopUpdateReleaseNotesDialog({
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
       role="presentation"
-      onClick={onClose}
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
     >
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="desktop-update-release-title"
         className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-stone-200/80 bg-white shadow-[0_34px_90px_-32px_rgba(41,37,36,0.55)]"
-        onClick={(event) => event.stopPropagation()}
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
       >
         <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-6 py-5">
           <div>
