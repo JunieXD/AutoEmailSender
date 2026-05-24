@@ -28,7 +28,6 @@ import { parseApiDateTime } from '@/lib/dateTime';
 import { extractPlainTextFromHtml } from '@/lib/htmlPreview';
 import { textToEmailHtml } from '@/lib/richEmail';
 import { useConfirmDialog } from '@/lib/useConfirmDialog';
-import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
 import {
   PROFESSOR_STATUS_LABELS,
   type OutreachGenerationMode,
@@ -249,14 +248,6 @@ const ScheduleSendDialog = ({
   onCancel: () => void;
   onConfirm: () => void;
 }) => {
-  const {
-    onBackdropClick,
-    onBackdropMouseDown,
-    onContentClick,
-    onContentMouseDown,
-  } =
-    useDismissableLayerClick(onCancel);
-
   useEffect(() => {
     if (!open) {
       return;
@@ -279,13 +270,11 @@ const ScheduleSendDialog = ({
   return (
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
-      onClick={onBackdropClick}
-      onMouseDown={onBackdropMouseDown}
+      onClick={onCancel}
     >
       <div
         className="relative w-full max-w-md overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
-        onClick={onContentClick}
-        onMouseDown={onContentMouseDown}
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_68%)]" />
         <div className="relative px-6 py-6">
