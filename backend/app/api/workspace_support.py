@@ -10,10 +10,12 @@ from sqlalchemy.orm import selectinload
 
 from app.api.identity_serializers import serialize_material
 from app.models import (
+    BatchTaskStatus,
     EmailDirection,
     EmailLog,
     EmailTask,
     EmailTaskCancellationReason,
+    EmailTaskSource,
     EmailTaskStatus,
     IdentityProfile,
     LLMProfile,
@@ -59,6 +61,25 @@ async def build_workspace_thread(
         if _task_has_match_result(current_task)
         else await _get_latest_identity_match_task(session, professor_id, identity_id)
     )
+    return await _build_workspace_thread_read(
+        session,
+        professor=professor,
+        identity=identity,
+        llm_profile=llm_profile,
+        current_task=current_task,
+        match_task=match_task,
+    )
+
+
+async def _build_workspace_thread_read(
+    session: AsyncSession,
+    *,
+    professor: Professor,
+    identity: IdentityProfile,
+    llm_profile: LLMProfile,
+    current_task: EmailTask | None,
+    match_task: EmailTask | None,
+) -> WorkspaceThreadRead:
     current_task_outreach = (
         _resolve_task_outreach_config(identity, current_task)
         if current_task is not None
@@ -71,8 +92,8 @@ async def build_workspace_thread(
     )
 
     message_filters = [
-        EmailLog.professor_id == professor_id,
-        EmailLog.identity_id == identity_id,
+        EmailLog.professor_id == professor.id,
+        EmailLog.identity_id == identity.id,
     ]
     if current_task is not None:
         message_filters.append(
@@ -212,6 +233,40 @@ async def build_workspace_thread(
             last_draft_total_tokens=latest_draft_usage.get("total_tokens"),
         ),
         messages=[_serialize_workspace_message(log) for log in logs],
+    )
+
+
+async def build_workspace_thread_for_task(
+    session: AsyncSession,
+    *,
+    task_id: int,
+) -> WorkspaceThreadRead:
+    current_task = await _get_email_task_for_workspace_thread(session, task_id)
+    if current_task is None:
+        raise HTTPException(status_code=404, detail="未找到邮件任务")
+    professor = await _get_professor(session, current_task.professor_id)
+    identity = await _get_identity(session, current_task.identity_id)
+    llm_profile = await _get_llm_profile(session, current_task.llm_profile_id)
+    if _recover_legacy_sent_task_status(current_task):
+        await session.commit()
+        await session.refresh(current_task)
+    match_task = (
+        current_task
+        if _task_has_match_result(current_task)
+        else await _get_latest_identity_match_task(
+            session,
+            current_task.professor_id,
+            current_task.identity_id,
+            exclude_task_id=current_task.id,
+        )
+    )
+    return await _build_workspace_thread_read(
+        session,
+        professor=professor,
+        identity=identity,
+        llm_profile=llm_profile,
+        current_task=current_task,
+        match_task=match_task,
     )
 
 
@@ -392,6 +447,20 @@ async def _get_latest_email_task(
     )
 
 
+async def _get_email_task_for_workspace_thread(
+    session: AsyncSession,
+    task_id: int,
+) -> EmailTask | None:
+    return await session.scalar(
+        select(EmailTask)
+        .options(
+            selectinload(EmailTask.primary_material),
+            selectinload(EmailTask.batch_task),
+        )
+        .where(EmailTask.id == task_id)
+    )
+
+
 async def _get_latest_identity_match_task(
     session: AsyncSession,
     professor_id: int,
@@ -560,8 +629,23 @@ def _can_write_follow_up(task: EmailTask | None) -> bool:
     )
 
 def _should_resume_workspace_task(task: EmailTask | None) -> bool:
-    return bool(
-        task is not None
-        and task.status == EmailTaskStatus.CANCELED.value
+    if task is None:
+        return False
+    if (
+        task.status == EmailTaskStatus.CANCELED.value
         and task.cancellation_reason == EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
-    )
+    ):
+        return True
+    if task.source != EmailTaskSource.BATCH.value or task.batch_task is None:
+        return False
+    if task.batch_task.status not in {
+        BatchTaskStatus.STOPPED.value,
+        BatchTaskStatus.EXPIRED.value,
+    }:
+        return False
+    if (
+        task.status == EmailTaskStatus.CANCELED.value
+        and task.cancellation_reason == EmailTaskCancellationReason.BATCH_STOPPED.value
+    ):
+        return True
+    return task.status == EmailTaskStatus.SEND_FAILED.value

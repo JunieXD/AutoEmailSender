@@ -28,6 +28,9 @@ from app.schemas.batch_task import (
     BatchTaskItemRead,
     CreateBatchTaskRequest,
 )
+from app.schemas.email_task import EmailTaskApprovalRequest
+from app.schemas.workspace import WorkspaceThreadRead
+from app.api.workspace_support import build_workspace_thread_for_task
 from app.services.batch_schedule import (
     build_jittered_batch_schedule,
     has_future_batch_window,
@@ -42,7 +45,14 @@ from app.services.outreach_templates import (
     render_outreach_template,
     resolve_outreach_template_config,
 )
-from app.services.task_runtime import dispatch_email_task, expire_batch_task_if_needed
+from app.services import llm_runtime
+from app.services.task_runtime import (
+    approve_and_send_task,
+    approve_draft_task,
+    dispatch_email_task,
+    expire_batch_task_if_needed,
+    regenerate_task_draft,
+)
 
 
 router = APIRouter(prefix="/api/batch-tasks", tags=["batch-tasks"])
@@ -308,6 +318,63 @@ async def list_batch_task_items(
     return [_serialize_batch_task_item(email_task) for email_task in email_tasks]
 
 
+@router.get("/{task_id}/items/{item_id}/thread", response_model=WorkspaceThreadRead)
+async def get_batch_task_item_thread(
+    task_id: int,
+    item_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    await _get_batch_task_item(session, task_id, item_id)
+    return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
+@router.post("/{task_id}/items/{item_id}/regenerate-draft", response_model=WorkspaceThreadRead)
+async def regenerate_batch_task_item_draft(
+    task_id: int,
+    item_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    await _run_batch_task_item_workspace_action(
+        session,
+        task_id,
+        item_id,
+        lambda: regenerate_task_draft(get_session_factory(), item_id),
+    )
+    return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
+@router.post("/{task_id}/items/{item_id}/approve", response_model=WorkspaceThreadRead)
+async def approve_batch_task_item_draft(
+    task_id: int,
+    item_id: int,
+    payload: EmailTaskApprovalRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    await _run_batch_task_item_workspace_action(
+        session,
+        task_id,
+        item_id,
+        lambda: approve_draft_task(get_session_factory(), item_id, payload),
+    )
+    return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
+@router.post("/{task_id}/items/{item_id}/approve-and-send", response_model=WorkspaceThreadRead)
+async def approve_and_send_batch_task_item_draft(
+    task_id: int,
+    item_id: int,
+    payload: EmailTaskApprovalRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    await _run_batch_task_item_workspace_action(
+        session,
+        task_id,
+        item_id,
+        lambda: approve_and_send_task(get_session_factory(), item_id, payload),
+    )
+    return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
 @router.post("/{task_id}/pause", response_model=BatchTaskActionResponse)
 async def pause_batch_task(
     task_id: int,
@@ -543,6 +610,42 @@ async def _get_batch_task(session: AsyncSession, task_id: int) -> BatchTask:
     if not task:
         raise HTTPException(status_code=404, detail="未找到批量任务")
     return task
+
+
+async def _get_batch_task_item(
+    session: AsyncSession,
+    task_id: int,
+    item_id: int,
+) -> EmailTask:
+    item = await session.scalar(
+        select(EmailTask).where(
+            EmailTask.id == item_id,
+            EmailTask.batch_task_id == task_id,
+            EmailTask.source == EmailTaskSource.BATCH.value,
+        ),
+    )
+    if item is None or _is_user_removed_batch_item(item):
+        raise HTTPException(status_code=404, detail="未找到批量任务项")
+    return item
+
+
+async def _run_batch_task_item_workspace_action(
+    session: AsyncSession,
+    task_id: int,
+    item_id: int,
+    action,
+) -> None:
+    await _get_batch_task_item(session, task_id, item_id)
+    try:
+        await action()
+    except llm_runtime.LLMRuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "不存在" in detail else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    session.expire_all()
+    await _get_batch_task_item(session, task_id, item_id)
 
 
 async def _load_batch_task_for_serialization(session: AsyncSession, task_id: int) -> BatchTask | None:

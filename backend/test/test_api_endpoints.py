@@ -1236,6 +1236,122 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(second_task["batch_task_id"], None)
         self.assertNotEqual(second_task["status"], "canceled")
 
+    def test_workspace_ensure_task_creates_manual_task_after_expired_batch_send_failure(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        professor_id = self._create_professor(email="expired-batch-send-failed@example.edu")
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "过期定时发送失败任务",
+                "professor_ids": [professor_id],
+                "schedule_type": "scheduled",
+                "window_start_time": "09:00",
+                "window_end_time": "10:00",
+                "emails_per_window": 1,
+                "scheduled_dates": [(datetime.now(UTC) + timedelta(days=1)).date().isoformat()],
+                "primary_material_id": None,
+                "email_subject": "Hello {{name}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{name}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        batch_task_id = created.json()["id"]
+        batch_item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE batch_tasks
+                SET status = 'expired',
+                    scheduled_dates = ?,
+                    window_end_time = '09:00',
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (json.dumps([datetime.now(UTC).date().isoformat()]), batch_task_id),
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'send_failed',
+                    last_error = 'SMTP 发信失败: flow over limit',
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (batch_item_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        workspace = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+        )
+
+        self.assertEqual(workspace.status_code, 200, msg=workspace.text)
+        current_task = workspace.json()["current_task"]
+        self.assertNotEqual(current_task["id"], batch_item_id)
+        self.assertEqual(current_task["source"], "manual")
+        self.assertEqual(current_task["parent_task_id"], batch_item_id)
+        self.assertIsNone(current_task["batch_task_id"])
+
+    def test_workspace_ensure_task_keeps_active_or_completed_tasks_from_stopped_batch(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        cases = [
+            ("review_required", "待审核批次邮件"),
+            ("approved", "已审核批次邮件"),
+            ("scheduled", "已定时批次邮件"),
+            ("sent", "已发送批次邮件"),
+        ]
+        for task_status, subject in cases:
+            with self.subTest(task_status=task_status):
+                professor_id = self._create_professor(
+                    email=f"{task_status.replace('_', '-')}-stopped-batch@example.edu",
+                )
+                batch_task_id = self._insert_batch_task_with_material(
+                    identity_id=identity_id,
+                    llm_id=llm_profile_id,
+                    status="stopped",
+                    primary_material_id=None,
+                )
+                batch_item_id = self._insert_email_task_with_material(
+                    identity_id=identity_id,
+                    llm_id=llm_profile_id,
+                    professor_id=professor_id,
+                    status=task_status,
+                    primary_material_id=None,
+                    batch_task_id=batch_task_id,
+                    source="batch",
+                    generated_subject=subject,
+                    generated_content_text="批次正文",
+                    generated_content_html="<p>批次正文</p>",
+                )
+
+                workspace = self.client.post(
+                    f"/api/workspaces/{professor_id}/ensure-task",
+                    params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+                )
+
+                self.assertEqual(workspace.status_code, 200, msg=workspace.text)
+                current_task = workspace.json()["current_task"]
+                self.assertEqual(current_task["id"], batch_item_id)
+                self.assertEqual(current_task["source"], "batch")
+                self.assertEqual(current_task["batch_task_id"], batch_task_id)
+                self.assertIsNone(current_task["parent_task_id"])
+                self.assertEqual(current_task["status"], task_status)
+
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -5893,6 +6009,144 @@ class ApiEndpointTests(unittest.TestCase):
         items = self.client.get(f"/api/batch-tasks/{task_id}/items")
         self.assertEqual(items.status_code, 200, msg=items.text)
         self.assertEqual(items.json()[0]["status"], "approved")
+
+    def test_batch_task_item_thread_and_approval_are_scoped_to_batch_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="scoped-batch-review@example.edu")
+        first_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        second_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        first_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=first_batch_id,
+            source="batch",
+            generated_subject="第一批草稿",
+            generated_content_text="第一批正文",
+            generated_content_html="<p>第一批正文</p>",
+        )
+        second_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=second_batch_id,
+            source="batch",
+            generated_subject="第二批草稿",
+            generated_content_text="第二批正文",
+            generated_content_html="<p>第二批正文</p>",
+        )
+
+        thread_response = self.client.get(
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/thread",
+        )
+
+        self.assertEqual(thread_response.status_code, 200, msg=thread_response.text)
+        self.assertEqual(thread_response.json()["current_task"]["id"], first_task_id)
+        self.assertEqual(thread_response.json()["current_task"]["batch_task_id"], first_batch_id)
+        self.assertEqual(thread_response.json()["current_task"]["generated_subject"], "第一批草稿")
+
+        mismatch_response = self.client.get(
+            f"/api/batch-tasks/{first_batch_id}/items/{second_task_id}/thread",
+        )
+        self.assertEqual(mismatch_response.status_code, 404, msg=mismatch_response.text)
+
+        approve_response = self.client.post(
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/approve",
+            json={
+                "subject": "第一批已审核",
+                "body_text": "第一批审核正文",
+                "body_html": "<p>第一批审核正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(approve_response.status_code, 200, msg=approve_response.text)
+        self.assertEqual(approve_response.json()["current_task"]["id"], first_task_id)
+        self.assertEqual(approve_response.json()["current_task"]["status"], "approved")
+        self.assertEqual(
+            approve_response.json()["current_task"]["approved_subject"],
+            "第一批已审核",
+        )
+        first_state = self._get_email_task_delete_state(first_task_id)
+        second_state = self._get_email_task_delete_state(second_task_id)
+        self.assertEqual(first_state["status"], "approved")
+        self.assertEqual(first_state["approved_subject"], "第一批已审核")
+        self.assertEqual(second_state["status"], "review_required")
+        self.assertIsNone(second_state["approved_subject"])
+
+    def test_email_task_approval_response_is_scoped_to_requested_task(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="scoped-email-task@example.edu")
+        first_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        second_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        first_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=first_batch_id,
+            source="batch",
+            generated_subject="较早任务草稿",
+            generated_content_text="较早任务正文",
+            generated_content_html="<p>较早任务正文</p>",
+        )
+        second_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=second_batch_id,
+            source="batch",
+            generated_subject="较新任务草稿",
+            generated_content_text="较新任务正文",
+            generated_content_html="<p>较新任务正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{first_task_id}/approve",
+            json={
+                "subject": "较早任务已审核",
+                "body_text": "较早任务审核正文",
+                "body_html": "<p>较早任务审核正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["current_task"]["id"], first_task_id)
+        self.assertEqual(response.json()["current_task"]["batch_task_id"], first_batch_id)
+        self.assertEqual(response.json()["current_task"]["status"], "approved")
+        second_state = self._get_email_task_delete_state(second_task_id)
+        self.assertEqual(second_state["status"], "review_required")
+        self.assertIsNone(second_state["approved_subject"])
 
     def test_approve_batch_draft_rejects_expired_scheduled_batch(self) -> None:
         batch_task_id, task_id = self._create_expired_scheduled_batch_review_task()

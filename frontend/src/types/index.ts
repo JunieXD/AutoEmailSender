@@ -588,6 +588,7 @@ export interface BatchTaskItemDTO {
   last_error: string | null;
   is_replied: boolean;
   updated_at: string;
+  next_action: string | null;
 }
 
 export interface WorkspaceProfessorDTO {

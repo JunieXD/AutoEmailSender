@@ -29,6 +29,10 @@ const apiMocks = vi.hoisted(() => ({
   stopBatchTask: vi.fn(),
   deleteBatchTask: vi.fn(),
   restoreBatchTask: vi.fn(),
+  getBatchTaskItemThread: vi.fn(),
+  regenerateBatchTaskItemDraft: vi.fn(),
+  approveBatchTaskItemDraft: vi.fn(),
+  approveAndSendBatchTaskItemDraft: vi.fn(),
   deleteBatchTaskItem: vi.fn(),
   listCrawlJobs: vi.fn(),
   getCrawlJob: vi.fn(),
@@ -89,6 +93,10 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   stopBatchTask: apiMocks.stopBatchTask,
   deleteBatchTask: apiMocks.deleteBatchTask,
   restoreBatchTask: apiMocks.restoreBatchTask,
+  getBatchTaskItemThread: apiMocks.getBatchTaskItemThread,
+  regenerateBatchTaskItemDraft: apiMocks.regenerateBatchTaskItemDraft,
+  approveBatchTaskItemDraft: apiMocks.approveBatchTaskItemDraft,
+  approveAndSendBatchTaskItemDraft: apiMocks.approveAndSendBatchTaskItemDraft,
   deleteBatchTaskItem: apiMocks.deleteBatchTaskItem,
 }));
 
@@ -419,6 +427,7 @@ const buildBatchItem = (
   last_error: null,
   is_replied: false,
   updated_at: "2026-05-08T00:00:00",
+  next_action: null,
   ...overrides,
 });
 
@@ -522,6 +531,32 @@ beforeEach(() => {
   apiMocks.listMatchAnalysisJobs.mockResolvedValue([]);
   apiMocks.listMatchAnalysisJobItems.mockResolvedValue([]);
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
+    current_task: {
+      ...buildWorkspaceThread().current_task,
+      generated_subject: "重新生成后的主题",
+      generated_content_text: "重新生成后的正文",
+      generated_content_html: "<p>重新生成后的正文</p>",
+    },
+  }));
+  apiMocks.approveBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
+    current_task: {
+      ...buildWorkspaceThread().current_task,
+      status: "approved",
+      approved_subject: "申请与老师交流",
+      approved_body_text: "老师您好，我想交流。",
+      approved_body_html: "<p>老师您好，我想交流。</p>",
+      approved_at: "2026-05-08T01:00:00",
+    },
+  }));
+  apiMocks.approveAndSendBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
+    current_task: {
+      ...buildWorkspaceThread().current_task,
+      status: "sent",
+      sent_at: "2026-05-08T01:00:00",
+    },
+  }));
   apiMocks.regenerateDraft.mockResolvedValue(buildWorkspaceThread({
     current_task: {
       ...buildWorkspaceThread().current_task,
@@ -571,7 +606,13 @@ describe("TasksPage batch draft review", () => {
     });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
     apiMocks.listBatchTaskItems.mockResolvedValue([item]);
-    apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+      },
+    }));
 
     render(
       <MemoryRouter>
@@ -586,8 +627,9 @@ describe("TasksPage batch draft review", () => {
     fireEvent.click(screen.getByRole("button", { name: "审核草稿" }));
 
     await waitFor(() => {
-      expect(apiMocks.getWorkspaceThread).toHaveBeenCalledWith(21, 1, 2);
+      expect(apiMocks.getBatchTaskItemThread).toHaveBeenCalledWith(task.id, item.id);
     });
+    expect(apiMocks.getWorkspaceThread).not.toHaveBeenCalled();
     expect(await screen.findByText("批量审核草稿")).toBeInTheDocument();
     expect(screen.getByLabelText("邮件主题")).toHaveValue("申请与老师交流");
     expect(screen.getByLabelText("邮件正文")).toHaveValue(
@@ -624,7 +666,8 @@ describe("TasksPage batch draft review", () => {
     const firstThread = buildWorkspaceThread({
       current_task: {
         ...buildWorkspaceThread().current_task,
-        id: 101,
+        id: 11,
+        batch_task_id: task.id,
       },
     });
     const secondThread = buildWorkspaceThread({
@@ -635,7 +678,8 @@ describe("TasksPage batch draft review", () => {
       },
       current_task: {
         ...buildWorkspaceThread().current_task,
-        id: 102,
+        id: 12,
+        batch_task_id: task.id,
       },
     });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
@@ -644,7 +688,7 @@ describe("TasksPage batch draft review", () => {
       .mockResolvedValueOnce([regeneratingFirstItem, secondItem])
       .mockResolvedValueOnce([regeneratingFirstItem, secondItem])
       .mockResolvedValueOnce([regeneratingFirstItem]);
-    apiMocks.getWorkspaceThread
+    apiMocks.getBatchTaskItemThread
       .mockResolvedValueOnce(firstThread)
       .mockResolvedValueOnce(secondThread);
     let finishRegeneration: (thread: ReturnType<typeof buildWorkspaceThread>) => void;
@@ -685,11 +729,11 @@ describe("TasksPage batch draft review", () => {
     expect(apiMocks.regenerateDraft).not.toHaveBeenCalled();
 
     confirmMock.mockResolvedValueOnce(true);
-    apiMocks.regenerateDraft.mockReturnValueOnce(regeneratingDraft);
+    apiMocks.regenerateBatchTaskItemDraft.mockReturnValueOnce(regeneratingDraft);
     fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
 
     await waitFor(() => {
-      expect(apiMocks.regenerateDraft).toHaveBeenCalledWith(101);
+      expect(apiMocks.regenerateBatchTaskItemDraft).toHaveBeenCalledWith(1, 11);
     });
     expect(screen.getByRole("button", { name: "审核通过" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "立即发送" })).toBeDisabled();
@@ -700,11 +744,11 @@ describe("TasksPage batch draft review", () => {
     expect(await screen.findByRole("button", { name: "审核通过" })).not.toBeDisabled();
 
     confirmMock.mockResolvedValueOnce(true);
-    apiMocks.regenerateDraft.mockReturnValueOnce(secondRegeneratingDraft);
+    apiMocks.regenerateBatchTaskItemDraft.mockReturnValueOnce(secondRegeneratingDraft);
     fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
 
     await waitFor(() => {
-      expect(apiMocks.regenerateDraft).toHaveBeenCalledWith(102);
+      expect(apiMocks.regenerateBatchTaskItemDraft).toHaveBeenCalledWith(1, 12);
     });
     const deleteButtonsWhileBothRegenerate = screen.getAllByRole("button", {
       name: "删除草稿",
@@ -715,6 +759,8 @@ describe("TasksPage batch draft review", () => {
     finishRegeneration!(buildWorkspaceThread({
       current_task: {
         ...buildWorkspaceThread().current_task,
+        id: 11,
+        batch_task_id: task.id,
         generated_subject: "重新生成后的主题",
         generated_content_text: "重新生成后的正文",
         generated_content_html: "<p>重新生成后的正文</p>",
@@ -730,7 +776,8 @@ describe("TasksPage batch draft review", () => {
     finishSecondRegeneration!(buildWorkspaceThread({
       current_task: {
         ...buildWorkspaceThread().current_task,
-        id: 102,
+        id: 12,
+        batch_task_id: task.id,
         generated_subject: "第二封重新生成后的主题",
         generated_content_text: "第二封重新生成后的正文",
         generated_content_html: "<p>第二封重新生成后的正文</p>",
@@ -762,6 +809,124 @@ describe("TasksPage batch draft review", () => {
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith("草稿已从批量任务中移除");
     expect(screen.queryByText("第二位导师")).not.toBeInTheDocument();
+  });
+
+  it("approves batch review drafts through scoped batch item APIs", async () => {
+    const task = buildBatchTask({
+      name: "审核批量任务",
+      schedule_type: "immediate",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 31,
+      professor_id: 21,
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+      },
+    }));
+    apiMocks.approveBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+        status: "approved",
+        approved_subject: "申请与老师交流",
+        approved_body_text: "老师您好，我想交流。",
+        approved_body_html: "<p>老师您好，我想交流。</p>",
+        approved_at: "2026-05-08T01:00:00",
+      },
+    }));
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("审核批量任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "审核通过" }));
+    await waitFor(() => {
+      expect(apiMocks.approveBatchTaskItemDraft).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+        expect.objectContaining({
+          subject: "申请与老师交流",
+          body_text: "老师您好，我想交流。",
+          body_html: "<p>老师您好，我想交流。</p>",
+          selected_material_ids: [7],
+        }),
+      );
+    });
+    expect(apiMocks.approveDraft).not.toHaveBeenCalled();
+  });
+
+  it("sends batch review drafts through scoped batch item APIs", async () => {
+    const task = buildBatchTask({
+      name: "立即发送批量任务",
+      schedule_type: "immediate",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 31,
+      professor_id: 21,
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+      },
+    }));
+    apiMocks.approveAndSendBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+        status: "sent",
+        sent_at: "2026-05-08T01:00:00",
+      },
+    }));
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("立即发送批量任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    fireEvent.click(await screen.findByRole("button", { name: "立即发送" }));
+    await waitFor(() => {
+      expect(apiMocks.approveAndSendBatchTaskItemDraft).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+        expect.objectContaining({
+          subject: "申请与老师交流",
+          body_text: "老师您好，我想交流。",
+          body_html: "<p>老师您好，我想交流。</p>",
+          selected_material_ids: [7],
+        }),
+      );
+    });
+    expect(apiMocks.approveAndSend).not.toHaveBeenCalled();
   });
 });
 

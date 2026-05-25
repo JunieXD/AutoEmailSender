@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.workspace_support import build_workspace_thread
+from app.api.workspace_support import build_workspace_thread, build_workspace_thread_for_task
 from app.core.database import get_async_session, get_session_factory
 from app.schemas.email_task import (
     DraftPreviewRead,
@@ -42,6 +42,7 @@ async def regenerate_draft(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: regenerate_task_draft(get_session_factory(), task_id),
     )
 
@@ -85,6 +86,7 @@ async def generate_draft(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: regenerate_task_draft(get_session_factory(), task_id),
     )
 
@@ -124,6 +126,7 @@ async def change_primary_material(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: update_task_primary_material(
             get_session_factory(),
             task_id,
@@ -140,6 +143,7 @@ async def change_outreach_config(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: update_task_outreach_config(
             get_session_factory(),
             task_id,
@@ -159,6 +163,7 @@ async def approve_draft(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: approve_draft_task(get_session_factory(), task_id, payload),
     )
 
@@ -171,6 +176,7 @@ async def approve_and_send(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: approve_and_send_task(get_session_factory(), task_id, payload),
     )
 
@@ -183,6 +189,7 @@ async def approve_and_schedule(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: approve_and_schedule_task(get_session_factory(), task_id, payload),
     )
 
@@ -194,6 +201,7 @@ async def cancel_schedule(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: cancel_scheduled_task(get_session_factory(), task_id),
     )
 
@@ -205,7 +213,9 @@ async def continue_manually(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: continue_task_manually(get_session_factory(), task_id),
+        response_scope="workspace",
     )
 
 
@@ -216,13 +226,18 @@ async def start_follow_up(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
+        task_id,
         lambda: start_follow_up_task(get_session_factory(), task_id),
+        response_scope="workspace",
     )
 
 
 async def _run_workspace_action(
     session: AsyncSession,
+    task_id: int,
     action,
+    *,
+    response_scope: str = "task",
 ) -> WorkspaceThreadRead:
     try:
         professor_id, identity_id, llm_profile_id = await action()
@@ -233,10 +248,13 @@ async def _run_workspace_action(
         status_code = 404 if "不存在" in detail else 400
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    return await build_workspace_thread(
-        session,
-        professor_id=professor_id,
-        identity_id=identity_id,
-        llm_profile_id=llm_profile_id,
-    )
+    session.expire_all()
+    if response_scope == "workspace":
+        return await build_workspace_thread(
+            session,
+            professor_id=professor_id,
+            identity_id=identity_id,
+            llm_profile_id=llm_profile_id,
+        )
+    return await build_workspace_thread_for_task(session, task_id=task_id)
 
