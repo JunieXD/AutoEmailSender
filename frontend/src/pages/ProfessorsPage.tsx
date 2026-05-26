@@ -41,6 +41,7 @@ import {
   setStoredPageSize,
 } from "@/lib/pagination";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import {
   archiveProfessor,
@@ -366,6 +367,14 @@ const ModalShell = ({
   children: ReactNode;
   maxWidthClassName?: string;
 }) => {
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } =
+    useDismissableLayerClick(onClose);
+
   useEffect(() => {
     if (!open) {
       return;
@@ -389,14 +398,16 @@ const ModalShell = ({
       aria-label={title}
       aria-modal="true"
       className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
-      onClick={onClose}
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
     >
       <div
         className={clsx(
           "relative w-full overflow-hidden rounded-[32px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.96))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]",
           maxWidthClassName,
         )}
-        onClick={(event) => event.stopPropagation()}
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
       >
         <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(153,27,27,0.15),transparent_70%)]" />
         <div className="relative max-h-[85vh] overflow-y-auto px-6 py-6">

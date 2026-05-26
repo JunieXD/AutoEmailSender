@@ -23,6 +23,7 @@ import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInpu
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
   approveAndSendBatchTaskItemDraft,
@@ -2153,6 +2154,13 @@ const selectedCrawlJobCanReview =
     setMatchJobDetailsLoading(false);
     lastMatchJobDetailsLoadErrorRef.current = null;
   };
+  const closeSelectedCandidateDetail = useCallback(() => {
+    setSelectedCandidateDetail(null);
+  }, []);
+  const batchTaskDetailsLayer = useDismissableLayerClick(closeBatchTaskDetails);
+  const matchJobDetailsLayer = useDismissableLayerClick(closeMatchJobDetails);
+  const crawlJobDetailsLayer = useDismissableLayerClick(closeCrawlJobDetails);
+  const candidateDetailLayer = useDismissableLayerClick(closeSelectedCandidateDetail);
 
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({
@@ -2748,7 +2756,8 @@ const selectedCrawlJobCanReview =
       {selectedBatchTask ? (
         <div
           className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
-          onClick={closeBatchTaskDetails}
+          onClick={batchTaskDetailsLayer.onBackdropClick}
+          onMouseDown={batchTaskDetailsLayer.onBackdropMouseDown}
         >
           <section
             role="dialog"
@@ -2758,7 +2767,8 @@ const selectedCrawlJobCanReview =
                 ? "flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-7xl sm:rounded-3xl"
                 : "flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-4xl sm:rounded-3xl"
             }
-            onClick={(event) => event.stopPropagation()}
+            onClick={batchTaskDetailsLayer.onContentClick}
+            onMouseDown={batchTaskDetailsLayer.onContentMouseDown}
           >
             <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
               <div>
@@ -3359,13 +3369,15 @@ const selectedCrawlJobCanReview =
       {selectedMatchJob ? (
         <div
           className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
-          onClick={closeMatchJobDetails}
+          onClick={matchJobDetailsLayer.onBackdropClick}
+          onMouseDown={matchJobDetailsLayer.onBackdropMouseDown}
         >
           <section
             role="dialog"
             aria-label="匹配分析任务详情"
             className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-4xl sm:rounded-3xl"
-            onClick={(event) => event.stopPropagation()}
+            onClick={matchJobDetailsLayer.onContentClick}
+            onMouseDown={matchJobDetailsLayer.onContentMouseDown}
           >
             <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
               <div>
@@ -3500,13 +3512,15 @@ const selectedCrawlJobCanReview =
       {selectedCrawlJob ? (
         <div
           className="fixed inset-0 z-50 flex items-stretch justify-center bg-stone-950/30 p-0 sm:p-6"
-          onClick={closeCrawlJobDetails}
+          onClick={crawlJobDetailsLayer.onBackdropClick}
+          onMouseDown={crawlJobDetailsLayer.onBackdropMouseDown}
         >
           <section
             role="dialog"
             aria-label="抓取任务详情"
             className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-[min(94vw,1280px)] sm:rounded-3xl"
-            onClick={(event) => event.stopPropagation()}
+            onClick={crawlJobDetailsLayer.onContentClick}
+            onMouseDown={crawlJobDetailsLayer.onContentMouseDown}
           >
             <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
               <div>
@@ -3880,13 +3894,15 @@ const selectedCrawlJobCanReview =
       {selectedCandidateDetail ? (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/35 p-4"
-          onClick={() => setSelectedCandidateDetail(null)}
+          onClick={candidateDetailLayer.onBackdropClick}
+          onMouseDown={candidateDetailLayer.onBackdropMouseDown}
         >
           <section
             role="dialog"
             aria-label="候选导师详情"
             className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
+            onClick={candidateDetailLayer.onContentClick}
+            onMouseDown={candidateDetailLayer.onContentMouseDown}
           >
             <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-6 py-5">
               <div>
@@ -3902,7 +3918,7 @@ const selectedCrawlJobCanReview =
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedCandidateDetail(null)}
+                onClick={closeSelectedCandidateDetail}
                 className="ui-btn-secondary shrink-0"
                 aria-label="关闭候选导师详情"
               >
