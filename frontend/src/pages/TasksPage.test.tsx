@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,6 +58,7 @@ const apiMocks = vi.hoisted(() => ({
   regenerateDraft: vi.fn(),
   approveDraft: vi.fn(),
   approveAndSend: vi.fn(),
+  retryBatchTaskItemDraft: vi.fn(),
 }));
 
 const notificationMocks = vi.hoisted(() => ({
@@ -98,6 +99,7 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   approveBatchTaskItemDraft: apiMocks.approveBatchTaskItemDraft,
   approveAndSendBatchTaskItemDraft: apiMocks.approveAndSendBatchTaskItemDraft,
   deleteBatchTaskItem: apiMocks.deleteBatchTaskItem,
+  retryBatchTaskItemDraft: apiMocks.retryBatchTaskItemDraft,
 }));
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
@@ -427,7 +429,7 @@ const buildBatchItem = (
   last_error: null,
   is_replied: false,
   updated_at: "2026-05-08T00:00:00",
-  next_action: null,
+  next_action: "waiting_send",
   ...overrides,
 });
 
@@ -602,6 +604,7 @@ describe("TasksPage batch draft review", () => {
     });
     const item = buildBatchItem({
       status: "review_required",
+      next_action: "review_draft",
       match_score: 92,
     });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
@@ -652,16 +655,19 @@ describe("TasksPage batch draft review", () => {
       professor_id: 21,
       professor_name: "第一位导师",
       status: "review_required",
+      next_action: "review_draft",
     });
     const secondItem = buildBatchItem({
       id: 12,
       professor_id: 22,
       professor_name: "第二位导师",
       status: "review_required",
+      next_action: "review_draft",
     });
     const regeneratingFirstItem = {
       ...firstItem,
       status: "generating_draft" as const,
+      next_action: null,
     };
     const firstThread = buildWorkspaceThread({
       current_task: {
@@ -992,7 +998,7 @@ describe("batch task send queue copy", () => {
 
   it("flags scheduled batch items that lost their planned send time", () => {
     const action = buildBatchPendingItemAction(
-      buildBatchItem({ status: "approved", scheduled_at: null }),
+      buildBatchItem({ status: "approved", scheduled_at: null, next_action: "missing_schedule" }),
       buildBatchTask({ schedule_type: "scheduled" }),
     );
 
@@ -1004,23 +1010,56 @@ describe("batch task send queue copy", () => {
 
   it("keeps AI rewritten drafts as manual review work", () => {
     const action = buildBatchPendingItemAction(
-      buildBatchItem({ status: "review_required" }),
+      buildBatchItem({ status: "review_required", next_action: "review_draft" }),
       buildBatchTask({ schedule_type: "scheduled" }),
     );
 
     expect(action).toEqual({
-      kind: "link",
+      kind: "review",
       text: "审核草稿",
+    });
+  });
+
+  it("ignores stale review actions after an item leaves review status", () => {
+    const action = buildBatchPendingItemAction(
+      buildBatchItem({ status: "approved", next_action: "review_draft" }),
+      buildBatchTask({ schedule_type: "immediate" }),
+    );
+
+    expect(action).toEqual({
+      kind: "message",
+      text: "等待自动发送",
     });
   });
 
   it("does not show an action while AI drafts are pending generation", () => {
     const action = buildBatchPendingItemAction(
-      buildBatchItem({ status: "matched" }),
+      buildBatchItem({ status: "matched", next_action: "waiting_draft_generation" }),
       buildBatchTask({ schedule_type: "scheduled" }),
     );
 
-    expect(action).toBeNull();
+    expect(action).toEqual({
+      kind: "message",
+      text: "等待后台生成草稿",
+    });
+  });
+
+  it("routes profile completion to professor management instead of workspace", () => {
+    const action = buildBatchPendingItemAction(
+      buildBatchItem({
+        professor_name: "缺资料导师",
+        professor_email: "missing-profile@example.edu",
+        status: "discovered",
+        next_action: "complete_professor_profile",
+      }),
+      buildBatchTask(),
+    );
+
+    expect(action).toEqual({
+      kind: "professor",
+      text: "补全导师资料",
+      href: "/professors?keyword=missing-profile%40example.edu",
+    });
   });
 
   it("describes schedule-expired canceled items with explicit copy", () => {
@@ -1028,6 +1067,7 @@ describe("batch task send queue copy", () => {
       buildBatchItem({
         status: "canceled",
         cancellation_reason: "schedule_expired",
+        next_action: null,
       }),
     );
 
@@ -1036,6 +1076,140 @@ describe("batch task send queue copy", () => {
 });
 
 describe("batch task expiration display", () => {
+  it("shows professor profile completion link instead of workspace fallback", async () => {
+    const task = buildBatchTask({
+      pending_generation_count: 1,
+      approved_count: 0,
+      scheduled_count: 0,
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([
+      buildBatchItem({
+        professor_name: "缺资料导师",
+        professor_email: "missing-profile@example.edu",
+        status: "discovered",
+        next_action: "complete_professor_profile",
+      }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+
+    const profileLink = await screen.findByRole("link", { name: "补全导师资料" });
+    expect(profileLink).toHaveAttribute(
+      "href",
+      "/professors?keyword=missing-profile%40example.edu",
+    );
+    expect(screen.queryByRole("link", { name: "去处理" })).not.toBeInTheDocument();
+  });
+
+  it("uses next actions for draft failed items instead of workspace fallback", async () => {
+    const task = buildBatchTask({
+      pending_generation_count: 0,
+      draft_failed_count: 1,
+      approved_count: 0,
+      scheduled_count: 0,
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([
+      buildBatchItem({
+        professor_name: "失败导师",
+        professor_email: "failed-profile@example.edu",
+        status: "draft_failed",
+        last_error: "请先补充导师研究方向，再使用 AI 生成草稿",
+        next_action: "complete_professor_profile",
+      }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+
+    const profileLink = await screen.findByRole("link", { name: "补全导师资料" });
+    expect(profileLink).toHaveAttribute(
+      "href",
+      "/professors?keyword=failed-profile%40example.edu",
+    );
+    expect(screen.queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
+  });
+
+  it("retries draft failed batch items from the detail panel", async () => {
+    const task = buildBatchTask({
+      pending_generation_count: 0,
+      draft_failed_count: 1,
+      approved_count: 0,
+      scheduled_count: 0,
+    });
+    const failedItem = buildBatchItem({
+      id: 88,
+      status: "draft_failed",
+      last_error: "LLM timeout",
+      next_action: "retry_draft_generation",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([failedItem]);
+    apiMocks.retryBatchTaskItemDraft.mockResolvedValue({ ok: true, task });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "重新生成草稿" }));
+
+    expect(apiMocks.retryBatchTaskItemDraft).toHaveBeenCalledWith(task.id, failedItem.id);
+  });
+
+  it("uses next actions for send failed items instead of workspace fallback", async () => {
+    const task = buildBatchTask({
+      pending_generation_count: 0,
+      failed_count: 1,
+      approved_count: 0,
+      scheduled_count: 0,
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([
+      buildBatchItem({
+        professor_name: "发送失败导师",
+        professor_email: "send-failed@example.edu",
+        status: "send_failed",
+        last_error: "smtp timeout",
+        next_action: "send_failed",
+      }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+
+    expect(await screen.findByText("请检查发送失败原因")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
+    const manualCard = screen
+      .getByText("待审核/未处理")
+      .closest("div.rounded-2xl");
+    expect(manualCard).not.toBeNull();
+    expect(within(manualCard as HTMLElement).getByText("0")).toBeInTheDocument();
+  });
+
   it("shows expired batch status and schedule-expired cancellation text in the detail panel", async () => {
     const task = buildBatchTask({
       status: "expired",
@@ -1048,6 +1222,7 @@ describe("batch task expiration display", () => {
       buildBatchItem({
         status: "canceled",
         cancellation_reason: "schedule_expired",
+        next_action: null,
       }),
     ]);
 

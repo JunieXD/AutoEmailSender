@@ -33,6 +33,8 @@ const normalize = (value: string | null | undefined): string =>
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
 
+const DASHBOARD_TITLE_SPLIT_PATTERN = /[、，,/／|｜；;]+/;
+
 const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
   const trimmed = value?.trim();
   if (trimmed) {
@@ -40,10 +42,31 @@ const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
   }
 };
 
+const extractDashboardTitleTags = (title: string | null | undefined): string[] => {
+  if (!title?.trim()) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  return title
+    .split(DASHBOARD_TITLE_SPLIT_PATTERN)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => {
+      if (seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    });
+};
+
 export const buildDashboardFilterOptions = (
   professors: ProfessorDashboardItemDTO[],
-  filters: Pick<DashboardFilterState, "universities"> = {
+  filters: Pick<DashboardFilterState, "universities"> &
+    Partial<Pick<DashboardFilterState, "schools">> = {
     universities: [],
+    schools: [],
   },
 ): DashboardFilterOptions => {
   const universities = new Set<string>();
@@ -51,17 +74,27 @@ export const buildDashboardFilterOptions = (
   const departments = new Set<string>();
   const titles = new Set<string>();
   const selectedUniversities = filters.universities;
+  const selectedSchools = filters.schools ?? [];
 
   professors.forEach((professor) => {
     addNonEmpty(universities, professor.university);
     if (
       selectedUniversities.length === 0 ||
-      selectedUniversities.includes(professor.university ?? "")
+      selectedUniversities.includes(professor.university?.trim() ?? "")
     ) {
       addNonEmpty(schools, professor.school);
     }
-    addNonEmpty(departments, professor.department);
-    addNonEmpty(titles, professor.title);
+    if (
+      (selectedUniversities.length === 0 ||
+        selectedUniversities.includes(professor.university?.trim() ?? "")) &&
+      (selectedSchools.length === 0 ||
+        selectedSchools.includes(professor.school?.trim() ?? ""))
+    ) {
+      addNonEmpty(departments, professor.department);
+    }
+    extractDashboardTitleTags(professor.title).forEach((title) => {
+      addNonEmpty(titles, title);
+    });
   });
 
   return {
@@ -75,12 +108,27 @@ export const buildDashboardFilterOptions = (
 const matchesAny = (
   value: string | null | undefined,
   selectedValues: string[],
-): boolean => selectedValues.length === 0 || selectedValues.includes(value ?? "");
+): boolean =>
+  selectedValues.length === 0 || selectedValues.includes(value?.trim() ?? "");
+
+const matchesAnyTitle = (
+  title: string | null | undefined,
+  selectedValues: string[],
+): boolean => {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+  const tags = extractDashboardTitleTags(title);
+  return selectedValues.some((value) => tags.includes(value));
+};
 
 const matchesAnyStatus = (
   value: ProfessorDashboardStatus,
   selectedValues: ProfessorDashboardStatus[],
 ): boolean => selectedValues.length === 0 || selectedValues.includes(value);
+
+const arraysEqual = (left: string[], right: string[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
 
 const parseMinimumMatchScore = (value: string): number | null => {
   const trimmed = value.trim();
@@ -134,9 +182,49 @@ export const filterDashboardProfessors = (
       matchesAny(professor.university, filters.universities) &&
       matchesAny(professor.school, filters.schools) &&
       matchesAny(professor.department, filters.departments) &&
-      matchesAny(professor.title, filters.titles) &&
+      matchesAnyTitle(professor.title, filters.titles) &&
       matchesAnyStatus(professor.status, filters.statuses) &&
       matchScoreMatched
     );
   });
+};
+
+export const pruneDashboardFilters = (
+  professors: ProfessorDashboardItemDTO[],
+  filters: DashboardFilterState,
+): DashboardFilterState => {
+  const allOptions = buildDashboardFilterOptions(professors);
+  const universities = filters.universities.filter((value) =>
+    allOptions.universities.includes(value),
+  );
+  const schoolOptions = buildDashboardFilterOptions(professors, {
+    universities,
+    schools: [],
+  }).schools;
+  const schools = filters.schools.filter((value) => schoolOptions.includes(value));
+  const departmentOptions = buildDashboardFilterOptions(professors, {
+    universities,
+    schools,
+  }).departments;
+  const departments = filters.departments.filter((value) =>
+    departmentOptions.includes(value),
+  );
+  const titles = filters.titles.filter((value) => allOptions.titles.includes(value));
+
+  if (
+    arraysEqual(universities, filters.universities) &&
+    arraysEqual(schools, filters.schools) &&
+    arraysEqual(departments, filters.departments) &&
+    arraysEqual(titles, filters.titles)
+  ) {
+    return filters;
+  }
+
+  return {
+    ...filters,
+    universities,
+    schools,
+    departments,
+    titles,
+  };
 };

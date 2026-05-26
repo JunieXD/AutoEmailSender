@@ -5,11 +5,15 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskCancellationReason, EmailTaskSource, EmailTaskStatus
+from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskCancellationReason, EmailTaskSource, EmailTaskStatus, Professor
+from app.services.batch_task_item_actions import (
+    batch_item_uses_llm_generation_column,
+    normalize_batch_item_generation_mode,
+)
 from app.services.task_runtime import generate_task_draft
 
 
@@ -105,10 +109,13 @@ async def _claim_queued_llm_drafts(
             await session.scalars(
                 select(EmailTask)
                 .join(BatchTask, EmailTask.batch_task_id == BatchTask.id)
+                .join(Professor, EmailTask.professor_id == Professor.id)
                 .where(
                     EmailTask.source == EmailTaskSource.BATCH.value,
                     EmailTask.status.in_([EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value]),
-                    EmailTask.outreach_generation_mode == "llm",
+                    batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode),
+                    EmailTask.primary_material_id.is_not(None),
+                    func.trim(Professor.research_direction) != "",
                     BatchTask.status == BatchTaskStatus.RUNNING.value,
                 )
                 .order_by(BatchTask.created_at.asc(), EmailTask.created_at.asc(), EmailTask.id.asc())
@@ -127,6 +134,7 @@ async def _claim_queued_llm_drafts(
                     EmailTask.status == task.status,
                 )
                 .values(
+                    outreach_generation_mode=normalize_batch_item_generation_mode(task),
                     draft_generation_previous_status=task.status,
                     status=EmailTaskStatus.GENERATING_DRAFT.value,
                     updated_at=now,

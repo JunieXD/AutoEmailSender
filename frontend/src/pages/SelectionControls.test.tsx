@@ -5,8 +5,9 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { listProfessorsForManagement } from "@/lib/api/professorsApi";
 import type {
   IdentityDTO,
   LLMProfileDTO,
@@ -20,6 +21,21 @@ const notifyMock = {
   notifyError: vi.fn(),
   notifySuccess: vi.fn(),
   notifyWarning: vi.fn(),
+};
+
+const ProfessorsPageWithLinkedNavigation = () => {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => navigate("/professors?keyword=missing-profile%40example.edu")}
+      >
+        Go to linked professor
+      </button>
+      <ProfessorsPage />
+    </>
+  );
 };
 
 const selectedIdentity: IdentityDTO = {
@@ -163,6 +179,7 @@ describe("selection controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+    vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
     Object.assign(selectionContextValue, {
       identities: [selectedIdentity],
       llmProfiles: [selectedLlmProfile],
@@ -368,5 +385,183 @@ describe("selection controls", () => {
         screen.getByRole("button", { name: "高级筛选 1" }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("switches back to active professors when opening management with a linked keyword", async () => {
+    window.sessionStorage.setItem(
+      "professors_page_filters",
+      JSON.stringify({
+        archiveFilter: "archived",
+        filters: {
+          keyword: "",
+          universities: [],
+          schools: [],
+          departments: [],
+          titles: [],
+        },
+        advancedFiltersOpen: false,
+        sortKey: "latest",
+        currentPage: 1,
+      }),
+    );
+    const activeTarget = {
+      ...managementProfessors[0],
+      id: 999,
+      name: "Missing Profile Mentor",
+      email: "missing-profile@example.edu",
+      university: "Target University",
+      school: "Target School",
+    };
+    vi.mocked(listProfessorsForManagement).mockImplementation(async (archived) =>
+      archived === "active" ? [activeTarget] : [],
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/professors?keyword=missing-profile%40example.edu"]}>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Missing Profile Mentor")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenLastCalledWith("active");
+    });
+    expect(listProfessorsForManagement).not.toHaveBeenCalledWith("archived");
+  });
+
+  it("keeps linked keyword active results when the previous archived request resolves later", async () => {
+    window.sessionStorage.setItem(
+      "professors_page_filters",
+      JSON.stringify({
+        archiveFilter: "archived",
+        filters: {
+          keyword: "",
+          universities: [],
+          schools: [],
+          departments: [],
+          titles: [],
+        },
+        advancedFiltersOpen: false,
+        sortKey: "latest",
+        currentPage: 1,
+      }),
+    );
+    const activeTarget = {
+      ...managementProfessors[0],
+      id: 999,
+      name: "Missing Profile Mentor",
+      email: "missing-profile@example.edu",
+      university: "Target University",
+      school: "Target School",
+    };
+    let resolveArchived: (value: ProfessorManagementItemDTO[]) => void = () => {};
+    vi.mocked(listProfessorsForManagement).mockImplementation((archived) => {
+      if (archived === "archived") {
+        return new Promise<ProfessorManagementItemDTO[]>((resolve) => {
+          resolveArchived = resolve;
+        });
+      }
+      return Promise.resolve([activeTarget]);
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/professors?keyword=missing-profile%40example.edu"]}>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Missing Profile Mentor")).toBeInTheDocument();
+    resolveArchived?.([]);
+    await waitFor(() => {
+      expect(screen.getByText("Missing Profile Mentor")).toBeInTheDocument();
+    });
+  });
+
+  it("switches to active professors when a linked keyword is opened after the page is mounted", async () => {
+    window.sessionStorage.setItem(
+      "professors_page_filters",
+      JSON.stringify({
+        archiveFilter: "archived",
+        filters: {
+          keyword: "",
+          universities: [],
+          schools: [],
+          departments: [],
+          titles: [],
+        },
+        advancedFiltersOpen: false,
+        sortKey: "latest",
+        currentPage: 1,
+      }),
+    );
+    const activeTarget = {
+      ...managementProfessors[0],
+      id: 999,
+      name: "Missing Profile Mentor",
+      email: "missing-profile@example.edu",
+      university: "Target University",
+      school: "Target School",
+    };
+    vi.mocked(listProfessorsForManagement).mockImplementation(async (archived) =>
+      archived === "active" ? [activeTarget] : [],
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/professors"]}>
+        <Routes>
+          <Route path="/professors" element={<ProfessorsPageWithLinkedNavigation />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("archived");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Go to linked professor" }));
+
+    expect(await screen.findByText("Missing Profile Mentor")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenLastCalledWith("active");
+    });
+  });
+
+  it("clears stored advanced filters when opening professor management with a linked keyword", async () => {
+    window.sessionStorage.setItem(
+      "professors_page_filters",
+      JSON.stringify({
+        archiveFilter: "active",
+        filters: {
+          keyword: "",
+          universities: ["示例大学"],
+          schools: [],
+          departments: [],
+          titles: [],
+        },
+        advancedFiltersOpen: true,
+        sortKey: "latest",
+        currentPage: 1,
+      }),
+    );
+    vi.mocked(listProfessorsForManagement).mockResolvedValue([
+      ...managementProfessors,
+      {
+        ...managementProfessors[0],
+        id: 999,
+        name: "缺资料导师",
+        email: "missing-profile@example.edu",
+        university: "目标大学",
+        school: "目标学院",
+      },
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={["/professors?keyword=missing-profile%40example.edu"]}>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("缺资料导师")).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("missing-profile@example.edu");
+    expect(screen.getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
   });
 });

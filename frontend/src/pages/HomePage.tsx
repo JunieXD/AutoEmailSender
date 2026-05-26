@@ -22,6 +22,7 @@ import {
   createDefaultDashboardFilters,
   filterDashboardProfessors,
   getActiveDashboardFilterCount,
+  pruneDashboardFilters,
   type DashboardFilterState,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
@@ -349,6 +350,14 @@ export const HomePage = () => {
     void loadProfessors();
   }, [loadProfessors]);
 
+  useEffect(() => {
+    if (professors.length === 0) {
+      return;
+    }
+
+    setFilters((previous) => pruneDashboardFilters(professors, previous));
+  }, [professors]);
+
   const filterOptions = buildDashboardFilterOptions(professors, filters);
   const activeAdvancedFilterCount = getActiveDashboardFilterCount(filters);
   const selectedStatusLabels = filters.statuses.map((item) =>
@@ -357,20 +366,6 @@ export const HomePage = () => {
 
   const updateFilters = (nextFilters: Partial<DashboardFilterState>) => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
-  };
-
-  const keepSchoolsForUniversities = (
-    schools: string[],
-    universities: string[],
-  ) => {
-    if (universities.length === 0 || schools.length === 0) {
-      return schools;
-    }
-
-    const availableSchools = new Set(
-      buildDashboardFilterOptions(professors, { universities }).schools,
-    );
-    return schools.filter((school) => availableSchools.has(school));
   };
 
   const toggleStringFilterValue = (
@@ -384,11 +379,17 @@ export const HomePage = () => {
         : [...currentValues, value];
 
       if (key === "universities") {
-        return {
+        return pruneDashboardFilters(professors, {
           ...previous,
           universities: nextValues,
-          schools: keepSchoolsForUniversities(previous.schools, nextValues),
-        };
+        });
+      }
+
+      if (key === "schools") {
+        return pruneDashboardFilters(professors, {
+          ...previous,
+          schools: nextValues,
+        });
       }
 
       return { ...previous, [key]: nextValues };

@@ -69,6 +69,7 @@ class BatchTaskItemRead(BaseModel):
     last_error: str | None
     is_replied: bool
     updated_at: datetime
+    next_action: str | None
 
 
 class BatchTaskActionResponse(BaseModel):

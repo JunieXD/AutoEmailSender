@@ -848,9 +848,13 @@ export const TasksPage = () => {
   const selectedBatchWaitingSendCount = selectedBatchTask
     ? getBatchTaskWaitingSendCount(selectedBatchTask)
     : 0;
-  const selectedBatchNeedsManualCount = Math.max(
-    pendingBatchTaskItems.length - selectedBatchWaitingSendCount,
-    0,
+  const selectedBatchNeedsManualItems = selectedBatchTaskItems.filter(
+    (item) =>
+      item.next_action === "complete_professor_profile" ||
+      item.next_action === "select_primary_material" ||
+      item.next_action === "review_draft" ||
+      item.next_action === "missing_schedule" ||
+      item.next_action === "retry_draft_generation",
   );
   const visibleBatchTasks = useMemo(
     () => getPageItems(tasks, batchPage, TASKS_PAGE_SIZE),
@@ -1954,7 +1958,14 @@ const selectedCrawlJobCanReview =
       setSelectedBatchTaskItems((current) =>
         current.map((item) =>
           item.id === activeBatchReviewItem.id
-            ? { ...item, status: "approved" }
+            ? {
+                ...item,
+                status: "approved",
+                next_action:
+                  selectedBatchTask.schedule_type === "scheduled" && !item.scheduled_at
+                    ? "missing_schedule"
+                    : "waiting_send",
+              }
             : item,
         ),
       );
@@ -2012,6 +2023,25 @@ const selectedCrawlJobCanReview =
     }
   };
 
+  const handleRetryBatchTaskItemDraft = async (item: BatchTaskItemDTO) => {
+    if (!selectedBatchTask) {
+      return;
+    }
+    setBatchReviewItemAction(item.id, "regenerate");
+    try {
+      const result = await retryBatchTaskItemDraft(selectedBatchTask.id, item.id);
+      setSelectedBatchTask(result.task);
+      notifySuccess("已重新加入草稿生成队列");
+      await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "重新生成草稿失败";
+      notifyError("重新生成草稿失败", message);
+    } finally {
+      clearBatchReviewItemAction(item.id, "regenerate");
+    }
+  };
+
   const handleSendBatchDraftNow = async () => {
     if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
       return;
@@ -2041,7 +2071,9 @@ const selectedCrawlJobCanReview =
       notifySuccess("邮件已提交发送");
       setSelectedBatchTaskItems((current) =>
         current.map((item) =>
-          item.id === activeBatchReviewItem.id ? { ...item, status: "sent" } : item,
+          item.id === activeBatchReviewItem.id
+            ? { ...item, status: "sent", next_action: null }
+            : item,
         ),
       );
       await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
@@ -2053,6 +2085,56 @@ const selectedCrawlJobCanReview =
     } finally {
       clearBatchReviewItemAction(itemId, "submit");
     }
+  };
+
+  const renderBatchTaskItemAction = (item: BatchTaskItemDTO) => {
+    if (!selectedBatchTask) {
+      return null;
+    }
+    const action = buildBatchPendingItemAction(item, selectedBatchTask);
+    if (action?.kind === "message") {
+      return (
+        <span className="font-medium text-stone-600">
+          {action.text}
+        </span>
+      );
+    }
+    if (action?.kind === "review") {
+      return (
+        <button
+          type="button"
+          onClick={() => void openBatchDraftReview(item)}
+          className="font-medium text-primary"
+        >
+          {action.text}
+        </button>
+      );
+    }
+    if (action?.kind === "professor" || action?.kind === "profile") {
+      return (
+        <Link
+          to={action.href}
+          className="font-medium text-primary"
+        >
+          {action.text}
+        </Link>
+      );
+    }
+    if (action?.kind === "retry") {
+      return (
+        <button
+          type="button"
+          onClick={() => void handleRetryBatchTaskItemDraft(item)}
+          disabled={batchReviewItemActions[item.id] === "regenerate"}
+          className="font-medium text-primary disabled:cursor-not-allowed disabled:text-stone-400"
+        >
+          {batchReviewItemActions[item.id] === "regenerate"
+            ? "正在重新生成"
+            : action.text}
+        </button>
+      );
+    }
+    return null;
   };
 
   const closeBatchTaskDetails = () => {
@@ -3010,7 +3092,7 @@ const selectedCrawlJobCanReview =
                       待审核/未处理
                     </div>
                     <div className="mt-2 text-xl font-semibold text-amber-900">
-                      {selectedBatchNeedsManualCount}
+                      {selectedBatchNeedsManualItems.length}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3">
@@ -3094,7 +3176,6 @@ const selectedCrawlJobCanReview =
                 <div className="mt-3 space-y-2">
                   {pendingBatchTaskItems.length > 0 ? (
                     pendingBatchTaskItems.map((item) => {
-                      const action = buildBatchPendingItemAction(item, selectedBatchTask);
                       const cancellationText = getBatchTaskItemCancellationText(item);
                       return (
                         <div
@@ -3132,26 +3213,7 @@ const selectedCrawlJobCanReview =
                               <span className="font-medium text-red-700">
                                 {cancellationText}
                               </span>
-                            ) : action?.kind === "message" ? (
-                              <span className="font-medium text-stone-600">
-                                {action.text}
-                              </span>
-                            ) : action?.kind === "link" && item.status === "review_required" ? (
-                              <button
-                                type="button"
-                                onClick={() => void openBatchDraftReview(item)}
-                                className="font-medium text-primary"
-                              >
-                                {action.text}
-                              </button>
-                            ) : action?.kind === "link" ? (
-                              <Link
-                                to={`/workspace/${item.professor_id}`}
-                                className="font-medium text-primary"
-                              >
-                                {action.text}
-                              </Link>
-                            ) : null}
+                            ) : renderBatchTaskItemAction(item)}
                             {item.match_score !== null ? (
                               <span>匹配分 {item.match_score}</span>
                             ) : null}
@@ -3223,12 +3285,9 @@ const selectedCrawlJobCanReview =
                               {item.last_error || "暂无失败原因"}
                             </p>
                           </div>
-                          <Link
-                            to={`/workspace/${item.professor_id}`}
-                            className="text-xs font-medium text-primary"
-                          >
-                            查看并处理
-                          </Link>
+                          <div className="text-xs">
+                            {renderBatchTaskItemAction(item)}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -3256,12 +3315,9 @@ const selectedCrawlJobCanReview =
                               {item.last_error || "暂无失败原因"}
                             </p>
                           </div>
-                          <Link
-                            to={`/workspace/${item.professor_id}`}
-                            className="text-xs font-medium text-primary"
-                          >
-                            查看并处理
-                          </Link>
+                          <div className="text-xs">
+                            {renderBatchTaskItemAction(item)}
+                          </div>
                         </div>
                       </div>
                     ))}

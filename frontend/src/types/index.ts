@@ -543,6 +543,16 @@ export type WorkspaceTaskStatus =
 
 export type WorkspaceTaskStatusLabelKey = WorkspaceTaskStatus;
 export type WorkspaceTaskCancellationReason = 'batch_stopped' | 'schedule_expired';
+export type BatchTaskItemNextAction =
+  | 'waiting_draft_generation'
+  | 'complete_professor_profile'
+  | 'select_primary_material'
+  | 'review_draft'
+  | 'waiting_send'
+  | 'waiting_scheduled_send'
+  | 'missing_schedule'
+  | 'retry_draft_generation'
+  | 'send_failed';
 
 export interface BatchTaskCardDTO {
   id: number;
@@ -588,7 +598,7 @@ export interface BatchTaskItemDTO {
   last_error: string | null;
   is_replied: boolean;
   updated_at: string;
-  next_action: string | null;
+  next_action: BatchTaskItemNextAction | null;
 }
 
 export interface WorkspaceProfessorDTO {

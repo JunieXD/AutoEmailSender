@@ -28,6 +28,10 @@ from app.services.file_storage import (
     save_upload,
 )
 from app.services.batch_task_status import sync_batch_task_completion
+from app.services.batch_task_item_actions import (
+    batch_item_uses_llm_generation_column,
+    normalize_batch_item_generation_mode,
+)
 from app.services.materials import (
     MATERIAL_REFERENCE_BLOCKING_STATUSES,
     MATERIAL_REFERENCE_DETACHABLE_STATUSES,
@@ -81,6 +85,7 @@ async def upload_identity_material(
     if identity.current_primary_material_id is None and material_can_be_primary(material):
         identity.current_primary_material_id = material.id
         identity.updated_at = datetime.now(UTC)
+        await _apply_primary_material_to_blocked_batch_tasks(session, material)
 
     await _record_material_log(session, material, "identity_material.uploaded")
     await session.commit()
@@ -101,6 +106,7 @@ async def set_primary_material(
     identity = material.identity
     identity.current_primary_material_id = material.id
     identity.updated_at = datetime.now(UTC)
+    await _apply_primary_material_to_blocked_batch_tasks(session, material)
     await _record_material_log(session, material, "identity_material.primary_set")
     await session.commit()
     await session.refresh(identity)
@@ -373,6 +379,52 @@ def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
     if updated:
         task.updated_at = datetime.now(UTC)
     return updated
+
+
+async def _apply_primary_material_to_blocked_batch_tasks(
+    session: AsyncSession,
+    material: IdentityMaterial,
+) -> int:
+    tasks = list(
+        (
+            await session.execute(
+                select(EmailTask)
+                .options(selectinload(EmailTask.batch_task))
+                .where(
+                    EmailTask.identity_id == material.identity_id,
+                    EmailTask.source == "batch",
+                    batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode),
+                    EmailTask.primary_material_id.is_(None),
+                    EmailTask.status.in_(
+                        [
+                            EmailTaskStatus.DISCOVERED.value,
+                            EmailTaskStatus.MATCHED.value,
+                            EmailTaskStatus.DRAFT_FAILED.value,
+                        ],
+                    ),
+                ),
+            )
+        )
+        .scalars()
+        .unique()
+    )
+    updated_count = 0
+    now = datetime.now(UTC)
+    for task in tasks:
+        batch_task = task.batch_task
+        if batch_task is None or batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES:
+            continue
+        task.outreach_generation_mode = normalize_batch_item_generation_mode(task)
+        task.primary_material_id = material.id
+        task.last_error = None
+        if task.status == EmailTaskStatus.DRAFT_FAILED.value:
+            task.status = material_reference_fallback_status(task)
+        task.updated_at = now
+        if batch_task.primary_material_id is None:
+            batch_task.primary_material_id = material.id
+            batch_task.updated_at = now
+        updated_count += 1
+    return updated_count
 
 
 def _detach_material_from_test_compose_session(

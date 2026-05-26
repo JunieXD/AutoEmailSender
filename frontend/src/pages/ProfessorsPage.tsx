@@ -6,9 +6,11 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import clsx from "clsx";
+import { useSearchParams } from "react-router-dom";
 import {
   Archive,
   Bot,
@@ -416,13 +418,27 @@ const ModalShell = ({
 };
 
 export const ProfessorsPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedKeyword = searchParams.get("keyword")?.trim() ?? "";
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { selectedLlmProfileId } = useSelectionContext();
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
-  const storedState = useMemo(
-    () => readStoredProfessorManagementState(),
-    [],
-  );
+  const storedState = useMemo(() => {
+    const state = readStoredProfessorManagementState();
+    if (!linkedKeyword) {
+      return state;
+    }
+    return {
+      ...state,
+      archiveFilter: "active" as ArchiveFilter,
+      filters: {
+        ...createDefaultManagementFilters(),
+        keyword: linkedKeyword,
+      },
+      advancedFiltersOpen: false,
+      currentPage: 1,
+    };
+  }, [linkedKeyword]);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>(
     storedState.archiveFilter,
   );
@@ -444,6 +460,7 @@ export const ProfessorsPage = () => {
   );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
+  const latestProfessorsRequestIdRef = useRef(0);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
   const [editingProfessor, setEditingProfessor] =
     useState<ProfessorManagementItemDTO | null>(null);
@@ -461,11 +478,31 @@ export const ProfessorsPage = () => {
     emptyCrawlerJobForm(),
   );
   const [creatingCrawlJob, setCreatingCrawlJob] = useState(false);
+  useEffect(() => {
+    if (!linkedKeyword) {
+      return;
+    }
+    setArchiveFilter("active");
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+    setAdvancedFiltersOpen(false);
+    setFilters({ ...createDefaultManagementFilters(), keyword: linkedKeyword });
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete("keyword");
+      return next;
+    }, { replace: true });
+  }, [linkedKeyword, setSearchParams]);
   const loadProfessors = useCallback(
     async (filter: ArchiveFilter = archiveFilter) => {
+      const requestId = latestProfessorsRequestIdRef.current + 1;
+      latestProfessorsRequestIdRef.current = requestId;
       setLoading(true);
       try {
         const data = await listProfessorsForManagement(filter);
+        if (latestProfessorsRequestIdRef.current !== requestId) {
+          return;
+        }
         setProfessors(data);
         setSelectedIds((previous) => {
           const next = new Set<number>();
@@ -480,10 +517,15 @@ export const ProfessorsPage = () => {
           return next;
         });
       } catch (loadError) {
+        if (latestProfessorsRequestIdRef.current !== requestId) {
+          return;
+        }
         const message = getActionErrorMessage(loadError, "加载导师列表失败");
         notifyError("加载导师列表失败", message);
       } finally {
-        setLoading(false);
+        if (latestProfessorsRequestIdRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
     [archiveFilter, notifyError],

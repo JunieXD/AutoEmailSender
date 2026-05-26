@@ -169,6 +169,81 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(processed, 0)
         mocked_generate.assert_not_awaited()
 
+    def test_null_generation_mode_batch_items_are_claimed_as_llm_drafts(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value],
+                outreach_generation_mode=None,
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            new=AsyncMock(return_value=self._build_draft_generation_result()),
+        ):
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=1,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                ),
+            )
+
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 1)
+        self.assertEqual(task.status, EmailTaskStatus.REVIEW_REQUIRED.value)
+        self.assertEqual(task.outreach_generation_mode, "llm")
+
+    def test_items_missing_primary_material_are_not_claimed_for_generation(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value],
+                with_primary_material=False,
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            new=AsyncMock(side_effect=AssertionError("缺默认材料的任务不应被认领")),
+        ) as mocked_generate:
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=1,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                ),
+            )
+
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 0)
+        self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
+        mocked_generate.assert_not_awaited()
+
+    def test_items_missing_professor_research_direction_are_not_claimed_for_generation(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value],
+                professor_research_direction="",
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            new=AsyncMock(side_effect=AssertionError("缺研究方向的任务不应被认领")),
+        ) as mocked_generate:
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=1,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                ),
+            )
+
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 0)
+        self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
+        mocked_generate.assert_not_awaited()
+
 
     def test_batch_draft_generation_keeps_batch_selected_materials(self) -> None:
         task_ids = self._run_async(
@@ -240,6 +315,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         previous_status: str | None = None,
         updated_at: datetime | None = None,
         selected_material_ids: list[int] | None = None,
+        outreach_generation_mode: str | None = "llm",
+        with_primary_material: bool = True,
+        professor_research_direction: str = "Large language models",
     ) -> list[int]:
         async with self.session_factory() as session:
             session.add(AppSetting(id=1))
@@ -269,7 +347,8 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 extracted_text="My research focuses on agents.",
                 material_type=IdentityMaterialType.RESUME.value,
             )
-            identity.current_primary_material = material
+            if with_primary_material:
+                identity.current_primary_material = material
             llm_profile = LLMProfile(
                 name=f"默认模型-{datetime.now(UTC).timestamp()}",
                 provider="openai",
@@ -284,7 +363,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 name="批量草稿任务",
                 schedule_type="immediate",
                 status=BatchTaskStatus.RUNNING.value,
-                primary_material=material,
+                primary_material=material if with_primary_material else None,
                 email_subject="申请与{{name}}老师交流",
                 email_body="老师您好，我是{{sender_name}}。",
                 selected_material_ids=selected_material_ids,
@@ -303,13 +382,13 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                         university="Example University",
                         school="School of AI",
                         department="Computer Science",
-                        research_direction="Large language models",
+                        research_direction=professor_research_direction,
                         recent_papers=[],
                     ),
-                    primary_material=material,
+                    primary_material=material if with_primary_material else None,
                     status=status,
                     draft_generation_previous_status=previous_status,
-                    outreach_generation_mode="llm",
+                    outreach_generation_mode=outreach_generation_mode,
                     outreach_template_subject="申请与{{name}}老师交流",
                     outreach_template_body_text="老师您好，我是{{sender_name}}。",
                     selected_material_ids=selected_material_ids,

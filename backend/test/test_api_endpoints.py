@@ -6317,6 +6317,362 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(payload[1]["status"], "send_failed")
         self.assertEqual(payload[1]["last_error"], "smtp timeout")
 
+    def test_batch_task_items_include_next_action_for_blocked_draft_generation(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+        professor_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "缺资料导师",
+                "email": "missing-profile@example.edu",
+                "title": "Professor",
+                "university": "Example University",
+                "school": "School of Computing",
+                "department": "Computer Science",
+                "research_direction": "",
+                "recent_papers": [],
+                "profile_url": None,
+                "source_url": None,
+            },
+        )
+        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_response.json()["id"],
+            status="discovered",
+            primary_material_id=material_id,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()[0]["next_action"], "complete_professor_profile")
+
+    def test_batch_task_items_retry_draft_after_profile_is_completed(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="completed-profile@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="draft_failed",
+            primary_material_id=material_id,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET last_error = '请先补充导师研究方向，再使用 AI 生成草稿'
+                WHERE id = ?
+                """,
+                (task_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()[0]["next_action"], "retry_draft_generation")
+
+    def test_setting_primary_material_unblocks_batch_task_items_missing_material(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="missing-material@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="discovered",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+
+        before_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(before_response.status_code, 200, msg=before_response.text)
+        self.assertEqual(before_response.json()[0]["next_action"], "select_primary_material")
+
+        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+
+        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        after_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(after_response.status_code, 200, msg=after_response.text)
+        self.assertEqual(after_response.json()[0]["next_action"], "waiting_draft_generation")
+
+    def test_null_generation_mode_batch_item_uses_llm_next_action_contract(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="null-mode-missing-material@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="discovered",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode=None,
+        )
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()[0]["next_action"], "select_primary_material")
+
+    def test_setting_primary_material_unblocks_null_generation_mode_batch_items(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="null-mode-unblocks@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="discovered",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode=None,
+        )
+
+        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+
+        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        after_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(after_response.status_code, 200, msg=after_response.text)
+        self.assertEqual(after_response.json()[0]["next_action"], "waiting_draft_generation")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            primary_material_id, generation_mode = connection.execute(
+                "SELECT primary_material_id, outreach_generation_mode FROM email_tasks WHERE batch_task_id = ?",
+                (batch_task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(primary_material_id, material_id)
+        self.assertEqual(generation_mode, "llm")
+
+    def test_uploading_first_primary_material_unblocks_batch_task_items_missing_material(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="upload-unblocks@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="discovered",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+
+        before_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(before_response.status_code, 200, msg=before_response.text)
+        self.assertEqual(before_response.json()[0]["next_action"], "select_primary_material")
+
+        material_id = self._upload_material(
+            identity_id,
+            filename="first-resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+
+        after_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(after_response.status_code, 200, msg=after_response.text)
+        self.assertEqual(after_response.json()[0]["next_action"], "waiting_draft_generation")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            primary_material_id = connection.execute(
+                "SELECT primary_material_id FROM email_tasks WHERE batch_task_id = ?",
+                (batch_task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(primary_material_id, material_id)
+
+    def test_retry_batch_task_item_draft_moves_failed_item_back_to_generation_queue(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="retry-batch-draft@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="draft_failed",
+            primary_material_id=material_id,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+
+        response = self.client.post(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertTrue(response.json()["ok"])
+        items_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(items_response.status_code, 200, msg=items_response.text)
+        item = items_response.json()[0]
+        self.assertEqual(item["status"], "discovered")
+        self.assertEqual(item["last_error"], None)
+        self.assertEqual(item["next_action"], "waiting_draft_generation")
+
+    def test_retry_null_generation_mode_batch_item_persists_llm_mode(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="retry-null-mode@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="draft_failed",
+            primary_material_id=material_id,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode=None,
+        )
+
+        response = self.client.post(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        items_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(items_response.status_code, 200, msg=items_response.text)
+        item = items_response.json()[0]
+        self.assertEqual(item["status"], "discovered")
+        self.assertEqual(item["next_action"], "waiting_draft_generation")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            generation_mode = connection.execute(
+                "SELECT outreach_generation_mode FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(generation_mode, "llm")
+
+    def test_template_draft_failed_batch_item_does_not_expose_ai_retry_action(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="template-draft-failed@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="draft_failed",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            outreach_generation_mode="template",
+        )
+
+        items_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        retry_response = self.client.post(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft")
+
+        self.assertEqual(items_response.status_code, 200, msg=items_response.text)
+        self.assertEqual(items_response.json()[0]["next_action"], None)
+        self.assertEqual(retry_response.status_code, 400)
+
     def test_test_compose_page_can_generate_and_send_to_self(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -7261,6 +7617,7 @@ class ApiEndpointTests(unittest.TestCase):
         approved_body_html: str | None = None,
         match_score: int | None = None,
         match_reason: str | None = None,
+        outreach_generation_mode: str | None = None,
     ) -> int:
         connection = sqlite3.connect(self.db_path)
         try:
@@ -7275,10 +7632,11 @@ class ApiEndpointTests(unittest.TestCase):
                     source, batch_task_id, identity_id, llm_profile_id, professor_id,
                     status, primary_material_id, selected_material_ids, last_error,
                     generated_subject, generated_content_text, generated_content_html,
+                    outreach_generation_mode,
                     approved_subject, approved_body_text, approved_body_html,
                     approved_at, match_score, match_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {approved_at}, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {approved_at}, ?, ?)
                 RETURNING id
                 """,
                 (
@@ -7294,6 +7652,7 @@ class ApiEndpointTests(unittest.TestCase):
                     generated_subject,
                     generated_content_text,
                     generated_content_html,
+                    outreach_generation_mode,
                     approved_subject,
                     approved_body_text,
                     approved_body_html,

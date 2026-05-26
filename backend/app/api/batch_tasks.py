@@ -36,6 +36,11 @@ from app.services.batch_schedule import (
     has_future_batch_window,
     normalize_scheduled_dates,
 )
+from app.services.batch_task_item_actions import (
+    batch_item_uses_llm_generation,
+    normalize_batch_item_generation_mode,
+    resolve_batch_task_item_next_action,
+)
 from app.services.batch_task_status import sync_batch_task_completion
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
@@ -304,7 +309,11 @@ async def list_batch_task_items(
 
     statement = (
         select(EmailTask)
-        .options(selectinload(EmailTask.professor))
+        .options(
+            selectinload(EmailTask.batch_task),
+            selectinload(EmailTask.professor),
+            selectinload(EmailTask.primary_material),
+        )
         .where(
             EmailTask.batch_task_id == task_id,
             ~(
@@ -586,6 +595,47 @@ async def delete_batch_task_item(
     return BatchTaskActionResponse(ok=True, task=_serialize_batch_task(task))
 
 
+@router.post("/{task_id}/items/{item_id}/retry-draft", response_model=BatchTaskActionResponse)
+async def retry_batch_task_item_draft(
+    task_id: int,
+    item_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> BatchTaskActionResponse:
+    task = await _get_batch_task(session, task_id)
+    if task.status != BatchTaskStatus.RUNNING.value:
+        raise HTTPException(status_code=400, detail="批量任务未运行，不能重新生成草稿")
+    item = next((email_task for email_task in task.email_tasks if email_task.id == item_id), None)
+    if item is None or _is_user_removed_batch_item(item):
+        raise HTTPException(status_code=404, detail="未找到批量任务项")
+    if item.status != EmailTaskStatus.DRAFT_FAILED.value:
+        raise HTTPException(status_code=400, detail="只有草稿生成失败的任务项可以重新生成")
+
+    generation_mode = normalize_batch_item_generation_mode(item)
+    if generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
+        raise HTTPException(status_code=400, detail="模板模式草稿失败不能加入 AI 生成队列")
+    if batch_item_uses_llm_generation(item):
+        await session.refresh(item, attribute_names=["professor", "primary_material"])
+        if item.primary_material is None:
+            raise HTTPException(status_code=400, detail="请先选择用于匹配的默认材料")
+        if not (item.professor.research_direction or "").strip():
+            raise HTTPException(status_code=400, detail="请先补充导师研究方向，再使用 AI 生成草稿")
+
+    item.outreach_generation_mode = generation_mode
+    item.status = EmailTaskStatus.DISCOVERED.value
+    item.last_error = None
+    item.draft_generation_previous_status = None
+    item.updated_at = datetime.now(UTC)
+    await _record_batch_task_action(
+        session,
+        task,
+        "batch_task.item_draft_retry_requested",
+        extra_metadata={"email_task_id": item_id},
+    )
+    await session.commit()
+    task = await _get_batch_task(session, task_id)
+    return BatchTaskActionResponse(ok=True, task=_serialize_batch_task(task))
+
+
 BATCH_TASK_ITEM_REMOVABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
     EmailTaskStatus.MATCHED.value,
@@ -705,6 +755,7 @@ def _serialize_batch_task_item(email_task: EmailTask) -> BatchTaskItemRead:
         last_error=email_task.last_error,
         is_replied=email_task.is_replied,
         updated_at=email_task.updated_at,
+        next_action=resolve_batch_task_item_next_action(email_task),
     )
 
 
