@@ -1303,10 +1303,10 @@ class ApiEndpointTests(unittest.TestCase):
         current_task = workspace.json()["current_task"]
         self.assertNotEqual(current_task["id"], batch_item_id)
         self.assertEqual(current_task["source"], "manual")
-        self.assertEqual(current_task["parent_task_id"], batch_item_id)
+        self.assertIsNone(current_task["parent_task_id"])
         self.assertIsNone(current_task["batch_task_id"])
 
-    def test_workspace_ensure_task_keeps_active_or_completed_tasks_from_stopped_batch(self) -> None:
+    def test_workspace_ensure_task_creates_independent_manual_task_when_batch_task_exists(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         cases = [
@@ -1314,6 +1314,7 @@ class ApiEndpointTests(unittest.TestCase):
             ("approved", "已审核批次邮件"),
             ("scheduled", "已定时批次邮件"),
             ("sent", "已发送批次邮件"),
+            ("send_failed", "发送失败批次邮件"),
         ]
         for task_status, subject in cases:
             with self.subTest(task_status=task_status):
@@ -1346,11 +1347,18 @@ class ApiEndpointTests(unittest.TestCase):
 
                 self.assertEqual(workspace.status_code, 200, msg=workspace.text)
                 current_task = workspace.json()["current_task"]
-                self.assertEqual(current_task["id"], batch_item_id)
-                self.assertEqual(current_task["source"], "batch")
-                self.assertEqual(current_task["batch_task_id"], batch_task_id)
+                self.assertNotEqual(current_task["id"], batch_item_id)
+                self.assertEqual(current_task["source"], "manual")
+                self.assertIsNone(current_task["batch_task_id"])
                 self.assertIsNone(current_task["parent_task_id"])
-                self.assertEqual(current_task["status"], task_status)
+                self.assertIn(current_task["status"], {"discovered", "matched"})
+
+                workspace_after_ensure = self.client.get(
+                    f"/api/workspaces/{professor_id}",
+                    params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+                )
+                self.assertEqual(workspace_after_ensure.status_code, 200, msg=workspace_after_ensure.text)
+                self.assertEqual(workspace_after_ensure.json()["current_task"]["id"], current_task["id"])
 
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -4545,11 +4553,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(workspace_before.status_code, 200, msg=workspace_before.text)
         before_task = workspace_before.json()["current_task"]
-        self.assertEqual(before_task["id"], parent_task_id)
-        self.assertEqual(before_task["source"], "batch")
-        self.assertIsNone(before_task["parent_task_id"])
-        self.assertEqual(before_task["cancellation_reason"], "batch_stopped")
-        self.assertTrue(before_task["can_continue_manually"])
+        self.assertIsNone(before_task["id"])
         self.assertFalse(before_task["can_write_follow_up"])
 
         response = self.client.post(f"/api/email-tasks/{parent_task_id}/continue-manually")

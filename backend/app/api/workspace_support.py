@@ -438,6 +438,7 @@ async def _get_latest_email_task(
             EmailTask.professor_id == professor_id,
             EmailTask.identity_id == identity_id,
             EmailTask.llm_profile_id == llm_profile_id,
+            EmailTask.source != EmailTaskSource.BATCH.value,
             ~(
                 (EmailTask.status == EmailTaskStatus.CANCELED.value)
                 & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)

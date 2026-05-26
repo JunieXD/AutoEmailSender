@@ -63,7 +63,7 @@ describe("shouldBootstrapWorkspaceTask", () => {
     ).toBe(true);
   });
 
-  it("bootstraps unfinished batch tasks so workspace can switch to a manual task", () => {
+  it("bootstraps any batch task so the workspace can switch to an independent manual task", () => {
     expect(
       shouldBootstrapWorkspaceTask(buildTask({
         source: "batch",
@@ -71,22 +71,19 @@ describe("shouldBootstrapWorkspaceTask", () => {
         status: "send_failed",
       })),
     ).toBe(true);
-  });
-
-  it("keeps final batch tasks visible instead of creating duplicate manual sends", () => {
     expect(
       shouldBootstrapWorkspaceTask(buildTask({
         source: "batch",
         batch_task_id: 10,
         status: "sent",
       })),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldBootstrapWorkspaceTask(buildTask({
         source: "batch",
         batch_task_id: 10,
         status: "reply_detected",
       })),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
