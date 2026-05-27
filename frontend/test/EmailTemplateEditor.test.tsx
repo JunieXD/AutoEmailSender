@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
+import { emailTemplateEditorDisablesStructuralInputRules } from "@/components/molecules/tiptap/listExtensions";
 import { prepareTemplateEditorHtml } from "@/lib/templatePlaceholders";
 
 describe("EmailTemplateEditor", () => {
@@ -91,6 +92,61 @@ describe("EmailTemplateEditor", () => {
     expect(editorCss).toMatch(
       /\.email-editor-content :where\(th, td\) > \* \{[\s\S]*font-size: inherit !important;/,
     );
+  });
+
+  it("shows generated list markers in the email editor", () => {
+    const editorCss = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+
+    render(
+      <EmailTemplateEditor
+        label="邮件正文"
+        html="<ol><li><p>我就读于 xxx 大学</p></li><li><p>我对您的研究很感兴趣</p></li></ol>"
+        onChange={vi.fn()}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox", { name: "邮件正文" });
+    expect(editor).toHaveClass("email-editor-content");
+    expect(editor.querySelector("ol li")).not.toBeNull();
+    expect(editorCss).toMatch(
+      /\.email-editor-content :where\(ol\) \{[\s\S]*list-style-type: decimal;/,
+    );
+    expect(editorCss).toMatch(
+      /\.email-editor-content :where\(ul\) \{[\s\S]*list-style-type: disc;/,
+    );
+    expect(editorCss).toMatch(
+      /\.email-editor-content :where\(li\) \{[\s\S]*padding-left: 0\.25rem;/,
+    );
+  });
+
+  it("keeps toolbar list creation available after disabling typed list shortcuts", () => {
+    const handleChange = vi.fn();
+
+    render(
+      <EmailTemplateEditor
+        label="邮件正文"
+        html="<p>我就读于 xxx 大学</p>"
+        onChange={handleChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "有序列表" }));
+    expect(handleChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        html: expect.stringContaining("<ol>"),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "无序列表" }));
+    expect(handleChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        html: expect.stringContaining("<ul>"),
+      }),
+    );
+  });
+
+  it("does not register typed shortcuts that convert text into block structures", () => {
+    expect(emailTemplateEditorDisablesStructuralInputRules()).toBe(true);
   });
 
   it("renders known template tokens as inline placeholder chips", () => {

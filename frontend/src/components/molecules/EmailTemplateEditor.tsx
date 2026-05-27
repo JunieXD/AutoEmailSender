@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Italic,
   Link2,
+  List,
+  ListOrdered,
   Table2,
   Underline as UnderlineIcon,
 } from "lucide-react";
@@ -28,6 +30,14 @@ import {
   EmailTableCell,
   EmailTableHeader,
 } from "@/components/molecules/tiptap/EmailTable";
+import {
+  BlockquoteWithoutInputRules,
+  BulletListWithoutInputRules,
+  CodeBlockWithoutInputRules,
+  HeadingWithoutInputRules,
+  HorizontalRuleWithoutInputRules,
+  OrderedListWithoutInputRules,
+} from "@/components/molecules/tiptap/listExtensions";
 import {
   EMAIL_FIRST_LINE_INDENT_OPTIONS,
   EMAIL_FONT_OPTIONS,
@@ -176,10 +186,21 @@ export const EmailTemplateEditor = ({
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: {
-          levels: [1, 2, 3, 4, 5, 6],
-        },
+        blockquote: false,
+        codeBlock: false,
+        heading: false,
+        horizontalRule: false,
+        orderedList: false,
+        bulletList: false,
       }),
+      HeadingWithoutInputRules.configure({
+        levels: [1, 2, 3, 4, 5, 6],
+      }),
+      BlockquoteWithoutInputRules,
+      CodeBlockWithoutInputRules,
+      HorizontalRuleWithoutInputRules,
+      OrderedListWithoutInputRules,
+      BulletListWithoutInputRules,
       Link.configure({
         openOnClick: false,
       }),
@@ -389,6 +410,22 @@ export const EmailTemplateEditor = ({
           className="rounded-xl p-2 text-stone-600 hover:bg-white"
         >
           <UnderlineIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="无序列表"
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+        >
+          <List className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="有序列表"
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+        >
+          <ListOrdered className="h-4 w-4" />
         </button>
         <button
           type="button"

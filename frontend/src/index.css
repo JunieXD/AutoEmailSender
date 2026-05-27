@@ -298,6 +298,28 @@ select.form-input,
   margin-bottom: 0;
 }
 
+.email-editor-content :where(ol) {
+  margin: 0 0 0.75rem;
+  padding-left: 1.5rem;
+  list-style-position: outside;
+  list-style-type: decimal;
+}
+
+.email-editor-content :where(ul) {
+  margin: 0 0 0.75rem;
+  padding-left: 1.5rem;
+  list-style-position: outside;
+  list-style-type: disc;
+}
+
+.email-editor-content :where(li) {
+  padding-left: 0.25rem;
+}
+
+.email-editor-content :where(li > p) {
+  margin: 0;
+}
+
 .email-editor-content .tableWrapper {
   margin: 1rem 0;
   overflow-x: auto;
