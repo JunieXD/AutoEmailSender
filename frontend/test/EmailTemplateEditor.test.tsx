@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
-import { emailTemplateEditorDisablesStructuralInputRules } from "@/components/molecules/tiptap/listExtensions";
+import {
+  emailTemplateEditorDisablesInlineMarkdownInputRules,
+  emailTemplateEditorDisablesStructuralInputRules,
+} from "@/components/molecules/tiptap/listExtensions";
 import { prepareTemplateEditorHtml } from "@/lib/templatePlaceholders";
 
 describe("EmailTemplateEditor", () => {
@@ -149,6 +152,9 @@ describe("EmailTemplateEditor", () => {
     expect(emailTemplateEditorDisablesStructuralInputRules()).toBe(true);
   });
 
+  it("does not register Markdown inline shortcuts for text marks", () => {
+    expect(emailTemplateEditorDisablesInlineMarkdownInputRules()).toBe(true);
+  });
   it("renders known template tokens as inline placeholder chips", () => {
     render(
       <EmailTemplateEditor

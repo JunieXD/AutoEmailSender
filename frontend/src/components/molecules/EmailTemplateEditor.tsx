@@ -32,10 +32,13 @@ import {
 } from "@/components/molecules/tiptap/EmailTable";
 import {
   BlockquoteWithoutInputRules,
+  BoldWithoutInputRules,
   BulletListWithoutInputRules,
+  CodeWithoutInputRules,
   CodeBlockWithoutInputRules,
   HeadingWithoutInputRules,
   HorizontalRuleWithoutInputRules,
+  ItalicWithoutInputRules,
   OrderedListWithoutInputRules,
 } from "@/components/molecules/tiptap/listExtensions";
 import {
@@ -187,12 +190,18 @@ export const EmailTemplateEditor = ({
     extensions: [
       StarterKit.configure({
         blockquote: false,
+        bold: false,
+        code: false,
         codeBlock: false,
         heading: false,
         horizontalRule: false,
+        italic: false,
         orderedList: false,
         bulletList: false,
       }),
+      BoldWithoutInputRules,
+      ItalicWithoutInputRules,
+      CodeWithoutInputRules,
       HeadingWithoutInputRules.configure({
         levels: [1, 2, 3, 4, 5, 6],
       }),
