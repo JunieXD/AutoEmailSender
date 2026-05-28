@@ -151,6 +151,15 @@ def resolve_crawl_runtime_concurrency(settings: Any) -> CrawlRuntimeConcurrency:
     )
 
 
+def _build_crawler_agent_run_budget(settings: Any) -> Any:
+    from app.agents.faculty_crawler_agent import CrawlerAgentRunBudget
+
+    return CrawlerAgentRunBudget(
+        max_completed_chunks=max(1, settings.crawler_agent_max_chunks_per_run),
+        max_tool_calls=max(1, settings.crawler_agent_max_tool_calls_per_run),
+    )
+
+
 async def run_queued_crawl_jobs_once(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> int:
@@ -248,6 +257,9 @@ async def run_queued_crawl_jobs_once(
             await session.commit()
             return 1
 
+        settings = await get_runtime_settings(session)
+        agent_run_budget = _build_crawler_agent_run_budget(settings)
+
         await session.commit()
 
         job_id = job.id
@@ -282,6 +294,7 @@ async def run_queued_crawl_jobs_once(
                         llm_profile,
                         trace_callback=trace_callback,
                         extra_body=entry_ctx.thinking_extra_body,
+                        run_budget=agent_run_budget,
                     )
             except (CrawlJobPaused, CrawlJobCanceled, CrawlJobSaveBudgetExceeded, asyncio.CancelledError):
                 raise
