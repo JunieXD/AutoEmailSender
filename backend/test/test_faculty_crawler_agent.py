@@ -161,6 +161,21 @@ class FacultyCrawlerAgentPromptTests(unittest.TestCase):
         self.assertIn("当前存在待处理 chunk 时，必须先 claim_next_page_chunk", FACULTY_CRAWLER_SYSTEM_PROMPT)
         self.assertIn("只有当前 chunk 正文中明确还有超过 10 个已看见候选", FACULTY_CRAWLER_SYSTEM_PROMPT)
 
+    def test_system_prompt_keeps_stable_sections_before_dynamic_input(self) -> None:
+        prompt = FACULTY_CRAWLER_SYSTEM_PROMPT
+        expected_headings = [
+            "角色与目标：",
+            "页面与 chunk 处理流程：",
+            "工具使用边界：",
+            "候选字段与提交约束：",
+            "禁止事项与错误恢复：",
+        ]
+        positions = [prompt.index(heading) for heading in expected_headings]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("入口 URL", prompt)
+        self.assertNotIn("学校:", prompt)
+        self.assertNotIn("学院/单位:", prompt)
+
 class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
     def test_chunked_crawl_page_response_omits_full_page_text(self) -> None:
         snapshot = PageSnapshot(
