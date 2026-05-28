@@ -103,6 +103,34 @@ class FacultyCrawlerAgentSaveResultTests(unittest.TestCase):
         self.assertEqual(result["rejected_count"], 0)
         self.assertIn("获取下一个 chunk", result["next_instruction"])
 
+    def test_format_save_batch_result_for_model_excludes_candidate_payload_echo(self) -> None:
+        result = _format_save_batch_result_for_model(
+            {
+                "batch_status": "saved",
+                "attempted_count": 1,
+                "saved_count": 1,
+                "merged_count": 0,
+                "skipped_duplicate_count": 0,
+                "rejected_count": 0,
+                "failed_count": 0,
+                "failed_items": [],
+                "rejected_items": [],
+                "total_saved_count": 1,
+                "candidates": [
+                    {
+                        "name": "张三",
+                        "profile_url": "https://example.edu/zhang",
+                        "evidence": "很长的页面证据正文",
+                    }
+                ],
+            }
+        )
+
+        serialized = str(result)
+        self.assertNotIn("candidates", result)
+        self.assertNotIn("很长的页面证据正文", serialized)
+        self.assertNotIn("https://example.edu/zhang", serialized)
+
     def test_validate_professor_candidate_batch_collects_schema_failures(self) -> None:
         payloads, failed_items = _validate_professor_candidate_batch(
             [
