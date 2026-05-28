@@ -196,3 +196,7 @@ DeepAgents 内部 messages 结构可能和预期不同。
 - 现有暂停、取消、恢复和候选保存逻辑保持可用。
 - token 统计能显示优化前后的 `input_tokens`、`cached_tokens` 和估算未缓存输入变化。
 - 抓取结果质量不低于优化前的同类任务。
+
+## 实施计划
+
+实现计划见 `docs/superpowers/plans/2026-05-28-crawler-context-cost-optimization.md`。
