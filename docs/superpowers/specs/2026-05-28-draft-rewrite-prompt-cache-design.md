@@ -44,7 +44,7 @@ DeepSeek KV Cache 按请求输入前缀匹配缓存。要提高缓存命中率�
 | 5 | `user_custom_instruction` | 低 | 同一批次通常来自同一次任务配置。 |
 | 6 | `student_material_text` | 低 | 同一用户身份和默认材料在批次内不变。 |
 | 7 | `available_materials` | 低 | 同一身份的材料清单在批次内不变。 |
-| 8 | `source_blocks` | 低 | 同一份模板对多个老师复用。 |
+| 8 | `source_blocks` | 中低 | 同一份模板主体通常复用；若模板含老师占位符，则这里会出现已渲染的老师真实内容，因此放在稳定段最后。 |
 | 9 | `current_match` | 高 | 匹配结果按老师变化。 |
 | 10 | `professor` | 最高 | 批量任务中每个请求对应不同老师。 |
 
@@ -54,7 +54,7 @@ DeepSeek KV Cache 按请求输入前缀匹配缓存。要提高缓存命中率�
 
 ### 稳定前缀
 
-稳定前缀包含同一批次中应保持一致的内容：
+稳定前缀包含同一批次中最不容易变化的内容。这里的 `source_blocks` 是已渲染模板块：为了保持功能效果，模板占位符会在进入 LLM 前替换成真实内容；因此当模板引用老师字段时，`source_blocks` 可能随老师变化，但它仍应位于 `current_match` 和完整 `professor` 之前。
 
 ```text
 instructions
@@ -66,17 +66,7 @@ input.available_materials
 input.source_blocks
 ```
 
-稳定前缀不得包含以下老师相关字段：
-
-```text
-current_match
-professor.name
-professor.email
-professor.title
-professor.research_direction
-professor.recent_papers
-professor.profile_url
-```
+稳定前缀不得包含独立的 `current_match` 或完整 `professor` 动态块。注意：如果模板正文显式使用 `{{name}}`、`{{research_direction}}` 等占位符，已渲染的老师真实内容可以出现在 `source_blocks` 中，这是现有功能语义，不应为了缓存命中改回占位符。
 
 ### 动态后缀
 
@@ -189,7 +179,7 @@ flowchart TD
 
 - `build_draft_rewrite_prompt_parts()` 应返回完整 Prompt、稳定前缀 Hash 和完整 Prompt Hash。
 - 稳定前缀必须包含 `source_blocks`。
-- 稳定前缀不得包含老师姓名、邮箱、研究方向、论文、主页等字段值。
+- 稳定前缀不得包含独立的 `current_match` 或完整 `professor` 动态块；若模板占位符已渲染为老师真实内容，该内容可以出现在 `source_blocks` 中。
 - 完整 Prompt 中 `source_blocks` 必须早于 `current_match`。
 - 完整 Prompt 中 `current_match` 必须早于 `professor`。
 - 当 `current_match` 为空时，`professor` 仍必须位于完整 Prompt 末尾的动态区域。
@@ -203,7 +193,7 @@ flowchart TD
 
 ## 验收标准
 
-- 同一身份、同一材料、同一模板、同一偏好、不同老师的模板改写请求拥有相同 `stable_prefix_hash`。
+- 同一身份、同一材料、同一模板、同一偏好，且模板主体不引用老师字段时，不同老师的模板改写请求拥有相同 `stable_prefix_hash`。
 - 不同老师的信息只出现在动态后缀中。
 - 完整 Prompt 的字段顺序符合变化概率排序。
 - 所有相关后端单元测试通过。

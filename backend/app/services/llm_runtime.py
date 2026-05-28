@@ -243,6 +243,14 @@ class MatchPromptParts:
     prompt_cache_key: str | None = None
 
 
+@dataclass(slots=True)
+class DraftRewritePromptParts:
+    prompt: str
+    stable_prefix: str
+    prompt_hash: str
+    stable_prefix_hash: str
+    prompt_cache_key: str | None = None
+
 
 class MatchEvaluationResult(BaseModel):
     match_score: int = Field(ge=0, le=100)
@@ -333,6 +341,9 @@ class GeneratedMatchEvaluation:
 class GeneratedDraftContent:
     result: DraftGenerationResult
     usage: ChatCompletionUsage | None = None
+    prompt_hash: str | None = None
+    stable_prefix_hash: str | None = None
+    prompt_cache_key: str | None = None
 
 
 DRAFT_REWRITE_INTENSITY_TEXT = {
@@ -506,7 +517,7 @@ async def generate_draft_content(
         template_context = build_template_context(identity, professor)
         rewrite_document = build_draft_rewrite_document(template_html, template_context)
         rendered_subject = render_draft_template_text(custom_subject, template_context).strip()
-        prompt = build_draft_rewrite_prompt(
+        prompt_parts = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
             professor=professor,
@@ -515,6 +526,7 @@ async def generate_draft_content(
             source_blocks=rewrite_document.blocks,
             current_match=current_match,
             rewrite_preferences=rewrite_preferences,
+            llm_profile=llm_profile,
         )
         payload: dict[str, object] = {
             "model": llm_profile.model_name,
@@ -525,20 +537,14 @@ async def generate_draft_content(
                 },
                 {
                     "role": "user",
-                    "content": prompt,
+                    "content": prompt_parts.prompt,
                 },
             ],
             "temperature": llm_profile.temperature if llm_profile.temperature is not None else DEFAULT_LLM_TEMPERATURE,
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         }
-        prompt_cache_key = _build_draft_rewrite_prompt_cache_key(
-            identity=identity,
-            primary_material=primary_material,
-            professor=professor,
-            llm_profile=llm_profile,
-        )
-        if prompt_cache_key is not None:
-            payload["prompt_cache_key"] = prompt_cache_key
+        if prompt_parts.prompt_cache_key is not None:
+            payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
         completion = await request_chat_completion(llm_profile, payload)
         rewrite_result = parse_structured_result(completion.content, DraftRewriteResult)
         try:
@@ -555,6 +561,9 @@ async def generate_draft_content(
                 body_html=rendered.html,
             ),
             usage=completion.usage,
+            prompt_hash=prompt_parts.prompt_hash,
+            stable_prefix_hash=prompt_parts.stable_prefix_hash,
+            prompt_cache_key=prompt_parts.prompt_cache_key,
         )
 
     prompt = build_draft_prompt(
@@ -610,7 +619,7 @@ def estimate_draft_content_tokens(
     if template_html:
         template_context = build_template_context(identity, professor)
         rewrite_document = build_draft_rewrite_document(template_html, template_context)
-        prompt = build_draft_rewrite_prompt(
+        prompt_parts = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
             professor=professor,
@@ -619,8 +628,9 @@ def estimate_draft_content_tokens(
             source_blocks=rewrite_document.blocks,
             current_match=current_match,
             rewrite_preferences=rewrite_preferences,
+            llm_profile=llm_profile,
         )
-        prompt_text = f"{SYSTEM_DRAFT_REWRITE_PROMPT}\n\n{prompt}"
+        prompt_text = f"{SYSTEM_DRAFT_REWRITE_PROMPT}\n\n{prompt_parts.prompt}"
     else:
         prompt = build_draft_prompt(
             identity=identity,
@@ -1231,6 +1241,30 @@ def build_draft_rewrite_prompt(
     current_match: MatchEvaluationResult | None,
     rewrite_preferences: DraftRewritePreferences | None,
 ) -> str:
+    return build_draft_rewrite_prompt_parts(
+        identity=identity,
+        primary_material=primary_material,
+        professor=professor,
+        available_materials=available_materials,
+        subject_template=subject_template,
+        source_blocks=source_blocks,
+        current_match=current_match,
+        rewrite_preferences=rewrite_preferences,
+    ).prompt
+
+
+def build_draft_rewrite_prompt_parts(
+    *,
+    identity: IdentityProfile,
+    primary_material: IdentityMaterial | None,
+    professor: Professor,
+    available_materials: list[IdentityMaterial],
+    subject_template: str | None,
+    source_blocks: list[DraftRewriteSourceBlock],
+    current_match: MatchEvaluationResult | None,
+    rewrite_preferences: DraftRewritePreferences | None,
+    llm_profile: LLMProfile | None = None,
+) -> DraftRewritePromptParts:
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
@@ -1292,6 +1326,10 @@ def build_draft_rewrite_prompt(
             del prompt_input["rewrite_preferences"]
         if not prompt_input["user_custom_instruction"]:
             del prompt_input["user_custom_instruction"]
+
+    stable_prefix = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    if isinstance(prompt_input, dict):
         if current_match is not None:
             prompt_input["current_match"] = {
                 "match_score": current_match.match_score,
@@ -1302,7 +1340,23 @@ def build_draft_rewrite_prompt(
             }
         prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
 
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    prompt = json.dumps(payload, ensure_ascii=False, indent=2)
+    return DraftRewritePromptParts(
+        prompt=prompt,
+        stable_prefix=stable_prefix,
+        prompt_hash=_hash_prompt(prompt),
+        stable_prefix_hash=_hash_prompt(stable_prefix),
+        prompt_cache_key=(
+            _build_draft_rewrite_prompt_cache_key(
+                identity=identity,
+                primary_material=primary_material,
+                professor=professor,
+                llm_profile=llm_profile,
+            )
+            if llm_profile is not None
+            else None
+        ),
+    )
 
 
 def _serialize_draft_source_block(block: DraftRewriteSourceBlock) -> dict[str, object]:

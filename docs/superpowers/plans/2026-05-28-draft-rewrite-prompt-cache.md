@@ -2,7 +2,7 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 在不改变草稿模板改写功能效果的前提下，显式拆分稳定前缀与动态后缀，提高同批次多老师改写时的 DeepSeek KV Cache 命中概率。
+**目标：** 在不改变草稿模板改写功能效果的前提下，显式拆分相对稳定的前缀与动态后缀，提高同批次多老师改写时的 DeepSeek KV Cache 命中概率。
 
 **架构：** 在 `llm_runtime.py` 中新增 `DraftRewritePromptParts` 与 `build_draft_rewrite_prompt_parts()`，保留现有 `build_draft_rewrite_prompt()` 作为兼容包装。Prompt 继续使用现有 JSON 结构和字段值，但显式构造稳定 payload，再追加 `current_match` 与 `professor` 动态块，并计算 `stable_prefix_hash`。
 
@@ -19,7 +19,7 @@
   - 在模板改写调用路径中保存 `prompt_hash`、`stable_prefix_hash`、`prompt_cache_key` 到 `GeneratedDraftContent`。
 - 修改：`backend/test/test_llm_runtime.py`
   - 导入 `build_draft_rewrite_prompt_parts`。
-  - 添加稳定前缀顺序与内容隔离测试。
+  - 添加稳定前缀顺序测试，并明确已渲染模板块允许包含老师占位符替换后的真实内容。
   - 添加生成流程元数据传递测试。
   - 保留现有模板改写测试，确保行为回归不变。
 
@@ -117,9 +117,6 @@
 
         self.assertIn("source_blocks", parts.stable_prefix)
         self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
-        self.assertNotIn("李老师", parts.stable_prefix)
-        self.assertNotIn("prof@example.edu", parts.stable_prefix)
-        self.assertNotIn("Information Extraction", parts.stable_prefix)
         self.assertNotIn("方向匹配", parts.stable_prefix)
         self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("current_match"))
         self.assertLess(parts.prompt.index("current_match"), parts.prompt.index("professor"))

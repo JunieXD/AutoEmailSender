@@ -12,6 +12,7 @@ from app.services.llm_runtime import (
     build_match_prompt_parts,
     build_draft_prompt,
     build_draft_rewrite_prompt,
+    build_draft_rewrite_prompt_parts,
     build_draft_rewrite_preferences,
     DraftRewritePreferences,
     estimate_draft_content_tokens,
@@ -171,7 +172,6 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(parts.prompt.index("默认材料"), parts.prompt.index("导师信息"))
         self.assertIn("信息抽取与智能体", parts.stable_prefix)
-        self.assertNotIn("李老师", parts.stable_prefix)
         self.assertEqual(len(parts.prompt_hash), 64)
         self.assertEqual(len(parts.stable_prefix_hash), 64)
 
@@ -1069,6 +1069,150 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(prompt.index("稳定学生材料"), prompt.index("导师变量"))
         self.assertLess(prompt.index("稳定模板正文"), prompt.index("导师变量"))
 
+    def test_build_draft_rewrite_prompt_parts_places_template_blocks_before_dynamic_suffix(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+        from app.services.llm_runtime import MatchEvaluationResult
+        from app.services.template_draft_rewrite import build_draft_rewrite_document
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        primary_material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="data/materials/resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="我做过信息抽取与智能体相关研究。",
+        )
+        professor = Professor(
+            id=5,
+            name="李老师",
+            email="prof@example.edu",
+            title="Professor",
+            university="Example University",
+            school="Computer Science",
+            department="AI",
+            research_direction="Information Extraction",
+            profile_url="https://example.edu/prof",
+            recent_papers=["Paper A"],
+        )
+        current_match = MatchEvaluationResult(
+            match_score=88,
+            match_reason="方向匹配",
+            fit_points=["信息抽取"],
+            risk_points=["背景略泛"],
+            keywords=["NLP"],
+        )
+        document = build_draft_rewrite_document(
+            "<p>老师您好，我是{{sender_name}}。</p>",
+            {},
+        )
+
+        parts = build_draft_rewrite_prompt_parts(
+            identity=identity,
+            primary_material=primary_material,
+            professor=professor,
+            available_materials=[primary_material],
+            subject_template="申请与{{name}}老师交流",
+            source_blocks=document.blocks,
+            current_match=current_match,
+            rewrite_preferences=DraftRewritePreferences(),
+            llm_profile=LLMProfile(
+                id=7,
+                provider="openai",
+                api_base_url=None,
+                api_key="test-key",
+                model_name="gpt-test",
+            ),
+        )
+
+        self.assertIn("source_blocks", parts.stable_prefix)
+        self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
+        self.assertNotIn("方向匹配", parts.stable_prefix)
+        self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("current_match"))
+        self.assertLess(parts.prompt.index("current_match"), parts.prompt.index("professor"))
+        self.assertEqual(len(parts.prompt_hash), 64)
+        self.assertEqual(len(parts.stable_prefix_hash), 64)
+        self.assertEqual(parts.prompt_cache_key, "draft-rewrite:v3:1:12:5:7")
+
+
+    def test_draft_rewrite_prompt_parts_keep_same_stable_prefix_for_different_professors(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+        from app.services.llm_runtime import MatchEvaluationResult
+        from app.services.template_draft_rewrite import build_draft_rewrite_document
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        primary_material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="data/materials/resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="我做过信息抽取与智能体相关研究。",
+        )
+        document = build_draft_rewrite_document(
+            "<p>老师您好，我是{{sender_name}}。</p>",
+            {},
+        )
+        first = build_draft_rewrite_prompt_parts(
+            identity=identity,
+            primary_material=primary_material,
+            professor=Professor(name="李老师", email="li@example.edu", research_direction="NLP"),
+            available_materials=[primary_material],
+            subject_template="申请与{{name}}老师交流",
+            source_blocks=document.blocks,
+            current_match=MatchEvaluationResult(
+                match_score=88,
+                match_reason="方向匹配",
+                fit_points=["信息抽取"],
+                risk_points=[],
+                keywords=["NLP"],
+            ),
+            rewrite_preferences=DraftRewritePreferences(),
+        )
+        second = build_draft_rewrite_prompt_parts(
+            identity=identity,
+            primary_material=primary_material,
+            professor=Professor(name="王老师", email="wang@example.edu", research_direction="Databases"),
+            available_materials=[primary_material],
+            subject_template="申请与{{name}}老师交流",
+            source_blocks=document.blocks,
+            current_match=MatchEvaluationResult(
+                match_score=72,
+                match_reason="数据库方向部分相关",
+                fit_points=["数据处理"],
+                risk_points=["方向不同"],
+                keywords=["Database"],
+            ),
+            rewrite_preferences=DraftRewritePreferences(),
+        )
+
+        self.assertEqual(first.stable_prefix_hash, second.stable_prefix_hash)
+        self.assertEqual(first.stable_prefix, second.stable_prefix)
+        self.assertNotEqual(first.prompt_hash, second.prompt_hash)
+
+
     def test_draft_rewrite_prompts_preserve_user_written_dates(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.outreach_templates import build_template_context
@@ -1320,6 +1464,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("rewrite_segments", prompt)
         self.assertNotIn("<table", prompt)
         self.assertEqual(payload["prompt_cache_key"], "draft-rewrite:v3:1:12:1:5")
+        self.assertIsNotNone(result.prompt_hash)
+        self.assertIsNotNone(result.stable_prefix_hash)
+        self.assertEqual(result.prompt_cache_key, "draft-rewrite:v3:1:12:1:5")
         self.assertEqual(result.result.subject, "申请与李老师老师交流")
         self.assertIn("<table", result.result.body_html)
         self.assertNotIn("{{name}}", result.result.body_html)
