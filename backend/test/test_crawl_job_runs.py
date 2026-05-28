@@ -68,5 +68,25 @@ class CrawlJobRunTokenUsageTests(unittest.TestCase):
         self.assertEqual(usage["cached_tokens"], 16)
 
 
+    def test_extracts_deepseek_prompt_cache_hit_tokens_from_trace(self) -> None:
+        usage = extract_token_usage(
+            {
+                "raw": {
+                    "message": (
+                        "response_metadata={'token_usage': {'completion_tokens': 12, "
+                        "'prompt_tokens': 34, 'total_tokens': 46, "
+                        "'prompt_cache_hit_tokens': 18, "
+                        "'prompt_cache_miss_tokens': 16}}"
+                    )
+                }
+            }
+        )
+
+        self.assertIsNotNone(usage)
+        self.assertEqual(usage["input_tokens"], 34)
+        self.assertEqual(usage["output_tokens"], 12)
+        self.assertEqual(usage["total_tokens"], 46)
+        self.assertEqual(usage["cached_tokens"], 18)
+
 if __name__ == "__main__":
     unittest.main()

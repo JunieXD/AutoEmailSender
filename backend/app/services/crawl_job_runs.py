@@ -18,6 +18,7 @@ TOKEN_USAGE_PATTERN = re.compile(
     r"'prompt_tokens':\s*(?P<input>\d+),\s*'total_tokens':\s*(?P<total>\d+)",
 )
 CACHED_TOKEN_PATTERNS = (
+    re.compile(r"['\"]prompt_cache_hit_tokens['\"]:\s*(?P<cached>\d+)"),
     re.compile(
         r"['\"](?:prompt_tokens_details|input_tokens_details|input_token_details)['\"]"
         r":\s*\{[^{}]*(?:['\"]cached_tokens['\"]|['\"]cache_read['\"]):\s*(?P<cached>\d+)"

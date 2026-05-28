@@ -1748,13 +1748,14 @@ def format_http_error(status_code: int, response_text: str, request_url: str) ->
 def parse_completion_usage(raw_usage: object) -> ChatCompletionUsage | None:
     if not isinstance(raw_usage, dict):
         return None
-    cached_tokens = None
-    for details_key in ("prompt_tokens_details", "input_tokens_details"):
-        details = raw_usage.get(details_key)
-        if isinstance(details, dict):
-            cached_tokens = _coerce_token_count(details.get("cached_tokens"))
-            if cached_tokens is not None:
-                break
+    cached_tokens = _coerce_token_count(raw_usage.get("prompt_cache_hit_tokens"))
+    if cached_tokens is None:
+        for details_key in ("prompt_tokens_details", "input_tokens_details"):
+            details = raw_usage.get(details_key)
+            if isinstance(details, dict):
+                cached_tokens = _coerce_token_count(details.get("cached_tokens"))
+                if cached_tokens is not None:
+                    break
     return ChatCompletionUsage(
         prompt_tokens=_coerce_token_count(
             raw_usage.get("prompt_tokens", raw_usage.get("input_tokens")),

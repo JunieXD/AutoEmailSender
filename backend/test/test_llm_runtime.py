@@ -175,6 +175,24 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(parts.prompt_hash), 64)
         self.assertEqual(len(parts.stable_prefix_hash), 64)
 
+    def test_parse_completion_usage_reads_deepseek_prompt_cache_hit_tokens(self) -> None:
+        usage = parse_completion_usage(
+            {
+                "prompt_tokens": 1200,
+                "completion_tokens": 80,
+                "total_tokens": 1280,
+                "prompt_cache_hit_tokens": 960,
+                "prompt_cache_miss_tokens": 240,
+            },
+        )
+
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        self.assertEqual(usage.prompt_tokens, 1200)
+        self.assertEqual(usage.completion_tokens, 80)
+        self.assertEqual(usage.total_tokens, 1280)
+        self.assertEqual(usage.cached_tokens, 960)
+
     async def test_generate_match_evaluation_uses_temperature_zero_and_prompt_cache_key(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
