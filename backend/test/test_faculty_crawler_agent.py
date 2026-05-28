@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agents.faculty_crawler_agent import (
     CONTROLLED_CRAWLER_TOOL_NAMES,
+    CrawlerAgentRunBudget,
     FACULTY_CRAWLER_SYSTEM_PROMPT,
     build_faculty_crawler_model,
     build_trace_event,
@@ -226,6 +227,114 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
         self.assertIn("已有待处理页面片段", prompt)
         self.assertIn("立即调用 claim_next_page_chunk", prompt)
         self.assertIn("不要重新抓取入口页", prompt)
+
+    def test_run_agent_stops_after_tool_call_budget_event(self) -> None:
+        async def run() -> tuple[dict[str, object], list[dict[str, object]]]:
+            events: list[dict[str, object]] = []
+
+            class FakeAgent:
+                async def astream(self, input_payload: object, **kwargs: object):
+                    _ = input_payload, kwargs
+                    yield {"event": "on_tool_start", "name": "claim_next_page_chunk", "data": {}}
+                    yield {"event": "on_tool_start", "name": "submit_page_chunk_candidates", "data": {}}
+                    yield {"event": "should_not_be_seen"}
+
+            async def trace_callback(event: object) -> None:
+                assert isinstance(event, dict)
+                events.append(event)
+
+            ctx = CrawlToolContext(
+                job_id=1,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=object(),  # type: ignore[arg-type]
+            )
+            profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
+
+            with (
+                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
+                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+            ):
+                result = await run_faculty_crawler_agent(
+                    ctx,
+                    profile,
+                    trace_callback=trace_callback,
+                    run_budget=CrawlerAgentRunBudget(max_tool_calls=2),
+                )
+            assert isinstance(result, dict)
+            return result, events
+
+        result, events = __import__("asyncio").run(run())
+
+        self.assertEqual(result["event_type"], "agent_context_budget_reached")
+        self.assertEqual(result["reason"], "max_tool_calls")
+        self.assertEqual(result["tool_calls"], 2)
+        self.assertTrue(any(event.get("event_type") == "agent_context_budget_reached" for event in events))
+        self.assertFalse(any(event.get("event") == "should_not_be_seen" for event in events))
+
+    def test_run_agent_stops_after_completed_chunk_budget_event(self) -> None:
+        async def run() -> tuple[dict[str, object], list[dict[str, object]]]:
+            events: list[dict[str, object]] = []
+
+            class FakeAgent:
+                async def astream(self, input_payload: object, **kwargs: object):
+                    _ = input_payload, kwargs
+                    yield {
+                        "event": "on_tool_end",
+                        "name": "submit_page_chunk_candidates",
+                        "data": {"output": {"chunk_status": "completed", "saved_count": 2}},
+                    }
+                    yield {"event": "should_not_be_seen"}
+
+            async def trace_callback(event: object) -> None:
+                assert isinstance(event, dict)
+                events.append(event)
+
+            ctx = CrawlToolContext(
+                job_id=1,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=object(),  # type: ignore[arg-type]
+            )
+            profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
+
+            with (
+                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
+                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+            ):
+                result = await run_faculty_crawler_agent(
+                    ctx,
+                    profile,
+                    trace_callback=trace_callback,
+                    run_budget=CrawlerAgentRunBudget(max_completed_chunks=1),
+                )
+            assert isinstance(result, dict)
+            return result, events
+
+        result, events = __import__("asyncio").run(run())
+
+        self.assertEqual(result["event_type"], "agent_context_budget_reached")
+        self.assertEqual(result["reason"], "max_completed_chunks")
+        self.assertEqual(result["completed_chunks"], 1)
+        self.assertTrue(any(event.get("event_type") == "agent_context_budget_reached" for event in events))
+        self.assertFalse(any(event.get("event") == "should_not_be_seen" for event in events))
+
+    def test_no_candidates_counts_as_completed_chunk(self) -> None:
+        from app.agents.faculty_crawler_agent import _is_completed_chunk_submit_event
+
+        self.assertTrue(
+            _is_completed_chunk_submit_event(
+                {
+                    "event": "on_tool_end",
+                    "name": "submit_page_chunk_candidates",
+                    "data": {"output": {"chunk_status": "no_candidates"}},
+                }
+            )
+        )
 
     def test_legacy_save_tool_is_not_exposed_to_agent(self) -> None:
         captured_tools: dict[str, object] = {}
