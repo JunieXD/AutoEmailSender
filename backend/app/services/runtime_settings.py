@@ -19,7 +19,6 @@ def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
         crawler_profile_enrichment_concurrency=settings.crawler_profile_enrichment_concurrency,
         crawler_host_concurrency=settings.crawler_host_concurrency,
         crawler_agent_max_chunks_per_run=settings.crawler_agent_max_chunks_per_run,
-        crawler_agent_max_tool_calls_per_run=settings.crawler_agent_max_tool_calls_per_run,
         draft_max_tokens=settings.draft_max_tokens,
         batch_draft_generation_concurrency=settings.batch_draft_generation_concurrency,
         draft_rewrite_intensity=settings.draft_rewrite_intensity,

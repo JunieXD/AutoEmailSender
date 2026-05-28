@@ -156,7 +156,6 @@ def _build_crawler_agent_run_budget(settings: Any) -> Any:
 
     return CrawlerAgentRunBudget(
         max_completed_chunks=max(1, settings.crawler_agent_max_chunks_per_run),
-        max_tool_calls=max(1, settings.crawler_agent_max_tool_calls_per_run),
     )
 
 

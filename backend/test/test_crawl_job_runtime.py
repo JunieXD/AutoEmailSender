@@ -213,7 +213,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ) -> dict[str, object]:
             _ = ctx, llm_profile, trace_callback
             captured.update(kwargs)
-            return {"event_type": "agent_context_budget_reached", "reason": "max_tool_calls"}
+            return {"event_type": "agent_context_budget_reached", "reason": "max_completed_chunks"}
 
         with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -222,7 +222,6 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         run_budget = captured.get("run_budget")
         self.assertIsNotNone(run_budget)
         self.assertEqual(run_budget.max_completed_chunks, 2)
-        self.assertEqual(run_budget.max_tool_calls, 12)
 
     async def test_run_queued_crawl_job_moves_to_needs_review_when_candidates_saved(self) -> None:
         job_id = await self._create_default_profile_and_job()

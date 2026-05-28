@@ -52,7 +52,6 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(payload["match_analysis_job_item_concurrency"], 5)
         self.assertEqual(payload["crawler_host_concurrency"], 1)
         self.assertEqual(payload["crawler_agent_max_chunks_per_run"], 2)
-        self.assertEqual(payload["crawler_agent_max_tool_calls_per_run"], 12)
         self.assertEqual(payload["draft_max_tokens"], 6000)
         self.assertEqual(payload["batch_draft_generation_concurrency"], 5)
         self.assertEqual(payload["draft_rewrite_intensity"], "moderate")
@@ -74,7 +73,6 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "crawler_profile_enrichment_concurrency": 4,
                 "crawler_host_concurrency": 2,
                 "crawler_agent_max_chunks_per_run": 3,
-                "crawler_agent_max_tool_calls_per_run": 15,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 5,
                 "draft_rewrite_intensity": "strong",
@@ -92,7 +90,6 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["draft_max_tokens"], 4800)
         self.assertEqual(response.json()["batch_draft_generation_concurrency"], 5)
         self.assertEqual(response.json()["crawler_agent_max_chunks_per_run"], 3)
-        self.assertEqual(response.json()["crawler_agent_max_tool_calls_per_run"], 15)
         self.assertEqual(response.json()["draft_rewrite_intensity"], "strong")
         self.assertEqual(response.json()["draft_rewrite_tone"], "professional")
         self.assertEqual(response.json()["draft_rewrite_formality"], "formal")

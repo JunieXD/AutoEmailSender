@@ -28,17 +28,8 @@ def upgrade() -> None:
                 nullable=False,
             )
         )
-        batch_op.add_column(
-            sa.Column(
-                "crawler_agent_max_tool_calls_per_run",
-                sa.Integer(),
-                server_default=sa.text("12"),
-                nullable=False,
-            )
-        )
 
 
 def downgrade() -> None:
     with op.batch_alter_table("app_settings", schema=None) as batch_op:
-        batch_op.drop_column("crawler_agent_max_tool_calls_per_run")
         batch_op.drop_column("crawler_agent_max_chunks_per_run")

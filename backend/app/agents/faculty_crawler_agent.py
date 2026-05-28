@@ -42,7 +42,6 @@ TraceCallback = Callable[[Any], None | Awaitable[None]]
 @dataclass(slots=True, frozen=True)
 class CrawlerAgentRunBudget:
     max_completed_chunks: int | None = None
-    max_tool_calls: int | None = None
 
 
 CONTROLLED_CRAWLER_TOOL_NAMES = frozenset(
@@ -458,7 +457,6 @@ async def run_faculty_crawler_agent(
         )
     input_payload = {"messages": [{"role": "user", "content": prompt}]}
     last_event: Any = None
-    tool_calls = 0
     completed_chunks = 0
 
     await _ensure_agent_job_can_continue(ctx)
@@ -470,8 +468,6 @@ async def run_faculty_crawler_agent(
         await _ensure_agent_job_can_continue(ctx)
         last_event = event
         trace_event = build_trace_event(event)
-        if _is_controlled_tool_start_event(trace_event):
-            tool_calls += 1
         if _is_completed_chunk_submit_event(trace_event):
             completed_chunks += 1
         if trace_callback is not None:
@@ -480,7 +476,6 @@ async def run_faculty_crawler_agent(
                 await result
         budget_event = _build_budget_reached_event(
             run_budget,
-            tool_calls=tool_calls,
             completed_chunks=completed_chunks,
         )
         if budget_event is not None:
@@ -492,12 +487,6 @@ async def run_faculty_crawler_agent(
         await _ensure_agent_job_can_continue(ctx)
 
     return build_trace_event(last_event)
-
-
-def _is_controlled_tool_start_event(event: dict[str, object]) -> bool:
-    event_name = str(event.get("event") or event.get("event_type") or "")
-    tool_name = str(event.get("name") or "")
-    return event_name == "on_tool_start" and tool_name in CONTROLLED_CRAWLER_TOOL_NAMES
 
 
 def _is_completed_chunk_submit_event(event: dict[str, object]) -> bool:
@@ -517,7 +506,6 @@ def _is_completed_chunk_submit_event(event: dict[str, object]) -> bool:
 def _build_budget_reached_event(
     run_budget: CrawlerAgentRunBudget | None,
     *,
-    tool_calls: int,
     completed_chunks: int,
 ) -> dict[str, object] | None:
     if run_budget is None:
@@ -527,16 +515,7 @@ def _build_budget_reached_event(
             "event_type": "agent_context_budget_reached",
             "reason": "max_completed_chunks",
             "completed_chunks": completed_chunks,
-            "tool_calls": tool_calls,
             "message": "本轮 Agent 已达到 chunk 处理上限，将结束当前短链运行并由任务调度继续。",
-        }
-    if run_budget.max_tool_calls is not None and tool_calls >= run_budget.max_tool_calls:
-        return {
-            "event_type": "agent_context_budget_reached",
-            "reason": "max_tool_calls",
-            "completed_chunks": completed_chunks,
-            "tool_calls": tool_calls,
-            "message": "本轮 Agent 已达到工具调用上限，将结束当前短链运行并由任务调度继续。",
         }
     return None
 

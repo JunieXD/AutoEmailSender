@@ -131,7 +131,6 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "crawler_profile_enrichment_concurrency",
                 "crawler_host_concurrency",
                 "crawler_agent_max_chunks_per_run",
-                "crawler_agent_max_tool_calls_per_run",
                 "draft_max_tokens",
                 "batch_draft_generation_concurrency",
                 "draft_rewrite_intensity",
