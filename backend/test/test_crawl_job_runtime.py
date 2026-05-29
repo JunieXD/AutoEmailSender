@@ -321,6 +321,49 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self._count_candidates(job_id), 2)
 
+    async def test_budget_event_stops_remaining_start_urls_for_current_run(self) -> None:
+        job_id = await self._create_default_profile_and_job(
+            start_url="https://example.edu/faculty",
+            start_urls=[
+                "https://example.edu/faculty",
+                "https://example.edu/faculty?page=2",
+            ],
+        )
+        calls: list[str] = []
+
+        async def fake_run(
+            ctx: CrawlToolContext,
+            llm_profile: LLMProfile,
+            trace_callback=None,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            _ = llm_profile, trace_callback, kwargs
+            calls.append(ctx.start_url)
+            async with ctx.session_factory() as session:
+                session.add(
+                    CrawlPageChunk(
+                        job_id=ctx.job_id,
+                        page_id=None,
+                        source_url=ctx.start_url,
+                        page_fingerprint="page",
+                        chunk_id="chunk-pending",
+                        chunk_index=0,
+                        chunk_hash="hash",
+                        status=CrawlPageChunkStatus.PENDING.value,
+                        content="李四",
+                    )
+                )
+                await session.commit()
+            return {"event_type": "agent_context_budget_reached", "reason": "max_completed_chunks"}
+
+        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run):
+            processed = await run_queued_crawl_jobs_once(self.session_factory)
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(calls, ["https://example.edu/faculty"])
+        job = await self._get_job(job_id)
+        self.assertEqual(job.status, CrawlJobStatus.QUEUED.value)
+
     async def test_run_queued_crawl_job_accumulates_tokens_on_current_run(self) -> None:
         job_id = await self._create_default_profile_and_job()
 

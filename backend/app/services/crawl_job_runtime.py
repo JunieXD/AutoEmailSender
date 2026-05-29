@@ -288,13 +288,15 @@ async def run_queued_crawl_jobs_once(
                         trace_callback=trace_callback,
                     )
                 else:
-                    await run_faculty_crawler_agent(
+                    agent_result = await run_faculty_crawler_agent(
                         entry_ctx,
                         llm_profile,
                         trace_callback=trace_callback,
                         extra_body=entry_ctx.thinking_extra_body,
                         run_budget=agent_run_budget,
                     )
+                    if _is_agent_context_budget_reached(agent_result):
+                        break
             except (CrawlJobPaused, CrawlJobCanceled, CrawlJobSaveBudgetExceeded, asyncio.CancelledError):
                 raise
             except Exception as exc:
@@ -1430,6 +1432,10 @@ def _extract_model_message_content(response: object) -> str:
         joined = "".join(pieces).strip()
         return joined
     return ""
+
+
+def _is_agent_context_budget_reached(result: object) -> bool:
+    return isinstance(result, dict) and result.get("event_type") == "agent_context_budget_reached"
 
 
 def build_faculty_crawler_model(*args: Any, **kwargs: Any) -> Any:
