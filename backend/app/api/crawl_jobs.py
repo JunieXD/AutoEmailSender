@@ -767,6 +767,7 @@ async def _build_crawl_job_summaries(
                 "latest_event_message": _latest_event_message(job.agent_trace),
                 "input_tokens": metrics.input_tokens,
                 "output_tokens": metrics.output_tokens,
+                "cached_tokens": metrics.cached_tokens,
                 "total_tokens": metrics.total_tokens,
                 "duration_seconds": metrics.duration_seconds,
             },

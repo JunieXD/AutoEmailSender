@@ -12,6 +12,7 @@ from app.services.crawl_job_runs import extract_token_usage
 class CrawlJobMetrics:
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
     total_tokens: int = 0
     duration_seconds: int = 0
 
@@ -24,6 +25,7 @@ def build_crawl_job_metrics(job: Any, *, now: datetime | None = None) -> CrawlJo
     trace_events = _normalize_trace(getattr(job, "agent_trace", None))
     input_tokens = 0
     output_tokens = 0
+    cached_tokens = 0
     total_tokens = 0
 
     for event in trace_events:
@@ -32,6 +34,7 @@ def build_crawl_job_metrics(job: Any, *, now: datetime | None = None) -> CrawlJo
             continue
         input_tokens += usage["input_tokens"]
         output_tokens += usage["output_tokens"]
+        cached_tokens += usage.get("cached_tokens") or 0
         total_tokens += usage["total_tokens"]
 
     created_at = _ensure_datetime(getattr(job, "created_at", None))
@@ -43,6 +46,7 @@ def build_crawl_job_metrics(job: Any, *, now: datetime | None = None) -> CrawlJo
     return CrawlJobMetrics(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cached_tokens=cached_tokens,
         total_tokens=total_tokens,
         duration_seconds=duration_seconds,
     )
@@ -59,6 +63,7 @@ def _build_current_run_metrics(current_run: Any, *, now: datetime | None) -> Cra
     return CrawlJobMetrics(
         input_tokens=int(getattr(current_run, "input_tokens", 0) or 0),
         output_tokens=int(getattr(current_run, "output_tokens", 0) or 0),
+        cached_tokens=int(getattr(current_run, "cached_tokens", 0) or 0),
         total_tokens=int(getattr(current_run, "total_tokens", 0) or 0),
         duration_seconds=duration_seconds,
     )

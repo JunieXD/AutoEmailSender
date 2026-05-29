@@ -203,6 +203,7 @@ const buildCrawlJob = (
     "入口 URL 抓取失败: Blocked by anti-bot protection: Structural: minimal_text, no_content_elements (52 bytes, 13 chars visible)",
   input_tokens: 0,
   output_tokens: 0,
+  cached_tokens: 0,
   total_tokens: 0,
   duration_seconds: 0,
   ...overrides,
@@ -643,6 +644,42 @@ beforeEach(() => {
       approved_count: 0,
     }),
   });
+});
+
+describe("TasksPage crawl job monitor", () => {
+  it("shows cached token usage in the realtime monitor", async () => {
+    apiMocks.listCrawlJobs.mockResolvedValue([
+      buildCrawlJob({
+        input_tokens: 128000,
+        output_tokens: 2048,
+        cached_tokens: 64000,
+        total_tokens: 130048,
+      }),
+    ]);
+    apiMocks.getCrawlJob.mockResolvedValue(
+      buildCrawlJob({
+        input_tokens: 128000,
+        output_tokens: 2048,
+        cached_tokens: 64000,
+        total_tokens: 130048,
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /教师抓取/ }));
+    expect(await screen.findByText("江西财经大学 / 计算机与人工智能学院")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+
+    expect(await screen.findByText("实时抓取监控")).toBeInTheDocument();
+    expect(screen.getByText("缓存命中 Token")).toBeInTheDocument();
+    expect(screen.getByText("64,000")).toBeInTheDocument();
+  });
+
 });
 
 describe("TasksPage batch draft review", () => {

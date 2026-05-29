@@ -131,6 +131,7 @@ class CrawlJobSummaryRead(CrawlJobRead):
     latest_event_message: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
     total_tokens: int = 0
     duration_seconds: int = 0
 

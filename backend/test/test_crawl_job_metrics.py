@@ -103,7 +103,7 @@ class CrawlJobMetricsTests(unittest.TestCase):
                         "data": {
                             "model": {
                                 "messages": [
-                                    "usage_metadata={'input_tokens': 100, 'output_tokens': 20, 'total_tokens': 120}",
+                                    "usage_metadata={'input_tokens': 100, 'output_tokens': 20, 'cached_tokens': 30, 'total_tokens': 120}",
                                 ]
                             }
                         },
@@ -115,7 +115,7 @@ class CrawlJobMetricsTests(unittest.TestCase):
                         "data": {
                             "model": {
                                 "messages": [
-                                    "usage_metadata={'input_tokens': 80, 'output_tokens': 15, 'total_tokens': 95}",
+                                    "usage_metadata={'input_tokens': 80, 'output_tokens': 15, 'cached_tokens': 10, 'total_tokens': 95}",
                                 ]
                             }
                         },
@@ -130,6 +130,7 @@ class CrawlJobMetricsTests(unittest.TestCase):
 
         self.assertEqual(metrics.input_tokens, 180)
         self.assertEqual(metrics.output_tokens, 35)
+        self.assertEqual(metrics.cached_tokens, 40)
         self.assertEqual(metrics.total_tokens, 215)
         self.assertEqual(metrics.duration_seconds, 90)
 

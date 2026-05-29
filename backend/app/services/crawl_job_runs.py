@@ -11,11 +11,11 @@ from app.models import CrawlJob, CrawlJobRun, CrawlJobStatus
 
 USAGE_METADATA_PATTERN = re.compile(
     r"usage_metadata=\{'input_tokens':\s*(?P<input>\d+),\s*"
-    r"'output_tokens':\s*(?P<output>\d+),\s*'total_tokens':\s*(?P<total>\d+)",
+    r"'output_tokens':\s*(?P<output>\d+),.*?'total_tokens':\s*(?P<total>\d+)",
 )
 TOKEN_USAGE_PATTERN = re.compile(
     r"'token_usage':\s*\{'completion_tokens':\s*(?P<output>\d+),\s*"
-    r"'prompt_tokens':\s*(?P<input>\d+),\s*'total_tokens':\s*(?P<total>\d+)",
+    r"'prompt_tokens':\s*(?P<input>\d+),.*?'total_tokens':\s*(?P<total>\d+)",
 )
 CACHED_TOKEN_PATTERNS = (
     re.compile(r"['\"]prompt_cache_hit_tokens['\"]:\s*(?P<cached>\d+)"),

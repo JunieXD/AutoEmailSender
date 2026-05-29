@@ -3573,7 +3573,7 @@ const selectedCrawlJobCanReview =
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">
                     当前状态
@@ -3612,6 +3612,14 @@ const selectedCrawlJobCanReview =
                   </div>
                   <div className="mt-2 text-sm font-semibold text-stone-900">
                     {selectedCrawlJob.output_tokens.toLocaleString("zh-CN")}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">
+                    缓存命中 Token
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {selectedCrawlJob.cached_tokens.toLocaleString("zh-CN")}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">

@@ -73,6 +73,7 @@ const crawlJobs = [
     latest_event_message: "任务已取消",
     input_tokens: 10,
     output_tokens: 5,
+    cached_tokens: 3,
     total_tokens: 15,
     duration_seconds: 30,
   },
