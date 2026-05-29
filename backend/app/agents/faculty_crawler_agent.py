@@ -478,7 +478,7 @@ async def run_faculty_crawler_agent(
             run_budget,
             completed_chunks=completed_chunks,
         )
-        if budget_event is not None:
+        if budget_event is not None and await crawl_job_has_pending_work(ctx.session_factory, job_id=ctx.job_id):
             if trace_callback is not None:
                 result = trace_callback(budget_event)
                 if inspect.isawaitable(result):
