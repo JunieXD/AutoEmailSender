@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus
-from app.services.crawler_tools import CandidateEnrichmentPayload
+from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, LLMProfile
+from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_crawl4ai
 from app.services.crawler_v2_scheduler import ensure_job_active
+from app.services.crawl_job_runtime import enrich_candidate_profile_with_llm
 
 MAX_ENRICHMENT_ATTEMPTS = 3
 
@@ -71,8 +73,44 @@ async def enrich_candidate_once(
     *,
     candidate_id: int,
 ) -> CandidateEnrichmentPayload:
-    _ = session_factory, candidate_id
-    raise NotImplementedError("V2 enrichment LLM adapter is not configured")
+    async with session_factory() as session:
+        candidate = await session.get(CrawlCandidate, candidate_id)
+        if candidate is None:
+            raise ValueError("candidate_missing")
+        job = await session.get(CrawlJob, candidate.job_id)
+        if job is None:
+            raise ValueError("job_missing")
+        llm_profile = await _resolve_llm_profile(session, job)
+        if llm_profile is None:
+            raise ValueError("缺少可用的 LLM Profile")
+        ctx = CrawlToolContext(
+            session_factory=session_factory,
+            job_id=job.id,
+            university=job.university,
+            school=job.school,
+            start_url=job.start_url,
+        )
+        profile_url = candidate.profile_url or ""
+    page_text = await fetch_profile_text(ctx, profile_url)
+    return await enrich_candidate_profile_with_llm(ctx, llm_profile, candidate, page_text)
+
+
+async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
+    snapshot: PageSnapshot = await crawl_page_with_crawl4ai(ctx, profile_url, intent="profile")
+    if snapshot.status != "succeeded":
+        raise ValueError(snapshot.error_message or "详情页抓取失败")
+    return snapshot.text or snapshot.html
+
+
+async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:
+    if job.llm_profile_id is not None:
+        return await session.get(LLMProfile, job.llm_profile_id)
+    return await session.scalar(
+        select(LLMProfile)
+        .where(LLMProfile.is_default.is_(True))
+        .order_by(LLMProfile.id.asc())
+        .limit(1)
+    )
 
 
 def _apply_enrichment(candidate: CrawlCandidate, payload: CandidateEnrichmentPayload) -> None:

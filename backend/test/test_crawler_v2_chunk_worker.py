@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask
-from app.services.crawler_v2_chunk_worker import complete_current_chunk
+from app.services.crawler_v2_chunk_worker import complete_current_chunk, run_crawler_v2_chunk_worker_once
 from app.services.crawler_tools import ProfessorCandidatePayload
 
 
@@ -55,6 +55,24 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([task.normalized_url for task in page_tasks], ["https://example.edu/page2.html"])
         self.assertEqual(len(enrichment_tasks), 1)
         self.assertEqual(enrichment_tasks[0].candidate_id, candidates[0].id)
+
+
+    async def test_chunk_worker_without_llm_profile_marks_retryable(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+
+        processed = await run_crawler_v2_chunk_worker_once(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+        )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertIsNone(chunk.worker_id)
+        self.assertIn("LLM Profile", chunk.last_error or "")
 
     async def _seed_processing_chunk(self) -> tuple[int, int]:
         async with self.session_factory() as session:

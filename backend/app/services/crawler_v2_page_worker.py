@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
-from app.services.crawler_tools import CrawlToolContext, PageSnapshot, crawl_page_with_crawl4ai
+from app.services.crawler_tools import CrawlToolContext, PageSnapshot, browser_investigate, crawl_page_with_http
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 
@@ -81,11 +81,11 @@ async def run_crawler_v2_page_worker_once(
 
 
 async def fetch_page_direct(ctx: CrawlToolContext, url: str) -> PageSnapshot:
-    return await crawl_page_with_crawl4ai(ctx, url)
+    return await crawl_page_with_http(ctx, url)
 
 
 async def fetch_page_browser(ctx: CrawlToolContext, url: str) -> PageSnapshot:
-    return await crawl_page_with_crawl4ai(ctx, url)
+    return await browser_investigate(ctx, url, goal="", intent="generic")
 
 
 def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:

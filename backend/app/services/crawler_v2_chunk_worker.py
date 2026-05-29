@@ -15,9 +15,12 @@ from app.models import (
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
-from app.services.crawler_tools import ProfessorCandidatePayload
+from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
+from app.services.crawl_job_runtime import run_faculty_crawler_agent
+
+MAX_CHUNK_ATTEMPTS = 2
 
 
 
@@ -54,8 +57,6 @@ async def run_crawler_v2_chunk_worker_once(
         )
     try:
         from app.agents.faculty_crawler_agent import CrawlerAgentRunBudget
-        from app.services.crawl_job_runtime import run_faculty_crawler_agent
-
         await run_faculty_crawler_agent(
             ctx,
             llm_profile,

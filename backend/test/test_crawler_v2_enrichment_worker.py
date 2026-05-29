@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus
+from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload
-from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
+from app.services.crawler_v2_enrichment_worker import enrich_candidate_once, run_crawler_v2_enrichment_worker_once
 
 
 class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -56,9 +56,24 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert task is not None
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SKIPPED.value)
 
+
+    async def test_enrichment_adapter_fetches_profile_and_invokes_existing_llm(self) -> None:
+        candidate_id, _ = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
+
+        with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="张三 邮箱 zhang@example.edu")) as fetch_mock, patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm", new=AsyncMock(return_value=payload)) as enrich_mock:
+            result = await enrich_candidate_once(self.session_factory, candidate_id=candidate_id)
+
+        self.assertEqual(result.email, "zhang@example.edu")
+        fetch_mock.assert_awaited_once()
+        enrich_mock.assert_awaited_once()
+
     async def _seed_task(self, *, profile_url: str | None) -> tuple[int, int]:
         async with self.session_factory() as session:
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+            profile = LLMProfile(name="默认", provider="openai", api_base_url="https://api.example.com/v1", api_key="sk-test", model_name="deepseek", is_default=True)
+            session.add(profile)
+            await session.flush()
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2", llm_profile_id=profile.id)
             session.add(job)
             await session.flush()
             candidate = CrawlCandidate(job_id=job.id, name="张三", profile_url=profile_url)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
@@ -104,24 +104,18 @@ async def _claim_page_task(
         .where(
             CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
-            or_(
-                CrawlPageTask.status == CrawlPageTaskStatus.PENDING.value,
-                (CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value) & (CrawlPageTask.lease_expires_at <= now),
-                CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value,
-            ),
+            _page_task_claimable(now),
         )
         .order_by(CrawlPageTask.priority.desc(), CrawlPageTask.id.asc())
         .limit(1)
     )
     if task is None:
         return CrawlerV2ClaimedWork.idle()
-    task.status = CrawlPageTaskStatus.PROCESSING.value
-    task.worker_id = worker_id
-    task.claimed_at = now
-    task.lease_expires_at = lease_expires_at
-    task.attempt_count = int(task.attempt_count or 0) + 1
+    result = await _conditional_claim_page_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
+    if result.rowcount != 1:
+        await session.rollback()
+        return CrawlerV2ClaimedWork.idle()
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.PAGE, work_item_id=task.id, job_id=task.job_id)
-
 
 async def _claim_chunk(
     session: AsyncSession,
@@ -145,24 +139,18 @@ async def _claim_chunk(
         .where(
             CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
-            or_(
-                CrawlPageChunk.status == CrawlPageChunkStatus.PENDING.value,
-                (CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value) & (CrawlPageChunk.lease_expires_at <= now),
-                CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value,
-            ),
+            _chunk_claimable(now),
         )
         .order_by(CrawlPageChunk.id.asc())
         .limit(1)
     )
     if chunk is None:
         return CrawlerV2ClaimedWork.idle()
-    chunk.status = CrawlPageChunkStatus.PROCESSING.value
-    chunk.worker_id = worker_id
-    chunk.claimed_at = now
-    chunk.lease_expires_at = lease_expires_at
-    chunk.attempt_count = int(chunk.attempt_count or 0) + 1
+    result = await _conditional_claim_chunk(session, chunk=chunk, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
+    if result.rowcount != 1:
+        await session.rollback()
+        return CrawlerV2ClaimedWork.idle()
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.CHUNK, work_item_id=chunk.id, job_id=chunk.job_id)
-
 
 async def _claim_enrichment_task(
     session: AsyncSession,
@@ -186,24 +174,108 @@ async def _claim_enrichment_task(
         .where(
             CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
-            or_(
-                CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-                (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value) & (CrawlCandidateEnrichmentTask.lease_expires_at <= now),
-                CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
-            ),
+            _enrichment_task_claimable(now),
         )
         .order_by(CrawlCandidateEnrichmentTask.id.asc())
         .limit(1)
     )
     if task is None:
         return CrawlerV2ClaimedWork.idle()
-    task.status = CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
-    task.worker_id = worker_id
-    task.claimed_at = now
-    task.lease_expires_at = lease_expires_at
-    task.attempt_count = int(task.attempt_count or 0) + 1
+    result = await _conditional_claim_enrichment_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
+    if result.rowcount != 1:
+        await session.rollback()
+        return CrawlerV2ClaimedWork.idle()
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.ENRICHMENT, work_item_id=task.id, job_id=task.job_id)
 
+
+def _page_task_claimable(now: datetime):
+    return or_(
+        CrawlPageTask.status == CrawlPageTaskStatus.PENDING.value,
+        (CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value) & (CrawlPageTask.lease_expires_at <= now),
+        CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value,
+    )
+
+
+def _chunk_claimable(now: datetime):
+    return or_(
+        CrawlPageChunk.status == CrawlPageChunkStatus.PENDING.value,
+        (CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value) & (CrawlPageChunk.lease_expires_at <= now),
+        CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+    )
+
+
+def _enrichment_task_claimable(now: datetime):
+    return or_(
+        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+        (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value) & (CrawlCandidateEnrichmentTask.lease_expires_at <= now),
+        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+    )
+
+
+async def _conditional_claim_page_task(
+    session: AsyncSession,
+    *,
+    task: CrawlPageTask,
+    worker_id: str,
+    now: datetime,
+    lease_expires_at: datetime,
+):
+    return await session.execute(
+        update(CrawlPageTask)
+        .execution_options(synchronize_session=False)
+        .where(CrawlPageTask.id == task.id, _page_task_claimable(now))
+        .values(
+            status=CrawlPageTaskStatus.PROCESSING.value,
+            worker_id=worker_id,
+            claimed_at=now,
+            lease_expires_at=lease_expires_at,
+            attempt_count=int(task.attempt_count or 0) + 1,
+        )
+    )
+
+
+async def _conditional_claim_chunk(
+    session: AsyncSession,
+    *,
+    chunk: CrawlPageChunk,
+    worker_id: str,
+    now: datetime,
+    lease_expires_at: datetime,
+):
+    return await session.execute(
+        update(CrawlPageChunk)
+        .execution_options(synchronize_session=False)
+        .where(CrawlPageChunk.id == chunk.id, _chunk_claimable(now))
+        .values(
+            status=CrawlPageChunkStatus.PROCESSING.value,
+            worker_id=worker_id,
+            claimed_at=now,
+            lease_expires_at=lease_expires_at,
+            attempt_count=int(chunk.attempt_count or 0) + 1,
+        )
+    )
+
+
+async def _conditional_claim_enrichment_task(
+    session: AsyncSession,
+    *,
+    task: CrawlCandidateEnrichmentTask,
+    worker_id: str,
+    now: datetime,
+    lease_expires_at: datetime,
+):
+    return await session.execute(
+        update(CrawlCandidateEnrichmentTask)
+        .execution_options(synchronize_session=False)
+        .where(CrawlCandidateEnrichmentTask.id == task.id, _enrichment_task_claimable(now))
+        .values(
+            status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+            worker_id=worker_id,
+            claimed_at=now,
+            lease_expires_at=lease_expires_at,
+            attempt_count=int(task.attempt_count or 0) + 1,
+        )
+    )
 
 async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: int, now: datetime) -> bool:
     page = await session.scalar(

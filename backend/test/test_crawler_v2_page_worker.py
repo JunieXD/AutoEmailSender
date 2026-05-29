@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_tools import PageSnapshot
-from app.services.crawler_v2_page_worker import run_crawler_v2_page_worker_once
+from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -74,6 +74,21 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(task.fetch_mode, "browser")
             self.assertEqual(task.direct_status, "failed")
             self.assertIsNotNone(task.fallback_reason)
+
+
+    async def test_fetch_modes_use_distinct_underlying_paths(self) -> None:
+        ctx = object()
+        direct_snapshot = PageSnapshot(url="https://example.edu", text="direct", html="", links=[], fetch_method="http", status="succeeded")
+        browser_snapshot = PageSnapshot(url="https://example.edu", text="browser", html="", links=[], fetch_method="browser", status="succeeded")
+
+        with patch("app.services.crawler_v2_page_worker.crawl_page_with_http", new=AsyncMock(return_value=direct_snapshot)) as http_mock, patch("app.services.crawler_v2_page_worker.browser_investigate", new=AsyncMock(return_value=browser_snapshot)) as browser_mock:
+            direct_result = await fetch_page_direct(ctx, "https://example.edu")
+            browser_result = await fetch_page_browser(ctx, "https://example.edu")
+
+        self.assertEqual(direct_result.fetch_method, "http")
+        self.assertEqual(browser_result.fetch_method, "browser")
+        http_mock.assert_awaited_once()
+        browser_mock.assert_awaited_once()
 
     async def _seed_page_task(self) -> tuple[int, int]:
         async with self.session_factory() as session:

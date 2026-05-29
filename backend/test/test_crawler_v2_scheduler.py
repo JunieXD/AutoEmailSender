@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -126,6 +127,26 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             job = await session.get(CrawlJob, job_id)
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+
+    async def test_claim_skips_row_when_conditional_update_loses_race(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a"))
+            await session.commit()
+
+        class LostRaceResult:
+            rowcount = 0
+
+        with patch("app.services.crawler_v2_scheduler._conditional_claim_page_task", return_value=LostRaceResult()):
+            claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.IDLE)
+        async with self.session_factory() as session:
+            task = await session.scalar(select(CrawlPageTask))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
+        self.assertIsNone(task.worker_id)
+
     async def _create_job(self, *, status: str = CrawlJobStatus.RUNNING.value) -> int:
         async with self.session_factory() as session:
             job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=status, runtime_version="v2")
