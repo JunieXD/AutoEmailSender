@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.crawl_jobs import create_crawl_job
-from app.models import Base, CrawlPageTask
+from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, LLMProfile
 from app.schemas.crawl_job import CrawlJobCreatePayload
 from app.services.runtime_manager import RuntimeManager
 
@@ -46,6 +46,34 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
             except FileNotFoundError:
                 pass
 
+
+    async def test_v2_runtime_dispatches_claimed_chunk_worker(self) -> None:
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        engine = create_async_engine(f"sqlite+aiosqlite:///{Path(db_path).as_posix()}")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+                session.add(job)
+                await session.flush()
+                session.add(CrawlPageChunk(job_id=job.id, page_id=None, source_url="https://example.edu", page_fingerprint="p", chunk_id="c1", chunk_index=0, chunk_hash="h", content="张三", status=CrawlPageChunkStatus.PENDING.value))
+                await session.commit()
+
+            with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=AsyncMock(return_value={"ok": True})):
+                from app.services.crawler_v2_scheduler import run_crawler_v2_once
+
+                processed = await run_crawler_v2_once(session_factory, worker_id="w1")
+
+            self.assertEqual(processed, 1)
+        finally:
+            await engine.dispose()
+            try:
+                os.unlink(db_path)
+            except FileNotFoundError:
+                pass
     async def test_runtime_manager_uses_v2_worker_entry(self) -> None:
         session = object()
         session_context = MagicMock()

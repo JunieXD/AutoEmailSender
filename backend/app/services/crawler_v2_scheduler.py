@@ -262,7 +262,9 @@ async def run_crawler_v2_once(
 
         return await run_crawler_v2_page_worker_once(session_factory, task_id=claimed.work_item_id, worker_id=worker_id)
     if claimed.kind is CrawlerV2WorkKind.CHUNK:
-        return 1
+        from app.services.crawler_v2_chunk_worker import run_crawler_v2_chunk_worker_once
+
+        return await run_crawler_v2_chunk_worker_once(session_factory, chunk_id=claimed.work_item_id, worker_id=worker_id)
     if claimed.kind is CrawlerV2WorkKind.ENRICHMENT:
         from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
 
