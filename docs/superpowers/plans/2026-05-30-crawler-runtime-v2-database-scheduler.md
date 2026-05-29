@@ -81,9 +81,12 @@ async def run() -> tuple[str, str, int, int, str]:
             status="pending",
             source_kind="entry",
         )
+        candidate = CrawlCandidate(job_id=job.id, name="张三", university="示例大学", school="计算机学院")
+        session.add(candidate)
+        await session.flush()
         enrich_task = CrawlCandidateEnrichmentTask(
             job_id=job.id,
-            candidate_id=1,
+            candidate_id=candidate.id,
             status="pending",
         )
         token_usage = CrawlWorkerTokenUsage(
@@ -196,6 +199,8 @@ direct_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
 fallback_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 browser_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
 ```
+
+为 `CrawlPageChunkStatus` 增加 `FAILED_RETRYABLE = "failed_retryable"` 和 `FAILED_TERMINAL = "failed_terminal"`，让调度器能统一判断 chunk 重试和终止失败。
 
 为 `CrawlPageChunk` 增加：
 
@@ -352,7 +357,7 @@ class SchedulerResult:
 
 - [ ] **步骤 4：实现最小调度器**
 
-`run_crawler_v2_scheduler_once` 查询一个 `running` 或 `queued` 且 `runtime_version='v2'` 的任务。若是 `queued`，先置为 `running`。按顺序领取 page、chunk、enrichment；领取通过 `UPDATE crawl_page_tasks SET status = 'processing', worker_id = :worker_id WHERE id = :id AND status IN ('pending', 'failed_retryable') AND (lease_expires_at IS NULL OR lease_expires_at < :now)` 条件更新，写入 `worker_id`、`claimed_at`、`lease_expires_at`。
+`run_crawler_v2_scheduler_once` 在本任务只实现“单实例决策 + 并发安全领取 + 结束判断”，不直接执行真实 Worker。它查询一个 `running` 或 `queued` 且 `runtime_version='v2'` 的任务；若是 `queued`，先置为 `running`。按顺序领取 page、chunk、enrichment；领取通过 `UPDATE crawl_page_tasks SET status = 'processing', worker_id = :worker_id WHERE id = :id AND status IN ('pending', 'failed_retryable') AND (lease_expires_at IS NULL OR lease_expires_at < :now)` 条件更新，写入 `worker_id`、`claimed_at`、`lease_expires_at`。真实 Worker 执行在任务 8 接入，避免本任务依赖尚未实现的 Worker。
 
 - [ ] **步骤 5：实现结束判断**
 
@@ -493,7 +498,7 @@ V1 原函数继续调用该共用函数，保证旧测试不破。
 
 - [ ] **步骤 6：实现 `complete_current_chunk`**
 
-实现流程：校验 chunk 归属和 lease；校验 candidates；保存/合并候选；校验 discovered_urls；合法 URL upsert 到 `crawl_page_tasks`；在同一事务中标记 chunk 状态。非法 URL 不回滚合法候选和合法 URL。
+实现流程：校验 chunk 归属和 lease；校验 candidates；保存/合并候选；为新建或更新后仍需补全的候选 upsert `crawl_candidate_enrichment_tasks`；校验 discovered_urls；合法 URL upsert 到 `crawl_page_tasks`；在同一事务中标记 chunk 状态。非法 URL 不回滚合法候选、补全任务和合法 URL。
 
 - [ ] **步骤 7：运行 Chunk Worker 测试和 V1 chunk 测试**
 
@@ -548,7 +553,7 @@ async def sync_candidate_enrichment_tasks(session: AsyncSession, *, job_id: int)
     return result
 ```
 
-规则：没有 `profile_url` 的候选写 `skipped_no_profile`；字段已完整写 `not_needed`；其余 pending。不要让不可补全候选永久停留 pending。
+规则：没有 `profile_url` 的候选写 `skipped_no_profile`；字段已完整写 `not_needed`；其余 pending。该同步函数用于修复历史或异常状态；正常新候选应在 `complete_current_chunk` 事务内同步创建补全任务，不能等到额外人工触发。
 
 - [ ] **步骤 5：实现 Enrichment Worker**
 
@@ -647,20 +652,24 @@ git commit -m "feat(crawler): 记录 V2 Worker token 用量"
 
 在 crawl job 创建逻辑中：写 `runtime_version='v2'`，对 `start_url` 和 `start_urls` 逐个 normalize，upsert 到 `crawl_page_tasks`，`source_kind='entry'`。
 
-- [ ] **步骤 4：runtime manager 切 V2 默认路径**
+- [ ] **步骤 4：实现 V2 调度执行入口**
 
-把 crawler worker 的自动入口改为调用 `run_crawler_v2_scheduler_once`。`crawl_job_runtime.py` 保留 V1 函数，但仅处理显式 `runtime_version='v1'` 的调试任务；遇到 V2 任务不启动长 Agent。
+新增或完善 `run_crawler_v2_once(session_factory, worker_id)`：先调用调度器领取工作项，再按领取结果执行对应 Worker。page task 调用 `run_page_worker_once`，chunk 调用 `run_chunk_worker_once`，enrichment 调用 `run_enrichment_worker_once`。如果某类 Worker 并发配额大于 1，使用 `asyncio.gather` 执行不同工作项；同一工作项仍只能被一个 Worker 领取。
 
-- [ ] **步骤 5：运行路由测试和旧 runtime 测试**
+- [ ] **步骤 5：runtime manager 切 V2 默认路径**
+
+把 crawler worker 的自动入口改为调用 `run_crawler_v2_once`，不能只调用“领取但不执行”的调度函数。`crawl_job_runtime.py` 保留 V1 函数，但仅处理显式 `runtime_version='v1'` 的调试任务；遇到 V2 任务不启动长 Agent。
+
+- [ ] **步骤 6：运行路由测试和旧 runtime 测试**
 
 运行：`cd C:\StudyPrograms\AutoEmailSender\backend; uv run python -m unittest test.test_crawler_v2_runtime_routing test.test_crawl_job_runtime test.test_runtime_manager -v`
 
 预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [ ] **步骤 7：Commit**
 
 ```powershell
-git add backend/app/api/crawl_jobs.py backend/app/schemas/crawl_job.py backend/app/services/crawl_job_runtime.py backend/app/services/runtime_manager.py backend/test/test_crawler_v2_runtime_routing.py
+git add backend/app/api/crawl_jobs.py backend/app/schemas/crawl_job.py backend/app/services/crawl_job_runtime.py backend/app/services/runtime_manager.py backend/app/services/crawler_v2_scheduler.py backend/test/test_crawler_v2_runtime_routing.py
 git commit -m "feat(crawler): 默认启用 V2 调度入口"
 ```
 
