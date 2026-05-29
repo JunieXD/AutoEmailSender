@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus
+from app.services.crawler_tools import CandidateEnrichmentPayload
+from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
+
+
+class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    async def asyncTearDown(self) -> None:
+        await self.engine.dispose()
+        try:
+            os.unlink(self.db_path)
+        except FileNotFoundError:
+            pass
+
+    async def test_enrichment_updates_missing_fields(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=["P1"], confidence=0.8, field_confidence={})
+
+        with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once", new=AsyncMock(return_value=payload)):
+            processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert candidate is not None and task is not None
+        self.assertEqual(candidate.email, "zhang@example.edu")
+        self.assertEqual(candidate.department, "计算机系")
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value)
+
+    async def test_enrichment_skips_candidate_without_profile_url(self) -> None:
+        _, task_id = await self._seed_task(profile_url=None)
+
+        processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SKIPPED.value)
+
+    async def _seed_task(self, *, profile_url: str | None) -> tuple[int, int]:
+        async with self.session_factory() as session:
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+            session.add(job)
+            await session.flush()
+            candidate = CrawlCandidate(job_id=job.id, name="张三", profile_url=profile_url)
+            session.add(candidate)
+            await session.flush()
+            task = CrawlCandidateEnrichmentTask(job_id=job.id, candidate_id=candidate.id, status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value, worker_id="w1")
+            session.add(task)
+            await session.commit()
+            return candidate.id, task.id
+
+
+if __name__ == "__main__":
+    unittest.main()
