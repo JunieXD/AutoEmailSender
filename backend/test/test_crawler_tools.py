@@ -11,7 +11,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage
+from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageFetchState
 from app.models.base import Base
 from app.services.crawler_tools import (
     CrawlJobSaveBudgetExceeded,
@@ -648,6 +648,42 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first, snapshot)
         self.assertEqual(second, snapshot)
         self.assertEqual(crawl_http.await_count, 1)
+
+
+    async def test_crawl_page_with_crawl4ai_skips_terminal_failed_url_without_network(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            async with harness.session_factory() as session:
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url="https://cs.example.edu/faculty",
+                        original_url="https://cs.example.edu/faculty",
+                        status="terminal_failed",
+                        last_fetch_method="browser",
+                        terminal_reason="anti_bot_or_empty_response",
+                        last_error_message="Blocked by anti-bot protection",
+                    )
+                )
+                await session.commit()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            with patch("app.services.crawler_tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
+                "app.services.crawler_tools._crawl_page_with_crawl4ai_browser", AsyncMock()
+            ) as browser_mock:
+                snapshot = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/faculty#ignored")
+
+        self.assertEqual(snapshot.status, "failed")
+        self.assertEqual(snapshot.fetch_method, "ledger")
+        self.assertIn("此前已明确抓取失败", snapshot.error_message or "")
+        http_mock.assert_not_awaited()
+        browser_mock.assert_not_awaited()
 
     async def test_crawl_page_with_crawl4ai_skips_previously_denied_url(self) -> None:
         ctx = CrawlToolContext(

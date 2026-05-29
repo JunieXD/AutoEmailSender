@@ -22,6 +22,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage
+from app.services.crawler_page_fetch_ledger import (
+    PageFetchDecision,
+    get_page_fetch_decision,
+    mark_page_fetch_result,
+)
 from app.services.html_text import html_to_text
 from app.services.professor_field_normalization import (
     RECENT_PAPERS_MAX_ITEMS,
@@ -1180,6 +1185,28 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
     return snapshot
 
 
+def _snapshot_from_page_fetch_decision(url: str, decision: PageFetchDecision) -> PageSnapshot | None:
+    if decision.action == "skip_terminal_failed":
+        return _failed_snapshot(
+            url=url,
+            fetch_method="ledger",
+            error_message=f"该页面此前已明确抓取失败，已跳过：{decision.message or decision.terminal_reason or 'terminal_failed'}",
+        )
+    if decision.action == "skip_processed":
+        return _failed_snapshot(
+            url=url,
+            fetch_method="ledger",
+            error_message="该页面已处理完成，已跳过重复抓取",
+        )
+    if decision.action == "claim_chunk":
+        return _failed_snapshot(
+            url=url,
+            fetch_method="ledger",
+            error_message="该页面已有待处理片段，请领取 chunk，不要重复抓取",
+        )
+    return None
+
+
 async def crawl_page_with_crawl4ai(
     ctx: CrawlToolContext,
     url: str,
@@ -1198,6 +1225,12 @@ async def crawl_page_with_crawl4ai(
     if cached is not None:
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return cached
+
+    decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
+    decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
+    if decision_snapshot is not None:
+        await _ensure_crawl_job_can_continue_for_context(ctx)
+        return decision_snapshot
 
     if ctx.is_http_blocked(absolute_url):
         snapshot = await browser_investigate(ctx, absolute_url, goal="", intent=intent)
@@ -1220,12 +1253,24 @@ async def crawl_page_with_crawl4ai(
             requested_url=absolute_url,
             snapshot=browser_snapshot,
         )
+        await mark_page_fetch_result(
+            ctx.session_factory,
+            job_id=ctx.job_id,
+            original_url=absolute_url,
+            snapshot=processed_browser_snapshot,
+        )
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return processed_browser_snapshot
     processed_snapshot = _apply_runtime_url_denylist_after_fetch(
         ctx,
         requested_url=absolute_url,
         snapshot=http_snapshot,
+    )
+    await mark_page_fetch_result(
+        ctx.session_factory,
+        job_id=ctx.job_id,
+        original_url=absolute_url,
+        snapshot=processed_snapshot,
     )
     if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
@@ -1279,6 +1324,12 @@ async def browser_investigate(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return cached
 
+    decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
+    decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
+    if decision_snapshot is not None:
+        await _ensure_crawl_job_can_continue_for_context(ctx)
+        return decision_snapshot
+
     if _has_unsafe_public_crawl_url(ctx.start_url, absolute_url):
         snapshot = _failed_snapshot(
             url=absolute_url,
@@ -1306,6 +1357,12 @@ async def browser_investigate(
         snapshot=snapshot,
     )
     await record_page_snapshot(ctx, processed_snapshot)
+    await mark_page_fetch_result(
+        ctx.session_factory,
+        job_id=ctx.job_id,
+        original_url=absolute_url,
+        snapshot=processed_snapshot,
+    )
     if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
     await _ensure_crawl_job_can_continue_for_context(ctx)

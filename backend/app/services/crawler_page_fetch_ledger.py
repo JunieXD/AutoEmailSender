@@ -81,7 +81,7 @@ async def get_page_fetch_decision(
                 CrawlPageFetchState.normalized_url == normalized_url,
             )
         )
-        if state is None:
+        if state is None or not isinstance(state, CrawlPageFetchState):
             return PageFetchDecision(action="allow_first_fetch", normalized_url=normalized_url)
         if state.status == CrawlPageFetchStatus.TERMINAL_FAILED.value:
             return PageFetchDecision(
@@ -138,6 +138,8 @@ async def mark_page_fetch_result(
                 CrawlPageFetchState.normalized_url == normalized_url,
             )
         )
+        if state is not None and not isinstance(state, CrawlPageFetchState):
+            return
         if state is None:
             state = CrawlPageFetchState(
                 job_id=job_id,
