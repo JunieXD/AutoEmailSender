@@ -15,7 +15,7 @@ from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "c4b8e2a9d6f3"
+HEAD_REVISION = "a9c3e7d1f4b2"
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
 
 
@@ -298,9 +298,27 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("crawl_jobs", table_names)
         self.assertIn("crawl_job_runs", table_names)
         self.assertIn("crawl_pages", table_names)
+        self.assertIn("crawl_page_fetch_states", table_names)
         self.assertIn("crawl_candidates", table_names)
 
         self.assertIn("current_run_id", self._get_columns("crawl_jobs"))
+        self.assertTrue(
+            {
+                "id",
+                "job_id",
+                "normalized_url",
+                "original_url",
+                "status",
+                "last_fetch_method",
+                "terminal_reason",
+                "transient_failure_count",
+                "last_error_message",
+                "last_page_id",
+                "first_seen_at",
+                "last_attempted_at",
+                "updated_at",
+            }.issubset(self._get_columns("crawl_page_fetch_states")),
+        )
         self.assertTrue(
             {
                 "job_id",
