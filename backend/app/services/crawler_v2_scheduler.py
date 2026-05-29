@@ -243,3 +243,28 @@ async def _job_has_terminal_failures(session: AsyncSession, *, job_id: int) -> b
         return True
     enrichment = await session.scalar(select(CrawlCandidateEnrichmentTask.id).where(CrawlCandidateEnrichmentTask.job_id == job_id, CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value).limit(1))
     return enrichment is not None
+async def run_crawler_v2_once(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    worker_id: str = "crawler-v2-worker",
+    config: CrawlerV2WorkerConfig | None = None,
+) -> int:
+    claimed = await claim_next_v2_work(session_factory, worker_id=worker_id, config=config)
+    if claimed.kind is CrawlerV2WorkKind.IDLE:
+        async with session_factory() as session:
+            await finalize_idle_jobs(session)
+            await session.commit()
+        return 0
+    if claimed.work_item_id is None:
+        return 0
+    if claimed.kind is CrawlerV2WorkKind.PAGE:
+        from app.services.crawler_v2_page_worker import run_crawler_v2_page_worker_once
+
+        return await run_crawler_v2_page_worker_once(session_factory, task_id=claimed.work_item_id, worker_id=worker_id)
+    if claimed.kind is CrawlerV2WorkKind.CHUNK:
+        return 1
+    if claimed.kind is CrawlerV2WorkKind.ENRICHMENT:
+        from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
+
+        return await run_crawler_v2_enrichment_worker_once(session_factory, task_id=claimed.work_item_id, worker_id=worker_id)
+    return 0

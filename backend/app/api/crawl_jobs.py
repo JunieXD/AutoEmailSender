@@ -18,6 +18,8 @@ from app.models import (
     CrawlJobStatus,
     CrawlPage,
     CrawlPageChunk,
+    CrawlPageTask,
+    CrawlPageTaskStatus,
     LLMProfile,
     Professor,
 )
@@ -49,6 +51,7 @@ from app.services.crawl_job_runs import (
 from app.services.operation_logs import record_operation_log
 from app.services.professor_management import is_valid_professor_email, normalize_professor_email
 from app.services.crawl_job_runtime import enrich_selected_crawl_candidates
+from app.services.crawler_v2_url_utils import normalize_url
 from app.core.database import get_session_factory
 
 
@@ -69,11 +72,21 @@ async def create_crawl_job(
         entry_type=payload.entry_type,
         llm_profile_id=payload.llm_profile_id,
         status=CrawlJobStatus.QUEUED.value,
+        runtime_version="v2",
         progress_current=0,
         progress_total=0,
     )
     session.add(job)
     await session.flush()
+    for start_url in job.start_urls or [job.start_url]:
+        session.add(
+            CrawlPageTask(
+                job_id=job.id,
+                normalized_url=normalize_url(start_url),
+                original_url=start_url,
+                status=CrawlPageTaskStatus.PENDING.value,
+            )
+        )
     await create_initial_crawl_job_run(session, job)
     await record_operation_log(
         session,
