@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlPageChunk, CrawlPageChunkStatus
 from app.services.crawler_chunking import ChunkingConfig, PageChunkDraft, split_chunk_content
+from app.services.crawler_page_fetch_ledger import mark_page_chunks_processed
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_batch
 
 
@@ -196,9 +197,11 @@ async def submit_page_chunk_candidates(
                     CrawlPageChunk.chunk_id == chunk_id,
                 )
             )
+            source_url = chunk.source_url if chunk is not None else None
             if chunk is not None:
                 chunk.status = CrawlPageChunkStatus.NO_CANDIDATES.value
                 await session.commit()
+        await _mark_source_processed_if_all_chunks_done(ctx, source_url)
         return {
             "chunk_status": CrawlPageChunkStatus.NO_CANDIDATES.value,
             "saved_count": 0,
@@ -240,9 +243,11 @@ async def submit_page_chunk_candidates(
                 CrawlPageChunk.chunk_id == chunk_id,
             )
         )
+        source_url = chunk.source_url if chunk is not None else None
         if chunk is not None:
             chunk.status = CrawlPageChunkStatus.COMPLETED.value
             await session.commit()
+    await _mark_source_processed_if_all_chunks_done(ctx, source_url)
     result = {**save_result, "chunk_status": CrawlPageChunkStatus.COMPLETED.value, "next_instruction": AFTER_CHUNK_DONE_INSTRUCTION}
     if legacy_more_flag or has_unsubmitted_candidates_in_current_chunk:
         result["warning"] = "只有 chunk_status=too_many_candidates 才会拆分当前 chunk；本次已按 completed 处理。"
@@ -361,6 +366,23 @@ async def has_chunks_for_source_url(
             .limit(1)
         )
         return chunk_id is not None
+
+
+async def _mark_source_processed_if_all_chunks_done(ctx: CrawlToolContext, source_url: str | None) -> None:
+    if not source_url:
+        return
+    state = await get_source_url_chunk_state(
+        ctx.session_factory,
+        job_id=ctx.job_id,
+        source_url=source_url,
+    )
+    if state == "completed":
+        await mark_page_chunks_processed(
+            ctx.session_factory,
+            job_id=ctx.job_id,
+            source_url=source_url,
+        )
+
 
 async def get_source_url_chunk_state(
     session_factory: async_sessionmaker[AsyncSession],

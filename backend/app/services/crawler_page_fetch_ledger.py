@@ -74,6 +74,8 @@ async def get_page_fetch_decision(
     url: str,
 ) -> PageFetchDecision:
     normalized_url = normalize_fetch_url(url)
+    if not callable(session_factory):
+        return PageFetchDecision(action="allow_first_fetch", normalized_url=normalized_url)
     async with session_factory() as session:
         state = await session.scalar(
             select(CrawlPageFetchState).where(
@@ -129,6 +131,8 @@ async def mark_page_fetch_result(
     snapshot: PageSnapshotLike,
     generated_chunks: bool = False,
 ) -> None:
+    if not callable(session_factory):
+        return
     normalized_url = normalize_fetch_url(snapshot.url or original_url)
     now = datetime.now(UTC)
     async with session_factory() as session:
@@ -177,6 +181,8 @@ async def mark_page_chunks_processed(
     job_id: int,
     source_url: str,
 ) -> None:
+    if not callable(session_factory):
+        return
     normalized_url = normalize_fetch_url(source_url)
     async with session_factory() as session:
         state = await session.scalar(

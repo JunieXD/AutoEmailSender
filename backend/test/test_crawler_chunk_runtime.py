@@ -6,7 +6,7 @@ import unittest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus
+from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageFetchState
 from app.models.base import Base
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import claim_next_page_chunk, create_chunks_for_page, submit_page_chunk_candidates
@@ -120,6 +120,37 @@ class CrawlerChunkRuntimeTests(unittest.TestCase):
                 self.assertEqual(row.status, CrawlPageChunkStatus.NO_CANDIDATES.value)
         asyncio.run(run())
 
+
+
+    def test_submit_no_candidates_marks_page_fetch_state_processed(self) -> None:
+        async def run() -> str:
+            session_factory = await _session_factory()
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu", status=CrawlJobStatus.RUNNING.value)
+                page = CrawlPage(job=job, url="https://cs.example.edu/faculty", fetch_method="http", status="succeeded")
+                session.add_all([job, page])
+                await session.flush()
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job.id,
+                        normalized_url="https://cs.example.edu/faculty",
+                        original_url="https://cs.example.edu/faculty",
+                        status="chunked",
+                    )
+                )
+                await session.commit()
+                await session.refresh(job)
+                await session.refresh(page)
+            drafts = build_page_chunks(source_url="https://cs.example.edu/faculty", html="<p>导航</p>", text="导航", config=ChunkingConfig())
+            await create_chunks_for_page(session_factory, job_id=job.id, page_id=page.id, drafts=drafts)
+            claimed = await claim_next_page_chunk(session_factory, job_id=job.id)
+            ctx = CrawlToolContext(job_id=job.id, start_url="https://cs.example.edu", university="示例大学", school="计算机学院", session_factory=session_factory)
+            await submit_page_chunk_candidates(ctx, chunk_id=claimed.chunk_id or "", chunk_status="no_candidates", has_unsubmitted_candidates_in_current_chunk=False, candidates=[])
+            async with session_factory() as session:
+                state = (await session.scalars(select(CrawlPageFetchState))).one()
+                return state.status
+
+        self.assertEqual(asyncio.run(run()), "processed")
 
     def test_submit_unsplittable_chunk_reports_failed(self) -> None:
         async def run() -> None:

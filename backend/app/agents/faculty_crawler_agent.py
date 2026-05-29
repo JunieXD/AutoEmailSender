@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.models import LLMProfile
 from app.services.crawl_job_runtime import crawl_job_has_pending_work, create_chunks_for_successful_page_snapshot
+from app.services.crawler_page_fetch_ledger import mark_page_fetch_result
 from app.services.crawler_chunk_runtime import (
     claim_next_page_chunk as claim_chunk_runtime,
     get_source_url_chunk_state,
@@ -331,6 +332,13 @@ def create_faculty_crawler_agent(
                 snapshot=snapshot,
             )
             if created_chunks > 0:
+                await mark_page_fetch_result(
+                    ctx.session_factory,
+                    job_id=ctx.job_id,
+                    original_url=absolute_url,
+                    snapshot=snapshot,
+                    generated_chunks=True,
+                )
                 return _format_chunked_crawl_page_response(snapshot, created_chunks=created_chunks)
         return snapshot.model_dump()
 
@@ -371,6 +379,13 @@ def create_faculty_crawler_agent(
                 snapshot=snapshot,
             )
             if created_chunks > 0:
+                await mark_page_fetch_result(
+                    ctx.session_factory,
+                    job_id=ctx.job_id,
+                    original_url=absolute_url,
+                    snapshot=snapshot,
+                    generated_chunks=True,
+                )
                 return _format_chunked_crawl_page_response(snapshot, created_chunks=created_chunks)
         return snapshot.model_dump(exclude={"text", "html", "markdown"})
 
