@@ -685,6 +685,49 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         http_mock.assert_not_awaited()
         browser_mock.assert_not_awaited()
 
+
+    async def test_crawl_page_with_crawl4ai_skips_terminal_failed_url_with_new_context(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            async with harness.session_factory() as session:
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url="https://cs.example.edu/faculty",
+                        original_url="https://cs.example.edu/faculty",
+                        status="terminal_failed",
+                        last_fetch_method="browser",
+                        terminal_reason="anti_bot_or_empty_response",
+                        last_error_message="Blocked by anti-bot protection",
+                    )
+                )
+                await session.commit()
+            first_ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            restarted_ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            with patch("app.services.crawler_tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
+                "app.services.crawler_tools._crawl_page_with_crawl4ai_browser", AsyncMock()
+            ) as browser_mock:
+                first = await crawl_page_with_crawl4ai(first_ctx, "https://cs.example.edu/faculty")
+                second = await crawl_page_with_crawl4ai(restarted_ctx, "https://cs.example.edu/faculty")
+
+        self.assertEqual(first.fetch_method, "ledger")
+        self.assertEqual(second.fetch_method, "ledger")
+        http_mock.assert_not_awaited()
+        browser_mock.assert_not_awaited()
+
     async def test_crawl_page_with_crawl4ai_skips_previously_denied_url(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
