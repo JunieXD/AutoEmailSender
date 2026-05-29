@@ -1227,7 +1227,7 @@ async def crawl_page_with_crawl4ai(
         requested_url=absolute_url,
         snapshot=http_snapshot,
     )
-    if processed_snapshot.status == "succeeded":
+    if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
     await _ensure_crawl_job_can_continue_for_context(ctx)
     return processed_snapshot
@@ -1306,10 +1306,32 @@ async def browser_investigate(
         snapshot=snapshot,
     )
     await record_page_snapshot(ctx, processed_snapshot)
-    if processed_snapshot.status == "succeeded":
+    if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
     await _ensure_crawl_job_can_continue_for_context(ctx)
     return processed_snapshot
+
+
+
+def _should_remember_page_snapshot(snapshot: PageSnapshot) -> bool:
+    if snapshot.status == "succeeded":
+        return True
+    if snapshot.status != "failed":
+        return False
+    if snapshot.suspicious_empty:
+        return True
+    error_message = (snapshot.error_message or "").lower()
+    return any(
+        marker in error_message
+        for marker in (
+            "anti-bot",
+            "blocked",
+            "captcha",
+            "cloudflare",
+            "access denied",
+            "security check",
+        )
+    )
 
 
 def _should_use_crawl4ai_fallback(snapshot: PageSnapshot) -> bool:

@@ -464,6 +464,58 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
         self.assertNotIn("text", result)
         self.assertNotIn("html", result)
 
+    def test_browser_investigate_reuses_failed_snapshot_for_same_url(self) -> None:
+        async def run() -> tuple[dict[str, object], dict[str, object], int]:
+            captured_tools: dict[str, object] = {}
+
+            def fake_create_deep_agent(**kwargs: object) -> object:
+                captured_tools["tools"] = kwargs["tools"]
+                return SimpleNamespace()
+
+            snapshot = PageSnapshot(
+                url="https://cs.example.edu/faculty",
+                title=None,
+                text="",
+                html="",
+                links=[],
+                fetch_method="browser",
+                status="failed",
+                error_message="Blocked by anti-bot protection",
+                suspicious_empty=True,
+            )
+            ctx = CrawlToolContext(
+                job_id=1,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=object(),  # type: ignore[arg-type]
+            )
+            profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
+
+            with (
+                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
+                patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
+                patch("app.services.crawler_tools._crawl_page_with_crawl4ai_browser", AsyncMock(return_value=snapshot)) as browser_mock,
+                patch("app.services.crawler_tools._ensure_crawl_job_can_continue_for_context", AsyncMock()),
+                patch("app.services.crawler_tools.record_page_snapshot", AsyncMock()),
+                patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
+                patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+            ):
+                from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+
+                create_faculty_crawler_agent(ctx, profile)
+                browser_tool = next(tool for tool in captured_tools["tools"] if getattr(tool, "name", "") == "investigate_with_browser")
+                first = await browser_tool.ainvoke({"url": "https://cs.example.edu/faculty", "goal": "查看导师列表"})
+                second = await browser_tool.ainvoke({"url": "https://cs.example.edu/faculty", "goal": "再次查看导师列表"})
+
+            return first, second, browser_mock.await_count
+
+        first, second, await_count = __import__("asyncio").run(run())
+
+        self.assertEqual(first["status"], "failed")
+        self.assertEqual(second["status"], "failed")
+        self.assertEqual(await_count, 1)
+
     def test_browser_investigate_returns_chunk_instruction_when_chunks_are_pending(self) -> None:
         async def run() -> dict[str, object]:
             captured_tools: dict[str, object] = {}
