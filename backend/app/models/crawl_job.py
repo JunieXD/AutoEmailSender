@@ -29,6 +29,35 @@ class CrawlJobEntryType(str, Enum):
     LIST = "list"
     PROFILE = "profile"
 
+class CrawlRuntimeVersion(str, Enum):
+    V1 = "v1"
+    V2 = "v2"
+
+class CrawlPageTaskStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    FAILED_RETRYABLE = "failed_retryable"
+    FAILED_TERMINAL = "failed_terminal"
+    SKIPPED_DUPLICATE = "skipped_duplicate"
+
+class CrawlCandidateEnrichmentTaskStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    SKIPPED = "skipped"
+    FAILED_RETRYABLE = "failed_retryable"
+    FAILED_TERMINAL = "failed_terminal"
+
+class CrawlWorkerKind(str, Enum):
+    PAGE = "page"
+    CHUNK = "chunk"
+    ENRICHMENT = "enrichment"
+
+class CrawlPageFetchMode(str, Enum):
+    DIRECT = "direct"
+    BROWSER = "browser"
+
 
 class CrawlPageStatus(str, Enum):
     SUCCEEDED = "succeeded"
@@ -61,6 +90,12 @@ class CrawlJob(Base):
         String(32),
         nullable=False,
         server_default=text("'list'"),
+    )
+    runtime_version: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'v2'"),
+        index=True,
     )
     llm_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("llm_profiles.id", ondelete="SET NULL"),
@@ -115,7 +150,19 @@ class CrawlJob(Base):
         back_populates="job",
         cascade="all, delete-orphan",
     )
+    page_tasks: Mapped[list["CrawlPageTask"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
     candidates: Mapped[list["CrawlCandidate"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+    enrichment_tasks: Mapped[list["CrawlCandidateEnrichmentTask"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+    token_usages: Mapped[list["CrawlWorkerTokenUsage"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
     )
@@ -200,6 +247,10 @@ class CrawlPageFetchState(Base):
     original_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     status: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     last_fetch_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fetch_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    direct_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fallback_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    browser_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     terminal_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     transient_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -269,3 +320,68 @@ class CrawlCandidate(Base):
 
     job: Mapped["CrawlJob"] = relationship(back_populates="candidates")
     professor: Mapped["Professor | None"] = relationship()
+
+class CrawlPageTask(Base):
+    __tablename__ = "crawl_page_tasks"
+    __table_args__ = (
+        UniqueConstraint("job_id", "normalized_url", name="uq_crawl_page_tasks_job_url"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    normalized_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    original_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fetch_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    direct_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fallback_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    browser_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=lambda: datetime.now(UTC))
+
+    job: Mapped["CrawlJob"] = relationship(back_populates="page_tasks")
+
+class CrawlCandidateEnrichmentTask(Base):
+    __tablename__ = "crawl_candidate_enrichment_tasks"
+    __table_args__ = (
+        UniqueConstraint("job_id", "candidate_id", name="uq_crawl_candidate_enrichment_tasks_job_candidate"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("crawl_candidates.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=lambda: datetime.now(UTC))
+
+    job: Mapped["CrawlJob"] = relationship(back_populates="enrichment_tasks")
+    candidate: Mapped["CrawlCandidate"] = relationship()
+
+class CrawlWorkerTokenUsage(Base):
+    __tablename__ = "crawl_worker_token_usages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    worker_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    work_item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cached_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    raw_usage: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    job: Mapped["CrawlJob"] = relationship(back_populates="token_usages")
+
