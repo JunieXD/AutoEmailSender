@@ -98,6 +98,34 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
 
+
+    async def test_terminal_failures_mark_partially_completed_when_no_retryable_work(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a", status=CrawlPageTaskStatus.FAILED_TERMINAL.value))
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            self.assertEqual(job.status, CrawlJobStatus.PARTIALLY_COMPLETED.value)
+
+    async def test_retryable_failures_are_claimed_before_job_completion(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a", status=CrawlPageTaskStatus.FAILED_RETRYABLE.value))
+            await session.commit()
+
+        claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.PAGE)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
     async def _create_job(self, *, status: str = CrawlJobStatus.RUNNING.value) -> int:
         async with self.session_factory() as session:
             job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=status, runtime_version="v2")
