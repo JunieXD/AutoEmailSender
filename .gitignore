@@ -19,7 +19,6 @@ desktop/release/
 .superpowers
 .omx
 .worktrees/
-docs/superpowers/plans/
 .codex
 .agents
 skills-lock.json
