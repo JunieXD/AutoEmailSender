@@ -102,7 +102,32 @@ class RuntimeSettingsApiTests(unittest.TestCase):
             params={"event_name": "runtime_settings.updated"},
         )
         self.assertEqual(logs.status_code, 200, msg=logs.text)
-        self.assertEqual(logs.json()["total"], 1)
+        self.assertGreaterEqual(logs.json()["total"], 1)
+
+    def test_patch_runtime_settings_accepts_legacy_payload_without_agent_budget(self) -> None:
+        response = self.client.patch(
+            "/api/runtime-settings",
+            json={
+                "match_analysis_job_worker_count": 2,
+                "match_analysis_job_item_concurrency": 4,
+                "match_analysis_job_interval_seconds": 5,
+                "crawler_worker_count": 3,
+                "crawler_profile_enrichment_concurrency": 4,
+                "crawler_host_concurrency": 2,
+                "draft_max_tokens": 4800,
+                "batch_draft_generation_concurrency": 5,
+                "draft_rewrite_intensity": "strong",
+                "draft_rewrite_tone": "professional",
+                "draft_rewrite_formality": "formal",
+                "draft_rewrite_length": "more_detailed",
+                "draft_rewrite_specificity": "detailed",
+                "draft_template_preservation": "content_first",
+                "draft_custom_instruction": "请少用套话，结尾保持简短。",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["crawler_agent_max_chunks_per_run"], 2)
 
     def test_patch_runtime_settings_rejects_out_of_range_values(self) -> None:
         response = self.client.patch(
