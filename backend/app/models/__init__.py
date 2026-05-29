@@ -9,6 +9,8 @@ from app.models.crawl_job import (
     CrawlJobRun,
     CrawlJobStatus,
     CrawlPage,
+    CrawlPageFetchState,
+    CrawlPageFetchStatus,
     CrawlPageStatus,
 )
 from app.models.email_log import EmailDirection, EmailLog

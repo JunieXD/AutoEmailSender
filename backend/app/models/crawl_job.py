@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -34,6 +34,13 @@ class CrawlPageStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
+
+class CrawlPageFetchStatus(str, Enum):
+    SUCCEEDED = "succeeded"
+    CHUNKED = "chunked"
+    PROCESSED = "processed"
+    TRANSIENT_FAILED = "transient_failed"
+    TERMINAL_FAILED = "terminal_failed"
 
 class CrawlCandidateReviewStatus(str, Enum):
     PENDING = "pending"
@@ -101,6 +108,10 @@ class CrawlJob(Base):
         foreign_keys="CrawlJobRun.job_id",
     )
     pages: Mapped[list["CrawlPage"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+    page_fetch_states: Mapped[list["CrawlPageFetchState"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
     )
@@ -173,6 +184,41 @@ class CrawlPage(Base):
     )
 
     job: Mapped["CrawlJob"] = relationship(back_populates="pages")
+
+
+
+
+class CrawlPageFetchState(Base):
+    __tablename__ = "crawl_page_fetch_states"
+    __table_args__ = (
+        UniqueConstraint("job_id", "normalized_url", name="uq_crawl_page_fetch_states_job_url"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    normalized_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    original_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    last_fetch_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    terminal_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    transient_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_page_id: Mapped[int | None] = mapped_column(ForeignKey("crawl_pages.id", ondelete="SET NULL"), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    job: Mapped["CrawlJob"] = relationship(back_populates="page_fetch_states")
+    last_page: Mapped["CrawlPage | None"] = relationship()
 
 
 class CrawlCandidate(Base):
