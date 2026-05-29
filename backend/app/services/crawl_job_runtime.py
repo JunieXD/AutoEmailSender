@@ -151,6 +151,14 @@ def resolve_crawl_runtime_concurrency(settings: Any) -> CrawlRuntimeConcurrency:
     )
 
 
+def _build_crawler_agent_run_budget(settings: Any) -> Any:
+    from app.agents.faculty_crawler_agent import CrawlerAgentRunBudget
+
+    return CrawlerAgentRunBudget(
+        max_completed_chunks=max(1, settings.crawler_agent_max_chunks_per_run),
+    )
+
+
 async def run_queued_crawl_jobs_once(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> int:
@@ -248,6 +256,9 @@ async def run_queued_crawl_jobs_once(
             await session.commit()
             return 1
 
+        settings = await get_runtime_settings(session)
+        agent_run_budget = _build_crawler_agent_run_budget(settings)
+
         await session.commit()
 
         job_id = job.id
@@ -277,12 +288,15 @@ async def run_queued_crawl_jobs_once(
                         trace_callback=trace_callback,
                     )
                 else:
-                    await run_faculty_crawler_agent(
+                    agent_result = await run_faculty_crawler_agent(
                         entry_ctx,
                         llm_profile,
                         trace_callback=trace_callback,
                         extra_body=entry_ctx.thinking_extra_body,
+                        run_budget=agent_run_budget,
                     )
+                    if _is_agent_context_budget_reached(agent_result):
+                        break
             except (CrawlJobPaused, CrawlJobCanceled, CrawlJobSaveBudgetExceeded, asyncio.CancelledError):
                 raise
             except Exception as exc:
@@ -1418,6 +1432,10 @@ def _extract_model_message_content(response: object) -> str:
         joined = "".join(pieces).strip()
         return joined
     return ""
+
+
+def _is_agent_context_budget_reached(result: object) -> bool:
+    return isinstance(result, dict) and result.get("event_type") == "agent_context_budget_reached"
 
 
 def build_faculty_crawler_model(*args: Any, **kwargs: Any) -> Any:

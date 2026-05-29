@@ -10,6 +10,7 @@
 | `id` | INTEGER PK | 固定使用 `1` |
 | `created_at` | DATETIME | 创建时间 |
 | `updated_at` | DATETIME | 最近更新时间 |
+| `crawler_agent_max_chunks_per_run` | INTEGER | 单次智能抓取 Agent 运行最多完成的 chunk 数 |
 
 ## 2. `identity_profiles`
 发送身份表。

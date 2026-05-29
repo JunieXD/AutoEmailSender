@@ -15,7 +15,7 @@ from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "d2c4e6f8a0b1"
+HEAD_REVISION = "c4b8e2a9d6f3"
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
 
 
@@ -130,6 +130,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "crawler_worker_count",
                 "crawler_profile_enrichment_concurrency",
                 "crawler_host_concurrency",
+                "crawler_agent_max_chunks_per_run",
                 "draft_max_tokens",
                 "batch_draft_generation_concurrency",
                 "draft_rewrite_intensity",

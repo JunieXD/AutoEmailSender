@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agents.faculty_crawler_agent import (
     CONTROLLED_CRAWLER_TOOL_NAMES,
+    CrawlerAgentRunBudget,
     FACULTY_CRAWLER_SYSTEM_PROMPT,
     build_faculty_crawler_model,
     build_trace_event,
@@ -102,6 +103,34 @@ class FacultyCrawlerAgentSaveResultTests(unittest.TestCase):
         self.assertEqual(result["rejected_count"], 0)
         self.assertIn("获取下一个 chunk", result["next_instruction"])
 
+    def test_format_save_batch_result_for_model_excludes_candidate_payload_echo(self) -> None:
+        result = _format_save_batch_result_for_model(
+            {
+                "batch_status": "saved",
+                "attempted_count": 1,
+                "saved_count": 1,
+                "merged_count": 0,
+                "skipped_duplicate_count": 0,
+                "rejected_count": 0,
+                "failed_count": 0,
+                "failed_items": [],
+                "rejected_items": [],
+                "total_saved_count": 1,
+                "candidates": [
+                    {
+                        "name": "张三",
+                        "profile_url": "https://example.edu/zhang",
+                        "evidence": "很长的页面证据正文",
+                    }
+                ],
+            }
+        )
+
+        serialized = str(result)
+        self.assertNotIn("candidates", result)
+        self.assertNotIn("很长的页面证据正文", serialized)
+        self.assertNotIn("https://example.edu/zhang", serialized)
+
     def test_validate_professor_candidate_batch_collects_schema_failures(self) -> None:
         payloads, failed_items = _validate_professor_candidate_batch(
             [
@@ -159,6 +188,21 @@ class FacultyCrawlerAgentPromptTests(unittest.TestCase):
         self.assertIn("investigate_with_browser 不能用于绕过 chunk", FACULTY_CRAWLER_SYSTEM_PROMPT)
         self.assertIn("当前存在待处理 chunk 时，必须先 claim_next_page_chunk", FACULTY_CRAWLER_SYSTEM_PROMPT)
         self.assertIn("只有当前 chunk 正文中明确还有超过 10 个已看见候选", FACULTY_CRAWLER_SYSTEM_PROMPT)
+
+    def test_system_prompt_keeps_stable_sections_before_dynamic_input(self) -> None:
+        prompt = FACULTY_CRAWLER_SYSTEM_PROMPT
+        expected_headings = [
+            "角色与目标：",
+            "页面与 chunk 处理流程：",
+            "工具使用边界：",
+            "候选字段与提交约束：",
+            "禁止事项与错误恢复：",
+        ]
+        positions = [prompt.index(heading) for heading in expected_headings]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("入口 URL", prompt)
+        self.assertNotIn("学校:", prompt)
+        self.assertNotIn("学院/单位:", prompt)
 
 class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
     def test_chunked_crawl_page_response_omits_full_page_text(self) -> None:
@@ -226,6 +270,114 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
         self.assertIn("已有待处理页面片段", prompt)
         self.assertIn("立即调用 claim_next_page_chunk", prompt)
         self.assertIn("不要重新抓取入口页", prompt)
+
+    def test_run_agent_stops_after_completed_chunk_budget_event(self) -> None:
+        async def run() -> tuple[dict[str, object], list[dict[str, object]]]:
+            events: list[dict[str, object]] = []
+
+            class FakeAgent:
+                async def astream(self, input_payload: object, **kwargs: object):
+                    _ = input_payload, kwargs
+                    yield {
+                        "event": "on_tool_end",
+                        "name": "submit_page_chunk_candidates",
+                        "data": {"output": {"chunk_status": "completed", "saved_count": 2}},
+                    }
+                    yield {"event": "should_not_be_seen"}
+
+            async def trace_callback(event: object) -> None:
+                assert isinstance(event, dict)
+                events.append(event)
+
+            ctx = CrawlToolContext(
+                job_id=1,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=object(),  # type: ignore[arg-type]
+            )
+            profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
+
+            with (
+                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
+                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+            ):
+                result = await run_faculty_crawler_agent(
+                    ctx,
+                    profile,
+                    trace_callback=trace_callback,
+                    run_budget=CrawlerAgentRunBudget(max_completed_chunks=1),
+                )
+            assert isinstance(result, dict)
+            return result, events
+
+        result, events = __import__("asyncio").run(run())
+
+        self.assertEqual(result["event_type"], "agent_context_budget_reached")
+        self.assertEqual(result["reason"], "max_completed_chunks")
+        self.assertEqual(result["completed_chunks"], 1)
+        self.assertTrue(any(event.get("event_type") == "agent_context_budget_reached" for event in events))
+        self.assertFalse(any(event.get("event") == "should_not_be_seen" for event in events))
+
+    def test_chunk_budget_does_not_stop_when_no_pending_work_remains(self) -> None:
+        async def run() -> tuple[dict[str, object], list[dict[str, object]]]:
+            events: list[dict[str, object]] = []
+
+            class FakeAgent:
+                async def astream(self, input_payload: object, **kwargs: object):
+                    _ = input_payload, kwargs
+                    yield {
+                        "event": "on_tool_end",
+                        "name": "submit_page_chunk_candidates",
+                        "data": {"output": {"chunk_status": "completed", "saved_count": 1}},
+                    }
+                    yield {"event": "agent_continued_after_completed_chunk"}
+
+            async def trace_callback(event: object) -> None:
+                assert isinstance(event, dict)
+                events.append(event)
+
+            ctx = CrawlToolContext(
+                job_id=1,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=object(),  # type: ignore[arg-type]
+            )
+            profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
+
+            with (
+                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(side_effect=[True, False, False])),
+                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+            ):
+                result = await run_faculty_crawler_agent(
+                    ctx,
+                    profile,
+                    trace_callback=trace_callback,
+                    run_budget=CrawlerAgentRunBudget(max_completed_chunks=1),
+                )
+            assert isinstance(result, dict)
+            return result, events
+
+        result, events = __import__("asyncio").run(run())
+
+        self.assertEqual(result["event"], "agent_continued_after_completed_chunk")
+        self.assertFalse(any(event.get("event_type") == "agent_context_budget_reached" for event in events))
+
+    def test_no_candidates_counts_as_completed_chunk(self) -> None:
+        from app.agents.faculty_crawler_agent import _is_completed_chunk_submit_event
+
+        self.assertTrue(
+            _is_completed_chunk_submit_event(
+                {
+                    "event": "on_tool_end",
+                    "name": "submit_page_chunk_candidates",
+                    "data": {"output": {"chunk_status": "no_candidates"}},
+                }
+            )
+        )
 
     def test_legacy_save_tool_is_not_exposed_to_agent(self) -> None:
         captured_tools: dict[str, object] = {}
