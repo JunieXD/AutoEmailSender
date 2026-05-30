@@ -24,7 +24,7 @@ from app.models import (
     CrawlPageChunkStatus,
 )
 from app.services.crawler_v2_models import CrawlerV2WorkKind, CrawlerV2WorkerConfig
-from app.services.crawler_v2_scheduler import claim_next_v2_work, run_crawler_v2_scheduler_once
+from app.services.crawler_v2_scheduler import claim_next_v2_work, ensure_job_active, run_crawler_v2_scheduler_once
 
 
 class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
@@ -100,6 +100,58 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
 
+    async def test_scheduler_does_not_finalize_job_with_expired_reclaimable_page(self) -> None:
+        job_id = await self._create_job()
+        other_job_id = await self._create_job()
+        expired = datetime.now(UTC) - timedelta(seconds=1)
+        active_until = datetime.now(UTC) + timedelta(seconds=60)
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/expired",
+                    original_url="https://example.edu/expired",
+                    status=CrawlPageTaskStatus.PROCESSING.value,
+                    worker_id="old",
+                    lease_expires_at=expired,
+                )
+            )
+            session.add(
+                CrawlPageTask(
+                    job_id=other_job_id,
+                    normalized_url="https://example.edu/active",
+                    original_url="https://example.edu/active",
+                    status=CrawlPageTaskStatus.PROCESSING.value,
+                    worker_id="busy",
+                    lease_expires_at=active_until,
+                )
+            )
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(
+            self.session_factory,
+            worker_id="w1",
+            config=CrawlerV2WorkerConfig(page_concurrency=1),
+        )
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+        assert job is not None and task is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(task.status, CrawlPageTaskStatus.PROCESSING.value)
+
+    async def test_terminal_jobs_are_not_active_for_workers(self) -> None:
+        statuses = [
+            CrawlJobStatus.FAILED.value,
+            CrawlJobStatus.NEEDS_REVIEW.value,
+            CrawlJobStatus.PARTIALLY_COMPLETED.value,
+        ]
+        for status in statuses:
+            job_id = await self._create_job(status=status)
+            async with self.session_factory() as session:
+                self.assertFalse(await ensure_job_active(session, job_id), msg=status)
     async def test_scheduler_finishes_current_run_when_job_becomes_reviewable(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:

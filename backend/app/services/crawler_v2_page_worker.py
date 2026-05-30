@@ -133,6 +133,8 @@ async def _record_page_and_state(
     page = None
     if snapshot.page_id is not None:
         page = await session.get(CrawlPage, snapshot.page_id)
+        if page is not None and page.job_id != task.job_id:
+            page = None
     if page is None:
         page = CrawlPage(
             job_id=task.job_id,

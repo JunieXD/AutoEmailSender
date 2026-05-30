@@ -24,7 +24,7 @@ _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.val
 
 async def ensure_job_active(session: AsyncSession, job_id: int) -> bool:
     job = await session.get(CrawlJob, job_id)
-    return job is not None and job.status not in _PAUSED_JOB_STATUSES
+    return job is not None and job.status in _ACTIVE_JOB_STATUSES
 
 
 async def claim_next_v2_work(
@@ -284,8 +284,7 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     page = await session.scalar(
         select(CrawlPageTask.id).where(
             CrawlPageTask.job_id == job_id,
-            CrawlPageTask.status.in_([CrawlPageTaskStatus.PENDING.value, CrawlPageTaskStatus.FAILED_RETRYABLE.value, CrawlPageTaskStatus.PROCESSING.value]),
-            or_(CrawlPageTask.status != CrawlPageTaskStatus.PROCESSING.value, CrawlPageTask.lease_expires_at > now),
+            _page_task_claimable(now),
         ).limit(1)
     )
     if page is not None:
@@ -293,8 +292,7 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     chunk = await session.scalar(
         select(CrawlPageChunk.id).where(
             CrawlPageChunk.job_id == job_id,
-            CrawlPageChunk.status.in_([CrawlPageChunkStatus.PENDING.value, CrawlPageChunkStatus.FAILED_RETRYABLE.value, CrawlPageChunkStatus.PROCESSING.value]),
-            or_(CrawlPageChunk.status != CrawlPageChunkStatus.PROCESSING.value, CrawlPageChunk.lease_expires_at > now),
+            _chunk_claimable(now),
         ).limit(1)
     )
     if chunk is not None:
@@ -302,8 +300,7 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     enrichment = await session.scalar(
         select(CrawlCandidateEnrichmentTask.id).where(
             CrawlCandidateEnrichmentTask.job_id == job_id,
-            CrawlCandidateEnrichmentTask.status.in_([CrawlCandidateEnrichmentTaskStatus.PENDING.value, CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value, CrawlCandidateEnrichmentTaskStatus.PROCESSING.value]),
-            or_(CrawlCandidateEnrichmentTask.status != CrawlCandidateEnrichmentTaskStatus.PROCESSING.value, CrawlCandidateEnrichmentTask.lease_expires_at > now),
+            _enrichment_task_claimable(now),
         ).limit(1)
     )
     return enrichment is not None

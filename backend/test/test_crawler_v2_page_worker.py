@@ -115,6 +115,54 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(chunk.page_id == page_id for chunk in chunks))
 
 
+    async def test_successful_page_does_not_reuse_page_record_from_other_job(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        async with self.session_factory() as session:
+            other_job = CrawlJob(
+                university="其他大学",
+                school="计算机学院",
+                start_url="https://other.example.edu/faculty",
+                status="running",
+                runtime_version="v2",
+            )
+            session.add(other_job)
+            await session.flush()
+            other_page = CrawlPage(
+                job_id=other_job.id,
+                url="https://example.edu/faculty",
+                parent_url=None,
+                fetch_method="http",
+                status="succeeded",
+                title="其他师资队伍",
+                text_excerpt="李四 教授",
+                error_message=None,
+            )
+            session.add(other_page)
+            await session.commit()
+            await session.refresh(other_page)
+            other_page_id = other_page.id
+        snapshot = PageSnapshot(
+            page_id=other_page_id,
+            url="https://example.edu/faculty",
+            title="师资队伍",
+            text="张三 教授",
+            html="<p>张三</p>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            pages = list(await session.scalars(select(CrawlPage).where(CrawlPage.job_id == job_id)))
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)))
+        self.assertEqual(len(pages), 1)
+        self.assertNotEqual(pages[0].id, other_page_id)
+        self.assertTrue(chunks)
+        self.assertTrue(all(chunk.page_id == pages[0].id for chunk in chunks))
     async def test_fetch_modes_use_distinct_underlying_paths(self) -> None:
         ctx = object()
         direct_snapshot = PageSnapshot(url="https://example.edu", text="direct", html="", links=[], fetch_method="http", status="succeeded")
