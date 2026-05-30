@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,12 +16,78 @@ from app.models import (
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
-from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload
+from pydantic import BaseModel, Field
+
+from app.services.crawler_tools import ProfessorCandidatePayload
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
-from app.services.crawl_job_runtime import run_faculty_crawler_agent
+from app.services.crawl_job_runtime import build_faculty_crawler_model
+from app.services.llm_runtime import parse_structured_result
 
 MAX_CHUNK_ATTEMPTS = 2
+
+
+class V2ChunkAgentPayload(BaseModel):
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    discovered_urls: list[str] = Field(default_factory=list)
+    chunk_status: str = "completed"
+
+
+async def invoke_v2_chunk_agent(
+    llm_profile: Any,
+    *,
+    university: str,
+    school: str,
+    source_url: str,
+    chunk_content: str,
+) -> dict[str, Any]:
+    model = build_faculty_crawler_model(llm_profile)
+    prompt = build_v2_chunk_prompt(
+        university=university,
+        school=school,
+        source_url=source_url,
+        chunk_content=chunk_content,
+    )
+    response = await model.ainvoke(prompt)
+    content = _extract_message_text(response)
+    payload = parse_structured_result(content, V2ChunkAgentPayload)
+    return payload.model_dump()
+
+
+def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
+    return (
+        "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
+        "请从当前 chunk 中提取候选导师，并发现明确出现的新 URL。\n"
+        "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。\n"
+        "chunk_status 只能是 completed、no_candidates 或 split_required。\n"
+        f"学校：{university}\n"
+        f"学院/单位：{school}\n"
+        f"来源 URL：{source_url}\n"
+        "当前 chunk 正文：\n"
+        f"{chunk_content}"
+    )
+
+
+def _extract_message_text(response: object) -> str:
+    if isinstance(response, str):
+        return response.strip()
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        pieces: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                pieces.append(item)
+            elif isinstance(item, dict):
+                value = item.get("text") or item.get("content")
+                if isinstance(value, str):
+                    pieces.append(value)
+        return "".join(pieces).strip()
+    if isinstance(response, dict):
+        value = response.get("content")
+        return value.strip() if isinstance(value, str) else ""
+    return ""
 
 
 
@@ -48,19 +115,22 @@ async def run_crawler_v2_chunk_worker_once(
             chunk.lease_expires_at = None
             await session.commit()
             return 1
-        ctx = CrawlToolContext(
-            session_factory=session_factory,
-            job_id=job.id,
+    try:
+        payload = await invoke_v2_chunk_agent(
+            llm_profile,
             university=job.university,
             school=job.school,
-            start_url=job.start_url,
+            source_url=chunk.source_url,
+            chunk_content=chunk.content,
         )
-    try:
-        from app.agents.faculty_crawler_agent import CrawlerAgentRunBudget
-        await run_faculty_crawler_agent(
-            ctx,
-            llm_profile,
-            run_budget=CrawlerAgentRunBudget(max_completed_chunks=1),
+        candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
+        await complete_current_chunk(
+            session_factory,
+            chunk_id=chunk_id,
+            worker_id=worker_id,
+            candidates=candidates,
+            discovered_urls=[str(url) for url in payload.get("discovered_urls", [])],
+            chunk_status=str(payload.get("chunk_status") or "completed"),
         )
         return 1
     except Exception as exc:

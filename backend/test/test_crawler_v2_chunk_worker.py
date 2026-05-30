@@ -4,11 +4,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask
+from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, LLMProfile
 from app.services.crawler_v2_chunk_worker import complete_current_chunk, run_crawler_v2_chunk_worker_once
 from app.services.crawler_tools import ProfessorCandidatePayload
 
@@ -74,9 +75,80 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(chunk.worker_id)
         self.assertIn("LLM Profile", chunk.last_error or "")
 
-    async def _seed_processing_chunk(self) -> tuple[int, int]:
+
+    async def test_chunk_worker_uses_single_tool_payload_instead_of_legacy_agent(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        payload = {
+            "candidates": [
+                {
+                    "name": "张三",
+                    "profile_url": "https://example.edu/zhang.html",
+                    "source_url": "https://example.edu/faculty",
+                    "confidence": 0.9,
+                }
+            ],
+            "discovered_urls": ["https://example.edu/page2.html"],
+            "chunk_status": "completed",
+        }
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)) as invoke_mock:
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        import app.services.crawler_v2_chunk_worker as module
+        self.assertFalse(hasattr(module, "run_faculty_crawler_agent"))
+        invoke_mock.assert_awaited_once()
         async with self.session_factory() as session:
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate)))
+            tasks = list(await session.scalars(select(CrawlPageTask).order_by(CrawlPageTask.id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
+        self.assertEqual([candidate.name for candidate in candidates], ["张三"])
+        self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/page2.html"])
+
+    async def test_complete_chunk_idempotently_ignores_url_already_found_by_page_worker(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/page2.html",
+                    original_url="https://example.edu/page2.html",
+                )
+            )
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[ProfessorCandidatePayload(name="张三", email="zhang@example.edu", confidence=0.9)],
+            discovered_urls=["https://example.edu/page2.html", "https://example.edu/page2.html#section"],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["url_count"], 0)
+        async with self.session_factory() as session:
+            tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(len(candidates), 1)
+
+    async def _seed_processing_chunk(self, *, with_profile: bool = False) -> tuple[int, int]:
+        async with self.session_factory() as session:
+            llm_profile_id = None
+            if with_profile:
+                profile = LLMProfile(name="默认", provider="openai", api_base_url="https://api.example.com/v1", api_key="sk-test", model_name="deepseek", is_default=True)
+                session.add(profile)
+                await session.flush()
+                llm_profile_id = profile.id
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2", llm_profile_id=llm_profile_id)
             session.add(job)
             await session.flush()
             chunk = CrawlPageChunk(job_id=job.id, page_id=None, source_url="https://example.edu/faculty", page_fingerprint="p", chunk_id="c1", chunk_index=0, chunk_hash="h", content="张三", status=CrawlPageChunkStatus.PROCESSING.value, worker_id="w1")
