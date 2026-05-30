@@ -20,8 +20,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     with op.batch_alter_table("crawl_jobs") as batch_op:
-        batch_op.add_column(sa.Column("runtime_version", sa.String(length=16), server_default=sa.text("'v2'"), nullable=False))
+        batch_op.add_column(sa.Column("runtime_version", sa.String(length=16), server_default=sa.text("'v1'"), nullable=False))
         batch_op.create_index(batch_op.f("ix_crawl_jobs_runtime_version"), ["runtime_version"], unique=False)
+
+    with op.batch_alter_table("crawl_jobs") as batch_op:
+        batch_op.alter_column("runtime_version", server_default=sa.text("'v2'"))
 
     with op.batch_alter_table("crawl_page_fetch_states") as batch_op:
         batch_op.add_column(sa.Column("fetch_mode", sa.String(length=64), nullable=True))

@@ -360,6 +360,44 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         self.assertEqual(version, HEAD_REVISION)
 
+    def test_existing_crawl_jobs_are_backfilled_as_v1_when_runtime_v2_is_added(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "runtime_v2_legacy_jobs.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "a9c3e7d1f4b2")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            connection.execute(
+                """
+                INSERT INTO crawl_jobs (
+                    university,
+                    school,
+                    start_url,
+                    status,
+                    progress_current,
+                    progress_total
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                ("历史大学", "计算机学院", "https://example.edu/faculty", "needs_review", 1, 1),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            runtime_version = connection.execute(
+                "SELECT runtime_version FROM crawl_jobs WHERE university = ?",
+                ("历史大学",),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(runtime_version, "v1")
+
     def test_concurrency_guard_migration_cleans_existing_duplicates(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "concurrency_guard_duplicates.db"
         env = os.environ.copy()
