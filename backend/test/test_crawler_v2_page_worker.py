@@ -90,6 +90,51 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         http_mock.assert_awaited_once()
         browser_mock.assert_awaited_once()
 
+    async def test_page_worker_ignores_link_unique_conflict_after_chunks_are_created(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            text="张三 教授",
+            html="<a href='/race.html'>下一页</a>",
+            links=["https://example.edu/race.html"],
+            fetch_method="http",
+            status="succeeded",
+        )
+        url_scalar_calls = 0
+
+        async def scalar_with_stale_url_check(self_session, statement=None, *args, **kwargs):
+            nonlocal url_scalar_calls
+            statement_text = str(statement) if statement is not None else ""
+            if "crawl_page_tasks.id" in statement_text:
+                url_scalar_calls += 1
+                if url_scalar_calls == 1:
+                    async with self.session_factory() as insert_session:
+                        insert_session.add(
+                            CrawlPageTask(
+                                job_id=job_id,
+                                normalized_url="https://example.edu/race.html",
+                                original_url="https://example.edu/race.html",
+                            )
+                        )
+                        await insert_session.commit()
+                    return None
+            return await original_scalar(self_session, statement, *args, **kwargs)
+
+        async with self.session_factory() as probe_session:
+            original_scalar = type(probe_session).scalar
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), patch("sqlalchemy.ext.asyncio.AsyncSession.scalar", scalar_with_stale_url_check):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertEqual(len([item for item in tasks if item.normalized_url == "https://example.edu/race.html"]), 1)
     async def _seed_page_task(self) -> tuple[int, int]:
         async with self.session_factory() as session:
             job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")

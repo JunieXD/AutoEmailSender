@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
@@ -192,13 +193,30 @@ async def _create_chunks_and_enqueue_links(
         job = await session.get(CrawlJob, task.job_id) if task is not None else None
         if task is None or job is None or not await ensure_job_active(session, task.job_id):
             return
-        for link in snapshot.links:
-            normalized = normalize_url(link, base_url=snapshot.url)
-            if not is_same_domain(normalized, job.start_url):
-                continue
+        job_id = task.job_id
+        start_url = job.start_url
+        depth = int(task.depth or 0) + 1
+    await _enqueue_page_links(session_factory, job_id=job_id, start_url=start_url, source_url=snapshot.url, links=snapshot.links, depth=depth)
+
+async def _enqueue_page_links(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    job_id: int,
+    start_url: str,
+    source_url: str,
+    links: list[str],
+    depth: int,
+) -> None:
+    seen: set[str] = set()
+    for link in links:
+        normalized = normalize_url(link, base_url=source_url)
+        if normalized in seen or not is_same_domain(normalized, start_url):
+            continue
+        seen.add(normalized)
+        async with session_factory() as session:
             exists = await session.scalar(
                 select(CrawlPageTask.id).where(
-                    CrawlPageTask.job_id == task.job_id,
+                    CrawlPageTask.job_id == job_id,
                     CrawlPageTask.normalized_url == normalized,
                 )
             )
@@ -206,12 +224,15 @@ async def _create_chunks_and_enqueue_links(
                 continue
             session.add(
                 CrawlPageTask(
-                    job_id=task.job_id,
+                    job_id=job_id,
                     normalized_url=normalized,
                     original_url=link,
-                    depth=int(task.depth or 0) + 1,
+                    depth=depth,
                     priority=0,
                     status=CrawlPageTaskStatus.PENDING.value,
                 )
             )
-        await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()

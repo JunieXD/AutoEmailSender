@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
@@ -11,6 +12,7 @@ from app.models import (
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
+    CrawlWorkerKind,
     CrawlPageChunk,
     CrawlPageChunkStatus,
     CrawlPageTask,
@@ -20,8 +22,10 @@ from pydantic import BaseModel, Field
 
 from app.services.crawler_tools import ProfessorCandidatePayload
 from app.services.crawler_v2_scheduler import ensure_job_active
+from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runtime import build_faculty_crawler_model
+from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import parse_structured_result
 
 MAX_CHUNK_ATTEMPTS = 2
@@ -40,7 +44,7 @@ async def invoke_v2_chunk_agent(
     school: str,
     source_url: str,
     chunk_content: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, int | None] | None]:
     model = build_faculty_crawler_model(llm_profile)
     prompt = build_v2_chunk_prompt(
         university=university,
@@ -51,7 +55,8 @@ async def invoke_v2_chunk_agent(
     response = await model.ainvoke(prompt)
     content = _extract_message_text(response)
     payload = parse_structured_result(content, V2ChunkAgentPayload)
-    return payload.model_dump()
+    usage = extract_token_usage_from_llm_response(response)
+    return payload.model_dump(), usage
 
 
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
@@ -116,13 +121,30 @@ async def run_crawler_v2_chunk_worker_once(
             await session.commit()
             return 1
     try:
-        payload = await invoke_v2_chunk_agent(
+        chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
             university=job.university,
             school=job.school,
             source_url=chunk.source_url,
             chunk_content=chunk.content,
         )
+        if isinstance(chunk_agent_result, tuple):
+            payload, usage = chunk_agent_result
+        else:
+            payload = chunk_agent_result
+            usage = None
+        if usage is not None:
+            await record_crawler_v2_token_usage(
+                session_factory,
+                job_id=job.id,
+                worker_kind=CrawlWorkerKind.CHUNK,
+                work_item_id=chunk_id,
+                model_name=getattr(llm_profile, "model_name", None),
+                input_tokens=usage.get("input_tokens") or 0,
+                output_tokens=usage.get("output_tokens") or 0,
+                cached_tokens=usage.get("cached_tokens") or 0,
+                raw_usage=dict(usage),
+            )
         candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
         await complete_current_chunk(
             session_factory,
@@ -246,10 +268,12 @@ async def complete_current_chunk(
             enrichment_count += 1
 
         url_count = 0
+        seen_urls: set[str] = set()
         for url in discovered_urls:
             normalized = normalize_url(url, base_url=chunk.source_url)
-            if not is_same_domain(normalized, job.start_url):
+            if normalized in seen_urls or not is_same_domain(normalized, job.start_url):
                 continue
+            seen_urls.add(normalized)
             exists = await session.scalar(
                 select(CrawlPageTask.id).where(
                     CrawlPageTask.job_id == chunk.job_id,
@@ -258,14 +282,19 @@ async def complete_current_chunk(
             )
             if exists is not None:
                 continue
-            session.add(
-                CrawlPageTask(
-                    job_id=chunk.job_id,
-                    normalized_url=normalized,
-                    original_url=url,
-                    status=CrawlPageTaskStatus.PENDING.value,
-                )
-            )
+            try:
+                async with session.begin_nested():
+                    session.add(
+                        CrawlPageTask(
+                            job_id=chunk.job_id,
+                            normalized_url=normalized,
+                            original_url=url,
+                            status=CrawlPageTaskStatus.PENDING.value,
+                        )
+                    )
+                    await session.flush()
+            except IntegrityError:
+                continue
             url_count += 1
 
         chunk.status = _normalize_chunk_status(chunk_status)
@@ -279,7 +308,6 @@ async def complete_current_chunk(
             "url_count": url_count,
             "enrichment_count": enrichment_count,
         }
-
 
 def _normalize_chunk_status(chunk_status: str) -> str:
     if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, CrawlPageChunkStatus.SPLIT_REQUIRED.value}:
