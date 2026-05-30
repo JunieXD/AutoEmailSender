@@ -130,18 +130,22 @@ async def _record_page_and_state(
     task.direct_status = direct_status
     task.fallback_reason = fallback_reason
     task.browser_status = browser_status
-    page = CrawlPage(
-        job_id=task.job_id,
-        url=snapshot.url,
-        parent_url=None,
-        fetch_method=snapshot.fetch_method,
-        status=snapshot.status,
-        title=snapshot.title,
-        text_excerpt=(snapshot.text or "")[:2000],
-        error_message=snapshot.error_message,
-    )
-    session.add(page)
-    await session.flush()
+    page = None
+    if snapshot.page_id is not None:
+        page = await session.get(CrawlPage, snapshot.page_id)
+    if page is None:
+        page = CrawlPage(
+            job_id=task.job_id,
+            url=snapshot.url,
+            parent_url=None,
+            fetch_method=snapshot.fetch_method,
+            status=snapshot.status,
+            title=snapshot.title,
+            text_excerpt=(snapshot.text or "")[:2000],
+            error_message=snapshot.error_message,
+        )
+        session.add(page)
+        await session.flush()
     state = await session.scalar(
         select(CrawlPageFetchState).where(
             CrawlPageFetchState.job_id == task.job_id,

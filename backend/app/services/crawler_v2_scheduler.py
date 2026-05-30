@@ -16,6 +16,7 @@ from app.models import (
     CrawlPageTaskStatus,
 )
 from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
+from app.services.crawl_job_runs import mark_crawl_job_run_finished
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
@@ -78,8 +79,10 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
         if await _job_has_available_or_leased_work(session, job_id=job.id, now=now):
             continue
         terminal_failures = await _job_has_terminal_failures(session, job_id=job.id)
-        job.status = CrawlJobStatus.PARTIALLY_COMPLETED.value if terminal_failures else CrawlJobStatus.NEEDS_REVIEW.value
+        final_status = CrawlJobStatus.PARTIALLY_COMPLETED.value if terminal_failures else CrawlJobStatus.NEEDS_REVIEW.value
+        job.status = final_status
         job.updated_at = now
+        await mark_crawl_job_run_finished(session, job, status=final_status, now=now)
 
 
 async def _claim_page_task(

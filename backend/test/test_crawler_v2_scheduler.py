@@ -16,6 +16,7 @@ from app.models import (
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
+    CrawlJobRun,
     CrawlJobStatus,
     CrawlPageTask,
     CrawlPageTaskStatus,
@@ -98,6 +99,29 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             job = await session.get(CrawlJob, job_id)
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
+
+    async def test_scheduler_finishes_current_run_when_job_becomes_reviewable(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            run = CrawlJobRun(job_id=job_id, attempt_number=1, status=CrawlJobStatus.RUNNING.value, active_started_at=datetime.now(UTC))
+            session.add(run)
+            await session.flush()
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            job.current_run_id = run.id
+            await session.commit()
+            run_id = run.id
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            run = await session.get(CrawlJobRun, run_id)
+        assert job is not None and run is not None
+        self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
+        self.assertEqual(run.status, CrawlJobStatus.NEEDS_REVIEW.value)
+        self.assertIsNotNone(run.finished_at)
 
 
     async def test_terminal_failures_mark_partially_completed_when_no_retryable_work(self) -> None:

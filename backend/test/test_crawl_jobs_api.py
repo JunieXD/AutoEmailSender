@@ -667,6 +667,8 @@ class CrawlJobsApiTests(unittest.TestCase):
         initial_run_id = self._list_job_runs(job_id)[0]["id"]
         self._set_job_status(job_id, "failed")
 
+        self._mark_page_tasks_succeeded(job_id)
+
         response = self.client.post(
             f"/api/crawl-jobs/{job_id}/retry",
             json={"clear_existing_data": False},
@@ -679,7 +681,42 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(runs[0]["id"], initial_run_id)
         self.assertEqual(runs[1]["status"], "queued")
         self.assertEqual(self._get_job_current_run_id(job_id), runs[1]["id"])
+        self.assertEqual(
+            self._list_page_task_statuses(job_id),
+            [("https://example.edu/faculty", "pending")],
+        )
 
+
+    def test_retry_v2_crawl_job_reseeds_pending_page_tasks(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "start_urls": ["https://example.edu/faculty", "https://example.edu/faculty?page=2"],
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._mark_page_tasks_succeeded(job_id)
+        self._set_job_status(job_id, "failed")
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/retry",
+            json={"clear_existing_data": True},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["status"], "queued")
+        self.assertEqual(
+            self._list_page_task_statuses(job_id),
+            [
+                ("https://example.edu/faculty", "pending"),
+                ("https://example.edu/faculty?page=2", "pending"),
+            ],
+        )
 
     def test_retry_crawl_job_clear_existing_data_removes_page_chunks(self) -> None:
         create_response = self.client.post(
@@ -1296,6 +1333,40 @@ class CrawlJobsApiTests(unittest.TestCase):
                 return int(count or 0)
 
         return asyncio.run(_count())
+
+    def _mark_page_tasks_succeeded(self, job_id: int) -> None:
+        async def _mark() -> None:
+            from sqlalchemy import select
+
+            from app.core.database import get_session_factory
+            from app.models import CrawlPageTask, CrawlPageTaskStatus
+
+            async with get_session_factory()() as session:
+                tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+                for task in tasks:
+                    task.status = CrawlPageTaskStatus.SUCCEEDED.value
+                await session.commit()
+
+        asyncio.run(_mark())
+
+    def _list_page_task_statuses(self, job_id: int) -> list[tuple[str, str]]:
+        async def _list() -> list[tuple[str, str]]:
+            from sqlalchemy import select
+
+            from app.core.database import get_session_factory
+            from app.models import CrawlPageTask
+
+            async with get_session_factory()() as session:
+                tasks = list(
+                    await session.scalars(
+                        select(CrawlPageTask)
+                        .where(CrawlPageTask.job_id == job_id)
+                        .order_by(CrawlPageTask.id.asc()),
+                    )
+                )
+                return [(task.normalized_url, task.status) for task in tasks]
+
+        return asyncio.run(_list())
 
     def _seed_candidate(self, job_id: int, *, name: str, profile_url: str) -> None:
         import sqlite3

@@ -20,6 +20,8 @@ from app.models import (
     CrawlPageChunk,
     CrawlPageTask,
     CrawlPageTaskStatus,
+    CrawlCandidateEnrichmentTask,
+    CrawlWorkerTokenUsage,
     LLMProfile,
     Professor,
 )
@@ -643,6 +645,18 @@ async def retry_crawl_job(
             detail="仅允许重试状态为\"失败\"或\"已取消\"的抓取任务",
         )
 
+    if job.runtime_version == "v2":
+        await session.execute(
+            delete(CrawlCandidateEnrichmentTask).where(CrawlCandidateEnrichmentTask.job_id == job.id),
+        )
+        await session.execute(
+            delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id),
+        )
+        if payload.clear_existing_data:
+            await session.execute(
+                delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
+            )
+
     if payload.clear_existing_data:
         await session.execute(
             delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id),
@@ -662,6 +676,17 @@ async def retry_crawl_job(
             payload.llm_profile_id,
             trigger="retry",
         )
+
+    if job.runtime_version == "v2":
+        for start_url in job.start_urls or [job.start_url]:
+            session.add(
+                CrawlPageTask(
+                    job_id=job.id,
+                    normalized_url=normalize_url(start_url),
+                    original_url=start_url,
+                    status=CrawlPageTaskStatus.PENDING.value,
+                )
+            )
 
     now = datetime.now(UTC)
     job.status = CrawlJobStatus.QUEUED.value

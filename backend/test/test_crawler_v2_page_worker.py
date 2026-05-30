@@ -75,6 +75,45 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(task.direct_status, "failed")
             self.assertIsNotNone(task.fallback_reason)
 
+    async def test_successful_page_reuses_fetch_tool_page_record(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        async with self.session_factory() as session:
+            page = CrawlPage(
+                job_id=job_id,
+                url="https://example.edu/faculty",
+                parent_url=None,
+                fetch_method="http",
+                status="succeeded",
+                title="师资队伍",
+                text_excerpt="张三 教授",
+                error_message=None,
+            )
+            session.add(page)
+            await session.commit()
+            await session.refresh(page)
+            page_id = page.id
+        snapshot = PageSnapshot(
+            page_id=page_id,
+            url="https://example.edu/faculty",
+            title="师资队伍",
+            text="张三 教授",
+            html="<p>张三</p>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            pages = list(await session.scalars(select(CrawlPage).where(CrawlPage.job_id == job_id)))
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)))
+        self.assertEqual([page.id for page in pages], [page_id])
+        self.assertTrue(chunks)
+        self.assertTrue(all(chunk.page_id == page_id for chunk in chunks))
+
 
     async def test_fetch_modes_use_distinct_underlying_paths(self) -> None:
         ctx = object()
