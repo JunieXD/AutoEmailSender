@@ -31,6 +31,10 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Check time usage
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-time-usage.ps1
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
