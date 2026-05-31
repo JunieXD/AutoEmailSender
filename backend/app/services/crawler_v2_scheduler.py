@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
@@ -36,7 +37,7 @@ async def claim_next_v2_work(
 ) -> CrawlerV2ClaimedWork:
     config = config or CrawlerV2WorkerConfig()
     async with session_factory() as session:
-        now = datetime.now(UTC)
+        now = utc_now()
         lease_expires_at = now + timedelta(seconds=config.lease_seconds)
         claimed = await _claim_page_task(session, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at, config=config)
         if claimed.kind is not CrawlerV2WorkKind.IDLE:
@@ -75,7 +76,7 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
             )
         )
     )
-    now = datetime.now(UTC)
+    now = utc_now()
     for job in jobs:
         if await _job_has_available_or_leased_work(session, job_id=job.id, now=now):
             continue

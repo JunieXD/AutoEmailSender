@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import as_utc_aware, utc_now
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
@@ -116,8 +117,7 @@ def _fallback_reason(snapshot: PageSnapshot) -> str:
 def _lease_valid(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:
         return True
-    expires_at = lease_expires_at if lease_expires_at.tzinfo else lease_expires_at.replace(tzinfo=UTC)
-    return expires_at > datetime.now(UTC)
+    return as_utc_aware(lease_expires_at) > utc_now()
 
 
 def _page_task_owned_by_worker(task: CrawlPageTask, worker_id: str) -> bool:

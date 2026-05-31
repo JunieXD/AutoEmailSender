@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from sqlalchemy import select
+
+from app.core.time import as_utc_aware, utc_now
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlWorkerKind, LLMProfile
@@ -123,8 +125,7 @@ def _enrichment_task_owned_by_worker(task: CrawlCandidateEnrichmentTask, worker_
         return False
     if task.lease_expires_at is None:
         return True
-    expires_at = task.lease_expires_at if task.lease_expires_at.tzinfo else task.lease_expires_at.replace(tzinfo=UTC)
-    return expires_at > datetime.now(UTC)
+    return as_utc_aware(task.lease_expires_at) > utc_now()
 
 async def enrich_candidate_once_with_usage(
     session_factory: async_sessionmaker[AsyncSession],
