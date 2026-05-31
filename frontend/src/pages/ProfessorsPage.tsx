@@ -428,6 +428,57 @@ const ModalShell = ({
   );
 };
 
+const ProfessorsPageLoadingSkeleton = () => (
+  <main
+    data-testid="professors-page-loading-skeleton"
+    className="mx-auto max-w-7xl px-6 py-8"
+    aria-label="导师管理加载中"
+  >
+    <section className="rounded-[32px] border border-stone-200 bg-[linear-gradient(180deg,#fcfbf8,#fffaf2)] p-6 shadow-sm">
+      <div className="flex flex-col gap-6">
+        <div className="space-y-3">
+          <div className="h-9 w-44 animate-pulse rounded-xl bg-stone-200" />
+          <div className="h-4 w-56 animate-pulse rounded-full bg-stone-100" />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div key={index} className="h-[7.5rem] animate-pulse rounded-[24px] border border-stone-200 bg-white" />
+          ))}
+        </div>
+        <div className="h-11 w-56 animate-pulse rounded-3xl border border-stone-200 bg-white" />
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_auto_auto]">
+          <div className="h-12 animate-pulse rounded-2xl border border-stone-200 bg-white" />
+          <div className="h-12 animate-pulse rounded-2xl border border-stone-200 bg-white" />
+          <div className="h-12 animate-pulse rounded-2xl border border-stone-200 bg-white" />
+          <div className="h-12 animate-pulse rounded-2xl border border-stone-200 bg-white" />
+        </div>
+      </div>
+    </section>
+
+    <section className="mt-6 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm">
+      <div className="flex items-center gap-3 border-b border-stone-100 px-6 py-4">
+        <div className="h-4 w-64 animate-pulse rounded-full bg-stone-100" />
+      </div>
+      <div className="hidden gap-4 border-b border-stone-100 px-6 py-4 lg:grid lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]">
+        {Array.from({ length: 8 }, (_, index) => (
+          <div key={index} className="h-3 animate-pulse rounded-full bg-stone-100" />
+        ))}
+      </div>
+      <div className="divide-y divide-stone-100">
+        {Array.from({ length: 6 }, (_, index) => (
+          <div
+            key={index}
+            className="grid gap-4 px-6 py-5 lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]"
+          >
+            {Array.from({ length: 8 }, (_, itemIndex) => (
+              <div key={itemIndex} className="h-4 animate-pulse rounded-full bg-stone-100" />
+            ))}
+          </div>
+        ))}
+      </div>
+    </section>
+  </main>
+);
 export const ProfessorsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedKeyword = searchParams.get("keyword")?.trim() ?? "";
@@ -471,6 +522,7 @@ export const ProfessorsPage = () => {
   );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const latestProfessorsRequestIdRef = useRef(0);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
   const [editingProfessor, setEditingProfessor] =
@@ -515,6 +567,7 @@ export const ProfessorsPage = () => {
           return;
         }
         setProfessors(data);
+        setHasLoadedProfessors(true);
         setSelectedIds((previous) => {
           const next = new Set<number>();
           data.forEach((item) => {
@@ -531,6 +584,7 @@ export const ProfessorsPage = () => {
         if (latestProfessorsRequestIdRef.current !== requestId) {
           return;
         }
+        setHasLoadedProfessors(true);
         const message = getActionErrorMessage(loadError, "加载导师列表失败");
         notifyError("加载导师列表失败", message);
       } finally {
@@ -960,6 +1014,10 @@ export const ProfessorsPage = () => {
     !crawlerFormState.university.trim() ||
     !crawlerFormState.school.trim() ||
     normalizeCrawlerStartUrls(crawlerFormState.start_urls).length === 0;
+
+  if (!hasLoadedProfessors && loading) {
+    return <ProfessorsPageLoadingSkeleton />;
+  }
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">

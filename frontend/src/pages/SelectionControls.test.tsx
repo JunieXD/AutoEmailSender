@@ -268,6 +268,24 @@ describe("selection controls", () => {
     expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
   });
 
+
+  it("shows a stable management skeleton before the first professor list load resolves", async () => {
+    vi.mocked(listProfessorsForManagement).mockImplementation(
+      () => new Promise<ProfessorManagementItemDTO[]>(() => {}),
+    );
+
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByTestId("professors-page-loading-skeleton"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("暂无导师")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("professor-empty-intake")).not.toBeInTheDocument();
+  });
   it("selects all filtered management results across pages", async () => {
     render(
       <MemoryRouter>
