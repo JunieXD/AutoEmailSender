@@ -1,8 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from collections import Counter
 from datetime import UTC, datetime, time
+
+from app.core.time import local_now, utc_now
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import case, select, update
@@ -114,7 +116,7 @@ async def create_batch_task(
         if not payload.emails_per_window or payload.emails_per_window <= 0:
             raise HTTPException(status_code=400, detail="请输入每天发送数量")
         if not has_future_batch_window(
-            datetime.now().astimezone(),
+            local_now(),
             scheduled_dates=scheduled_dates,
             window_end_time=payload.window_end_time,
         ):
@@ -158,7 +160,7 @@ async def create_batch_task(
                     window_start_time=payload.window_start_time or "",
                     window_end_time=payload.window_end_time or "",
                     emails_per_window=payload.emails_per_window or 0,
-                    now=datetime.now().astimezone(),
+                    now=local_now(),
                 ),
             )
         except ValueError as exc:
@@ -242,7 +244,7 @@ async def create_batch_task(
             generated_body_text = rendered.body_text
             generated_body_html = rendered.body_html
             task_status = EmailTaskStatus.APPROVED.value
-            approved_at = datetime.now(UTC)
+            approved_at = utc_now()
 
         email_task = EmailTask(
             source=EmailTaskSource.BATCH.value,
@@ -392,14 +394,14 @@ async def pause_batch_task(
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
     task.status = BatchTaskStatus.PAUSED.value
-    task.updated_at = datetime.now(UTC)
+    task.updated_at = utc_now()
     for email_task in task.email_tasks:
         if _is_user_removed_batch_item(email_task):
             continue
         if email_task.status == EmailTaskStatus.GENERATING_DRAFT.value:
             email_task.status = email_task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
             email_task.draft_generation_previous_status = None
-            email_task.updated_at = datetime.now(UTC)
+            email_task.updated_at = utc_now()
     await _record_batch_task_action(session, task, "batch_task.paused")
     await session.commit()
     _cancel_running_batch_drafts(request, task_id)
@@ -414,8 +416,8 @@ async def resume_batch_task(
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
     task.status = BatchTaskStatus.RUNNING.value
-    task.updated_at = datetime.now(UTC)
-    expired = await expire_batch_task_if_needed(session, task, datetime.now().astimezone())
+    task.updated_at = utc_now()
+    expired = await expire_batch_task_if_needed(session, task, local_now())
     if not expired:
         await _record_batch_task_action(session, task, "batch_task.resumed")
     await session.commit()
@@ -431,7 +433,7 @@ async def stop_batch_task(
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
     task.status = BatchTaskStatus.STOPPED.value
-    task.updated_at = datetime.now(UTC)
+    task.updated_at = utc_now()
     for email_task in task.email_tasks:
         if _is_user_removed_batch_item(email_task):
             continue
@@ -444,7 +446,7 @@ async def stop_batch_task(
             email_task.status = EmailTaskStatus.CANCELED.value
             email_task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
             email_task.draft_generation_previous_status = None
-            email_task.updated_at = datetime.now(UTC)
+            email_task.updated_at = utc_now()
     await _record_batch_task_action(session, task, "batch_task.stopped")
     await session.commit()
     _cancel_running_batch_drafts(request, task_id)
@@ -471,7 +473,7 @@ async def delete_batch_task(
         raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
     previous_deleted_at = task.deleted_at
     if task.deleted_at is None:
-        now = datetime.now(UTC)
+        now = utc_now()
         task.deleted_at = now
         task.updated_at = now
     await _record_batch_task_action(
@@ -497,7 +499,7 @@ async def restore_batch_task(
     if task.deleted_at is not None:
         await _sanitize_batch_task_material_references_before_restore(session, task)
         task.deleted_at = None
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
     await _record_batch_task_action(
         session,
         task,
@@ -523,7 +525,7 @@ async def delete_batch_task_item(
         raise HTTPException(status_code=404, detail="未找到批量任务项")
     previous_status = item.status
     previous_cancellation_reason = item.cancellation_reason
-    now = datetime.now(UTC)
+    now = utc_now()
 
     delete_result = await session.execute(
         update(EmailTask)
@@ -624,7 +626,7 @@ async def retry_batch_task_item_draft(
     item.status = EmailTaskStatus.DISCOVERED.value
     item.last_error = None
     item.draft_generation_previous_status = None
-    item.updated_at = datetime.now(UTC)
+    item.updated_at = utc_now()
     await _record_batch_task_action(
         session,
         task,
@@ -791,7 +793,7 @@ async def _sanitize_batch_task_material_references_before_restore(session: Async
             task.selected_material_ids = filtered_material_ids
             updated = True
     if updated:
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
 
 
 def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
@@ -864,3 +866,5 @@ def _normalize_nullable_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+

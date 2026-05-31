@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
+from app.core.time import as_utc_aware, utc_now
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -706,7 +708,7 @@ def _build_email_trend(
         start_day = _floor_day(start_at)
         current_day = _floor_day(end_at)
     else:
-        current_day = _floor_day(datetime.now(UTC))
+        current_day = _floor_day(utc_now())
         start_day = current_day - timedelta(days=29)
 
     buckets: dict[str, DashboardEmailTrendBucketRead] = {}
@@ -951,7 +953,7 @@ def _parse_date_filter(value: str | None, *, field_name: str) -> datetime | None
         parsed = datetime.strptime(normalized, "%Y-%m-%d")
     except ValueError as exc:
         raise ValueError(f"{field_name} 日期格式应为 YYYY-MM-DD") from exc
-    return parsed.replace(tzinfo=UTC)
+    return as_utc_aware(parsed)
 
 
 def _end_of_day(value: datetime | None) -> datetime | None:
@@ -962,7 +964,7 @@ def _end_of_day(value: datetime | None) -> datetime | None:
 
 def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: datetime | None) -> bool:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
+        value = as_utc_aware(value)
     value = value.astimezone(UTC)
     if start_at is not None and value < start_at:
         return False
@@ -973,5 +975,7 @@ def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: da
 
 def _floor_day(value: datetime) -> datetime:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
+        value = as_utc_aware(value)
     return value.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+

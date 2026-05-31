@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app.core.time import utc_now
+
 from sqlalchemy import DateTime, JSON, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.time import utc_now
 from app.models.base import Base
 from app.models.types import UTCDateTime
 

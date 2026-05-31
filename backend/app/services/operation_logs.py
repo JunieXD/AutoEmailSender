@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+
+from app.core.time import utc_now
+
 from types import FunctionType, MethodType
 from urllib.parse import urlsplit, urlunsplit
 
@@ -100,7 +103,7 @@ async def cleanup_old_operation_logs(
     if resolved_retention_days <= 0:
         return 0
 
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = now or utc_now()
     cutoff = resolved_now - timedelta(days=resolved_retention_days)
     result = await session.execute(
         delete(OperationLog)
@@ -204,3 +207,5 @@ def _truncate_string(value: str) -> str:
 
 def _stringify_exception(exc: BaseException) -> str:
     return _truncate_string(f"{exc.__class__.__name__}: {exc}")
+
+

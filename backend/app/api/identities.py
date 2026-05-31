@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+
+from app.core.time import utc_now
+
 from time import perf_counter
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -93,7 +96,7 @@ async def update_identity(
 
     for key, value in data.items():
         setattr(identity, key, value)
-    identity.updated_at = datetime.now(UTC)
+    identity.updated_at = utc_now()
 
     try:
         await _record_identity_log(session, identity, "identity.updated")
@@ -134,7 +137,7 @@ async def delete_identity(
         )
         if remaining:
             remaining.is_default = True
-            remaining.updated_at = datetime.now(UTC)
+            remaining.updated_at = utc_now()
             await session.commit()
 
 
@@ -146,7 +149,7 @@ async def set_default_identity(
     identity = await _get_identity(session, identity_id)
     await _clear_default_identities(session, exclude_id=identity_id)
     identity.is_default = True
-    identity.updated_at = datetime.now(UTC)
+    identity.updated_at = utc_now()
     await _record_identity_log(session, identity, "identity.default_set")
     await session.commit()
     saved = await _get_identity(session, identity_id)
@@ -263,7 +266,7 @@ async def _clear_default_identities(
         if exclude_id is not None and identity.id == exclude_id:
             continue
         identity.is_default = False
-        identity.updated_at = datetime.now(UTC)
+        identity.updated_at = utc_now()
 
 
 async def _ensure_identity_email_available(
@@ -388,3 +391,5 @@ def _clean_required_text(value: object) -> str:
     if not cleaned:
         raise HTTPException(status_code=400, detail="请填写配置名称和发件人姓名")
     return cleaned
+
+

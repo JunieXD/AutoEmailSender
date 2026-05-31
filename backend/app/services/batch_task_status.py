@@ -1,6 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import UTC, datetime
+
+from app.core.time import utc_now
 
 from app.models import BatchTask, BatchTaskStatus, EmailTaskStatus
 
@@ -38,5 +40,7 @@ def sync_batch_task_completion(task: BatchTask, *, now: datetime | None = None) 
     if task.status == BatchTaskStatus.COMPLETED.value:
         return False
     task.status = BatchTaskStatus.COMPLETED.value
-    task.updated_at = now or datetime.now(UTC)
+    task.updated_at = now or utc_now()
     return True
+
+

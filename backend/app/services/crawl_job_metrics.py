@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.time import as_utc_aware, utc_now
+
 from app.models import CrawlJobStatus
 from app.services.crawl_job_runs import extract_token_usage
 
@@ -57,7 +59,7 @@ def _build_current_run_metrics(current_run: Any, *, now: datetime | None) -> Cra
     active_started_at = _ensure_datetime(getattr(current_run, "active_started_at", None))
     run_status = getattr(current_run, "status", None)
     if run_status == CrawlJobStatus.RUNNING.value and active_started_at is not None:
-        resolved_now = _ensure_datetime(now) or datetime.now(UTC)
+        resolved_now = _ensure_datetime(now) or utc_now()
         duration_seconds += max(0, int((resolved_now - active_started_at).total_seconds()))
 
     return CrawlJobMetrics(
@@ -79,5 +81,7 @@ def _ensure_datetime(value: object) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+        return as_utc_aware(value)
     return value
+
+

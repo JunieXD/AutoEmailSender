@@ -9,6 +9,7 @@ export const parseApiDateTime = (value: string) => {
   const withTimezone = HAS_TIMEZONE_SUFFIX.test(normalized)
     ? normalized
     : `${normalized}Z`;
+  // time-check: ignore(api-datetime-parser, reason="parseApiDateTime is the canonical Date constructor for API instants")
   return new Date(withTimezone);
 };
 

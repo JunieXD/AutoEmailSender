@@ -1,6 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import UTC, datetime
+
+from app.core.time import utc_now
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
@@ -296,7 +298,7 @@ async def ensure_workspace_task(
             )
             if match_task is not None:
                 _copy_match_snapshot(current_task, match_task)
-                current_task.updated_at = datetime.now(UTC)
+                current_task.updated_at = utc_now()
                 await session.commit()
                 await session.refresh(current_task)
         return current_task
@@ -325,8 +327,8 @@ async def ensure_workspace_task(
         risk_points=list(match_task.risk_points or []) if match_task else None,
         match_keywords=list(match_task.match_keywords or []) if match_task else None,
         selected_material_ids=None,
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     session.add(task)
     try:
@@ -515,7 +517,7 @@ def _recover_legacy_sent_task_status(task: EmailTask | None) -> bool:
 
     task.status = EmailTaskStatus.SENT.value
     task.last_error = None
-    task.updated_at = datetime.now(UTC)
+    task.updated_at = utc_now()
     return True
 
 
@@ -650,3 +652,5 @@ def _should_resume_workspace_task(task: EmailTask | None) -> bool:
     ):
         return True
     return task.status == EmailTaskStatus.SEND_FAILED.value
+
+

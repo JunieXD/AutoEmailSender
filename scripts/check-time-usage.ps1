@@ -18,7 +18,7 @@ function Test-TimeCheckExempt {
     if ($Line -notmatch 'time-check:') {
         return $false
     }
-    return $Line -match 'reason\s*=\s*"[^"]+"' -or $Line -match 'reason\s*=\s*''[^'']+''' -or $Line -match 'because\s+.+'
+    return $Line -match 'reason\s*=\s*"[^"]+"' -or $Line -match "reason\s*=\s*'[^']+'" -or $Line -match 'because\s+.+' -or $Line -match 'time-check:\s*[^,]+,\s*\S.+'
 }
 
 function Add-Violation {
@@ -26,9 +26,11 @@ function Add-Violation {
         [string]$File,
         [int]$LineNumber,
         [string]$Rule,
-        [string]$Line
+        [string]$Line,
+        [string]$PreviousLine = "",
+        [string]$PreviousPreviousLine = ""
     )
-    if (Test-TimeCheckExempt -Line $Line) {
+    if ((Test-TimeCheckExempt -Line $Line) -or (Test-TimeCheckExempt -Line $PreviousLine) -or (Test-TimeCheckExempt -Line $PreviousPreviousLine)) {
         return
     }
     $violations.Add([pscustomobject]@{
@@ -38,6 +40,7 @@ function Add-Violation {
         Text = $Line.Trim()
     }) | Out-Null
 }
+
 
 function Scan-Files {
     param(
@@ -64,7 +67,8 @@ function Scan-Files {
             foreach ($ruleName in $Rules.Keys) {
                 if ($lines[$i] -match $Rules[$ruleName]) {
                     $previousLine = if ($i -gt 0) { $lines[$i - 1] } else { "" }
-                    Add-Violation -File $relative -LineNumber ($i + 1) -Rule $ruleName -Line $lines[$i] -PreviousLine $previousLine
+                    $previousPreviousLine = if ($i -gt 1) { $lines[$i - 2] } else { "" }
+                    Add-Violation -File $relative -LineNumber ($i + 1) -Rule $ruleName -Line $lines[$i] -PreviousLine $previousLine -PreviousPreviousLine $previousPreviousLine
                 }
             }
         }

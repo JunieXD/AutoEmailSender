@@ -101,6 +101,7 @@ const buildNewReplyNotificationDescription = (
 const getDefaultScheduledAtValue = () => {
   const local = new Date(Date.now() + 3600_000);
   local.setMinutes(Math.ceil(local.getMinutes() / 5) * 5);
+  // time-check: local-control-value, datetime-local default is derived from local wall-clock time.
   const adjusted = new Date(local.getTime() - local.getTimezoneOffset() * 60000);
   return adjusted.toISOString().slice(0, 16);
 };

@@ -1,5 +1,8 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
+
+from app.core.time import utc_now
+
+# -*- coding: utf-8 -*-
 
 from datetime import UTC, datetime
 
@@ -156,7 +159,7 @@ async def update_crawl_candidate(
     candidate.profile_url = payload.profile_url
     candidate.source_url = payload.source_url
     candidate.review_status = payload.review_status
-    candidate.updated_at = datetime.now(UTC)
+    candidate.updated_at = utc_now()
 
     await record_operation_log(
         session,
@@ -285,7 +288,7 @@ async def approve_crawl_candidates(
     inserted_count = 0
     updated_count = 0
     skipped_count = 0
-    now = datetime.now(UTC)
+    now = utc_now()
 
     for candidate in candidates:
         email = normalize_professor_email(candidate.email)
@@ -433,7 +436,7 @@ async def enrich_crawl_candidates(
         trigger="enrich",
     )
 
-    now = datetime.now(UTC)
+    now = utc_now()
     job.status = CrawlJobStatus.RUNNING.value
     job.error_message = None
     job.updated_at = now
@@ -448,7 +451,7 @@ async def enrich_crawl_candidates(
             trace = list(trace_job.agent_trace or [])
             trace.append(normalize_agent_trace_event(event))
             trace_job.agent_trace = trace[-100:]
-            trace_job.updated_at = datetime.now(UTC)
+            trace_job.updated_at = utc_now()
             await trace_session.commit()
 
     try:
@@ -464,12 +467,12 @@ async def enrich_crawl_candidates(
             final_job = await final_session.get(CrawlJob, job_id)
             if final_job is not None and final_job.status == CrawlJobStatus.RUNNING.value:
                 final_job.status = review_status_before_enrich
-                final_job.updated_at = datetime.now(UTC)
+                final_job.updated_at = utc_now()
                 await mark_crawl_job_run_finished(
                     final_session,
                     final_job,
                     status=review_status_before_enrich,
-                    now=datetime.now(UTC),
+                    now=utc_now(),
                 )
                 await final_session.commit()
 
@@ -510,7 +513,7 @@ async def resume_crawl_job_review(
     if int(candidate_count or 0) <= 0:
         raise HTTPException(status_code=400, detail="当前任务没有可审核的候选导师")
 
-    now = datetime.now(UTC)
+    now = utc_now()
     job.status = CrawlJobStatus.NEEDS_REVIEW.value
     job.error_message = None
     job.updated_at = now
@@ -582,7 +585,7 @@ async def cancel_crawl_job(
     }:
         return job
 
-    now = datetime.now(UTC)
+    now = utc_now()
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
     await _release_processing_v2_work(session, job.id, reason="任务已取消，释放处理中工作项")
@@ -616,7 +619,7 @@ async def pause_crawl_job(
     if job.status not in {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}:
         raise HTTPException(status_code=409, detail="仅允许暂停排队中或运行中的抓取任务")
 
-    now = datetime.now(UTC)
+    now = utc_now()
     job.status = CrawlJobStatus.PAUSED.value
     job.updated_at = now
     await _release_processing_v2_work(session, job.id, reason="任务已暂停，释放处理中工作项")
@@ -652,7 +655,7 @@ async def resume_crawl_job(
             trigger="resume",
         )
 
-    now = datetime.now(UTC)
+    now = utc_now()
     job.status = CrawlJobStatus.QUEUED.value
     job.error_message = None
     job.updated_at = now
@@ -726,7 +729,7 @@ async def retry_crawl_job(
                 )
             )
 
-    now = datetime.now(UTC)
+    now = utc_now()
     job.status = CrawlJobStatus.QUEUED.value
     job.progress_current = 0
     job.progress_total = 0
@@ -768,7 +771,7 @@ async def delete_crawl_job(
         raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
     previous_deleted_at = job.deleted_at
     if job.deleted_at is None:
-        now = datetime.now(UTC)
+        now = utc_now()
         job.deleted_at = now
         job.updated_at = now
     await record_operation_log(
@@ -797,7 +800,7 @@ async def restore_crawl_job(
     previous_deleted_at = job.deleted_at
     if job.deleted_at is not None:
         job.deleted_at = None
-        job.updated_at = datetime.now(UTC)
+        job.updated_at = utc_now()
     await record_operation_log(
         session,
         category="crawler",

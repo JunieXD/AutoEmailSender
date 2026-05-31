@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Thinking-mode adaptation: detect protocol errors and find the right extra_body per model.
 
 The cache is keyed by (api_base_url, model_name) and stored in the
@@ -5,7 +7,8 @@ The cache is keyed by (api_base_url, model_name) and stored in the
 field semantics.
 """
 
-from __future__ import annotations
+
+from app.core.time import utc_now
 
 from typing import Final
 
@@ -130,7 +133,7 @@ async def record_thinking_adaptation(
             ThinkingAdaptationCache.model_name == model_name,
         )
     )
-    now = datetime.now(UTC)
+    now = utc_now()
     if row is None:
         session.add(
             ThinkingAdaptationCache(

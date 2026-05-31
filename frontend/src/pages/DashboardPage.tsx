@@ -94,6 +94,7 @@ const getEmailDateRange = (preset: string): { startDate: string | null; endDate:
   if (preset === 'all') {
     return { startDate: null, endDate: null };
   }
+  // time-check: local-control-value, dashboard local date filter clones the current Date object.
   const start = new Date(now);
   if (preset === '7d') {
     start.setDate(start.getDate() - 6);

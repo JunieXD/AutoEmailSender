@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
+from app.core.time import utc_now
+
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -66,7 +69,7 @@ async def update_llm_profile(
 
     for key, value in data.items():
         setattr(profile, key, value)
-    profile.updated_at = datetime.now(UTC)
+    profile.updated_at = utc_now()
 
     await _record_llm_profile_log(session, profile, "llm_profile.updated")
     await session.commit()
@@ -96,7 +99,7 @@ async def delete_llm_profile(
         )
         if remaining:
             remaining.is_default = True
-            remaining.updated_at = datetime.now(UTC)
+            remaining.updated_at = utc_now()
             await session.commit()
 
 
@@ -108,7 +111,7 @@ async def set_default_llm_profile(
     profile = await _get_profile(session, profile_id)
     await _clear_default_profiles(session, exclude_id=profile_id)
     profile.is_default = True
-    profile.updated_at = datetime.now(UTC)
+    profile.updated_at = utc_now()
     await _record_llm_profile_log(session, profile, "llm_profile.default_set")
     await session.commit()
     await session.refresh(profile)
@@ -258,7 +261,7 @@ async def _clear_default_profiles(
         if exclude_id is not None and profile.id == exclude_id:
             continue
         profile.is_default = False
-        profile.updated_at = datetime.now(UTC)
+        profile.updated_at = utc_now()
 
 
 async def _record_llm_profile_log(
@@ -303,3 +306,5 @@ def _strip_url_list_query_and_fragment(urls: list[str]) -> list[str]:
         for url in urls
         if (sanitized := _strip_url_query_and_fragment(url)) is not None
     ]
+
+

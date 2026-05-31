@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from app.core.time import as_utc_aware, utc_now
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.time import as_utc_aware, utc_now
 from app.models import CrawlJob, CrawlJobRun, CrawlJobStatus
 
 

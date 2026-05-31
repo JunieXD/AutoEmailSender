@@ -4,6 +4,9 @@ import asyncio
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
+
+from app.core.time import utc_now
+
 from urllib.parse import urlparse
 
 import httpx
@@ -175,7 +178,7 @@ async def run_queued_crawl_jobs_once(
         if job_id is None:
             return 0
 
-        now = datetime.now(UTC)
+        now = utc_now()
         claim_result = await session.execute(
             update(CrawlJob)
             .where(
@@ -207,7 +210,7 @@ async def run_queued_crawl_jobs_once(
         await mark_crawl_job_run_running(session, job, now=now)
         llm_profile = await _resolve_llm_profile(session, job)
         if llm_profile is None:
-            failed_at = datetime.now(UTC)
+            failed_at = utc_now()
             job.status = CrawlJobStatus.FAILED.value
             job.error_message = NO_LLM_PROFILE_ERROR
             job.updated_at = failed_at
@@ -225,7 +228,7 @@ async def run_queued_crawl_jobs_once(
         try:
             thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
         except ThinkingAdaptationFailed as exc:
-            failed_at = datetime.now(UTC)
+            failed_at = utc_now()
             job.status = CrawlJobStatus.FAILED.value
             job.error_message = (
                 "思考模式自适应失败：已尝试全部候选 extra_body 仍无法绕开协议错。"
@@ -242,7 +245,7 @@ async def run_queued_crawl_jobs_once(
             await session.commit()
             return 1
         except LLMRuntimeError as exc:
-            failed_at = datetime.now(UTC)
+            failed_at = utc_now()
             job.status = CrawlJobStatus.FAILED.value
             job.error_message = f"思考模式探活失败：{exc}"
             job.updated_at = failed_at
@@ -307,7 +310,7 @@ async def run_queued_crawl_jobs_once(
                     {
                         "event_type": "start_url_failed",
                         "message": f"入口 URL 抓取失败：{exc}",
-                        "created_at": datetime.now(UTC).isoformat(),
+                        "created_at": utc_now().isoformat(),
                         "raw": {"url": start_url},
                     },
                 )
@@ -319,7 +322,7 @@ async def run_queued_crawl_jobs_once(
             {
                 "event_type": "job_control",
                 "message": "任务已暂停，已保留当前抓取结果",
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": utc_now().isoformat(),
             },
         )
         await _mark_job_paused(session_factory, job_id)
@@ -329,7 +332,7 @@ async def run_queued_crawl_jobs_once(
             {
                 "event_type": "job_control",
                 "message": "任务已取消",
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": utc_now().isoformat(),
             },
         )
         await _mark_job_canceled(session_factory, job_id)
@@ -344,7 +347,7 @@ async def run_queued_crawl_jobs_once(
                 "total_save_failures": exc.total_save_failures,
                 "terminal_reason": exc.terminal_reason,
                 "latest_failure_summary": exc.latest_failure_summary,
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": utc_now().isoformat(),
             },
         )
         await _mark_job_failed(session_factory, job_id, str(exc))
@@ -390,7 +393,7 @@ async def _recover_interrupted_crawl_job(
             return
 
         if await _crawl_job_has_pending_work_in_session(session, job_id=job_id):
-            now = datetime.now(UTC)
+            now = utc_now()
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
             if job.current_run_id is not None:
@@ -404,7 +407,7 @@ async def _recover_interrupted_crawl_job(
         candidate_count = await session.scalar(
             select(func.count()).select_from(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
         )
-        now = datetime.now(UTC)
+        now = utc_now()
         if int(candidate_count or 0) > 0:
             job.status = CrawlJobStatus.NEEDS_REVIEW.value
             job.error_message = None
@@ -476,12 +479,12 @@ async def _append_agent_trace(
 
         normalized_event = normalize_agent_trace_event(event)
         if not normalized_event.get("created_at"):
-            normalized_event["created_at"] = datetime.now(UTC).isoformat()
+            normalized_event["created_at"] = utc_now().isoformat()
 
         trace = list(_normalize_trace(job.agent_trace))
         trace.append(normalized_event)
         job.agent_trace = trace[-MAX_AGENT_TRACE_EVENTS:]
-        job.updated_at = datetime.now(UTC)
+        job.updated_at = utc_now()
         await accumulate_crawl_job_run_tokens(session, job_id, normalized_event)
         await session.commit()
 
@@ -507,7 +510,7 @@ async def _accumulate_direct_llm_response_tokens(
         cached_tokens = usage.get("cached_tokens")
         if cached_tokens is not None:
             run.cached_tokens = (run.cached_tokens or 0) + cached_tokens
-        run.updated_at = datetime.now(UTC)
+        run.updated_at = utc_now()
         await session.commit()
 
 
@@ -521,7 +524,7 @@ async def _complete_running_job(
             return
 
         if await _crawl_job_has_pending_work_in_session(session, job_id=job_id):
-            now = datetime.now(UTC)
+            now = utc_now()
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
             if job.current_run_id is not None:
@@ -546,7 +549,7 @@ async def _complete_running_job(
                 job.agent_trace,
             )
             job.error_message = adapt_failure_message_for_thinking_error(derived)
-        now = datetime.now(UTC)
+        now = utc_now()
         job.updated_at = now
         await mark_crawl_job_run_finished(
             session,
@@ -630,7 +633,7 @@ async def _run_profile_crawl_job(
         {
             "event_type": "profile_entry",
             "message": "开始抓取单个导师详情页",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": utc_now().isoformat(),
             "raw": {"url": ctx.start_url},
         },
     )
@@ -662,7 +665,7 @@ async def _run_profile_crawl_job(
         {
             "event_type": "profile_entry",
             "message": f"详情页导师候选提取成功：{saved[0].name}",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": utc_now().isoformat(),
             "raw": {"candidate_id": saved[0].id, "url": ctx.start_url},
         },
     )
@@ -811,7 +814,7 @@ async def _enrich_candidate_collection_concurrent(
         {
             "event_type": "enrichment",
             "message": f"开始统一补全候选导师详情，共 {len(pending_candidates)} 位待补全",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": utc_now().isoformat(),
             "raw": {"candidate_count": len(pending_candidates)},
         },
     )
@@ -866,7 +869,7 @@ async def _enrich_candidate_collection_concurrent(
         {
             "event_type": "enrichment",
             "message": f"候选导师详情补全完成：成功 {enriched} 位，未变化 {unchanged} 位，失败 {failed} 位",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": utc_now().isoformat(),
             "raw": {
                 "candidate_count": len(pending_candidates),
                 "enriched_count": enriched,
@@ -952,7 +955,7 @@ async def _enrich_candidate_work_item(
         {
             "event_type": "enrichment",
             "message": f"开始补全候选导师详情：{item.candidate_name}",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": utc_now().isoformat(),
             "raw": {
                 "candidate_id": item.candidate_id,
                 "profile_url": item.profile_url,
@@ -1097,7 +1100,7 @@ async def _consume_candidate_enrichment_results(
                 {
                     "event_type": "enrichment",
                     "message": f"候选导师详情补全失败：{result.candidate_name}",
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": utc_now().isoformat(),
                     "raw": {
                         "candidate_id": result.candidate_id,
                         "profile_url": result.profile_url,
@@ -1128,7 +1131,7 @@ async def _consume_candidate_enrichment_results(
                 {
                     "event_type": "enrichment",
                     "message": f"候选导师详情补全成功：{result.candidate_name}（{_format_enrichment_fields(result.updated_fields or [])}）",
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": utc_now().isoformat(),
                     "raw": {
                         "candidate_id": result.candidate_id,
                         "profile_url": result.profile_url,
@@ -1143,7 +1146,7 @@ async def _consume_candidate_enrichment_results(
                 {
                     "event_type": "enrichment",
                     "message": f"候选导师详情无新增信息：{result.candidate_name}",
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": utc_now().isoformat(),
                     "raw": {
                         "candidate_id": result.candidate_id,
                         "profile_url": result.profile_url,
@@ -1176,7 +1179,7 @@ async def _mark_job_failed(
         adapted_message = adapt_failure_message_for_thinking_error(error_message)
         job.status = CrawlJobStatus.FAILED.value
         job.error_message = adapted_message
-        now = datetime.now(UTC)
+        now = utc_now()
         job.updated_at = now
         await mark_crawl_job_run_finished(
             session,
@@ -1197,7 +1200,7 @@ async def _mark_job_paused(
         if job is None:
             return
 
-        now = datetime.now(UTC)
+        now = utc_now()
         job.status = CrawlJobStatus.PAUSED.value
         job.updated_at = now
         await mark_crawl_job_run_paused(session, job, now=now)
@@ -1213,7 +1216,7 @@ async def _mark_job_canceled(
         if job is None:
             return
 
-        now = datetime.now(UTC)
+        now = utc_now()
         job.status = CrawlJobStatus.CANCELED.value
         job.updated_at = now
         await mark_crawl_job_run_finished(
@@ -1287,7 +1290,7 @@ async def _apply_candidate_enrichment(
             return False
 
         await ensure_crawl_job_can_continue(session, candidate.job_id)
-        candidate.updated_at = datetime.now(UTC)
+        candidate.updated_at = utc_now()
         await session.commit()
         return True
 
@@ -1321,7 +1324,7 @@ async def _update_crawl_job_run_enrichment_metrics(
         run.host_limited_count += host_limited_count
         run.failed_candidate_count += failed_candidate_count
         run.unchanged_candidate_count += unchanged_candidate_count
-        run.updated_at = datetime.now(UTC)
+        run.updated_at = utc_now()
         await session.commit()
 
 
@@ -1483,3 +1486,5 @@ def _stringify_trace_payload(event: dict[str, object]) -> str:
     if raw is not None:
         parts.append(str(raw))
     return "\n".join(parts)
+
+

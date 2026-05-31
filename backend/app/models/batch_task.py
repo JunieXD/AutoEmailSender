@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+
+from app.core.time import utc_now
+
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.time import utc_now
 from app.models.base import Base
 from app.models.types import UTCDateTime
 

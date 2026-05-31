@@ -98,6 +98,7 @@ export const resolveTokenVisualizationDateRange = (
   if (preset !== 'custom') {
     return { preset, startAt: null, endAt: null };
   }
+  // time-check: local-control-value, custom range default is derived from the current Date object.
   const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   return {
     preset,

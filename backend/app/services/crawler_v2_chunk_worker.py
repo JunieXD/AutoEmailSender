@@ -4,9 +4,10 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from app.core.time import as_utc_aware, utc_now
+
 from sqlalchemy import select
 
-from app.core.time import as_utc_aware, utc_now
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 

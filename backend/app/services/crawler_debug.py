@@ -5,6 +5,9 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+
+from app.core.time import utc_now
+
 from types import FunctionType, MethodType
 from typing import Any
 
@@ -40,7 +43,7 @@ def append_crawler_debug_event(job_id: int, event: Any) -> Path | None:
 
     debug_file = settings.crawler_debug_dir / f"crawl-job-{job_id}.jsonl"
     record = {
-        "recorded_at": datetime.now(UTC).isoformat(),
+        "recorded_at": utc_now().isoformat(),
         "job_id": job_id,
         "raw_event": _safe_debug_json(event),
     }
@@ -124,3 +127,5 @@ def _sanitize_debug_string(value: str) -> str:
 
 def _stringify_exception(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
+
+

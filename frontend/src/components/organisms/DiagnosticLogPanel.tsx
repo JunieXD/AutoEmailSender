@@ -549,6 +549,7 @@ function getLocalDateRange(
     return undefined;
   }
 
+  // time-check: local-control-value, endAt clones the local date-range start.
   const endAt = new Date(startAt);
   endAt.setDate(endAt.getDate() + 1);
   return {

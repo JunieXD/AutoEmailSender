@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.core.time import utc_now
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
@@ -84,7 +86,7 @@ async def upload_identity_material(
 
     if identity.current_primary_material_id is None and material_can_be_primary(material):
         identity.current_primary_material_id = material.id
-        identity.updated_at = datetime.now(UTC)
+        identity.updated_at = utc_now()
         await _apply_primary_material_to_blocked_batch_tasks(session, material)
 
     await _record_material_log(session, material, "identity_material.uploaded")
@@ -105,7 +107,7 @@ async def set_primary_material(
 
     identity = material.identity
     identity.current_primary_material_id = material.id
-    identity.updated_at = datetime.now(UTC)
+    identity.updated_at = utc_now()
     await _apply_primary_material_to_blocked_batch_tasks(session, material)
     await _record_material_log(session, material, "identity_material.primary_set")
     await session.commit()
@@ -218,7 +220,7 @@ async def delete_material(
 
     if is_current_primary:
         identity.current_primary_material_id = None
-        identity.updated_at = datetime.now(UTC)
+        identity.updated_at = utc_now()
 
     material_file_path = material.file_path
     await _record_material_log(
@@ -350,7 +352,7 @@ def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple
             reset_draft = True
 
     if detached_primary or removed_attachment or reset_draft:
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
 
     return detached_primary, removed_attachment, reset_draft
 
@@ -377,7 +379,7 @@ def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
         task.status = BatchTaskStatus.STOPPED.value
         updated = True
     if updated:
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
     return updated
 
 
@@ -409,7 +411,7 @@ async def _apply_primary_material_to_blocked_batch_tasks(
         .unique()
     )
     updated_count = 0
-    now = datetime.now(UTC)
+    now = utc_now()
     for task in tasks:
         batch_task = task.batch_task
         if batch_task is None or batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES:
@@ -439,7 +441,7 @@ def _detach_material_from_test_compose_session(
         for selected_material_id in compose_session.selected_material_ids or []
         if selected_material_id != material_id
     ]
-    compose_session.updated_at = datetime.now(UTC)
+    compose_session.updated_at = utc_now()
     return True
 
 
@@ -475,3 +477,5 @@ async def _record_material_log(
         entity_id=str(material.id),
         metadata=base_metadata,
     )
+
+

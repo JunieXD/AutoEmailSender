@@ -4,11 +4,13 @@ from datetime import UTC, datetime, tzinfo
 
 
 def utc_now() -> datetime:
+    # time-check: ignore(core-time-primitive, reason="utc_now is the canonical wrapper")
     return datetime.now(UTC)
 
 
 def as_utc_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
+        # time-check: ignore(core-time-primitive, reason="naive datetimes are interpreted as UTC here")
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
@@ -18,6 +20,7 @@ def as_utc_naive(value: datetime) -> datetime:
 
 
 def local_now(local_timezone: tzinfo | None = None) -> datetime:
+    # time-check: ignore(core-time-primitive, reason="local_now discovers the system local timezone")
     timezone = local_timezone or datetime.now().astimezone().tzinfo or UTC
     return utc_now().astimezone(timezone)
 

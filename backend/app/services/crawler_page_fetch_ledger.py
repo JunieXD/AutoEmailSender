@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Protocol
 from dataclasses import dataclass
 from datetime import UTC, datetime
+
+from app.core.time import utc_now
+
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select
@@ -98,7 +101,7 @@ async def get_page_fetch_decision(
             if state.transient_failure_count >= TRANSIENT_FETCH_RETRY_LIMIT:
                 state.status = CrawlPageFetchStatus.TERMINAL_FAILED.value
                 state.terminal_reason = "transient_retry_exhausted"
-                state.updated_at = datetime.now(UTC)
+                state.updated_at = utc_now()
                 await session.commit()
                 return PageFetchDecision(
                     action="skip_terminal_failed",
@@ -134,7 +137,7 @@ async def mark_page_fetch_result(
     if not callable(session_factory):
         return
     normalized_url = normalize_fetch_url(snapshot.url or original_url)
-    now = datetime.now(UTC)
+    now = utc_now()
     async with session_factory() as session:
         state = await session.scalar(
             select(CrawlPageFetchState).where(
@@ -193,5 +196,7 @@ async def mark_page_chunks_processed(
         )
         if state is not None:
             state.status = CrawlPageFetchStatus.PROCESSED.value
-            state.updated_at = datetime.now(UTC)
+            state.updated_at = utc_now()
             await session.commit()
+
+

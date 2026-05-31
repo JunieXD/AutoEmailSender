@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, field_serializer
-
 from app.core.time import serialize_api_datetime
+
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 
 class ApiSchema(BaseModel):

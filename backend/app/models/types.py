@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app.core.time import as_utc_aware, as_utc_naive
+
 from sqlalchemy import DateTime
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.types import TypeDecorator
-
-from app.core.time import as_utc_aware, as_utc_naive
 
 
 class UTCDateTime(TypeDecorator[datetime]):

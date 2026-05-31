@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.core.time import utc_now
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -141,7 +143,7 @@ async def delete_match_analysis_job(
         raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
     previous_deleted_at = job.deleted_at
     if job.deleted_at is None:
-        now = datetime.now(UTC)
+        now = utc_now()
         job.deleted_at = now
         job.updated_at = now
     await _record_match_analysis_job_action(
@@ -164,7 +166,7 @@ async def restore_match_analysis_job(
     previous_deleted_at = job.deleted_at
     if job.deleted_at is not None:
         job.deleted_at = None
-        job.updated_at = datetime.now(UTC)
+        job.updated_at = utc_now()
     await _record_match_analysis_job_action(
         session,
         job,
@@ -206,3 +208,5 @@ async def _record_match_analysis_job_action(
             "previous_deleted_at": previous_deleted_at.isoformat() if previous_deleted_at else None,
         },
     )
+
+

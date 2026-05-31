@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime
 
+from app.core.time import utc_now
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -217,7 +219,7 @@ async def import_professors_from_file(
             professor.profile_url = payload["profile_url"]
             professor.source_url = payload["source_url"]
             professor.archived_at = None
-            professor.updated_at = datetime.now(UTC)
+            professor.updated_at = utc_now()
             updated_count += 1
 
     await record_operation_log(
@@ -311,7 +313,7 @@ async def update_professor(
     professor.recent_papers = professor_data["recent_papers"]
     professor.profile_url = professor_data["profile_url"]
     professor.source_url = professor_data["source_url"]
-    professor.updated_at = datetime.now(UTC)
+    professor.updated_at = utc_now()
 
     await _record_professor_log(session, professor, "professor.updated")
     await session.commit()
@@ -330,8 +332,8 @@ async def archive_professor(
 
     affected_count = 0
     if professor.archived_at is None:
-        professor.archived_at = datetime.now(UTC)
-        professor.updated_at = datetime.now(UTC)
+        professor.archived_at = utc_now()
+        professor.updated_at = utc_now()
         affected_count = 1
     await _record_professor_log(
         session,
@@ -365,7 +367,7 @@ async def bulk_archive_professors(
     )
 
     affected_count = 0
-    archive_time = datetime.now(UTC)
+    archive_time = utc_now()
     for professor in professors:
         if professor.archived_at is None:
             professor.archived_at = archive_time
@@ -403,7 +405,7 @@ async def restore_professor(
     affected_count = 0
     if professor.archived_at is not None:
         professor.archived_at = None
-        professor.updated_at = datetime.now(UTC)
+        professor.updated_at = utc_now()
         affected_count = 1
     await _record_professor_log(
         session,
@@ -580,3 +582,5 @@ def _map_dashboard_status(tasks: list[EmailTask], sent_count: int = 0) -> str:
         return "preparing"
 
     return "not_contacted"
+
+

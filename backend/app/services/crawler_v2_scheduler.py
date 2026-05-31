@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from app.core.time import utc_now
+
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.time import utc_now
 from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,

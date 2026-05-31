@@ -1,10 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import io
 import re
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
+
+from app.core.time import local_now
+
 from html import escape
 from pathlib import Path
 
@@ -132,7 +135,7 @@ def build_send_date_context(
     *,
     local_timezone: tzinfo | None = None,
 ) -> dict[str, str]:
-    timezone = local_timezone or datetime.now().astimezone().tzinfo
+    timezone = local_timezone or local_now().tzinfo
     current = now or datetime.now(timezone)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone)
@@ -741,3 +744,5 @@ def _append_inline_style(tag, style_fragment: str) -> None:
     if existing_style and not existing_style.endswith(";"):
         existing_style = f"{existing_style};"
     tag["style"] = f"{existing_style}{style_fragment}"
+
+

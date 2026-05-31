@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
+from app.core.time import utc_now
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -72,7 +74,7 @@ async def claim_next_professor_scan(
         if state is None:
             return None
         state.historical_scan_status = ImapProfessorHistoricalScanStatus.RUNNING.value
-        state.historical_scan_started_at = datetime.now(UTC)
+        state.historical_scan_started_at = utc_now()
         state.last_error = None
         await session.commit()
         await session.refresh(state)
@@ -89,7 +91,7 @@ async def mark_professor_scan_completed(
         if state is None:
             return
         state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
-        state.historical_scan_completed_at = datetime.now(UTC)
+        state.historical_scan_completed_at = utc_now()
         state.last_scanned_uid = last_scanned_uid
         state.last_error = None
         await session.commit()
@@ -162,3 +164,5 @@ def _dedupe_rows(
 
 def _normalize_email(value: str | None) -> str:
     return (value or "").strip().lower()
+
+

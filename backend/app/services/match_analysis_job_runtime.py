@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+from app.core.time import utc_now
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.core.time import utc_now
 from app.models import (
     EmailTask,
     EmailTaskSource,

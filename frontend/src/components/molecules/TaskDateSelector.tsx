@@ -30,17 +30,21 @@ const fromIsoDate = (value: string) => new Date(`${value}T00:00:00Z`);
 
 const getTodayIsoDate = () => {
   const today = new Date();
+  // time-check: local-control-value, calendar grid constructs UTC dates from local date parts.
   return toIsoDate(new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())));
 };
 
 const buildMonthDays = (monthDate: Date) => {
   const year = monthDate.getUTCFullYear();
   const month = monthDate.getUTCMonth();
+  // time-check: local-control-value, calendar grid month calculations use UTC date objects.
   const firstDay = new Date(Date.UTC(year, month, 1));
   const startOffset = (firstDay.getUTCDay() + 6) % 7;
+  // time-check: local-control-value, calendar grid start date is derived from visible month.
   const start = new Date(Date.UTC(year, month, 1 - startOffset));
 
   return Array.from({ length: 42 }, (_, index) => {
+    // time-check: local-control-value, calendar cells clone an internal Date object.
     const date = new Date(start);
     date.setUTCDate(start.getUTCDate() + index);
     return date;
@@ -75,6 +79,7 @@ export const TaskDateSelector: React.FC<TaskDateSelectorProps> = ({
   const monthLabel = `${visibleYear}年${visibleMonthIndex + 1}月`;
 
   const changeMonth = (offset: number) => {
+    // time-check: local-control-value, calendar navigation constructs the visible month.
     setVisibleMonth(new Date(Date.UTC(visibleYear, visibleMonthIndex + offset, 1)));
   };
 

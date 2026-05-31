@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+
+from app.core.time import utc_now
+
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator
@@ -43,7 +46,7 @@ async def recover_stale_generating_drafts(
     stale_after: timedelta = timedelta(minutes=30),
     now: datetime | None = None,
 ) -> int:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = now or utc_now()
     cutoff = resolved_now - stale_after
     async with session_factory() as session:
         tasks = list(
@@ -123,7 +126,7 @@ async def _claim_queued_llm_drafts(
             ),
         )
         claimed: list[tuple[int, int]] = []
-        now = datetime.now(UTC)
+        now = utc_now()
         for task in candidates:
             if task.batch_task_id is None:
                 continue
@@ -145,3 +148,5 @@ async def _claim_queued_llm_drafts(
             claimed.append((task.id, task.batch_task_id))
         await session.commit()
         return claimed
+
+

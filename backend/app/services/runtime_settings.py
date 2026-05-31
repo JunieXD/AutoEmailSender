@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.core.time import utc_now
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AppSetting
@@ -46,7 +48,7 @@ async def update_runtime_settings(
 
     for key, value in next_values.items():
         setattr(settings, key, value)
-    settings.updated_at = datetime.now(UTC)
+    settings.updated_at = utc_now()
 
     await record_operation_log(
         session,
@@ -61,3 +63,5 @@ async def update_runtime_settings(
         },
     )
     return settings
+
+

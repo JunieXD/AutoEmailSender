@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated
 
+from app.core.time import utc_now
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import Select, func, select
@@ -114,7 +116,7 @@ async def export_operation_logs(
         ).scalars(),
     )
     return OperationLogExportResponse(
-        exported_at=datetime.now(UTC),
+        exported_at=utc_now(),
         total=total,
         items=[_to_operation_log_read(log) for log in logs],
         filters=filter_values,
@@ -196,3 +198,5 @@ def _to_operation_log_read(log: OperationLog) -> OperationLogRead:
         metadata=log.event_metadata,
         created_at=log.created_at,
     )
+
+

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.core.time import utc_now
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -130,7 +132,7 @@ async def generate_test_compose_draft(
         compose_session.body_text = generation.result.body_text
         compose_session.body_html = generation.result.body_html
 
-    compose_session.updated_at = datetime.now(UTC)
+    compose_session.updated_at = utc_now()
     await _record_test_compose_log(
         session,
         compose_session,
@@ -180,7 +182,7 @@ async def send_test_compose_message(
     compose_session.body_text = draft_rendered.text
     compose_session.body_html = draft_rendered.html
     compose_session.selected_material_ids = selected_material_ids
-    compose_session.updated_at = datetime.now(UTC)
+    compose_session.updated_at = utc_now()
 
     attachments = await _resolve_selected_materials(session, identity_id, selected_material_ids)
 
@@ -260,7 +262,7 @@ async def save_test_compose_draft(
     compose_session.body_text = rendered.text
     compose_session.body_html = rendered.html
     compose_session.selected_material_ids = selected_material_ids
-    compose_session.updated_at = datetime.now(UTC)
+    compose_session.updated_at = utc_now()
     await _record_test_compose_log(
         session,
         compose_session,
@@ -490,6 +492,8 @@ def _synchronize_selected_material_ids(
     if filtered_ids == existing_ids:
         return False
     compose_session.selected_material_ids = filtered_ids
-    compose_session.updated_at = datetime.now(UTC)
+    compose_session.updated_at = utc_now()
     return True
+
+
 

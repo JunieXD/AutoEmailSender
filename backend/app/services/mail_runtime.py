@@ -13,6 +13,9 @@ from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formataddr, make_msgid, parseaddr, parsedate_to_datetime
+
+from app.core.time import as_utc_aware, utc_now
+
 from html import escape
 from html.parser import HTMLParser
 from imaplib import IMAP4, IMAP4_SSL
@@ -273,7 +276,7 @@ def text_to_html(body_text: str) -> str:
 
 
 def email_datetime_now() -> str:
-    return datetime.now(UTC).astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
+    return utc_now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
 
 
 def _test_smtp_connection_sync(identity: IdentityProfile) -> None:
@@ -495,11 +498,11 @@ def _parse_fetched_headers(
     message_id = parsed.get("Message-ID")
     in_reply_to = parsed.get("In-Reply-To")
     references = parsed.get("References")
-    sent_at = datetime.now(UTC)
+    sent_at = utc_now()
     if parsed.get("Date"):
         try:
             parsed_at = parsedate_to_datetime(parsed.get("Date"))
-            sent_at = parsed_at.astimezone(UTC) if parsed_at.tzinfo else parsed_at.replace(tzinfo=UTC)
+            sent_at = as_utc_aware(parsed_at)
         except (TypeError, ValueError, IndexError):
             pass
     headers = {
@@ -611,11 +614,11 @@ def parse_received_email(raw_message: bytes) -> ReceivedEmail:
     in_reply_to = parsed.get("In-Reply-To")
     references = parsed.get("References")
 
-    sent_at = datetime.now(UTC)
+    sent_at = utc_now()
     if parsed.get("Date"):
         try:
             parsed_at = parsedate_to_datetime(parsed.get("Date"))
-            sent_at = parsed_at.astimezone(UTC) if parsed_at.tzinfo else parsed_at.replace(tzinfo=UTC)
+            sent_at = as_utc_aware(parsed_at)
         except (TypeError, ValueError, IndexError):
             pass
 
@@ -739,3 +742,5 @@ def _open_imap_client(identity: IdentityProfile) -> IMAP4 | IMAP4_SSL:
     if identity.imap_port == 993:
         return IMAP4_SSL(identity.imap_host or "", identity.imap_port or 993, timeout=timeout)
     return IMAP4(identity.imap_host or "", identity.imap_port or 143, timeout=timeout)
+
+

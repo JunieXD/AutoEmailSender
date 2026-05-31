@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.core.time import as_utc_aware, as_utc_naive, utc_now
+
 from sqlalchemy import select
 
-from app.core.time import as_utc_aware, as_utc_naive, utc_now
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 

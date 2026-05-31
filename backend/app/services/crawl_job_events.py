@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime
+
+from app.core.time import as_utc_aware
+
 from enum import Enum
 from typing import Any
 
@@ -248,8 +251,10 @@ def _to_event_time(value: object) -> str:
         return ""
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
+            value = as_utc_aware(value)
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
