@@ -4,8 +4,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import ApiSchema
 
-class OperationLogRead(BaseModel):
+class OperationLogRead(ApiSchema):
     id: int
     request_id: str | None
     category: str
@@ -18,20 +19,20 @@ class OperationLogRead(BaseModel):
     created_at: datetime
 
 
-class OperationLogListResponse(BaseModel):
+class OperationLogListResponse(ApiSchema):
     items: list[OperationLogRead]
     total: int
     limit: int = Field(ge=1, le=500)
     offset: int = Field(ge=0)
 
 
-class DiagnosticFileRead(BaseModel):
+class DiagnosticFileRead(ApiSchema):
     name: str
     relative_path: str
     content: str
 
 
-class OperationLogExportResponse(BaseModel):
+class OperationLogExportResponse(ApiSchema):
     exported_at: datetime
     items: list[OperationLogRead]
     total: int

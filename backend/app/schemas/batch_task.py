@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.base import ApiSchema
 
 class CreateBatchTaskRequest(BaseModel):
     identity_id: int
@@ -25,7 +26,7 @@ class CreateBatchTaskRequest(BaseModel):
     outreach_template_body_html: str | None = None
 
 
-class BatchTaskCardRead(BaseModel):
+class BatchTaskCardRead(ApiSchema):
     id: int
     name: str
     status: str
@@ -53,7 +54,7 @@ class BatchTaskCardRead(BaseModel):
     deleted_at: datetime | None
 
 
-class BatchTaskItemRead(BaseModel):
+class BatchTaskItemRead(ApiSchema):
     id: int
     professor_id: int
     professor_name: str
@@ -72,6 +73,6 @@ class BatchTaskItemRead(BaseModel):
     next_action: str | None
 
 
-class BatchTaskActionResponse(BaseModel):
+class BatchTaskActionResponse(ApiSchema):
     ok: bool
     task: BatchTaskCardRead

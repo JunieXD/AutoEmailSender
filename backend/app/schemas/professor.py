@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.base import ApiSchema
 from app.services.professor_field_normalization import normalize_recent_papers
 
 
@@ -18,8 +19,7 @@ ProfessorDashboardStatus = Literal[
 ]
 
 
-class ProfessorRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class ProfessorRead(ApiSchema):
 
     id: int
     name: str
@@ -39,7 +39,7 @@ class ProfessorRead(BaseModel):
     updated_at: datetime
 
 
-class ProfessorDashboardItemRead(BaseModel):
+class ProfessorDashboardItemRead(ApiSchema):
     id: int
     name: str
     email: str | None
@@ -54,14 +54,13 @@ class ProfessorDashboardItemRead(BaseModel):
     status: ProfessorDashboardStatus
 
 
-class ProfessorImportResult(BaseModel):
+class ProfessorImportResult(ApiSchema):
     inserted_count: int
     total_count: int
     message: str
 
 
-class ProfessorManagementItemRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class ProfessorManagementItemRead(ApiSchema):
 
     id: int
     name: str
@@ -132,7 +131,7 @@ class ProfessorUpsertPayload(BaseModel):
         return normalize_recent_papers(value)
 
 
-class ProfessorImportFileResult(BaseModel):
+class ProfessorImportFileResult(ApiSchema):
     inserted_count: int
     updated_count: int
     failed_count: int
@@ -143,7 +142,7 @@ class ProfessorBulkArchivePayload(BaseModel):
     ids: list[int]
 
 
-class ProfessorActionResult(BaseModel):
+class ProfessorActionResult(ApiSchema):
     ok: bool
     affected_count: int
     message: str

@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.base import ApiSchema
 from app.services.crawler_tools import (
     UNSAFE_CRAWL_URL_MESSAGE,
     validate_safe_public_crawl_url,
@@ -95,8 +96,7 @@ class CrawlJobCreatePayload(BaseModel):
         return self
 
 
-class CrawlJobRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class CrawlJobRead(ApiSchema):
 
     id: int
     university: str
@@ -139,7 +139,7 @@ class CrawlJobSummaryRead(CrawlJobRead):
     duration_seconds: int = 0
 
 
-class CrawlJobEventRead(BaseModel):
+class CrawlJobEventRead(ApiSchema):
     id: str
     job_id: int
     event_type: str
@@ -148,8 +148,7 @@ class CrawlJobEventRead(BaseModel):
     raw: dict[str, object] | None = None
 
 
-class CrawlPageRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class CrawlPageRead(ApiSchema):
 
     id: int
     job_id: int
@@ -164,8 +163,7 @@ class CrawlPageRead(BaseModel):
     created_at: datetime
 
 
-class CrawlCandidateRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class CrawlCandidateRead(ApiSchema):
 
     id: int
     job_id: int
@@ -242,7 +240,7 @@ class CrawlJobApprovePayload(BaseModel):
     candidate_ids: list[int]
 
 
-class CrawlJobApproveResult(BaseModel):
+class CrawlJobApproveResult(ApiSchema):
     inserted_count: int
     updated_count: int
     skipped_count: int
@@ -254,7 +252,7 @@ class CrawlJobEnrichPayload(BaseModel):
     llm_profile_id: int | None = None
 
 
-class CrawlJobEnrichResult(BaseModel):
+class CrawlJobEnrichResult(ApiSchema):
     selected_count: int
     enriched_count: int
     unchanged_count: int

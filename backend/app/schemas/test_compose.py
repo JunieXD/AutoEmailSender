@@ -4,10 +4,11 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.base import ApiSchema
 from app.schemas.identity import IdentityMaterialRead
 
 
-class TestComposeIdentityRead(BaseModel):
+class TestComposeIdentityRead(ApiSchema):
     id: int
     name: str
     profile_name: str
@@ -15,21 +16,21 @@ class TestComposeIdentityRead(BaseModel):
     email_address: str
 
 
-class TestComposeLLMRead(BaseModel):
+class TestComposeLLMRead(ApiSchema):
     id: int
     name: str
     provider: str
     model_name: str
 
 
-class TestComposeDraftRead(BaseModel):
+class TestComposeDraftRead(ApiSchema):
     subject: str | None
     body_text: str
     body_html: str | None
     selected_material_ids: list[int]
 
 
-class TestComposeMessageRead(BaseModel):
+class TestComposeMessageRead(ApiSchema):
     id: int
     recipient_email: str
     subject: str | None
@@ -41,7 +42,7 @@ class TestComposeMessageRead(BaseModel):
     created_at: datetime
 
 
-class TestComposeThreadRead(BaseModel):
+class TestComposeThreadRead(ApiSchema):
     identity: TestComposeIdentityRead
     llm_profile: TestComposeLLMRead
     material_options: list[IdentityMaterialRead]
@@ -49,7 +50,7 @@ class TestComposeThreadRead(BaseModel):
     history: list[TestComposeMessageRead]
 
 
-class TestComposeStatusRead(BaseModel):
+class TestComposeStatusRead(ApiSchema):
     completed: bool
 
 

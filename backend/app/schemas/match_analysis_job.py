@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import ApiSchema
 
 class CreateMatchAnalysisJobRequest(BaseModel):
     identity_id: int
@@ -12,7 +13,7 @@ class CreateMatchAnalysisJobRequest(BaseModel):
     name: str | None = None
 
 
-class MatchAnalysisJobRead(BaseModel):
+class MatchAnalysisJobRead(ApiSchema):
     id: int
     name: str
     status: str
@@ -34,7 +35,7 @@ class MatchAnalysisJobRead(BaseModel):
     last_error: str | None
 
 
-class MatchAnalysisJobItemRead(BaseModel):
+class MatchAnalysisJobItemRead(ApiSchema):
     id: int
     job_id: int
     professor_id: int
@@ -56,6 +57,6 @@ class MatchAnalysisJobItemRead(BaseModel):
     updated_at: datetime
 
 
-class MatchAnalysisJobActionResponse(BaseModel):
+class MatchAnalysisJobActionResponse(ApiSchema):
     ok: bool
     job: MatchAnalysisJobRead

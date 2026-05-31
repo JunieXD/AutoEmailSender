@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
+from app.schemas.base import ApiSchema
 
 class LLMProfileBase(BaseModel):
     name: str
@@ -27,14 +28,13 @@ class LLMProfileUpdate(LLMProfileBase):
 
 
 class LLMProfileRead(LLMProfileBase):
-    model_config = ConfigDict(from_attributes=True)
 
     id: int
     created_at: datetime
     updated_at: datetime
 
 
-class LLMProfileTestResult(BaseModel):
+class LLMProfileTestResult(ApiSchema):
     ok: bool
     message: str
     resolved_base_url: str | None = None
@@ -50,7 +50,7 @@ class LLMProfileTestResult(BaseModel):
     response_preview: str | None = None
 
 
-class LLMProfileModelsResult(BaseModel):
+class LLMProfileModelsResult(ApiSchema):
     ok: bool
     message: str
     resolved_base_url: str | None = None

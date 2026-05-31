@@ -4,10 +4,11 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.base import ApiSchema
 from app.schemas.identity import IdentityMaterialRead
 
 
-class WorkspaceProfessorRead(BaseModel):
+class WorkspaceProfessorRead(ApiSchema):
     id: int
     name: str
     email: str | None
@@ -18,7 +19,7 @@ class WorkspaceProfessorRead(BaseModel):
     recent_papers: list[str]
 
 
-class WorkspaceIdentityRead(BaseModel):
+class WorkspaceIdentityRead(ApiSchema):
     id: int
     name: str
     profile_name: str
@@ -26,14 +27,14 @@ class WorkspaceIdentityRead(BaseModel):
     email_address: str
 
 
-class WorkspaceLLMRead(BaseModel):
+class WorkspaceLLMRead(ApiSchema):
     id: int
     name: str
     provider: str
     model_name: str
 
 
-class WorkspaceTaskSummaryRead(BaseModel):
+class WorkspaceTaskSummaryRead(ApiSchema):
     id: int | None
     source: str | None
     batch_task_id: int | None
@@ -79,7 +80,7 @@ class WorkspaceTaskSummaryRead(BaseModel):
     last_draft_total_tokens: int | None = None
 
 
-class WorkspaceMessageRead(BaseModel):
+class WorkspaceMessageRead(ApiSchema):
     id: int
     direction: str
     subject: str | None
@@ -94,7 +95,7 @@ class WorkspaceMessageRead(BaseModel):
     created_at: datetime
 
 
-class WorkspaceThreadRead(BaseModel):
+class WorkspaceThreadRead(ApiSchema):
     professor: WorkspaceProfessorRead
     identity: WorkspaceIdentityRead
     llm_profile: WorkspaceLLMRead

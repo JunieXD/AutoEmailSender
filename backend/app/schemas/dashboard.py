@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import ApiSchema
 
 DashboardMentorMatchBucket = Literal[
     "unmatched",
@@ -40,7 +41,7 @@ DashboardProfileCompletenessBucket = Literal[
 ]
 
 
-class DashboardMentorSummaryRead(BaseModel):
+class DashboardMentorSummaryRead(ApiSchema):
     total_professors: int = 0
     matched_professors: int = 0
     matched_rate: float = 0.0
@@ -49,13 +50,13 @@ class DashboardMentorSummaryRead(BaseModel):
     high_score_threshold: int = 80
 
 
-class DashboardMentorMatchBucketRead(BaseModel):
+class DashboardMentorMatchBucketRead(ApiSchema):
     bucket: DashboardMentorMatchBucket
     label: str
     count: int = 0
 
 
-class DashboardProfileCompletenessRead(BaseModel):
+class DashboardProfileCompletenessRead(ApiSchema):
     key: Literal["email", "research_direction", "recent_papers", "profile_url", "complete"]
     label: str
     count: int = 0
@@ -63,28 +64,28 @@ class DashboardProfileCompletenessRead(BaseModel):
     rate: float = 0.0
 
 
-class DashboardSchoolDistributionRead(BaseModel):
+class DashboardSchoolDistributionRead(ApiSchema):
     school_name: str
     count: int = 0
 
 
-class DashboardSchoolFilterSchoolRead(BaseModel):
+class DashboardSchoolFilterSchoolRead(ApiSchema):
     school_name: str
     count: int = 0
 
 
-class DashboardSchoolFilterRead(BaseModel):
+class DashboardSchoolFilterRead(ApiSchema):
     university: str
     count: int = 0
     schools: list[DashboardSchoolFilterSchoolRead] = Field(default_factory=list)
 
 
-class DashboardMentorFilterRead(BaseModel):
+class DashboardMentorFilterRead(ApiSchema):
     university: str | None = None
     school: str | None = None
 
 
-class DashboardProfileCompletenessBucketRead(BaseModel):
+class DashboardProfileCompletenessBucketRead(ApiSchema):
     key: DashboardProfileCompletenessBucket
     label: str
     count: int = 0
@@ -92,7 +93,7 @@ class DashboardProfileCompletenessBucketRead(BaseModel):
     rate: float = 0.0
 
 
-class DashboardMentorActionItemRead(BaseModel):
+class DashboardMentorActionItemRead(ApiSchema):
     professor_id: int
     name: str
     university: str | None = None
@@ -106,7 +107,7 @@ class DashboardMentorActionItemRead(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
 
 
-class DashboardMentorSectionRead(BaseModel):
+class DashboardMentorSectionRead(ApiSchema):
     summary: DashboardMentorSummaryRead
     match_score_distribution: list[DashboardMentorMatchBucketRead] = Field(default_factory=list)
     profile_completeness: list[DashboardProfileCompletenessRead] = Field(default_factory=list)
@@ -118,7 +119,7 @@ class DashboardMentorSectionRead(BaseModel):
     incomplete_professors: list[DashboardMentorActionItemRead] = Field(default_factory=list)
 
 
-class DashboardEmailSummaryRead(BaseModel):
+class DashboardEmailSummaryRead(ApiSchema):
     sent_count: int = 0
     contacted_professor_count: int = 0
     replied_count: int = 0
@@ -129,7 +130,7 @@ class DashboardEmailSummaryRead(BaseModel):
     scheduled_count: int = 0
 
 
-class DashboardEmailTrendBucketRead(BaseModel):
+class DashboardEmailTrendBucketRead(ApiSchema):
     date: str
     label: str | None = None
     sent_count: int = 0
@@ -137,19 +138,19 @@ class DashboardEmailTrendBucketRead(BaseModel):
     failed_count: int = 0
 
 
-class DashboardEmailFunnelBucketRead(BaseModel):
+class DashboardEmailFunnelBucketRead(ApiSchema):
     key: str
     label: str
     count: int = 0
 
 
-class DashboardEmailStatusBucketRead(BaseModel):
+class DashboardEmailStatusBucketRead(ApiSchema):
     status: DashboardEmailStatusKey
     label: str
     count: int = 0
 
 
-class DashboardEmailFollowUpRead(BaseModel):
+class DashboardEmailFollowUpRead(ApiSchema):
     professor_id: int
     task_id: int
     name: str
@@ -163,7 +164,7 @@ class DashboardEmailFollowUpRead(BaseModel):
     updated_at: datetime
 
 
-class DashboardEmailSectionRead(BaseModel):
+class DashboardEmailSectionRead(ApiSchema):
     summary: DashboardEmailSummaryRead
     trend_30_days: list[DashboardEmailTrendBucketRead] = Field(default_factory=list)
     funnel: list[DashboardEmailFunnelBucketRead] = Field(default_factory=list)
@@ -171,6 +172,6 @@ class DashboardEmailSectionRead(BaseModel):
     follow_ups: list[DashboardEmailFollowUpRead] = Field(default_factory=list)
 
 
-class DashboardOverviewRead(BaseModel):
+class DashboardOverviewRead(ApiSchema):
     mentor: DashboardMentorSectionRead
     email: DashboardEmailSectionRead

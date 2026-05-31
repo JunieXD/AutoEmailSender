@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.base import ApiSchema
 from app.schemas.workspace import WorkspaceThreadRead
 
 
@@ -29,20 +30,20 @@ class EmailTaskOutreachConfigRequest(BaseModel):
     outreach_template_body_html: str | None = None
 
 
-class TokenUsageRead(BaseModel):
+class TokenUsageRead(ApiSchema):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
     cached_tokens: int | None = None
 
 
-class MatchCalculationResultRead(BaseModel):
+class MatchCalculationResultRead(ApiSchema):
     thread: WorkspaceThreadRead
     usage: TokenUsageRead
     run_id: int | None = None
 
 
-class DraftPreviewRead(BaseModel):
+class DraftPreviewRead(ApiSchema):
     subject: str
     body_text: str | None = None
     body_html: str | None = None

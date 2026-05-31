@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
+from app.schemas.base import ApiSchema
 
 class IdentityMaterialTypeRead(StrEnum):
     RESUME = "resume"
@@ -14,8 +15,7 @@ class IdentityMaterialTypeRead(StrEnum):
     OTHER = "other"
 
 
-class IdentityMaterialRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class IdentityMaterialRead(ApiSchema):
 
     id: int
     display_name: str
@@ -67,7 +67,6 @@ class IdentityProfileUpdate(IdentityProfileBase):
 
 
 class IdentityProfileRead(IdentityProfileBase):
-    model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
@@ -80,13 +79,13 @@ class IdentityProfileRead(IdentityProfileBase):
     updated_at: datetime
 
 
-class ConnectionTestResult(BaseModel):
+class ConnectionTestResult(ApiSchema):
     ok: bool
     message: str
     host: str | None = None
 
 
-class IdentityTemplateImportResult(BaseModel):
+class IdentityTemplateImportResult(ApiSchema):
     subject: str | None
     body_text: str
     body_html: str

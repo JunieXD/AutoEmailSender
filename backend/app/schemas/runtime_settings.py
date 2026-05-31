@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import ApiSchema
 
 DraftRewriteIntensity = Literal["light", "moderate", "strong"]
 DraftRewriteTone = Literal["polite", "professional", "friendly"]
@@ -14,7 +15,7 @@ DraftRewriteSpecificity = Literal["concise", "balanced", "detailed"]
 DraftTemplatePreservation = Literal["structure_first", "balanced", "content_first"]
 
 
-class RuntimeSettingsRead(BaseModel):
+class RuntimeSettingsRead(ApiSchema):
     match_analysis_job_worker_count: int
     match_analysis_job_item_concurrency: int
     match_analysis_job_interval_seconds: int

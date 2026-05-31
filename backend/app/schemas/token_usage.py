@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.base import ApiSchema
 
 TokenUsageFeatureType = Literal["crawl", "match_analysis", "draft_generation"]
 TokenUsageFeatureFilter = Literal[
@@ -24,7 +25,7 @@ TokenUsageChartPreset = Literal[
 TokenUsageChartGranularity = Literal["hour", "day"]
 
 
-class TokenUsageRecordRead(BaseModel):
+class TokenUsageRecordRead(ApiSchema):
     id: str
     feature_type: TokenUsageFeatureType
     feature_label: str
@@ -39,7 +40,7 @@ class TokenUsageRecordRead(BaseModel):
     status: TokenUsageStatus
 
 
-class TokenUsageSummaryRead(BaseModel):
+class TokenUsageSummaryRead(ApiSchema):
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
@@ -47,21 +48,21 @@ class TokenUsageSummaryRead(BaseModel):
     record_count: int = 0
 
 
-class TokenUsagePaginationRead(BaseModel):
+class TokenUsagePaginationRead(ApiSchema):
     page: int
     page_size: int
     total_records: int
     total_pages: int
 
 
-class TokenUsageRecordListRead(BaseModel):
+class TokenUsageRecordListRead(ApiSchema):
     records: list[TokenUsageRecordRead] = Field(default_factory=list)
     summary: TokenUsageSummaryRead
     pagination: TokenUsagePaginationRead
     model_options: list[str] = Field(default_factory=list)
 
 
-class TokenUsageChartBucketRead(BaseModel):
+class TokenUsageChartBucketRead(ApiSchema):
     bucket_start: datetime
     bucket_label: str
     input_tokens: int = 0
@@ -70,7 +71,7 @@ class TokenUsageChartBucketRead(BaseModel):
     total_tokens: int = 0
 
 
-class TokenUsageChartRead(BaseModel):
+class TokenUsageChartRead(ApiSchema):
     preset: TokenUsageChartPreset
     granularity: TokenUsageChartGranularity
     range_start: datetime
@@ -78,7 +79,7 @@ class TokenUsageChartRead(BaseModel):
     buckets: list[TokenUsageChartBucketRead] = Field(default_factory=list)
 
 
-class TokenUsageFeatureDistributionRead(BaseModel):
+class TokenUsageFeatureDistributionRead(ApiSchema):
     feature_type: TokenUsageFeatureType
     feature_label: str
     input_tokens: int = 0
@@ -89,7 +90,7 @@ class TokenUsageFeatureDistributionRead(BaseModel):
     share: float = 0.0
 
 
-class TokenUsageModelRankingRead(BaseModel):
+class TokenUsageModelRankingRead(ApiSchema):
     model_name: str
     input_tokens: int = 0
     output_tokens: int = 0
@@ -99,7 +100,7 @@ class TokenUsageModelRankingRead(BaseModel):
     share: float = 0.0
 
 
-class TokenUsageVisualizationRead(BaseModel):
+class TokenUsageVisualizationRead(ApiSchema):
     preset: TokenUsageChartPreset
     summary: TokenUsageSummaryRead
     chart: TokenUsageChartRead
