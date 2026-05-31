@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -69,6 +70,26 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         fetch_mock.assert_awaited_once()
         enrich_mock.assert_awaited_once()
 
+    async def test_enrichment_worker_does_not_write_after_lease_expires(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        expired = datetime.now(UTC) - timedelta(seconds=1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            task.lease_expires_at = expired
+            await session.commit()
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
+
+        with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage", new=AsyncMock(return_value=(payload, None))):
+            processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert candidate is not None and task is not None
+        self.assertIsNone(candidate.email)
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.PROCESSING.value)
     async def test_enrichment_worker_records_llm_token_usage(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
         payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})

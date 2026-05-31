@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -211,6 +212,8 @@ async def complete_current_chunk(
             return {"status": "missing", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
         if chunk.status != CrawlPageChunkStatus.PROCESSING.value or chunk.worker_id != worker_id:
             return {"status": "not_claimed", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
+        if _lease_expired(chunk.lease_expires_at):
+            return {"status": "lease_expired", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
         if not await ensure_job_active(session, chunk.job_id):
             return {"status": "inactive", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
         job = await session.get(CrawlJob, chunk.job_id)
@@ -308,6 +311,13 @@ async def complete_current_chunk(
             "url_count": url_count,
             "enrichment_count": enrichment_count,
         }
+
+def _lease_expired(lease_expires_at: datetime | None) -> bool:
+    if lease_expires_at is None:
+        return False
+    now = datetime.now(lease_expires_at.tzinfo) if lease_expires_at.tzinfo else datetime.now()
+    return lease_expires_at <= now
+
 
 def _normalize_chunk_status(chunk_status: str) -> str:
     if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, CrawlPageChunkStatus.SPLIT_REQUIRED.value}:

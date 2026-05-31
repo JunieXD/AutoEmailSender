@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageTask, CrawlPageTaskStatus
+from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_tools import PageSnapshot
 from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 
@@ -163,6 +164,60 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(pages[0].id, other_page_id)
         self.assertTrue(chunks)
         self.assertTrue(all(chunk.page_id == pages[0].id for chunk in chunks))
+    async def test_page_worker_skips_processed_url_without_fetching_again(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageFetchState(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/faculty",
+                    original_url="https://example.edu/faculty",
+                    status=CrawlPageFetchStatus.PROCESSED.value,
+                )
+            )
+            await session.commit()
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock()) as fetch_mock:
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        fetch_mock.assert_not_awaited()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            pages = list(await session.scalars(select(CrawlPage).where(CrawlPage.job_id == job_id)))
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SKIPPED_DUPLICATE.value)
+        self.assertEqual(len(pages), 0)
+        self.assertEqual(len(chunks), 0)
+
+    async def test_page_worker_does_not_write_after_lease_expires(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        expired = datetime.now(UTC) - timedelta(seconds=1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            assert task is not None
+            task.lease_expires_at = expired
+            await session.commit()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            text="张三 教授",
+            html="<p>张三</p>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            pages = list(await session.scalars(select(CrawlPage).where(CrawlPage.job_id == job_id)))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.PROCESSING.value)
+        self.assertEqual(len(pages), 0)
     async def test_fetch_modes_use_distinct_underlying_paths(self) -> None:
         ctx = object()
         direct_snapshot = PageSnapshot(url="https://example.edu", text="direct", html="", links=[], fetch_method="http", status="succeeded")

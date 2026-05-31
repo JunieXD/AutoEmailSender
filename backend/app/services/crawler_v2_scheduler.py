@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
+    CrawlCandidate,
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
@@ -79,7 +80,13 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
         if await _job_has_available_or_leased_work(session, job_id=job.id, now=now):
             continue
         terminal_failures = await _job_has_terminal_failures(session, job_id=job.id)
-        final_status = CrawlJobStatus.PARTIALLY_COMPLETED.value if terminal_failures else CrawlJobStatus.NEEDS_REVIEW.value
+        has_candidates = await _job_has_candidates(session, job_id=job.id)
+        if terminal_failures and not has_candidates:
+            final_status = CrawlJobStatus.FAILED.value
+        elif terminal_failures:
+            final_status = CrawlJobStatus.PARTIALLY_COMPLETED.value
+        else:
+            final_status = CrawlJobStatus.NEEDS_REVIEW.value
         job.status = final_status
         job.updated_at = now
         await mark_crawl_job_run_finished(session, job, status=final_status, now=now)
@@ -305,6 +312,10 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     )
     return enrichment is not None
 
+
+async def _job_has_candidates(session: AsyncSession, *, job_id: int) -> bool:
+    candidate = await session.scalar(select(CrawlCandidate.id).where(CrawlCandidate.job_id == job_id).limit(1))
+    return candidate is not None
 
 async def _job_has_terminal_failures(session: AsyncSession, *, job_id: int) -> bool:
     page = await session.scalar(select(CrawlPageTask.id).where(CrawlPageTask.job_id == job_id, CrawlPageTask.status == CrawlPageTaskStatus.FAILED_TERMINAL.value).limit(1))

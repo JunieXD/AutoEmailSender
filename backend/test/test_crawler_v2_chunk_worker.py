@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -176,6 +177,34 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(len(tasks), 0)
 
+    async def test_complete_chunk_rejects_expired_lease_without_writing(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        expired = datetime.now(UTC) - timedelta(seconds=1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.lease_expires_at = expired
+            await session.commit()
+        candidate = ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/zhang.html", source_url="https://example.edu/faculty", confidence=0.9)
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[candidate],
+            discovered_urls=["https://example.edu/page2.html"],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["status"], "lease_expired")
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+            page_tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.PROCESSING.value)
+        self.assertEqual(len(candidates), 0)
+        self.assertEqual(len(page_tasks), 0)
     async def test_chunk_worker_records_llm_token_usage(self) -> None:
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
 

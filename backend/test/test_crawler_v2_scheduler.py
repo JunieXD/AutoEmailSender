@@ -176,9 +176,24 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(run.finished_at)
 
 
-    async def test_terminal_failures_mark_partially_completed_when_no_retryable_work(self) -> None:
+    async def test_no_candidates_with_terminal_page_failure_marks_failed(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a", status=CrawlPageTaskStatus.FAILED_TERMINAL.value))
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+
+    async def test_terminal_failures_with_candidates_mark_partially_completed_when_no_retryable_work(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(CrawlCandidate(job_id=job_id, name="张三"))
             session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a", status=CrawlPageTaskStatus.FAILED_TERMINAL.value))
             await session.commit()
 

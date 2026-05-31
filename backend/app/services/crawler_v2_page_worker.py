@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,11 +24,14 @@ async def run_crawler_v2_page_worker_once(
 ) -> int:
     async with session_factory() as session:
         task = await session.get(CrawlPageTask, task_id)
-        if task is None or task.status != CrawlPageTaskStatus.PROCESSING.value or task.worker_id != worker_id:
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
             return 0
         job = await session.get(CrawlJob, task.job_id)
         if job is None or not await ensure_job_active(session, task.job_id):
             return 0
+        if await _skip_page_task_from_ledger(session, task):
+            await session.commit()
+            return 1
         target_url = task.original_url
         ctx = CrawlToolContext(
             session_factory=session_factory,
@@ -53,7 +58,7 @@ async def run_crawler_v2_page_worker_once(
             if not await ensure_job_active(session, task.job_id):
                 return 0
             task = await session.get(CrawlPageTask, task_id)
-            if task is None:
+            if task is None or not _page_task_owned_by_worker(task, worker_id):
                 return 0
             page_id = await _record_page_and_state(
                 session,
@@ -75,7 +80,7 @@ async def run_crawler_v2_page_worker_once(
     except Exception as exc:
         async with session_factory() as session:
             task = await session.get(CrawlPageTask, task_id)
-            if task is not None:
+            if task is not None and _page_task_owned_by_worker(task, worker_id):
                 _mark_page_failed(task, str(exc))
             await session.commit()
         return 1
@@ -107,6 +112,42 @@ def _fallback_reason(snapshot: PageSnapshot) -> str:
         return snapshot.error_message or "direct_fetch_failed"
     return "direct_fetch_unusable"
 
+
+def _lease_valid(lease_expires_at: datetime | None) -> bool:
+    if lease_expires_at is None:
+        return True
+    now = datetime.now(lease_expires_at.tzinfo) if lease_expires_at.tzinfo else datetime.now()
+    return lease_expires_at > now
+
+
+def _page_task_owned_by_worker(task: CrawlPageTask, worker_id: str) -> bool:
+    return task.status == CrawlPageTaskStatus.PROCESSING.value and task.worker_id == worker_id and _lease_valid(task.lease_expires_at)
+
+
+async def _skip_page_task_from_ledger(session: AsyncSession, task: CrawlPageTask) -> bool:
+    state = await session.scalar(
+        select(CrawlPageFetchState).where(
+            CrawlPageFetchState.job_id == task.job_id,
+            CrawlPageFetchState.normalized_url == task.normalized_url,
+        )
+    )
+    if state is None:
+        return False
+    if state.status == CrawlPageFetchStatus.PROCESSED.value:
+        task.status = CrawlPageTaskStatus.SKIPPED_DUPLICATE.value
+        task.last_error = "页面已处理完成，跳过重复抓取"
+        task.worker_id = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        return True
+    if state.status == CrawlPageFetchStatus.TERMINAL_FAILED.value:
+        task.status = CrawlPageTaskStatus.FAILED_TERMINAL.value
+        task.last_error = state.last_error_message or "页面此前已终止失败，跳过重复抓取"
+        task.worker_id = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        return True
+    return False
 
 def _mark_page_failed(task: CrawlPageTask, message: str) -> None:
     task.last_error = message
