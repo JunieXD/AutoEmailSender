@@ -5,7 +5,6 @@ from datetime import datetime
 from app.core.time import as_utc_aware, utc_now
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
@@ -13,7 +12,6 @@ from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
 from app.services.crawler_tools import CrawlToolContext, PageSnapshot, browser_investigate, crawl_page_with_http
 from app.services.crawler_v2_scheduler import ensure_job_active
-from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 
 MAX_PAGE_ATTEMPTS = 3
 
@@ -77,7 +75,7 @@ async def run_crawler_v2_page_worker_once(
                 _mark_page_failed(task, snapshot.error_message or "页面抓取失败")
             await session.commit()
         if snapshot.status == "succeeded":
-            await _create_chunks_and_enqueue_links(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
+            await _create_chunks_for_page_snapshot(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
         return 1
     except Exception as exc:
         async with session_factory() as session:
@@ -215,7 +213,7 @@ async def _record_page_and_state(
     return page.id
 
 
-async def _create_chunks_and_enqueue_links(
+async def _create_chunks_for_page_snapshot(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     task_id: int,
@@ -235,52 +233,5 @@ async def _create_chunks_and_enqueue_links(
             text=snapshot.text,
             config=ChunkingConfig(),
         )
-    await create_chunks_for_page(session_factory, job_id=task.job_id, page_id=page_id, drafts=drafts)
-    async with session_factory() as session:
-        task = await session.get(CrawlPageTask, task_id)
-        job = await session.get(CrawlJob, task.job_id) if task is not None else None
-        if task is None or job is None or not await ensure_job_active(session, task.job_id):
-            return
         job_id = task.job_id
-        start_url = job.start_url
-        depth = int(task.depth or 0) + 1
-    await _enqueue_page_links(session_factory, job_id=job_id, start_url=start_url, source_url=snapshot.url, links=snapshot.links, depth=depth)
-
-async def _enqueue_page_links(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    job_id: int,
-    start_url: str,
-    source_url: str,
-    links: list[str],
-    depth: int,
-) -> None:
-    seen: set[str] = set()
-    for link in links:
-        normalized = normalize_url(link, base_url=source_url)
-        if normalized in seen or not is_same_domain(normalized, start_url):
-            continue
-        seen.add(normalized)
-        async with session_factory() as session:
-            exists = await session.scalar(
-                select(CrawlPageTask.id).where(
-                    CrawlPageTask.job_id == job_id,
-                    CrawlPageTask.normalized_url == normalized,
-                )
-            )
-            if exists is not None:
-                continue
-            session.add(
-                CrawlPageTask(
-                    job_id=job_id,
-                    normalized_url=normalized,
-                    original_url=link,
-                    depth=depth,
-                    priority=0,
-                    status=CrawlPageTaskStatus.PENDING.value,
-                )
-            )
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
+    await create_chunks_for_page(session_factory, job_id=job_id, page_id=page_id, drafts=drafts)

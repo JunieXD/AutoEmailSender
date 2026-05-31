@@ -23,13 +23,13 @@
 - `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_url_utils.py`：URL 规范化、同域判断、任务去重 key。
 - `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_models.py`：V2 内部 dataclass/枚举，避免把调度 DTO 塞进 ORM 文件。
 - `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_scheduler.py`：单实例调度决策、并发配额、任务结束判断。
-- `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_page_worker.py`：每次处理一个 page task，负责 direct fetch、browser fallback、写 page/chunk/link task。
+- `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_page_worker.py`：每次处理一个 page task，负责 direct fetch、browser fallback、写 page/chunk；不发现或入队新 URL。
 - `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_chunk_worker.py`：每次处理一个 chunk，暴露 `complete_current_chunk` 语义并原子保存 candidates 和 discovered_urls。
 - `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_enrichment_worker.py`：每次补全一个候选，写回候选字段和补全任务状态。
 - `C:\StudyPrograms\AutoEmailSender\backend\app\services\crawler_v2_token_usage.py`：按 worker_kind/work_item_id 记录 token。
 - `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_url_utils.py`：URL 规范化和同域规则测试。
 - `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_scheduler.py`：调度优先级、并发配额、结束判断测试。
-- `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_page_worker.py`：Page Worker direct/browser fallback、chunk 生成、链接入队测试。
+- `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_page_worker.py`：Page Worker direct/browser fallback、chunk 生成、禁止链接入队测试。
 - `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_chunk_worker.py`：Chunk Worker 领取、`complete_current_chunk`、候选/URL 原子保存测试。
 - `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_enrichment_worker.py`：候选补全任务 lease、跳过、失败重试测试。
 - `C:\StudyPrograms\AutoEmailSender\backend\test\test_crawler_v2_runtime_routing.py`：新任务默认 V2、V1 不再自动处理新任务测试。
@@ -400,7 +400,7 @@ class FakeFetcher:
         raise AssertionError("browser fallback should not be called")
 ```
 
-断言：page task 变为 `fetched`，`CrawlPage.fetch_method == 'direct'`，生成 chunks，入队 `p2`。
+断言：page task 变为 `fetched`，`CrawlPage.fetch_method == 'direct'`，生成 chunks，但不入队 `p2`。
 
 - [ ] **步骤 2：编写 browser fallback 测试**
 
@@ -423,7 +423,7 @@ async def run_page_worker_once(session_factory, *, page_task_id: int, worker_id:
     # 3. direct_fetch
     # 4. direct 不可用时 browser_fetch 一次
     # 5. 写 CrawlPage、mark_page_fetch_result、create_chunks_for_page
-    # 6. 提取同域链接并 upsert CrawlPageTask
+    # 6. 不从页面 links 自动 upsert CrawlPageTask
     # 7. page task 标记 fetched/skipped/failed_retryable/failed_terminal
 ```
 

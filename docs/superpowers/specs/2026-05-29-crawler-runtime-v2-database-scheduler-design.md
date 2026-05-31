@@ -61,10 +61,10 @@ flowchart TD
     D -- "有" --> E["Page Worker 处理 1 个 URL"]
     E --> F["写 crawl_pages 和 page ledger"]
     E --> G["生成 crawl_page_chunks"]
-    E --> H["发现链接写 page task"]
+
     F --> C
     G --> C
-    H --> C
+
 
     D -- "没有" --> I{"有 pending/可恢复 chunk?"}
     I -- "有" --> J["Chunk Worker 处理 1 个 chunk"]
@@ -94,9 +94,9 @@ flowchart TD
 5. 可恢复失败重试；
 6. 结束任务。
 
-页面优先于 chunk 的原因：入口页和已发现页面需要先形成 chunk 队列，避免只处理局部列表后就误以为任务完成。但 page task 不能无限优先。默认每连续处理 3 个 page task 后，如果存在 pending chunk，则至少处理 1 个 chunk。
+页面优先于 chunk 的原因：入口页和 Chunk Worker 明确发现的页面需要先形成 chunk 队列，避免只处理局部列表后就误以为任务完成。但 page task 不能无限优先。默认每连续处理 3 个 page task 后，如果存在 pending chunk，则至少处理 1 个 chunk。
 
-Chunk Worker 提交 discovered_urls 后，调度器后续调度会重新看到 page task；公平预算保证新页面能继续抓，也保证已生成 chunk 不会长期积压。
+只有 Chunk Worker 提交的 discovered_urls 才会形成新的 page task；公平预算保证新页面能继续抓，也保证已生成 chunk 不会长期积压。
 
 ## 并发策略
 
@@ -237,10 +237,10 @@ Page Worker 每次只处理一个 page task。
 5. 写 `crawl_pages`。
 6. 更新 Page Ledger。
 7. 成功页面生成 chunks。
-8. 从页面中提取候选页面链接，写入 `crawl_page_tasks`。
-9. 更新当前 page task 状态。
+8. 更新当前 page task 状态。
 
-Page Worker 不负责保存导师候选。候选保存只发生在 Chunk Worker 或 Enrichment Worker 中。
+
+Page Worker 不负责保存导师候选，也不负责发现或入队新 URL。候选保存和新 URL 发现只发生在 Chunk Worker；字段补全只发生在 Enrichment Worker。
 
 抓取路径选择规则：
 
@@ -253,13 +253,12 @@ Page Worker 不负责保存导师候选。候选保存只发生在 Chunk Worker 
 - direct fetch 优先是资源优化；browser fallback 是功能兜底。任何节省资源的策略都不能导致原本可通过浏览器获取的页面被直接放弃。
 
 
-链接发现规则：
+URL 发现边界：
 
-- 优先通过确定性规则提取页面 links；
-- 只保留同域或允许规则内链接；
-- 按锚文本、URL、上下文过滤明显无关链接；
-- 必要时使用短链 LLM 对当前页面链接做分类；
-- 低置信度链接必须记录为 skipped 或进入人工复核，不能静默丢弃有明确导师语义的链接。
+- Page Worker 可以在页面快照中保留原始 links，供 chunk 文本和证据展示使用，但不能把这些 links 自动写入 `crawl_page_tasks`。
+- 新 URL 的唯一正常入口是 Chunk Worker 的 `complete_current_chunk.discovered_urls`。
+- Chunk Worker 必须基于当前 chunk 的文本、锚文本和上下文语义判断 URL 是否值得继续抓；不能把导航栏、新闻栏目、英文站、邮箱伪链接或 HTML 片段机械入队。
+- 低置信度链接默认不入队；如后续需要保留证据，应记录为 rejected/skipped 结果，而不是交给 Page Worker 扩散。
 
 ## Chunk Worker
 
@@ -449,8 +448,8 @@ V1 代码保留，不在新任务主流程中使用。
 1. 新建任务入口 URL 写入 page task。
 2. 调度器优先处理 page task。
 3. Page Worker 成功抓页后生成 chunks。
-4. Page Worker 发现同域教师相关链接后写入 page task。
-5. Page Worker 不重复入队已完成处理、无需再处理或 terminal_failed 的 URL。
+4. Page Worker 即使页面包含同域链接，也不会自动写入新的 page task。
+5. Chunk Worker 发现同域教师相关链接后通过 discovered_urls 写入 page task，并且不重复入队已完成处理、无需再处理或 terminal_failed 的 URL。
 6. 有 pending chunk 时 Chunk Worker 处理一个 chunk 后立即结束。
 7. Chunk Worker 只能调用 `complete_current_chunk`。
 8. `complete_current_chunk` 同时保存 candidates 和 discovered_urls。
@@ -486,9 +485,9 @@ V1 代码保留，不在新任务主流程中使用。
 
 缓解：采用优先级 + 公平预算。page task 仍优先，但连续 page task 达到预算后，必须处理已存在的 pending chunk，避免候选迟迟不入库。
 
-### 风险：Page Worker 链接分类漏掉重要页面
+### 风险：Chunk Worker 语义发现漏掉重要页面
 
-缓解：规则过滤优先保守保留教师相关链接；LLM 分类只处理当前页面链接；低置信度链接记录 skipped reason，不静默丢弃。
+缓解：页面 HTML 在切 chunk 时保留锚文本和 URL，Chunk Worker 基于当前 chunk 语义提交 discovered_urls；低置信度链接默认不扩散，但应通过测试覆盖教师列表、分页和导师主页链接，确保正常功能不因节省抓取而受损。
 
 ### 风险：Chunk Worker 无历史导致漏跨页线索
 
