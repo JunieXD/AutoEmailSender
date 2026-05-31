@@ -89,7 +89,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert task is not None
             self.assertEqual(task.worker_id, "new")
 
-    async def test_scheduler_marks_job_needs_review_when_no_work_remains(self) -> None:
+    async def test_scheduler_marks_job_failed_when_no_work_and_no_candidates_remain(self) -> None:
         job_id = await self._create_job()
 
         processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
@@ -98,7 +98,108 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         async with self.session_factory() as session:
             job = await session.get(CrawlJob, job_id)
             assert job is not None
+            self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+            self.assertEqual(job.error_message, "抓取未发现候选导师")
+
+    async def test_scheduler_marks_job_needs_review_when_candidates_exist_and_no_work_remains(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(CrawlCandidate(job_id=job_id, name="张三"))
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
+            self.assertIsNone(job.error_message)
+
+    async def test_scheduler_does_not_finalize_job_with_active_processing_page(self) -> None:
+        job_id = await self._create_job()
+        active_until = datetime.now(UTC) + timedelta(minutes=5)
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/a",
+                    original_url="https://example.edu/a",
+                    status=CrawlPageTaskStatus.PROCESSING.value,
+                    worker_id="active-worker",
+                    lease_expires_at=active_until,
+                )
+            )
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+        assert job is not None and task is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(task.status, CrawlPageTaskStatus.PROCESSING.value)
+
+    async def test_scheduler_does_not_finalize_job_with_active_processing_chunk(self) -> None:
+        job_id = await self._create_job()
+        active_until = datetime.now(UTC) + timedelta(minutes=5)
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageChunk(
+                    job_id=job_id,
+                    page_id=None,
+                    source_url="https://example.edu/a",
+                    page_fingerprint="p",
+                    chunk_id="c-active",
+                    chunk_index=0,
+                    chunk_hash="h-active",
+                    content="张三",
+                    status=CrawlPageChunkStatus.PROCESSING.value,
+                    worker_id="active-worker",
+                    lease_expires_at=active_until,
+                )
+            )
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            chunk = await session.scalar(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id))
+        assert job is not None and chunk is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.PROCESSING.value)
+
+    async def test_scheduler_does_not_finalize_job_with_active_processing_enrichment(self) -> None:
+        job_id = await self._create_job()
+        active_until = datetime.now(UTC) + timedelta(minutes=5)
+        async with self.session_factory() as session:
+            candidate = CrawlCandidate(job_id=job_id, name="张三")
+            session.add(candidate)
+            await session.flush()
+            session.add(
+                CrawlCandidateEnrichmentTask(
+                    job_id=job_id,
+                    candidate_id=candidate.id,
+                    status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                    worker_id="active-worker",
+                    lease_expires_at=active_until,
+                )
+            )
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            task = await session.scalar(select(CrawlCandidateEnrichmentTask).where(CrawlCandidateEnrichmentTask.job_id == job_id))
+        assert job is not None and task is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.PROCESSING.value)
 
     async def test_scheduler_does_not_finalize_job_with_expired_reclaimable_page(self) -> None:
         job_id = await self._create_job()
@@ -157,6 +258,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         async with self.session_factory() as session:
             run = CrawlJobRun(job_id=job_id, attempt_number=1, status=CrawlJobStatus.RUNNING.value, active_started_at=datetime.now(UTC))
             session.add(run)
+            session.add(CrawlCandidate(job_id=job_id, name="张三"))
             await session.flush()
             job = await session.get(CrawlJob, job_id)
             assert job is not None

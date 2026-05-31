@@ -81,15 +81,18 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
             continue
         terminal_failures = await _job_has_terminal_failures(session, job_id=job.id)
         has_candidates = await _job_has_candidates(session, job_id=job.id)
-        if terminal_failures and not has_candidates:
+        error_message = None
+        if not has_candidates:
             final_status = CrawlJobStatus.FAILED.value
+            error_message = "抓取未发现候选导师"
         elif terminal_failures:
             final_status = CrawlJobStatus.PARTIALLY_COMPLETED.value
         else:
             final_status = CrawlJobStatus.NEEDS_REVIEW.value
         job.status = final_status
+        job.error_message = error_message
         job.updated_at = now
-        await mark_crawl_job_run_finished(session, job, status=final_status, now=now)
+        await mark_crawl_job_run_finished(session, job, status=final_status, error_message=error_message, now=now)
 
 
 async def _claim_page_task(
@@ -206,6 +209,13 @@ def _page_task_claimable(now: datetime):
     )
 
 
+def _page_task_unfinished(now: datetime):
+    return or_(
+        _page_task_claimable(now),
+        CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
+    )
+
+
 def _chunk_claimable(now: datetime):
     return or_(
         CrawlPageChunk.status == CrawlPageChunkStatus.PENDING.value,
@@ -214,11 +224,25 @@ def _chunk_claimable(now: datetime):
     )
 
 
+def _chunk_unfinished(now: datetime):
+    return or_(
+        _chunk_claimable(now),
+        CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
+    )
+
+
 def _enrichment_task_claimable(now: datetime):
     return or_(
         CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
         (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value) & (CrawlCandidateEnrichmentTask.lease_expires_at <= now),
         CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+    )
+
+
+def _enrichment_task_unfinished(now: datetime):
+    return or_(
+        _enrichment_task_claimable(now),
+        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
     )
 
 
@@ -291,7 +315,7 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     page = await session.scalar(
         select(CrawlPageTask.id).where(
             CrawlPageTask.job_id == job_id,
-            _page_task_claimable(now),
+            _page_task_unfinished(now),
         ).limit(1)
     )
     if page is not None:
@@ -299,7 +323,7 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     chunk = await session.scalar(
         select(CrawlPageChunk.id).where(
             CrawlPageChunk.job_id == job_id,
-            _chunk_claimable(now),
+            _chunk_unfinished(now),
         ).limit(1)
     )
     if chunk is not None:
@@ -307,7 +331,7 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
     enrichment = await session.scalar(
         select(CrawlCandidateEnrichmentTask.id).where(
             CrawlCandidateEnrichmentTask.job_id == job_id,
-            _enrichment_task_claimable(now),
+            _enrichment_task_unfinished(now),
         ).limit(1)
     )
     return enrichment is not None
