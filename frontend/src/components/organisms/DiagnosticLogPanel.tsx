@@ -28,7 +28,7 @@ import {
   type OperationLogDTO,
 } from "@/lib/api/diagnosticsApi";
 import { listCrawlJobs } from "@/lib/api/crawlJobsApi";
-import { formatApiDateTime } from "@/lib/dateTime";
+import { formatApiDateTime, parseApiDateTime } from "@/lib/dateTime";
 import type { CrawlJobSummaryDTO } from "@/types";
 
 type FilterValue = "" | string;
@@ -528,7 +528,7 @@ function filterEventsByDate(
   }
 
   return events.filter((event) => {
-    const eventDate = new Date(event.timestamp);
+    const eventDate = parseApiDateTime(event.timestamp);
     if (Number.isNaN(eventDate.getTime())) {
       return false;
     }
@@ -543,6 +543,7 @@ function getLocalDateRange(
     return undefined;
   }
 
+  // time-check: local-control-value, selectedDate comes from an input date value.
   const startAt = new Date(`${selectedDate}T00:00:00`);
   if (Number.isNaN(startAt.getTime())) {
     return undefined;

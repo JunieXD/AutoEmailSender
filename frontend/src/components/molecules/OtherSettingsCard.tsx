@@ -10,6 +10,7 @@ import {
   type RuntimeSettingsDTO,
   type RuntimeSettingsUpdateDTO,
 } from "@/lib/api/runtimeSettings";
+import { formatApiDateTime } from "@/lib/dateTime";
 import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
@@ -554,7 +555,7 @@ export function OtherSettingsCard() {
                   <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500">
                     <Settings className="h-4 w-4 shrink-0" />
                     <span className="truncate">
-                      最后更新：{updatedAt ? new Date(updatedAt).toLocaleString("zh-CN") : "尚未加载"}
+                      最后更新：{updatedAt ? formatApiDateTime(updatedAt) : "尚未加载"}
                     </span>
                   </div>
                   <button

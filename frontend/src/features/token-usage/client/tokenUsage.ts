@@ -110,6 +110,7 @@ export const parseDateTimeLocalValue = (value: string): string | null => {
   if (!value.trim()) {
     return null;
   }
+  // time-check: local-control-value, value comes from a datetime-local control.
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return null;
@@ -121,6 +122,7 @@ export const formatDateTimeLocalValue = (value: string | null): string => {
   if (!value) {
     return '';
   }
+  // time-check: local-control-value, value is an ISO instant being projected into a datetime-local control.
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return '';
@@ -149,7 +151,7 @@ export const formatTokenUsageBucketLabel = ({
   granularity: 'hour' | 'day';
   timeZone?: string;
 }): string => {
-  const date = new Date(bucketStart);
+  const date = parseApiDateTime(bucketStart);
   if (Number.isNaN(date.getTime())) {
     return fallbackLabel;
   }

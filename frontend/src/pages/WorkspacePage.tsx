@@ -775,6 +775,7 @@ export const WorkspacePage = () => {
       return;
     }
 
+    // time-check: local-control-value, pendingScheduledAt comes from a datetime-local control.
     const scheduleDate = new Date(pendingScheduledAt);
     if (Number.isNaN(scheduleDate.getTime())) {
       notifyFormErrors('请检查表单', ['请先选一个有效的发送时间']);

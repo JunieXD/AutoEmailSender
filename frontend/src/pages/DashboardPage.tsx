@@ -13,6 +13,7 @@ import {
 } from 'chart.js';
 import type { ChartData, ChartOptions, TooltipItem } from 'chart.js';
 import { Line } from 'react-chartjs-2';
+import { parseApiDateTime } from '@/lib/dateTime';
 import {
   BadgeCheck,
   ClipboardCheck,
@@ -68,7 +69,7 @@ const formatNumber = (value: number) => numberFormatter.format(value);
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
 const formatDate = (value: string) => {
-  const date = new Date(value);
+  const date = parseApiDateTime(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }

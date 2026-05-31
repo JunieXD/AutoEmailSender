@@ -3,7 +3,22 @@ import { formatApiDateTime, parseApiDateTime } from './dateTime';
 
 describe('dateTime', () => {
   it('parses api datetime without timezone suffix as utc', () => {
+    expect(parseApiDateTime('2026-04-27T02:54:06').toISOString()).toBe(
+      '2026-04-27T02:54:06.000Z',
+    );
+  });
+
+  it('parses legacy space-separated api datetime without timezone suffix as utc', () => {
     expect(parseApiDateTime('2026-04-27 02:54:06').toISOString()).toBe(
+      '2026-04-27T02:54:06.000Z',
+    );
+  });
+
+  it('keeps explicit utc and offset strings as the same instant', () => {
+    expect(parseApiDateTime('2026-04-27T02:54:06Z').toISOString()).toBe(
+      '2026-04-27T02:54:06.000Z',
+    );
+    expect(parseApiDateTime('2026-04-27T10:54:06+08:00').toISOString()).toBe(
       '2026-04-27T02:54:06.000Z',
     );
   });
