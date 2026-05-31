@@ -17,7 +17,7 @@ from app.models import (
     CrawlPageTaskStatus,
 )
 from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
-from app.services.crawl_job_runs import mark_crawl_job_run_finished
+from app.services.crawl_job_runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
@@ -128,6 +128,7 @@ async def _claim_page_task(
     if result.rowcount != 1:
         await session.rollback()
         return CrawlerV2ClaimedWork.idle()
+    await _mark_job_running_for_claimed_work(session, job_id=task.job_id, now=now)
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.PAGE, work_item_id=task.id, job_id=task.job_id)
 
 async def _claim_chunk(
@@ -163,6 +164,7 @@ async def _claim_chunk(
     if result.rowcount != 1:
         await session.rollback()
         return CrawlerV2ClaimedWork.idle()
+    await _mark_job_running_for_claimed_work(session, job_id=chunk.job_id, now=now)
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.CHUNK, work_item_id=chunk.id, job_id=chunk.job_id)
 
 async def _claim_enrichment_task(
@@ -198,9 +200,18 @@ async def _claim_enrichment_task(
     if result.rowcount != 1:
         await session.rollback()
         return CrawlerV2ClaimedWork.idle()
+    await _mark_job_running_for_claimed_work(session, job_id=task.job_id, now=now)
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.ENRICHMENT, work_item_id=task.id, job_id=task.job_id)
 
 
+async def _mark_job_running_for_claimed_work(session: AsyncSession, *, job_id: int, now: datetime) -> None:
+    job = await session.get(CrawlJob, job_id)
+    if job is None or job.status != CrawlJobStatus.QUEUED.value:
+        return
+    job.status = CrawlJobStatus.RUNNING.value
+    job.error_message = None
+    job.updated_at = now
+    await mark_crawl_job_run_running(session, job, now=now)
 def _page_task_claimable(now: datetime):
     return or_(
         CrawlPageTask.status == CrawlPageTaskStatus.PENDING.value,

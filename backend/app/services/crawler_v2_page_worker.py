@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -116,8 +116,8 @@ def _fallback_reason(snapshot: PageSnapshot) -> str:
 def _lease_valid(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:
         return True
-    now = datetime.now(lease_expires_at.tzinfo) if lease_expires_at.tzinfo else datetime.now()
-    return lease_expires_at > now
+    expires_at = lease_expires_at if lease_expires_at.tzinfo else lease_expires_at.replace(tzinfo=UTC)
+    return expires_at > datetime.now(UTC)
 
 
 def _page_task_owned_by_worker(task: CrawlPageTask, worker_id: str) -> bool:

@@ -73,6 +73,30 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
 
         self.assertEqual(claimed.kind, CrawlerV2WorkKind.IDLE)
+    async def test_claiming_work_marks_queued_job_and_run_running(self) -> None:
+        job_id = await self._create_job(status=CrawlJobStatus.QUEUED.value)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            run = CrawlJobRun(job_id=job_id, attempt_number=1, status=CrawlJobStatus.QUEUED.value)
+            session.add(run)
+            await session.flush()
+            job.current_run_id = run.id
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a"))
+            await session.commit()
+            run_id = run.id
+
+        claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.PAGE)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            run = await session.get(CrawlJobRun, run_id)
+        assert job is not None and run is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(run.status, CrawlJobStatus.RUNNING.value)
+        self.assertIsNotNone(run.started_at)
+        self.assertIsNotNone(run.active_started_at)
 
     async def test_expired_processing_page_can_be_reclaimed(self) -> None:
         job_id = await self._create_job()

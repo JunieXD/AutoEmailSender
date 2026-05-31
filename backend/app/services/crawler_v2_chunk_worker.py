@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -334,8 +334,8 @@ async def complete_current_chunk(
 def _lease_expired(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:
         return False
-    now = datetime.now(lease_expires_at.tzinfo) if lease_expires_at.tzinfo else datetime.now()
-    return lease_expires_at <= now
+    expires_at = lease_expires_at if lease_expires_at.tzinfo else lease_expires_at.replace(tzinfo=UTC)
+    return expires_at <= datetime.now(UTC)
 
 
 def _normalize_chunk_status(chunk_status: str) -> str:

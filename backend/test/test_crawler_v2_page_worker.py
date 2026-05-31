@@ -252,6 +252,33 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert task is not None
         self.assertEqual(task.status, CrawlPageTaskStatus.PROCESSING.value)
         self.assertEqual(len(pages), 0)
+    async def test_page_worker_treats_naive_lease_timestamp_as_utc(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        naive_future_utc = (datetime.now(UTC) + timedelta(minutes=5)).replace(tzinfo=None)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            assert task is not None
+            task.lease_expires_at = naive_future_utc
+            await session.commit()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            text="张三 教授",
+            html="<p>张三</p>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            pages = list(await session.scalars(select(CrawlPage).where(CrawlPage.job_id == job_id)))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertEqual(len(pages), 1)
     async def test_fetch_modes_use_distinct_underlying_paths(self) -> None:
         ctx = object()
         direct_snapshot = PageSnapshot(url="https://example.edu", text="direct", html="", links=[], fetch_method="http", status="succeeded")
