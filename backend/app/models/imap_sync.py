@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.time import utc_now
 from app.models.base import Base
+from app.models.types import UTCDateTime
 
 
 class ImapProfessorHistoricalScanStatus(str, Enum):
@@ -40,20 +42,20 @@ class ImapMailboxSyncState(Base):
     uidvalidity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_seen_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
 
 
@@ -93,22 +95,22 @@ class ImapProfessorSyncState(Base):
     )
     last_scanned_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     historical_scan_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     historical_scan_completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.time import utc_now
 from app.models.base import Base
+from app.models.types import UTCDateTime
 
 if TYPE_CHECKING:
     from app.models.batch_task import BatchTask
@@ -37,15 +39,15 @@ class LLMProfile(Base):
         server_default=text("0"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
 
     email_tasks: Mapped[list["EmailTask"]] = relationship(

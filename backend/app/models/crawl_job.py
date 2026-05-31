@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.time import utc_now
 from app.models.base import Base
+from app.models.types import UTCDateTime
 
 if TYPE_CHECKING:
     from app.models.llm_profile import LLMProfile
@@ -116,18 +118,18 @@ class CrawlJob(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         index=True,
         nullable=True,
     )
@@ -175,10 +177,10 @@ class CrawlJobRun(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    active_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    active_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     active_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -194,15 +196,15 @@ class CrawlJobRun(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
 
     job: Mapped["CrawlJob"] = relationship(
@@ -225,7 +227,7 @@ class CrawlPage(Base):
     text_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
@@ -256,16 +258,16 @@ class CrawlPageFetchState(Base):
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_page_id: Mapped[int | None] = mapped_column(ForeignKey("crawl_pages.id", ondelete="SET NULL"), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
 
     job: Mapped["CrawlJob"] = relationship(back_populates="page_fetch_states")
@@ -307,15 +309,15 @@ class CrawlCandidate(Base):
         server_default=text("'pending'"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
 
     job: Mapped["CrawlJob"] = relationship(back_populates="candidates")
@@ -335,16 +337,16 @@ class CrawlPageTask(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     fetch_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     direct_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fallback_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     browser_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=utc_now)
 
     job: Mapped["CrawlJob"] = relationship(back_populates="page_tasks")
 
@@ -359,12 +361,12 @@ class CrawlCandidateEnrichmentTask(Base):
     candidate_id: Mapped[int] = mapped_column(ForeignKey("crawl_candidates.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=utc_now)
 
     job: Mapped["CrawlJob"] = relationship(back_populates="enrichment_tasks")
     candidate: Mapped["CrawlCandidate"] = relationship()
@@ -381,7 +383,7 @@ class CrawlWorkerTokenUsage(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     cached_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     raw_usage: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
     job: Mapped["CrawlJob"] = relationship(back_populates="token_usages")
 

@@ -6,6 +6,7 @@ from sqlalchemy import JSON, DateTime, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+from app.models.types import UTCDateTime
 
 
 class OperationLog(Base):
@@ -29,7 +30,7 @@ class OperationLog(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         index=True,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),

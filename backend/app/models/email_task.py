@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.time import utc_now
 from app.models.base import Base
+from app.models.types import UTCDateTime
 
 if TYPE_CHECKING:
     from app.models.batch_task import BatchTask
@@ -111,7 +113,7 @@ class EmailTask(Base):
     outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_material_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     fit_points: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -121,15 +123,15 @@ class EmailTask(Base):
     approved_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     last_send_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=True,
     )
     last_rfc_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -150,15 +152,15 @@ class EmailTask(Base):
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(UTC),
+        onupdate=utc_now,
     )
 
     batch_task: Mapped["BatchTask | None"] = relationship(

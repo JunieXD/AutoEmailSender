@@ -7,6 +7,7 @@ from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.models.types import UTCDateTime
 
 if TYPE_CHECKING:
     from app.models.identity_profile import IdentityProfile
@@ -46,7 +47,7 @@ class TestComposeMessage(Base):
     provider_payload: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
