@@ -149,6 +149,19 @@ describe('TokenVisualizationPanel', () => {
     expect(screen.getByText('李老师 1 - 匹配分析')).toBeInTheDocument();
   });
 
+  it('centers all recent token record table headers and cells', async () => {
+    render(<TokenVisualizationPanel />);
+
+    await screen.findByText('最近 Token 消耗记录');
+
+    screen.getAllByRole('columnheader').forEach((header) => {
+      expect(header).toHaveClass('text-center');
+    });
+    screen.getAllByRole('cell').forEach((cell) => {
+      expect(cell).toHaveClass('text-center');
+    });
+  });
+
   it('paginates recent token records with homepage-style controls', async () => {
     render(<TokenVisualizationPanel />);
 
@@ -178,6 +191,38 @@ describe('TokenVisualizationPanel', () => {
         endAt: null,
       });
     });
+  });
+
+  it('does not show a transient refreshing banner when preset changes', async () => {
+    let resolveNext: ((value: TokenUsageVisualizationDTO) => void) | undefined;
+    getTokenUsageVisualization
+      .mockResolvedValueOnce(visualization)
+      .mockImplementationOnce(
+        () =>
+          new Promise<TokenUsageVisualizationDTO>((resolve) => {
+            resolveNext = resolve;
+          }),
+      );
+
+    render(<TokenVisualizationPanel />);
+
+    await screen.findByText('Token 消耗可视化');
+    fireEvent.click(screen.getByRole('button', { name: '最近 24 小时' }));
+
+    await waitFor(() => {
+      expect(getTokenUsageVisualization).toHaveBeenLastCalledWith({
+        preset: 'last_24_hours',
+        startAt: null,
+        endAt: null,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '刷新' })).toBeDisabled();
+    });
+
+    expect(screen.queryByText('正在更新 Token 可视化数据...')).not.toBeInTheDocument();
+
+    resolveNext?.(visualization);
   });
 
   it('shows bucket tooltip on trend hover', async () => {

@@ -1,11 +1,13 @@
 import { MemoryRouter } from "react-router-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { resolveStatisticsSectionNavTop } from "@/lib/statisticsSectionNav";
 import type { DashboardOverviewDTO } from "@/types";
 
 const notifyError = vi.fn();
 const lineChartRender = vi.fn();
+const scrollIntoViewMock = vi.fn();
 type SelectionState = {
   selectedIdentityId: number | null;
   selectedLlmProfileId: number | null;
@@ -28,6 +30,37 @@ let selectionState: SelectionState = {
   },
   loading: false,
 };
+
+type MockIntersectionObserverEntry = Pick<
+  IntersectionObserverEntry,
+  "isIntersecting" | "target" | "intersectionRatio"
+>;
+
+let intersectionObserverCallback:
+  | ((entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void)
+  | null = null;
+let intersectionObserverOptions: IntersectionObserverInit | undefined;
+
+class MockIntersectionObserver implements IntersectionObserver {
+  readonly root = null;
+  readonly rootMargin = "";
+  readonly thresholds = [];
+
+  constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+    intersectionObserverCallback = callback;
+    intersectionObserverOptions = options;
+  }
+
+  disconnect() {}
+
+  observe() {}
+
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+
+  unobserve() {}
+}
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionState,
@@ -207,11 +240,40 @@ const legacyOverviewWithoutContactedProfessorCount = {
   },
 } as unknown as DashboardOverviewDTO;
 
+const chooseNativeSelectOption = (label: string, optionName: string) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("option", { name: optionName }));
+};
+
+const emitIntersectionEntries = (entries: MockIntersectionObserverEntry[]) => {
+  if (!intersectionObserverCallback) {
+    throw new Error("IntersectionObserver callback was not registered");
+  }
+
+  intersectionObserverCallback(
+    entries.map((entry) => ({
+      boundingClientRect: {} as DOMRectReadOnly,
+      intersectionRect: {} as DOMRectReadOnly,
+      isIntersecting: entry.isIntersecting,
+      intersectionRatio: entry.intersectionRatio,
+      rootBounds: null,
+      target: entry.target,
+      time: 0,
+    })),
+    {} as IntersectionObserver,
+  );
+};
+
 describe("DashboardPage", () => {
   beforeEach(() => {
     getDashboardOverview.mockReset();
     lineChartRender.mockReset();
     notifyError.mockReset();
+    scrollIntoViewMock.mockReset();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+    intersectionObserverCallback = null;
+    intersectionObserverOptions = undefined;
+    window.IntersectionObserver = MockIntersectionObserver;
     selectionState = {
       selectedIdentityId: 1,
       selectedLlmProfileId: 2,
@@ -245,14 +307,16 @@ describe("DashboardPage", () => {
     expect(screen.getByRole("heading", { name: "资料完整度概览" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "学校分布" })).toBeInTheDocument();
     expect(screen.getByTestId("mentor-overview-grid")).toHaveClass(
-      "lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(18rem,1.05fr)]",
+      "lg:grid-cols-[minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(22rem,1.45fr)]",
     );
+    expect(screen.getByTestId("mentor-overview-grid")).toHaveClass("lg:items-stretch");
     expect(screen.getByTestId("mentor-overview-grid").getAttribute("style") ?? "").not.toContain("repeat(auto-fit");
     expect(screen.getByTestId("mentor-filter-bar")).toHaveClass("w-full");
     expect(screen.getByTestId("mentor-filter-bar")).toHaveClass("lg:col-span-3");
     expect(screen.getByTestId("mentor-profile-completeness-card")).toHaveClass("lg:row-span-2");
     expect(screen.getByTestId("mentor-profile-completeness-card")).toHaveClass("lg:col-start-4");
     expect(screen.getByTestId("mentor-profile-completeness-card")).toHaveClass("lg:row-start-1");
+    expect(screen.getByTestId("mentor-profile-completeness-card")).toHaveClass("h-full");
     expect(screen.getByTestId("mentor-detail-grid").getAttribute("style") ?? "").toContain("repeat(auto-fit");
     expect(screen.getByTestId("mentor-detail-grid")).not.toHaveClass("lg:grid-cols-2");
     expect(screen.getByTestId("mentor-detail-grid")).toHaveClass("items-start");
@@ -265,6 +329,9 @@ describe("DashboardPage", () => {
       screen.getByTestId("match-distribution-plot"),
     );
     expect(screen.getByTestId("match-distribution-plot")).toHaveClass("h-40");
+    expect(screen.getByTestId("match-distribution-chart-window")).not.toHaveClass("overflow-x-auto");
+    expect(screen.getByTestId("match-distribution-chart-body")).toHaveClass("w-full");
+    expect(screen.getByTestId("match-distribution-chart-body")).not.toHaveClass("min-w-[520px]");
     expect(screen.getByTestId("mentor-profile-completeness-card")).toContainElement(
       screen.getByTestId("pie-legend-horizontal-scroll"),
     );
@@ -276,6 +343,10 @@ describe("DashboardPage", () => {
     expect(screen.getByTestId("mentor-school-distribution-card")).toHaveTextContent("67%");
     expect(screen.getByLabelText("学校筛选")).toBeInTheDocument();
     expect(screen.getByLabelText("学院筛选")).toBeInTheDocument();
+    const mentorFilterBar = screen.getByTestId("mentor-filter-bar");
+    expect(within(mentorFilterBar).getByLabelText("学院筛选")).toBeDisabled();
+    expect(within(mentorFilterBar).getByText("请先选择学校")).toBeInTheDocument();
+    expect(mentorFilterBar.querySelector("select")).toBeNull();
     expect(screen.getByTestId("mentor-overview-grid")).toContainElement(screen.getByTestId("mentor-filter-bar"));
     expect(
       screen.getByTestId("mentor-filter-bar").compareDocumentPosition(screen.getByText("导师总数")) &
@@ -286,6 +357,7 @@ describe("DashboardPage", () => {
     expect(screen.getByLabelText("邮件触达时间筛选")).toBeInTheDocument();
     expect(screen.getByLabelText("邮件触达学校筛选")).toBeInTheDocument();
     expect(screen.getByLabelText("邮件触达学院筛选")).toBeInTheDocument();
+    expect(screen.getByTestId("email-outreach-filters").querySelector("select")).toBeNull();
     expect(screen.getByTestId("email-outreach-filters")).not.toHaveTextContent("刷新统计");
     expect(screen.getByTestId("email-metrics-grid").getAttribute("style") ?? "").toContain("repeat(auto-fit");
     expect(screen.getByTestId("email-metrics-grid")).not.toHaveClass("md:grid-cols-3");
@@ -309,6 +381,16 @@ describe("DashboardPage", () => {
     expect(screen.queryByText("高价值待跟进邮件")).not.toBeInTheDocument();
     expect(screen.getByTestId("token-visualization-panel")).toBeInTheDocument();
     expect(screen.getByText("Token 消耗可视化")).toBeInTheDocument();
+    expect(screen.getByTestId("statistics-section-nav")).toBeInTheDocument();
+    expect(screen.getByTestId("statistics-sections-shell")).toHaveClass("lg:pl-24");
+    expect(screen.getByTestId("statistics-sections-shell")).toHaveClass("xl:pl-24");
+    expect(screen.getByTestId("statistics-section-nav")).toHaveClass("lg:left-[max(-0.5rem,calc((100vw-80rem)/2-0.5rem))]");
+    expect(screen.getByRole("button", { name: "导师" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "邮件" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Token" })).toBeInTheDocument();
+    expect(screen.getByTestId("statistics-section-mentor")).toHaveClass("scroll-mt-44");
+    expect(screen.getByTestId("statistics-section-email")).toHaveClass("scroll-mt-44");
+    expect(screen.getByTestId("statistics-section-token")).toHaveClass("scroll-mt-44");
   });
 
   it("renders email sending trend as an index-hover line chart", async () => {
@@ -406,8 +488,19 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
 
-    const bucket = await screen.findByLabelText(/90-100.*1 位/);
-    fireEvent.mouseEnter(bucket, { clientX: 220, clientY: 260 });
+    const interactionLayer = await screen.findByTestId("match-distribution-interaction-layer");
+    vi.spyOn(interactionLayer, "getBoundingClientRect").mockReturnValue({
+      x: 100,
+      y: 100,
+      width: 600,
+      height: 160,
+      top: 100,
+      right: 700,
+      bottom: 260,
+      left: 100,
+      toJSON: () => ({}),
+    });
+    fireEvent.mouseMove(interactionLayer, { clientX: 660, clientY: 180 });
 
     expect(screen.getByRole("tooltip")).toHaveTextContent("90-100");
     expect(screen.getByRole("tooltip")).toHaveTextContent("导师数");
@@ -423,9 +516,7 @@ describe("DashboardPage", () => {
     );
 
     await screen.findByText("导师概览");
-    fireEvent.change(screen.getByLabelText("学校筛选"), {
-      target: { value: "示例大学" },
-    });
+    chooseNativeSelectOption("学校筛选", "示例大学（2）");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
@@ -440,9 +531,7 @@ describe("DashboardPage", () => {
       });
     });
 
-    fireEvent.change(screen.getByLabelText("学院筛选"), {
-      target: { value: "计算机学院" },
-    });
+    chooseNativeSelectOption("学院筛选", "计算机学院（2）");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
@@ -458,6 +547,76 @@ describe("DashboardPage", () => {
     });
   });
 
+  it("smoothly scrolls to each statistics section from the section nav", async () => {
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Token 消耗可视化");
+
+    fireEvent.click(screen.getByRole("button", { name: "邮件" }));
+
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Token" }));
+
+    expect(scrollIntoViewMock).toHaveBeenCalledTimes(2);
+    expect(scrollIntoViewMock).toHaveBeenLastCalledWith({ behavior: "smooth", block: "start" });
+  });
+
+  it("updates the active nav item when the visible statistics section changes", async () => {
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    const mentorSection = await screen.findByTestId("statistics-section-mentor");
+    const emailSection = screen.getByTestId("statistics-section-email");
+    const tokenSection = screen.getByTestId("statistics-section-token");
+
+    expect(screen.getByRole("button", { name: "导师" })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("button", { name: "邮件" })).toHaveAttribute("aria-current", "false");
+
+    emitIntersectionEntries([
+      { target: emailSection, isIntersecting: true, intersectionRatio: 0.8 },
+      { target: mentorSection, isIntersecting: false, intersectionRatio: 0.2 },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "邮件" })).toHaveAttribute("aria-current", "true");
+    });
+
+    emitIntersectionEntries([
+      { target: tokenSection, isIntersecting: true, intersectionRatio: 0.85 },
+      { target: emailSection, isIntersecting: false, intersectionRatio: 0.1 },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Token" })).toHaveAttribute("aria-current", "true");
+    });
+  });
+
+  it("observes small visibility ratios so the bottom token section can become active", async () => {
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId("statistics-section-token");
+
+    expect(intersectionObserverOptions?.threshold).toEqual(expect.arrayContaining([0.05, 0.1, 0.2]));
+  });
+
+  it("keeps the section nav centered after the summary card scrolls away", () => {
+    expect(resolveStatisticsSectionNavTop({ headerBottom: 120, summaryCardBottom: 248, rootFontSize: 16 })).toBe(304);
+    expect(resolveStatisticsSectionNavTop({ headerBottom: 320, summaryCardBottom: 40, rootFontSize: 16 })).toBe(344);
+    expect(resolveStatisticsSectionNavTop({ headerBottom: 0, summaryCardBottom: 40, rootFontSize: 16 })).toBe(160);
+  });
+
   it("reloads email outreach metrics when email filters change", async () => {
     render(
       <MemoryRouter>
@@ -466,9 +625,7 @@ describe("DashboardPage", () => {
     );
 
     await screen.findByText("邮件触达");
-    fireEvent.change(screen.getByLabelText("邮件触达学校筛选"), {
-      target: { value: "示例大学" },
-    });
+    chooseNativeSelectOption("邮件触达学校筛选", "示例大学（2）");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
@@ -483,9 +640,7 @@ describe("DashboardPage", () => {
       });
     });
 
-    fireEvent.change(screen.getByLabelText("邮件触达学院筛选"), {
-      target: { value: "计算机学院" },
-    });
+    chooseNativeSelectOption("邮件触达学院筛选", "计算机学院（2）");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith(
@@ -496,9 +651,7 @@ describe("DashboardPage", () => {
       );
     });
 
-    fireEvent.change(screen.getByLabelText("邮件触达时间筛选"), {
-      target: { value: "30d" },
-    });
+    chooseNativeSelectOption("邮件触达时间筛选", "最近 30 天");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith(

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
+import { assignPieSliceColors } from '@/lib/charting';
 
 export interface DistributionPieChartItem {
   key: string;
@@ -15,19 +16,6 @@ interface DistributionPieChartProps {
   valueSuffix?: string;
   legendLayout?: 'compact' | 'columns' | 'horizontal-scroll';
 }
-
-const colors = [
-  '#14b8a6',
-  '#3b82f6',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#ec4899',
-  '#06b6d4',
-  '#84cc16',
-  '#f97316',
-  '#64748b',
-];
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
@@ -70,29 +58,27 @@ export const DistributionPieChart = ({
 }: DistributionPieChartProps) => {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const total = data.reduce((sum, item) => sum + item.count, 0);
-  const slices = useMemo(
-    () =>
-      data
-        .filter((item) => item.count > 0)
-        .reduce<
-          PieChartSlice[]
-        >((acc, item, index) => {
-          const startAngle = acc.length > 0 ? acc[acc.length - 1].endAngle : 0;
-          const percent = item.count / total;
-          const angle = percent * 360;
-          return [
-            ...acc,
-            {
-              ...item,
-              color: colors[index % colors.length],
-              startAngle,
-              endAngle: startAngle + angle,
-              percent,
-            },
-          ];
-        }, []),
-    [data, total],
-  );
+  const slices = useMemo(() => {
+    const visibleData = data.filter((item) => item.count > 0);
+    const sliceColors = assignPieSliceColors(visibleData.length);
+
+    return visibleData.reduce<PieChartSlice[]>((acc, item, index) => {
+      const startAngle = acc.length > 0 ? acc[acc.length - 1].endAngle : 0;
+      const percent = item.count / total;
+      const angle = percent * 360;
+
+      return [
+        ...acc,
+        {
+          ...item,
+          color: sliceColors[index],
+          startAngle,
+          endAngle: startAngle + angle,
+          percent,
+        },
+      ];
+    }, []);
+  }, [data, total]);
 
   const hoveredItem = slices.find((item) => item.key === hoveredKey) ?? null;
 
@@ -129,6 +115,7 @@ export const DistributionPieChart = ({
             return (
               <path
                 key={item.key}
+                data-testid={`pie-slice-${item.key}`}
                 d={describeArc(60, hoveredKey === item.key ? 58 : 54, item.startAngle, item.endAngle)}
                 fill={item.color}
                 className="cursor-pointer transition-opacity duration-150"

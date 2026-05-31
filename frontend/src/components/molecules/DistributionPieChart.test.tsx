@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { DistributionPieChart } from "@/components/molecules/DistributionPieChart";
+import { dashboardPieColors } from "@/lib/charting";
 
 describe("DistributionPieChart", () => {
   const data = [
@@ -69,9 +70,32 @@ describe("DistributionPieChart", () => {
 
     const fullSlice = screen.getByTestId("pie-full-slice-missing_research_direction");
     expect(fullSlice.tagName.toLowerCase()).toBe("circle");
-    expect(fullSlice).toHaveAttribute("fill", "#14b8a6");
+    expect(fullSlice).toHaveAttribute("fill", dashboardPieColors[0]);
     expect(screen.getByText("缺研究方向")).toBeInTheDocument();
     expect(screen.getByText("100%")).toBeInTheDocument();
+  });
+
+  it("renders more than the old palette length without repeating the first color", () => {
+    const manySlices = Array.from({ length: 12 }, (_, index) => ({
+      key: `slice-${index}`,
+      label: `分类 ${index + 1}`,
+      count: 1,
+    }));
+
+    render(
+      <DistributionPieChart
+        title="分类分布"
+        data={manySlices}
+        emptyText="暂无数据"
+        legendLayout="columns"
+      />,
+    );
+
+    const firstSlice = screen.getByTestId("pie-slice-slice-0");
+    const eleventhSlice = screen.getByTestId("pie-slice-slice-10");
+
+    expect(firstSlice).toHaveAttribute("fill", dashboardPieColors[0]);
+    expect(eleventhSlice).not.toHaveAttribute("fill", dashboardPieColors[0]);
   });
 
   it("uses three aligned legend columns for school distribution", () => {

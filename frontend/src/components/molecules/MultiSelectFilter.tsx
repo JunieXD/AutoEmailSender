@@ -95,7 +95,7 @@ export const MultiSelectFilter = ({
         </button>
 
         {open ? (
-          <div className="absolute left-0 top-[calc(100%+0.45rem)] z-50 w-full overflow-hidden rounded-2xl border border-stone-200/90 bg-white p-1 shadow-[0_22px_40px_-26px_rgba(41,37,36,0.34)]">
+          <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 w-full overflow-hidden rounded-2xl border border-stone-200/90 bg-white p-1 shadow-[0_22px_40px_-26px_rgba(41,37,36,0.34)]">
             <div className="flex items-center justify-between border-b border-stone-100 px-2 py-1.5">
               <span className="text-xs font-medium text-stone-500">
                 已选 {selectedValues.length} 项

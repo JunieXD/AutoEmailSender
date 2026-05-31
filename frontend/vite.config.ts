@@ -13,6 +13,7 @@ const nodeTestFiles = [
   "src/features/professor-management/client/*.test.ts",
   "src/features/token-usage/client/tokenUsage.test.ts",
   "src/lib/dateTime.test.ts",
+  "src/lib/charting.test.ts",
   "src/lib/pagination.test.ts",
   "src/lib/professorTitle.test.ts",
   "src/pages/ProfilePage.test.ts",

@@ -152,7 +152,6 @@ export const TokenVisualizationPanel = () => {
   };
 
   const showInitialLoading = loading && !loaded;
-  const showRefreshing = loading && loaded;
 
   return (
     <section data-testid="token-visualization-panel" className="mt-10">
@@ -223,12 +222,6 @@ export const TokenVisualizationPanel = () => {
         </div>
       ) : data ? (
         <div className="space-y-4">
-          {showRefreshing ? (
-            <div className="flex items-center gap-2 rounded-2xl border border-teal-100 bg-teal-50 px-4 py-2.5 text-sm text-teal-700">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              正在更新 Token 可视化数据...
-            </div>
-          ) : null}
           <TokenTrendChart chart={data.chart} />
           <div className="grid gap-4 lg:grid-cols-2">
             <FeatureDistributionCard items={data.feature_distribution} />
@@ -549,38 +542,38 @@ function RecentRecordsTable({ records }: { records: TokenUsageRecordDTO[] }) {
           <div className="overflow-x-auto">
             <table className="min-w-[760px] w-full text-sm">
               <thead>
-                <tr className="border-b border-stone-100 text-left text-xs font-medium text-stone-500">
-                  <th className="py-2 pr-3">时间</th>
-                  <th className="py-2 pr-3">功能</th>
-                  <th className="py-2 pr-3">标题</th>
-                  <th className="py-2 pr-3">模型</th>
-                  <th className="py-2 pr-3 text-right">输入</th>
-                  <th className="py-2 pr-3 text-right">输出</th>
-                  <th className="py-2 pr-3 text-right">缓存</th>
-                  <th className="py-2 text-right">总计</th>
+                <tr className="border-b border-stone-100 text-xs font-medium text-stone-500">
+                  <th className="py-2 pr-3 text-center">时间</th>
+                  <th className="py-2 pr-3 text-center">功能</th>
+                  <th className="py-2 pr-3 text-center">标题</th>
+                  <th className="py-2 pr-3 text-center">模型</th>
+                  <th className="py-2 pr-3 text-center">输入</th>
+                  <th className="py-2 pr-3 text-center">输出</th>
+                  <th className="py-2 pr-3 text-center">缓存</th>
+                  <th className="py-2 text-center">总计</th>
                 </tr>
               </thead>
               <tbody>
                 {pagedRecords.map((record) => (
                   <tr key={record.id} className="border-b border-stone-100 last:border-b-0">
-                    <td className="py-3 pr-3 text-xs text-stone-500">
+                    <td className="py-3 pr-3 text-center text-xs text-stone-500">
                       {formatTokenUsageRecordTime({ value: record.created_at })}
                     </td>
-                    <td className="py-3 pr-3">
+                    <td className="py-3 pr-3 text-center">
                       <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700">
                         {record.feature_label}
                       </span>
                     </td>
-                    <td className="max-w-64 truncate py-3 pr-3 font-medium text-stone-900" title={record.title}>
+                    <td className="max-w-64 truncate py-3 pr-3 text-center font-medium text-stone-900" title={record.title}>
                       {record.title}
                     </td>
-                    <td className="max-w-40 truncate py-3 pr-3 text-stone-600" title={record.model_name ?? '未关联'}>
+                    <td className="max-w-40 truncate py-3 pr-3 text-center text-stone-600" title={record.model_name ?? '未关联'}>
                       {record.model_name ?? '未关联'}
                     </td>
-                    <td className="py-3 pr-3 text-right text-stone-600">{formatNullableNumber(record.input_tokens)}</td>
-                    <td className="py-3 pr-3 text-right text-stone-600">{formatNullableNumber(record.output_tokens)}</td>
-                    <td className="py-3 pr-3 text-right text-stone-600">{formatNullableNumber(record.cached_tokens)}</td>
-                    <td className="py-3 text-right font-semibold text-stone-900">{formatNullableNumber(record.total_tokens)}</td>
+                    <td className="py-3 pr-3 text-center text-stone-600">{formatNullableNumber(record.input_tokens)}</td>
+                    <td className="py-3 pr-3 text-center text-stone-600">{formatNullableNumber(record.output_tokens)}</td>
+                    <td className="py-3 pr-3 text-center text-stone-600">{formatNullableNumber(record.cached_tokens)}</td>
+                    <td className="py-3 text-center font-semibold text-stone-900">{formatNullableNumber(record.total_tokens)}</td>
                   </tr>
                 ))}
               </tbody>

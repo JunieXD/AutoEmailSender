@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CategoryScale,
@@ -26,6 +26,8 @@ import {
   Users,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { NativeSelectField } from '@/components/atoms/NativeSelectField';
+import { StatisticsSectionNav, type StatisticsSectionNavItem } from '@/components/molecules/StatisticsSectionNav';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { DistributionPieChart } from '@/components/molecules/DistributionPieChart';
@@ -36,6 +38,7 @@ import {
   resolveFloatingTooltipPosition,
   resolveNiceAxisMax,
 } from '@/lib/charting';
+import { resolveStatisticsSectionNavTop } from '@/lib/statisticsSectionNav';
 import type {
   DashboardEmailTrendBucketDTO,
   DashboardOverviewDTO,
@@ -122,6 +125,12 @@ const mentorDetailGridStyle = {
 const emailMetricsGridStyle = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 16rem), 1fr))',
 };
+
+const statisticsSectionItems: StatisticsSectionNavItem[] = [
+  { id: 'mentor', label: '导师' },
+  { id: 'email', label: '邮件' },
+  { id: 'token', label: 'Token' },
+];
 
 const toneClasses: Record<MetricTone, { icon: string }> = {
   teal: { icon: 'bg-teal-50 text-teal-700' },
@@ -235,6 +244,20 @@ const MatchDistributionChart = ({
   const axisMax = resolveNiceAxisMax(max);
   const ticks = buildAxisTicks(axisMax);
   const total = data.reduce((sum, item) => sum + item.count, 0);
+  const activeTooltipItem = tooltip ? data.find((item) => item.bucket === tooltip.bucket) ?? null : null;
+  const activeTooltipShare = activeTooltipItem && total > 0 ? activeTooltipItem.count / total : 0;
+
+  const handlePlotMouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const itemIndex = resolveMatchDistributionBucketIndex(event.clientX, event.currentTarget.getBoundingClientRect(), data.length);
+    if (itemIndex === null) {
+      return;
+    }
+
+    const item = data[itemIndex];
+    setActiveBucket(item.bucket);
+    setTooltip(createMatchTooltipState(item.bucket, event));
+  };
+
   if (data.every((item) => item.count === 0)) {
     return <EmptyState>暂无匹配分数数据</EmptyState>;
   }
@@ -245,8 +268,11 @@ const MatchDistributionChart = ({
         <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-teal-500" />已分析</span>
         <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-stone-300" />未分析</span>
       </div>
-      <div className="min-w-0 max-w-full overflow-x-auto rounded-xl border border-stone-200 bg-white px-4 py-5">
-        <div className="min-w-[520px] pl-20 pr-4">
+      <div
+        data-testid="match-distribution-chart-window"
+        className="min-w-0 max-w-full overflow-hidden rounded-xl border border-stone-200 bg-white px-3 py-5 sm:px-4"
+      >
+        <div data-testid="match-distribution-chart-body" className="w-full pl-14 pr-1 sm:pl-16 sm:pr-3">
           <div data-testid="match-distribution-plot" className="relative h-40 border-b border-stone-500">
             {ticks.map((tick) => (
               <div
@@ -257,36 +283,32 @@ const MatchDistributionChart = ({
                 )}
                 style={{ bottom: `${(tick / axisMax) * 100}%` }}
               >
-                <span className="absolute right-[calc(100%+0.875rem)] top-0 -translate-y-1/2 whitespace-nowrap text-xs text-stone-500">
+                <span className="absolute right-[calc(100%+0.625rem)] top-0 -translate-y-1/2 whitespace-nowrap text-xs text-stone-500">
                   {formatNumber(tick)} 位
                 </span>
               </div>
             ))}
-            <div className="relative z-10 flex h-full items-end justify-between gap-5">
+            <div
+              data-testid="match-distribution-interaction-layer"
+              className="relative z-10 flex h-full items-end justify-between gap-2 sm:gap-3"
+              onMouseMove={handlePlotMouseMove}
+              onMouseLeave={() => {
+                setActiveBucket(null);
+                setTooltip(null);
+              }}
+            >
               {data.map((item) => {
                 const share = total > 0 ? item.count / total : 0;
                 const height = item.count > 0 ? Math.max((item.count / axisMax) * 100, 1.5) : 0;
                 const active = activeBucket === item.bucket;
-                const activeTooltip = active && tooltip?.bucket === item.bucket ? tooltip : null;
 
                 return (
-                  <div key={item.bucket} className="relative flex h-full min-w-14 flex-1 flex-col items-center justify-end">
-                    {active ? <div className="pointer-events-none absolute inset-y-0 -left-3 -right-3 bg-teal-50/70" /> : null}
+                  <div key={item.bucket} className="relative flex h-full min-w-0 flex-1 flex-col items-center justify-end">
+                    {active ? <div className="pointer-events-none absolute inset-y-0 -left-1.5 -right-1.5 bg-teal-50/70 sm:-left-2 sm:-right-2" /> : null}
                     <button
                       type="button"
                       aria-label={`${item.label} ${formatNumber(item.count)} 位，占比 ${formatPercent(share)}`}
                       className="relative z-10 flex h-full w-full items-end justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
-                      onMouseEnter={(event) => {
-                        setActiveBucket(item.bucket);
-                        setTooltip(createMatchTooltipState(item.bucket, event));
-                      }}
-                      onMouseMove={(event) => {
-                        setTooltip(createMatchTooltipState(item.bucket, event));
-                      }}
-                      onMouseLeave={() => {
-                        setActiveBucket(null);
-                        setTooltip(null);
-                      }}
                       onFocus={() => setActiveBucket(item.bucket)}
                       onBlur={() => {
                         setActiveBucket(null);
@@ -295,23 +317,29 @@ const MatchDistributionChart = ({
                     >
                       <span
                         className={clsx(
-                          'w-12 max-w-[80%] min-w-8 rounded-t shadow-[0_0_0_1px_rgba(20,184,166,0.08)] transition-all',
+                          'max-w-[80%] rounded-t shadow-[0_0_0_1px_rgba(20,184,166,0.08)] transition-all',
+                          'w-8 min-w-5 sm:w-10 sm:min-w-6',
                           item.bucket === 'unmatched' ? 'bg-stone-300' : 'bg-teal-500',
                         )}
                         style={{ height: `${height}%` }}
                       />
                     </button>
-                    {activeTooltip ? (
-                      <MatchBucketTooltip item={item} share={share} x={activeTooltip.x} y={activeTooltip.y} />
-                    ) : null}
                   </div>
                 );
               })}
             </div>
+            {tooltip && activeTooltipItem ? (
+              <MatchBucketTooltip
+                item={activeTooltipItem}
+                share={activeTooltipShare}
+                x={tooltip.x}
+                y={tooltip.y}
+              />
+            ) : null}
           </div>
-          <div className="flex justify-between gap-5 pt-3">
+          <div className="flex justify-between gap-2 pt-3 sm:gap-3">
             {data.map((item) => (
-              <span key={item.bucket} className="min-w-14 flex-1 text-center text-xs text-stone-500">
+              <span key={item.bucket} className="min-w-0 flex-1 text-center text-xs text-stone-500">
                 {item.label}
               </span>
             ))}
@@ -371,6 +399,19 @@ function createMatchTooltipState(
     x: position.x,
     y: position.y,
   };
+}
+
+function resolveMatchDistributionBucketIndex(
+  clientX: number,
+  chartRect: Pick<DOMRect, 'left' | 'width'>,
+  bucketCount: number,
+) {
+  if (bucketCount <= 0 || chartRect.width <= 0) {
+    return null;
+  }
+
+  const ratio = Math.min(0.999999, Math.max(0, (clientX - chartRect.left) / chartRect.width));
+  return Math.floor(ratio * bucketCount);
 }
 
 const TrendChart = ({ data }: { data: DashboardEmailTrendBucketDTO[] }) => {
@@ -524,45 +565,77 @@ const MentorFilterBar = ({
     className={clsx('rounded-2xl border border-stone-200 bg-white p-4 shadow-sm', className)}
   >
     <div className="flex flex-col gap-3 md:flex-row md:items-end">
-      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-stone-700">
-        学校
-        <select
-          aria-label="学校筛选"
-          value={selectedUniversity ?? ''}
-          onChange={(event) => onUniversityChange(event.target.value || null)}
-          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
-        >
-          <option value="">全部学校</option>
-          {schoolFilters.map((item) => (
-            <option key={item.university} value={item.university}>
-              {item.university}（{item.count}）
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-stone-700">
-        学院
-        <select
-          aria-label="学院筛选"
-          value={selectedSchool ?? ''}
-          disabled={!selectedUniversity || schoolOptions.length === 0}
-          onChange={(event) => onSchoolChange(event.target.value || null)}
-          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 disabled:cursor-not-allowed disabled:bg-stone-50 disabled:text-stone-400"
-        >
-          <option value="">{selectedUniversity ? '全部学院' : '请先选择学校'}</option>
-          {schoolOptions.map((item) => (
-            <option key={item.school_name} value={item.school_name}>
-              {item.school_name}（{item.count}）
-            </option>
-          ))}
-        </select>
-      </label>
+      <DashboardFilterSelect
+        label="学校"
+        ariaLabel="学校筛选"
+        value={selectedUniversity ?? ''}
+        onChange={(value) => onUniversityChange(value || null)}
+        options={[
+          { value: '', label: '全部学校' },
+          ...schoolFilters.map((item) => ({
+            value: item.university,
+            label: `${item.university}（${item.count}）`,
+          })),
+        ]}
+      />
+      <DashboardFilterSelect
+        label="学院"
+        ariaLabel="学院筛选"
+        value={selectedSchool ?? ''}
+        disabled={!selectedUniversity || schoolOptions.length === 0}
+        onChange={(value) => onSchoolChange(value || null)}
+        options={[
+          { value: '', label: selectedUniversity ? '全部学院' : '请先选择学校' },
+          ...schoolOptions.map((item) => ({
+            value: item.school_name,
+            label: `${item.school_name}（${item.count}）`,
+          })),
+        ]}
+      />
       <button type="button" onClick={onClear} className="ui-btn-secondary px-4 py-2 text-sm">
         清空筛选
       </button>
     </div>
   </article>
 );
+
+type DashboardFilterSelectOption = {
+  value: string;
+  label: string;
+};
+
+function DashboardFilterSelect({
+  label,
+  ariaLabel,
+  value,
+  disabled = false,
+  options,
+  onChange,
+}: {
+  label: string;
+  ariaLabel: string;
+  value: string;
+  disabled?: boolean;
+  options: DashboardFilterSelectOption[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <NativeSelectField
+      label={label}
+      ariaLabel={ariaLabel}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      wrapperClassName="min-w-0 flex-1"
+    >
+      {options.map((option) => (
+        <option key={`${label}-${option.value || 'empty'}-${option.label}`} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </NativeSelectField>
+  );
+}
 
 const EmailOutreachFilterBar = ({
   schoolFilters,
@@ -587,53 +660,45 @@ const EmailOutreachFilterBar = ({
 }) => (
   <article data-testid="email-outreach-filters" className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
     <div className="flex flex-col gap-3 md:flex-row md:items-end">
-      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-stone-700">
-        时间范围
-        <select
-          aria-label="邮件触达时间筛选"
-          value={datePreset}
-          onChange={(event) => onDatePresetChange(event.target.value)}
-          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
-        >
-          <option value="all">全部时间</option>
-          <option value="7d">最近 7 天</option>
-          <option value="30d">最近 30 天</option>
-          <option value="90d">最近 90 天</option>
-        </select>
-      </label>
-      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-stone-700">
-        学校
-        <select
-          aria-label="邮件触达学校筛选"
-          value={selectedUniversity ?? ''}
-          onChange={(event) => onUniversityChange(event.target.value || null)}
-          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
-        >
-          <option value="">全部学校</option>
-          {schoolFilters.map((item) => (
-            <option key={item.university} value={item.university}>
-              {item.university}（{item.count}）
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-stone-700">
-        学院
-        <select
-          aria-label="邮件触达学院筛选"
-          value={selectedSchool ?? ''}
-          disabled={!selectedUniversity || schoolOptions.length === 0}
-          onChange={(event) => onSchoolChange(event.target.value || null)}
-          className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 disabled:cursor-not-allowed disabled:bg-stone-50 disabled:text-stone-400"
-        >
-          <option value="">{selectedUniversity ? '全部学院' : '请先选择学校'}</option>
-          {schoolOptions.map((item) => (
-            <option key={item.school_name} value={item.school_name}>
-              {item.school_name}（{item.count}）
-            </option>
-          ))}
-        </select>
-      </label>
+      <DashboardFilterSelect
+        label="时间范围"
+        ariaLabel="邮件触达时间筛选"
+        value={datePreset}
+        onChange={onDatePresetChange}
+        options={[
+          { value: 'all', label: '全部时间' },
+          { value: '7d', label: '最近 7 天' },
+          { value: '30d', label: '最近 30 天' },
+          { value: '90d', label: '最近 90 天' },
+        ]}
+      />
+      <DashboardFilterSelect
+        label="学校"
+        ariaLabel="邮件触达学校筛选"
+        value={selectedUniversity ?? ''}
+        onChange={(value) => onUniversityChange(value || null)}
+        options={[
+          { value: '', label: '全部学校' },
+          ...schoolFilters.map((item) => ({
+            value: item.university,
+            label: `${item.university}（${item.count}）`,
+          })),
+        ]}
+      />
+      <DashboardFilterSelect
+        label="学院"
+        ariaLabel="邮件触达学院筛选"
+        value={selectedSchool ?? ''}
+        disabled={!selectedUniversity || schoolOptions.length === 0}
+        onChange={(value) => onSchoolChange(value || null)}
+        options={[
+          { value: '', label: selectedUniversity ? '全部学院' : '请先选择学校' },
+          ...schoolOptions.map((item) => ({
+            value: item.school_name,
+            label: `${item.school_name}（${item.count}）`,
+          })),
+        ]}
+      />
       <button type="button" onClick={onClear} className="ui-btn-secondary px-4 py-2 text-sm">
         清空筛选
       </button>
@@ -659,7 +724,13 @@ export const DashboardPage = () => {
   const [emailUniversity, setEmailUniversity] = useState<string | null>(null);
   const [emailSchool, setEmailSchool] = useState<string | null>(null);
   const [emailDatePreset, setEmailDatePreset] = useState('all');
+  const [activeSectionId, setActiveSectionId] = useState<string>('mentor');
+  const [sectionNavTop, setSectionNavTop] = useState<number | null>(null);
   const requestIdRef = useRef(0);
+  const summaryCardRef = useRef<HTMLElement | null>(null);
+  const mentorSectionRef = useRef<HTMLElement | null>(null);
+  const emailSectionRef = useRef<HTMLElement | null>(null);
+  const tokenSectionRef = useRef<HTMLElement | null>(null);
   const emailDateRange = useMemo(() => getEmailDateRange(emailDatePreset), [emailDatePreset]);
   const dashboardRequestKey =
     selectedIdentityId && selectedLlmProfileId
@@ -734,6 +805,38 @@ export const DashboardPage = () => {
     void loadOverview();
   }, [loadOverview]);
 
+  const updateSectionNavTop = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const rootFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+    const headerBottom =
+      document.querySelector<HTMLElement>('[data-app-header="true"]')?.getBoundingClientRect().bottom ?? 0;
+    const summaryCardBottom = summaryCardRef.current?.getBoundingClientRect().bottom ?? 0;
+    const nextTop = resolveStatisticsSectionNavTop({ headerBottom, summaryCardBottom, rootFontSize });
+
+    setSectionNavTop((currentTop) =>
+      currentTop !== null && Math.abs(currentTop - nextTop) < 1 ? currentTop : nextTop,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!overview) {
+      setSectionNavTop(null);
+      return;
+    }
+
+    updateSectionNavTop();
+    window.addEventListener('scroll', updateSectionNavTop, { passive: true });
+    window.addEventListener('resize', updateSectionNavTop);
+
+    return () => {
+      window.removeEventListener('scroll', updateSectionNavTop);
+      window.removeEventListener('resize', updateSectionNavTop);
+    };
+  }, [overview, updateSectionNavTop]);
+
   useEffect(() => {
     setSelectedUniversity(null);
     setSelectedSchool(null);
@@ -741,6 +844,72 @@ export const DashboardPage = () => {
     setEmailSchool(null);
     setEmailDatePreset('all');
   }, [selectedIdentityId, selectedLlmProfileId]);
+
+  useEffect(() => {
+    if (!overview || typeof window === 'undefined' || typeof window.IntersectionObserver === 'undefined') {
+      return;
+    }
+
+    const visibleRatios = new Map<string, number>();
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const sectionId = entry.target.getAttribute('data-statistics-section');
+          if (!sectionId) {
+            return;
+          }
+
+          if (entry.isIntersecting) {
+            visibleRatios.set(sectionId, entry.intersectionRatio);
+            return;
+          }
+
+          visibleRatios.delete(sectionId);
+        });
+
+        const nextActiveSection = statisticsSectionItems
+          .map((item) => ({
+            id: item.id,
+            ratio: visibleRatios.get(item.id) ?? 0,
+          }))
+          .sort((first, second) => second.ratio - first.ratio)[0];
+
+        if (nextActiveSection && nextActiveSection.ratio > 0) {
+          setActiveSectionId(nextActiveSection.id);
+        }
+      },
+      {
+        rootMargin: '-18% 0px -52% 0px',
+        threshold: [0.05, 0.1, 0.2, 0.4, 0.6, 0.8],
+      },
+    );
+
+    [mentorSectionRef.current, emailSectionRef.current, tokenSectionRef.current].forEach((section) => {
+      if (section) {
+        observer.observe(section);
+      }
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [overview]);
+
+  const handleSectionSelect = useCallback((sectionId: string) => {
+    const sectionElement =
+      sectionId === 'mentor'
+        ? mentorSectionRef.current
+        : sectionId === 'email'
+          ? emailSectionRef.current
+          : tokenSectionRef.current;
+
+    if (!sectionElement) {
+      return;
+    }
+
+    setActiveSectionId(sectionId);
+    sectionElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const mentorMetrics = useMemo(() => {
     if (!overview) {
@@ -839,6 +1008,16 @@ export const DashboardPage = () => {
     [overview],
   );
 
+  const sectionNavStyle = useMemo<CSSProperties | undefined>(
+    () =>
+      sectionNavTop === null
+        ? undefined
+        : ({
+            '--statistics-section-nav-top': `${sectionNavTop}px`,
+          } as CSSProperties),
+    [sectionNavTop],
+  );
+
   if (selectionLoading || (loading && !hasLoaded)) {
     return <DashboardLoadingSkeleton />;
   }
@@ -859,7 +1038,7 @@ export const DashboardPage = () => {
 
   return (
     <main data-testid="statistics-panel" className="mx-auto max-w-7xl px-6 py-8">
-      <section className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-6 shadow-sm">
+      <section ref={summaryCardRef} className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h1 className="text-3xl font-semibold text-stone-950">统计面板</h1>
@@ -882,117 +1061,147 @@ export const DashboardPage = () => {
       </section>
 
       {overview ? (
-        <>
-          <section className="mt-8">
-            <ModuleHeader
-              title="导师概览"
-              description="导师池规模、资料质量和高价值待推进导师"
-              icon={<GraduationCap className="h-5 w-5" />}
-            />
-            <div
-              data-testid="mentor-overview-grid"
-              className="mt-4 grid items-start gap-4 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(18rem,1.05fr)]"
+        <div data-testid="statistics-sections-shell" className="relative mt-8 lg:pl-24 xl:pl-24">
+          <StatisticsSectionNav
+            className="mb-6 lg:mb-0 lg:left-[max(-0.5rem,calc((100vw-80rem)/2-0.5rem))]"
+            style={sectionNavStyle}
+            items={statisticsSectionItems}
+            activeSectionId={activeSectionId}
+            onSelect={handleSectionSelect}
+          />
+
+          <div className="space-y-10">
+            <section
+              ref={mentorSectionRef}
+              id="statistics-mentor"
+              data-testid="statistics-section-mentor"
+              data-statistics-section="mentor"
+              className="scroll-mt-44"
             >
-              <MentorFilterBar
-                className="w-full lg:col-span-3"
-                schoolFilters={overview.mentor.school_filters}
-                selectedUniversity={selectedUniversity}
-                selectedSchool={selectedSchool}
-                schoolOptions={selectedSchoolOptions}
-                onUniversityChange={(value) => {
-                  setSelectedUniversity(value);
-                  setSelectedSchool(null);
-                }}
-                onSchoolChange={setSelectedSchool}
-                onClear={() => {
-                  setSelectedUniversity(null);
-                  setSelectedSchool(null);
-                }}
+              <ModuleHeader
+                title="导师概览"
+                description="导师池规模、资料质量和高价值待推进导师"
+                icon={<GraduationCap className="h-5 w-5" />}
               />
-              {mentorMetrics.map((metric) => (
-                <MetricCard key={metric.title} {...metric} />
-              ))}
-              <ChartCard
-                className="min-w-0 lg:col-start-4 lg:row-start-1 lg:row-span-2"
-                testId="mentor-profile-completeness-card"
-                title="资料完整度概览"
+              <div
+                data-testid="mentor-overview-grid"
+                className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(22rem,1.45fr)] lg:items-stretch"
               >
-                <DistributionPieChart
+                <MentorFilterBar
+                  className="w-full lg:col-span-3"
+                  schoolFilters={overview.mentor.school_filters}
+                  selectedUniversity={selectedUniversity}
+                  selectedSchool={selectedSchool}
+                  schoolOptions={selectedSchoolOptions}
+                  onUniversityChange={(value) => {
+                    setSelectedUniversity(value);
+                    setSelectedSchool(null);
+                  }}
+                  onSchoolChange={setSelectedSchool}
+                  onClear={() => {
+                    setSelectedUniversity(null);
+                    setSelectedSchool(null);
+                  }}
+                />
+                {mentorMetrics.map((metric) => (
+                  <MetricCard key={metric.title} {...metric} />
+                ))}
+                <ChartCard
+                  className="h-full min-w-0 lg:col-start-4 lg:row-start-1 lg:row-span-2"
+                  testId="mentor-profile-completeness-card"
                   title="资料完整度概览"
-                  data={profileCompletenessData}
-                  emptyText="当前筛选下暂无导师"
-                  legendLayout="horizontal-scroll"
-                />
-              </ChartCard>
-            </div>
-            <div
-              data-testid="mentor-detail-grid"
-              className="mt-4 grid items-start gap-4"
-              style={mentorDetailGridStyle}
-            >
-              <ChartCard
-                className="h-[22rem] overflow-hidden"
-                testId="mentor-match-distribution-card"
-                title="匹配分数分布"
+                >
+                  <DistributionPieChart
+                    title="资料完整度概览"
+                    data={profileCompletenessData}
+                    emptyText="当前筛选下暂无导师"
+                    legendLayout="horizontal-scroll"
+                  />
+                </ChartCard>
+              </div>
+              <div
+                data-testid="mentor-detail-grid"
+                className="mt-4 grid items-start gap-4"
+                style={mentorDetailGridStyle}
               >
-                <MatchDistributionChart data={overview.mentor.match_score_distribution} />
-              </ChartCard>
-              <ChartCard
-                className="h-[22rem] overflow-hidden"
-                testId="mentor-school-distribution-card"
-                title="学校分布"
-              >
-                <DistributionPieChart
+                <ChartCard
+                  className="h-[22rem] overflow-hidden"
+                  testId="mentor-match-distribution-card"
+                  title="匹配分数分布"
+                >
+                  <MatchDistributionChart data={overview.mentor.match_score_distribution} />
+                </ChartCard>
+                <ChartCard
+                  className="h-[22rem] overflow-hidden"
+                  testId="mentor-school-distribution-card"
                   title="学校分布"
-                  data={schoolDistributionData}
-                  emptyText="暂无学校分布数据"
-                  legendLayout="columns"
-                  valueSuffix="位"
-                />
-              </ChartCard>
-            </div>
-          </section>
+                >
+                  <DistributionPieChart
+                    title="学校分布"
+                    data={schoolDistributionData}
+                    emptyText="暂无学校分布数据"
+                    legendLayout="columns"
+                    valueSuffix="位"
+                  />
+                </ChartCard>
+              </div>
+            </section>
 
-          <section className="mt-10">
-            <ModuleHeader
-              title="邮件触达"
-              description="发送进度、回复效果和触达趋势"
-              icon={<ClipboardCheck className="h-5 w-5" />}
-            />
-            <div className="mb-4">
-              <EmailOutreachFilterBar
-                schoolFilters={overview.mentor.school_filters}
-                selectedUniversity={emailUniversity}
-                selectedSchool={emailSchool}
-                schoolOptions={emailSchoolOptions}
-                datePreset={emailDatePreset}
-                onUniversityChange={(value) => {
-                  setEmailUniversity(value);
-                  setEmailSchool(null);
-                }}
-                onSchoolChange={setEmailSchool}
-                onDatePresetChange={setEmailDatePreset}
-                onClear={() => {
-                  setEmailUniversity(null);
-                  setEmailSchool(null);
-                  setEmailDatePreset('all');
-                }}
+            <section
+              ref={emailSectionRef}
+              id="statistics-email"
+              data-testid="statistics-section-email"
+              data-statistics-section="email"
+              className="scroll-mt-44"
+            >
+              <ModuleHeader
+                title="邮件触达"
+                description="发送进度、回复效果和触达趋势"
+                icon={<ClipboardCheck className="h-5 w-5" />}
               />
-            </div>
-            <div data-testid="email-metrics-grid" className="grid gap-4" style={emailMetricsGridStyle}>
-              {emailMetrics.map((metric) => (
-                <MetricCard key={metric.title} {...metric} />
-              ))}
-            </div>
-            <div data-testid="email-trend-grid" className="mt-4 grid grid-cols-1 gap-4">
-              <ChartCard testId="email-trend-card" title="发送趋势">
-                <TrendChart data={overview.email.trend_30_days} />
-              </ChartCard>
-            </div>
-          </section>
+              <div className="mb-4">
+                <EmailOutreachFilterBar
+                  schoolFilters={overview.mentor.school_filters}
+                  selectedUniversity={emailUniversity}
+                  selectedSchool={emailSchool}
+                  schoolOptions={emailSchoolOptions}
+                  datePreset={emailDatePreset}
+                  onUniversityChange={(value) => {
+                    setEmailUniversity(value);
+                    setEmailSchool(null);
+                  }}
+                  onSchoolChange={setEmailSchool}
+                  onDatePresetChange={setEmailDatePreset}
+                  onClear={() => {
+                    setEmailUniversity(null);
+                    setEmailSchool(null);
+                    setEmailDatePreset('all');
+                  }}
+                />
+              </div>
+              <div data-testid="email-metrics-grid" className="grid gap-4" style={emailMetricsGridStyle}>
+                {emailMetrics.map((metric) => (
+                  <MetricCard key={metric.title} {...metric} />
+                ))}
+              </div>
+              <div data-testid="email-trend-grid" className="mt-4 grid grid-cols-1 gap-4">
+                <ChartCard testId="email-trend-card" title="发送趋势">
+                  <TrendChart data={overview.email.trend_30_days} />
+                </ChartCard>
+              </div>
+            </section>
 
-          <TokenVisualizationPanel />
-        </>
+            <section
+              ref={tokenSectionRef}
+              id="statistics-token"
+              data-testid="statistics-section-token"
+              data-statistics-section="token"
+              className="scroll-mt-44"
+            >
+              <TokenVisualizationPanel />
+            </section>
+          </div>
+        </div>
       ) : (
         <section className="mt-6 rounded-3xl border border-stone-200 bg-white p-8 text-center text-sm text-stone-500 shadow-sm">
           暂无统计数据。

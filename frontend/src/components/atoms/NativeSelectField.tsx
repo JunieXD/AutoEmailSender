@@ -207,7 +207,7 @@ export const NativeSelectField = ({
       role="listbox"
       style={menuPlacement === "floating-up" ? floatingMenuStyle : undefined}
       className={clsx(
-        "z-50 overflow-hidden rounded-2xl border border-stone-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(250,250,249,0.97))] p-1 shadow-[0_22px_40px_-26px_rgba(41,37,36,0.34)] backdrop-blur-xl",
+        "z-40 overflow-hidden rounded-2xl border border-stone-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(250,250,249,0.97))] p-1 shadow-[0_22px_40px_-26px_rgba(41,37,36,0.34)] backdrop-blur-xl",
         menuPlacement === "inline"
           ? "relative mt-2 w-full"
           : menuPlacement === "floating-up"
