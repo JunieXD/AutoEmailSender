@@ -40,7 +40,7 @@ export const StatisticsSectionNav = ({
       data-testid="statistics-section-nav"
       style={style}
       className={clsx(
-        "lg:fixed lg:top-[var(--statistics-section-nav-top,10rem)] lg:bottom-10 lg:z-30 lg:transition-[top] lg:duration-200 lg:ease-out",
+        "lg:fixed lg:top-[var(--statistics-section-nav-top,10rem)] lg:bottom-10 lg:z-30",
         className,
       )}
     >

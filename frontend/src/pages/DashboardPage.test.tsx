@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { MemoryRouter } from "react-router-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -615,6 +617,14 @@ describe("DashboardPage", () => {
     expect(resolveStatisticsSectionNavTop({ headerBottom: 120, summaryCardBottom: 248, rootFontSize: 16 })).toBe(304);
     expect(resolveStatisticsSectionNavTop({ headerBottom: 320, summaryCardBottom: 40, rootFontSize: 16 })).toBe(344);
     expect(resolveStatisticsSectionNavTop({ headerBottom: 0, summaryCardBottom: 40, rootFontSize: 16 })).toBe(160);
+  });
+
+
+  it("measures the fixed section nav before paint to avoid first-load rail resizing", () => {
+    const source = readFileSync(join(process.cwd(), "src/pages/DashboardPage.tsx"), "utf8").replace(/\r\n/g, "\n");
+
+    expect(source).toContain("useLayoutEffect(() => {\n    if (!overview)");
+    expect(source).not.toContain("useEffect(() => {\n    if (!overview)");
   });
 
   it("reloads email outreach metrics when email filters change", async () => {

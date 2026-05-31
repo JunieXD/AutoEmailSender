@@ -105,6 +105,27 @@ const metricToneClasses: Record<MetricTone, { icon: string }> = {
   violet: { icon: 'bg-violet-50 text-violet-700' },
 };
 
+const summaryCompactThreshold = 10_000_000;
+const summaryCompactUnits = [
+  { value: 1_000_000_000_000, suffix: 'T' },
+  { value: 1_000_000_000, suffix: 'B' },
+  { value: 1_000_000, suffix: 'M' },
+] as const;
+
+function formatSummaryTokenValue(value: number): { display: string; full: string } {
+  const full = value.toLocaleString('zh-CN');
+  if (Math.abs(value) < summaryCompactThreshold) {
+    return { display: full, full };
+  }
+
+  const unit = summaryCompactUnits.find((item) => Math.abs(value) >= item.value) ?? summaryCompactUnits[summaryCompactUnits.length - 1];
+  return {
+    display: `${(value / unit.value).toFixed(2)}${unit.suffix}`,
+    full,
+  };
+}
+
+
 export const TokenVisualizationPanel = () => {
   const [preset, setPreset] = useState<TokenUsageChartPresetDTO>('last_30_days');
   const [startAt, setStartAt] = useState<string | null>(null);
@@ -276,28 +297,28 @@ function SummaryGrid({ data }: { data: TokenUsageVisualizationDTO }) {
   const items = [
     {
       label: '总 Token',
-      value: data.summary.total_tokens.toLocaleString('zh-CN'),
+      value: formatSummaryTokenValue(data.summary.total_tokens),
       helper: `${data.summary.record_count.toLocaleString('zh-CN')} 条记录`,
       icon: <Hash className="h-5 w-5" />,
       tone: 'teal' as const,
     },
     {
       label: '输入 Token',
-      value: data.summary.input_tokens.toLocaleString('zh-CN'),
+      value: formatSummaryTokenValue(data.summary.input_tokens),
       helper: 'Prompt / 输入消耗',
       icon: <Download className="h-5 w-5" />,
       tone: 'sky' as const,
     },
     {
       label: '输出 Token',
-      value: data.summary.output_tokens.toLocaleString('zh-CN'),
+      value: formatSummaryTokenValue(data.summary.output_tokens),
       helper: 'Completion / 输出消耗',
       icon: <Upload className="h-5 w-5" />,
       tone: 'violet' as const,
     },
     {
       label: '缓存命中',
-      value: data.summary.cached_tokens.toLocaleString('zh-CN'),
+      value: formatSummaryTokenValue(data.summary.cached_tokens),
       helper: `占比 ${formatTokenShare(cachedShare)}`,
       icon: <Zap className="h-5 w-5" />,
       tone: 'amber' as const,
@@ -319,7 +340,7 @@ function SummaryGrid({ data }: { data: TokenUsageVisualizationDTO }) {
             </div>
             <div className="min-w-0">
               <div className="text-sm font-medium text-stone-600">{item.label}</div>
-              <div className="mt-2 text-2xl font-semibold leading-none text-stone-950 xl:text-3xl">{item.value}</div>
+              <div className="mt-2 text-2xl font-semibold leading-none text-stone-950 xl:text-3xl" title={item.value.full}>{item.value.display}</div>
               <div className="mt-2 text-xs leading-5 text-stone-500">{item.helper}</div>
             </div>
           </div>

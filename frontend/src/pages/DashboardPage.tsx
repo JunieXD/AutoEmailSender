@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CategoryScale,
@@ -821,7 +821,7 @@ export const DashboardPage = () => {
     );
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!overview) {
       setSectionNavTop(null);
       return;

@@ -149,6 +149,23 @@ describe('TokenVisualizationPanel', () => {
     expect(screen.getByText('李老师 1 - 匹配分析')).toBeInTheDocument();
   });
 
+
+  it('compacts summary token totals from ten million with two decimals', async () => {
+    getTokenUsageVisualization.mockResolvedValue({
+      ...visualization,
+      summary: {
+        ...visualization.summary,
+        total_tokens: 12_345_678,
+      },
+    });
+
+    render(<TokenVisualizationPanel />);
+
+    expect(await screen.findByText('12.35M')).toBeInTheDocument();
+    expect(screen.queryByText('12,345,678')).not.toBeInTheDocument();
+    expect(screen.getByText('12.35M')).toHaveAttribute('title', '12,345,678');
+  });
+
   it('centers all recent token record table headers and cells', async () => {
     render(<TokenVisualizationPanel />);
 

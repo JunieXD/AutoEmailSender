@@ -68,6 +68,20 @@ describe("StatisticsSectionNav", () => {
     expect(container.querySelector('[class*="lg:inset-y-5"]')).not.toBeInTheDocument();
   });
 
+
+  it("does not animate top offset changes that would resize the fixed rail", () => {
+    render(
+      <StatisticsSectionNav
+        items={items}
+        activeSectionId="mentor"
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("statistics-section-nav")).not.toHaveClass("lg:transition-[top]");
+    expect(screen.getByTestId("statistics-section-nav")).not.toHaveClass("lg:duration-200");
+  });
+
   it("accepts a dynamic top offset through a CSS variable", () => {
     render(
       <StatisticsSectionNav
