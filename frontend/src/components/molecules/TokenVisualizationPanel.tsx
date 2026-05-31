@@ -19,23 +19,23 @@ import {
   Hash,
   Loader2,
   RefreshCw,
+  RotateCcw,
+  Search,
   Upload,
   Zap,
 } from 'lucide-react';
+import { NativeSelectField } from '@/components/atoms/NativeSelectField';
 import { DistributionPieChart } from '@/components/molecules/DistributionPieChart';
 import { PageSizeSelector } from '@/components/molecules/PageSizeSelector';
-import { getTokenUsageVisualization } from '@/lib/api/tokenUsage';
-import {
-  PAGE_SIZE as DEFAULT_PAGE_SIZE,
-  getPageItems,
-  getTotalPages,
-} from '@/lib/pagination';
+import { getTokenUsageVisualization, listTokenUsageRecords } from '@/lib/api/tokenUsage';
+import { PAGE_SIZE as DEFAULT_PAGE_SIZE } from '@/lib/pagination';
 import type {
   TokenUsageChartDTO,
   TokenUsageChartPresetDTO,
   TokenUsageFeatureDistributionDTO,
   TokenUsageModelRankingDTO,
-  TokenUsageRecordDTO,
+  TokenUsageRecordFeatureFilterDTO,
+  TokenUsageRecordListDTO,
   TokenUsageVisualizationDTO,
 } from '@/types';
 import {
@@ -77,6 +77,13 @@ type TrendDatasetConfig = {
   backgroundColor: string;
 };
 
+type TokenRecordFiltersState = {
+  featureType: TokenUsageRecordFeatureFilterDTO;
+  modelName: string | null;
+  startAt: string | null;
+  endAt: string | null;
+};
+
 const trendDatasets: TrendDatasetConfig[] = [
   {
     key: 'input_tokens',
@@ -112,6 +119,25 @@ const summaryCompactUnits = [
   { value: 1_000_000, suffix: 'M' },
 ] as const;
 
+const defaultRecordFeatureType: TokenUsageRecordFeatureFilterDTO = 'all';
+
+const emptyRecordList: TokenUsageRecordListDTO = {
+  records: [],
+  summary: {
+    input_tokens: 0,
+    output_tokens: 0,
+    cached_tokens: 0,
+    total_tokens: 0,
+    record_count: 0,
+  },
+  pagination: {
+    page: 1,
+    page_size: DEFAULT_PAGE_SIZE,
+    total_records: 0,
+    total_pages: 0,
+  },
+  model_options: [],
+};
 function formatSummaryTokenValue(value: number): { display: string; full: string } {
   const full = value.toLocaleString('zh-CN');
   if (Math.abs(value) < summaryCompactThreshold) {
@@ -134,7 +160,18 @@ export const TokenVisualizationPanel = () => {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recordList, setRecordList] = useState<TokenUsageRecordListDTO>(emptyRecordList);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsLoaded, setRecordsLoaded] = useState(false);
+  const [recordsError, setRecordsError] = useState<string | null>(null);
+  const [recordFeatureType, setRecordFeatureType] = useState<TokenUsageRecordFeatureFilterDTO>(defaultRecordFeatureType);
+  const [recordModelName, setRecordModelName] = useState<string | null>(null);
+  const [recordStartAt, setRecordStartAt] = useState<string | null>(null);
+  const [recordEndAt, setRecordEndAt] = useState<string | null>(null);
+  const [recordPage, setRecordPage] = useState(1);
+  const [recordPageSize, setRecordPageSize] = useState(DEFAULT_PAGE_SIZE);
   const requestIdRef = useRef(0);
+  const recordsRequestIdRef = useRef(0);
 
   const loadData = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
@@ -159,10 +196,56 @@ export const TokenVisualizationPanel = () => {
       }
     }
   }, [endAt, preset, startAt]);
-
+  const loadRecords = useCallback(async (
+    nextPage: number,
+    nextPageSize: number,
+    filters: TokenRecordFiltersState = {
+      featureType: recordFeatureType,
+      modelName: recordModelName,
+      startAt: recordStartAt,
+      endAt: recordEndAt,
+    },
+  ) => {
+    const requestId = recordsRequestIdRef.current + 1;
+    recordsRequestIdRef.current = requestId;
+    setRecordsLoading(true);
+    setRecordsError(null);
+    try {
+      const result = await listTokenUsageRecords({
+        page: nextPage,
+        pageSize: nextPageSize,
+        featureType: filters.featureType,
+        modelName: filters.modelName,
+        startAt: filters.startAt,
+        endAt: filters.endAt,
+      });
+      if (recordsRequestIdRef.current !== requestId) {
+        return;
+      }
+      setRecordList(result);
+      setRecordPage(result.pagination.page);
+      setRecordPageSize(result.pagination.page_size);
+      setRecordsLoaded(true);
+    } catch (loadError) {
+      if (recordsRequestIdRef.current !== requestId) {
+        return;
+      }
+      setRecordsError(loadError instanceof Error ? loadError.message : '加载 Token 消耗记录失败');
+    } finally {
+      if (recordsRequestIdRef.current === requestId) {
+        setRecordsLoading(false);
+      }
+    }
+  }, [recordEndAt, recordFeatureType, recordModelName, recordStartAt]);
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!recordsLoading && !recordsLoaded && !recordsError) {
+      void loadRecords(1, recordPageSize);
+    }
+  }, [loadRecords, recordPageSize, recordsError, recordsLoaded, recordsLoading]);
 
   const handlePresetChange = (nextPreset: TokenUsageChartPresetDTO) => {
     setPreset(nextPreset);
@@ -170,6 +253,31 @@ export const TokenVisualizationPanel = () => {
       setStartAt(null);
       setEndAt(null);
     }
+  };
+
+  const handleRecordSearch = () => {
+    void loadRecords(1, recordPageSize);
+  };
+
+  const handleRecordReset = () => {
+    const resetFilters: TokenRecordFiltersState = {
+      featureType: defaultRecordFeatureType,
+      modelName: null,
+      startAt: null,
+      endAt: null,
+    };
+    setRecordFeatureType(resetFilters.featureType);
+    setRecordModelName(resetFilters.modelName);
+    setRecordStartAt(resetFilters.startAt);
+    setRecordEndAt(resetFilters.endAt);
+    setRecordPage(1);
+    void loadRecords(1, recordPageSize, resetFilters);
+  };
+
+  const handleRecordPageSizeChange = (nextPageSize: number) => {
+    setRecordPageSize(nextPageSize);
+    setRecordPage(1);
+    void loadRecords(1, nextPageSize);
   };
 
   const showInitialLoading = loading && !loaded;
@@ -248,7 +356,26 @@ export const TokenVisualizationPanel = () => {
             <FeatureDistributionCard items={data.feature_distribution} />
             <ModelRankingCard items={data.model_ranking} />
           </div>
-          <RecentRecordsTable records={data.recent_records} />
+          <RecentRecordsTable
+            result={recordList}
+            loading={recordsLoading}
+            loaded={recordsLoaded}
+            error={recordsError}
+            featureType={recordFeatureType}
+            modelName={recordModelName}
+            startAt={recordStartAt}
+            endAt={recordEndAt}
+            pageSize={recordPageSize}
+            onFeatureTypeChange={setRecordFeatureType}
+            onModelNameChange={setRecordModelName}
+            onStartAtChange={setRecordStartAt}
+            onEndAtChange={setRecordEndAt}
+            onSearch={handleRecordSearch}
+            onReset={handleRecordReset}
+            onPageChange={(nextPage) => void loadRecords(nextPage, recordPageSize)}
+            onPageSizeChange={handleRecordPageSizeChange}
+            onRetry={() => void loadRecords(recordPage, recordPageSize)}
+          />
         </div>
       ) : null}
     </section>
@@ -538,28 +665,82 @@ function ModelRankingCard({ items }: { items: TokenUsageModelRankingDTO[] }) {
   );
 }
 
-function RecentRecordsTable({ records }: { records: TokenUsageRecordDTO[] }) {
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [currentPage, setCurrentPage] = useState(1);
-  const totalPages = getTotalPages(records.length, pageSize);
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pagedRecords = getPageItems(records, safeCurrentPage, pageSize);
-
-  useEffect(() => {
-    setCurrentPage((previous) => Math.min(previous, totalPages));
-  }, [totalPages]);
-
-  const handlePageSizeChange = (nextPageSize: number) => {
-    setPageSize(nextPageSize);
-    setCurrentPage(1);
-  };
+function RecentRecordsTable({
+  result,
+  loading,
+  loaded,
+  error,
+  featureType,
+  modelName,
+  startAt,
+  endAt,
+  pageSize,
+  onFeatureTypeChange,
+  onModelNameChange,
+  onStartAtChange,
+  onEndAtChange,
+  onSearch,
+  onReset,
+  onPageChange,
+  onPageSizeChange,
+  onRetry,
+}: {
+  result: TokenUsageRecordListDTO;
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  featureType: TokenUsageRecordFeatureFilterDTO;
+  modelName: string | null;
+  startAt: string | null;
+  endAt: string | null;
+  pageSize: number;
+  onFeatureTypeChange: (value: TokenUsageRecordFeatureFilterDTO) => void;
+  onModelNameChange: (value: string | null) => void;
+  onStartAtChange: (value: string | null) => void;
+  onEndAtChange: (value: string | null) => void;
+  onSearch: () => void;
+  onReset: () => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  onRetry: () => void;
+}) {
+  const { records, pagination, model_options: modelOptions } = result;
+  const safeCurrentPage = pagination.total_pages > 0 ? pagination.page : 1;
+  const totalPages = Math.max(pagination.total_pages, 1);
 
   return (
-    <PanelCard title="最近 Token 消耗记录">
-      {records.length === 0 ? (
-        <EmptyState>暂无最近 Token 消耗记录</EmptyState>
+    <PanelCard title="Token 消耗记录">
+      <TokenRecordFilters
+        featureType={featureType}
+        modelName={modelName}
+        modelOptions={modelOptions}
+        startAt={startAt}
+        endAt={endAt}
+        onFeatureTypeChange={onFeatureTypeChange}
+        onModelNameChange={onModelNameChange}
+        onStartAtChange={onStartAtChange}
+        onEndAtChange={onEndAtChange}
+        onSearch={onSearch}
+        onReset={onReset}
+      />
+      {loading && !loaded ? (
+        <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-8 text-sm text-stone-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在加载 Token 消耗记录...
+        </div>
+      ) : error ? (
+        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
+          <div>{error}</div>
+          <button type="button" onClick={onRetry} className="ui-btn-secondary mt-3 px-3 py-2 text-xs">
+            重试
+          </button>
+        </div>
+      ) : records.length === 0 ? (
+        <div className="mt-4">
+          <EmptyState>暂无 Token 消耗记录</EmptyState>
+        </div>
       ) : (
-        <div>
+        <div className="mt-4">
           <div className="overflow-x-auto">
             <table className="min-w-[760px] w-full text-sm">
               <thead>
@@ -575,7 +756,7 @@ function RecentRecordsTable({ records }: { records: TokenUsageRecordDTO[] }) {
                 </tr>
               </thead>
               <tbody>
-                {pagedRecords.map((record) => (
+                {records.map((record) => (
                   <tr key={record.id} className="border-b border-stone-100 last:border-b-0">
                     <td className="py-3 pr-3 text-center text-xs text-stone-500">
                       {formatTokenUsageRecordTime({ value: record.created_at })}
@@ -602,22 +783,22 @@ function RecentRecordsTable({ records }: { records: TokenUsageRecordDTO[] }) {
           </div>
           <div className="mt-4 flex flex-col gap-3 border-t border-stone-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-stone-500">
-              共 {records.length} 条记录，当前第 {safeCurrentPage} / {totalPages} 页
+              共 {pagination.total_records} 条记录，当前第 {safeCurrentPage} / {totalPages} 页
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <PageSizeSelector value={pageSize} onChange={handlePageSizeChange} unitLabel="条" />
+              <PageSizeSelector value={pageSize} onChange={onPageSizeChange} unitLabel="条" />
               <button
                 type="button"
-                onClick={() => setCurrentPage(safeCurrentPage - 1)}
-                disabled={safeCurrentPage <= 1}
+                onClick={() => onPageChange(safeCurrentPage - 1)}
+                disabled={loading || safeCurrentPage <= 1}
                 className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
                 上一页
               </button>
               <button
                 type="button"
-                onClick={() => setCurrentPage(safeCurrentPage + 1)}
-                disabled={safeCurrentPage >= totalPages}
+                onClick={() => onPageChange(safeCurrentPage + 1)}
+                disabled={loading || safeCurrentPage >= totalPages}
                 className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
                 下一页
@@ -630,6 +811,96 @@ function RecentRecordsTable({ records }: { records: TokenUsageRecordDTO[] }) {
   );
 }
 
+function TokenRecordFilters({
+  featureType,
+  modelName,
+  modelOptions,
+  startAt,
+  endAt,
+  onFeatureTypeChange,
+  onModelNameChange,
+  onStartAtChange,
+  onEndAtChange,
+  onSearch,
+  onReset,
+}: {
+  featureType: TokenUsageRecordFeatureFilterDTO;
+  modelName: string | null;
+  modelOptions: string[];
+  startAt: string | null;
+  endAt: string | null;
+  onFeatureTypeChange: (value: TokenUsageRecordFeatureFilterDTO) => void;
+  onModelNameChange: (value: string | null) => void;
+  onStartAtChange: (value: string | null) => void;
+  onEndAtChange: (value: string | null) => void;
+  onSearch: () => void;
+  onReset: () => void;
+}) {
+  const resolvedModelOptions = modelName
+    ? Array.from(new Set([...modelOptions, modelName])).sort()
+    : modelOptions;
+
+  return (
+    <div className="grid min-w-0 gap-3 rounded-xl border border-stone-200 bg-stone-50/70 p-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <NativeSelectField
+        label="功能筛选"
+        ariaLabel="Token 记录功能筛选"
+        value={featureType}
+        wrapperClassName="block"
+        shellClassName="h-10"
+        onChange={(event) => onFeatureTypeChange(event.target.value as TokenUsageRecordFeatureFilterDTO)}
+      >
+        <option value="all">全部功能</option>
+        <option value="crawl">智能爬取</option>
+        <option value="match_analysis">匹配分析</option>
+        <option value="draft_generation">AI 草稿</option>
+      </NativeSelectField>
+      <NativeSelectField
+        label="模型筛选"
+        ariaLabel="Token 记录模型筛选"
+        value={modelName ?? ''}
+        wrapperClassName="block"
+        shellClassName="h-10"
+        onChange={(event) => onModelNameChange(event.target.value || null)}
+      >
+        <option value="">全部模型</option>
+        {resolvedModelOptions.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </NativeSelectField>
+      <label className="block">
+        <span className="mb-2 block text-sm font-medium text-stone-800">开始时间</span>
+        <input
+          aria-label="Token 记录开始时间"
+          type="datetime-local"
+          value={formatDateTimeLocalValue(startAt)}
+          onChange={(event) => onStartAtChange(parseDateTimeLocalValue(event.target.value))}
+          className="h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-2 block text-sm font-medium text-stone-800">结束时间</span>
+        <input
+          aria-label="Token 记录结束时间"
+          type="datetime-local"
+          value={formatDateTimeLocalValue(endAt)}
+          onChange={(event) => onEndAtChange(parseDateTimeLocalValue(event.target.value))}
+          className="h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+        />
+      </label>
+      <div className="flex min-w-0 flex-wrap items-end gap-2 md:col-span-2 xl:col-span-1">
+        <button type="button" onClick={onSearch} className="ui-btn-primary h-10 px-3 text-sm">
+          <Search className="h-4 w-4" />
+          查询记录
+        </button>
+        <button type="button" onClick={onReset} className="ui-btn-secondary h-10 px-3 text-sm">
+          <RotateCcw className="h-4 w-4" />
+          重置
+        </button>
+      </div>
+    </div>
+  );
+}
 function PanelCard({
   title,
   meta,

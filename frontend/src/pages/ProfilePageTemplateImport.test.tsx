@@ -93,9 +93,6 @@ vi.mock("@/components/molecules/OtherSettingsCard", () => ({
   OtherSettingsCard: () => null,
 }));
 
-vi.mock("@/components/molecules/TokenUsageCenterCard", () => ({
-  TokenUsageCenterCard: () => null,
-}));
 
 vi.mock("@/components/organisms/DiagnosticLogPanel", () => ({
   DiagnosticLogPanel: () => null,

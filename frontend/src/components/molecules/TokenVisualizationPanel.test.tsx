@@ -4,10 +4,12 @@ import { TokenVisualizationPanel } from './TokenVisualizationPanel';
 import type { TokenUsageRecordDTO, TokenUsageVisualizationDTO } from '@/types';
 
 const getTokenUsageVisualization = vi.fn();
+const listTokenUsageRecords = vi.fn();
 const lineChartRender = vi.fn();
 
 vi.mock('@/lib/api/tokenUsage', () => ({
   getTokenUsageVisualization: (...args: unknown[]) => getTokenUsageVisualization(...args),
+  listTokenUsageRecords: (...args: unknown[]) => listTokenUsageRecords(...args),
 }));
 
 vi.mock('react-chartjs-2', () => ({
@@ -130,10 +132,32 @@ const denseVisualization: TokenUsageVisualizationDTO = {
   },
 };
 
+const recordList = {
+  records: visualization.recent_records.slice(0, 10),
+  summary: visualization.summary,
+  pagination: {
+    page: 1,
+    page_size: 10,
+    total_records: visualization.recent_records.length,
+    total_pages: 2,
+  },
+  model_options: ['gpt-primary', 'gpt-secondary'],
+};
+
+const secondRecordList = {
+  ...recordList,
+  records: visualization.recent_records.slice(10),
+  pagination: {
+    ...recordList.pagination,
+    page: 2,
+  },
+};
 describe('TokenVisualizationPanel', () => {
   beforeEach(() => {
     getTokenUsageVisualization.mockReset();
+    listTokenUsageRecords.mockReset();
     getTokenUsageVisualization.mockResolvedValue(visualization);
+    listTokenUsageRecords.mockResolvedValue(recordList);
   });
 
   it('renders summary cards, trend chart, breakdowns and recent records', async () => {
@@ -145,12 +169,22 @@ describe('TokenVisualizationPanel', () => {
     expect(screen.getByText('输入 / 输出 / 缓存趋势')).toBeInTheDocument();
     expect(screen.getByText('功能消耗分布')).toBeInTheDocument();
     expect(screen.getByText('模型消耗排行')).toBeInTheDocument();
-    expect(screen.getByText('最近 Token 消耗记录')).toBeInTheDocument();
+    expect(screen.getByText('Token 消耗记录')).toBeInTheDocument();
     expect(screen.getByText('李老师 1 - 匹配分析')).toBeInTheDocument();
   });
 
 
   it('compacts summary token totals from ten million with two decimals', async () => {
+    listTokenUsageRecords.mockResolvedValue({
+      ...recordList,
+      records: [],
+      pagination: {
+        page: 1,
+        page_size: 10,
+        total_records: 0,
+        total_pages: 0,
+      },
+    });
     getTokenUsageVisualization.mockResolvedValue({
       ...visualization,
       summary: {
@@ -169,7 +203,7 @@ describe('TokenVisualizationPanel', () => {
   it('centers all recent token record table headers and cells', async () => {
     render(<TokenVisualizationPanel />);
 
-    await screen.findByText('最近 Token 消耗记录');
+    await screen.findByText('Token 消耗记录');
 
     screen.getAllByRole('columnheader').forEach((header) => {
       expect(header).toHaveClass('text-center');
@@ -180,6 +214,7 @@ describe('TokenVisualizationPanel', () => {
   });
 
   it('paginates recent token records with homepage-style controls', async () => {
+    listTokenUsageRecords.mockResolvedValueOnce(recordList).mockResolvedValueOnce(secondRecordList);
     render(<TokenVisualizationPanel />);
 
     expect(await screen.findByText('共 12 条记录，当前第 1 / 2 页')).toBeInTheDocument();
@@ -189,12 +224,35 @@ describe('TokenVisualizationPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
 
-    expect(screen.getByText('共 12 条记录，当前第 2 / 2 页')).toBeInTheDocument();
+    expect(await screen.findByText('共 12 条记录，当前第 2 / 2 页')).toBeInTheDocument();
     expect(screen.getByText('李老师 11 - 匹配分析')).toBeInTheDocument();
     expect(screen.queryByText('李老师 1 - 匹配分析')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled();
   });
 
+  it('filters token records by feature model and time range', async () => {
+    render(<TokenVisualizationPanel />);
+
+    await screen.findByText('Token 消耗记录');
+    fireEvent.click(screen.getByLabelText('Token 记录功能筛选'));
+    fireEvent.click(screen.getByRole('option', { name: '匹配分析' }));
+    fireEvent.click(screen.getByLabelText('Token 记录模型筛选'));
+    fireEvent.click(screen.getByRole('option', { name: 'gpt-primary' }));
+    fireEvent.change(screen.getByLabelText('Token 记录开始时间'), { target: { value: '2026-05-24T10:30' } });
+    fireEvent.change(screen.getByLabelText('Token 记录结束时间'), { target: { value: '2026-05-25T11:45' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询记录' }));
+
+    await waitFor(() => {
+      expect(listTokenUsageRecords).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 10,
+        featureType: 'match_analysis',
+        modelName: 'gpt-primary',
+        startAt: new Date('2026-05-24T10:30').toISOString(),
+        endAt: new Date('2026-05-25T11:45').toISOString(),
+      });
+    });
+  });
   it('reloads visualization when preset changes', async () => {
     render(<TokenVisualizationPanel />);
 
@@ -297,6 +355,16 @@ describe('TokenVisualizationPanel', () => {
   });
 
   it('shows empty state for empty visualization data', async () => {
+    listTokenUsageRecords.mockResolvedValue({
+      ...recordList,
+      records: [],
+      pagination: {
+        page: 1,
+        page_size: 10,
+        total_records: 0,
+        total_pages: 0,
+      },
+    });
     getTokenUsageVisualization.mockResolvedValue({
       ...visualization,
       summary: {
@@ -317,7 +385,7 @@ describe('TokenVisualizationPanel', () => {
     expect(await screen.findByText('当前时间范围暂无 Token 消耗数据')).toBeInTheDocument();
     expect(screen.getByText('暂无功能消耗数据')).toBeInTheDocument();
     expect(screen.getByText('暂无模型消耗数据')).toBeInTheDocument();
-    expect(screen.getByText('暂无最近 Token 消耗记录')).toBeInTheDocument();
+    expect(screen.getByText('暂无 Token 消耗记录')).toBeInTheDocument();
   });
 
   it('shows an error and retries loading', async () => {

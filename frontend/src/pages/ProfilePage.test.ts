@@ -112,4 +112,8 @@ describe("ProfilePage setup sections", () => {
     expect(profilePageSource).not.toContain('link.rel = "noreferrer"');
   });
 
+  it("does not render the legacy token usage center in profile settings", () => {
+    expect(profilePageSource).not.toContain("TokenUsageCenterCard");
+    expect(profilePageSource).not.toContain("Token 消耗记录中心");
+  });
 });

@@ -82,6 +82,7 @@ const runningJob = {
   candidate_count: 34,
   input_tokens: 1000,
   output_tokens: 400,
+  cached_tokens: 0,
   total_tokens: 1400,
   duration_seconds: 90,
   latest_event_message: "正在分析教师列表",
@@ -635,7 +636,7 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
     await waitFor(() => {
-      expect(enrichCrawlCandidates).toHaveBeenCalledWith(7, [21]);
+      expect(enrichCrawlCandidates).toHaveBeenCalledWith(7, [21], 2);
     });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "清空选择" }));
@@ -757,7 +758,7 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
     await waitFor(() => {
-      expect(enrichCrawlCandidates).toHaveBeenCalledWith(7, [21, 23]);
+      expect(enrichCrawlCandidates).toHaveBeenCalledWith(7, [21, 23], 2);
     });
   });
 });

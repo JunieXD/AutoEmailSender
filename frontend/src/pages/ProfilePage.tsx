@@ -31,7 +31,6 @@ import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
-import { TokenUsageCenterCard } from "@/components/molecules/TokenUsageCenterCard";
 import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
@@ -3206,7 +3205,6 @@ export const ProfilePage = () => {
             </div>
           </ProfileSetupSection>
 
-          <TokenUsageCenterCard />
 
           <OtherSettingsCard />
 
