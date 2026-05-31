@@ -4,14 +4,47 @@ import unittest
 
 from app.models.crawl_chunk import CrawlPageChunkStatus
 from app.models.crawl_job import (
+    CrawlCandidateEnrichmentTaskStatus,
     CrawlCandidateReviewStatus,
     CrawlJobEntryType,
     CrawlJobStatus,
+    CrawlPageFetchMode,
     CrawlPageStatus,
+    CrawlPageTaskStatus,
+    CrawlRuntimeVersion,
+    CrawlWorkerKind,
 )
 
 
 class CrawlJobModelTests(unittest.TestCase):
+
+    def test_runtime_version_constants_are_stable(self) -> None:
+        self.assertEqual(CrawlRuntimeVersion.V1.value, "v1")
+        self.assertEqual(CrawlRuntimeVersion.V2.value, "v2")
+
+    def test_page_task_status_constants_are_stable(self) -> None:
+        self.assertEqual(CrawlPageTaskStatus.PENDING.value, "pending")
+        self.assertEqual(CrawlPageTaskStatus.PROCESSING.value, "processing")
+        self.assertEqual(CrawlPageTaskStatus.SUCCEEDED.value, "succeeded")
+        self.assertEqual(CrawlPageTaskStatus.FAILED_RETRYABLE.value, "failed_retryable")
+        self.assertEqual(CrawlPageTaskStatus.FAILED_TERMINAL.value, "failed_terminal")
+        self.assertEqual(CrawlPageTaskStatus.SKIPPED_DUPLICATE.value, "skipped_duplicate")
+
+    def test_enrichment_task_status_constants_are_stable(self) -> None:
+        self.assertEqual(CrawlCandidateEnrichmentTaskStatus.PENDING.value, "pending")
+        self.assertEqual(CrawlCandidateEnrichmentTaskStatus.PROCESSING.value, "processing")
+        self.assertEqual(CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value, "succeeded")
+        self.assertEqual(CrawlCandidateEnrichmentTaskStatus.SKIPPED.value, "skipped")
+        self.assertEqual(CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value, "failed_retryable")
+        self.assertEqual(CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value, "failed_terminal")
+
+    def test_worker_kind_and_fetch_mode_constants_are_stable(self) -> None:
+        self.assertEqual(CrawlWorkerKind.PAGE.value, "page")
+        self.assertEqual(CrawlWorkerKind.CHUNK.value, "chunk")
+        self.assertEqual(CrawlWorkerKind.ENRICHMENT.value, "enrichment")
+        self.assertEqual(CrawlPageFetchMode.DIRECT.value, "direct")
+        self.assertEqual(CrawlPageFetchMode.BROWSER.value, "browser")
+
     def test_entry_type_constants_are_stable(self) -> None:
         self.assertEqual(CrawlJobEntryType.LIST.value, "list")
         self.assertEqual(CrawlJobEntryType.PROFILE.value, "profile")
@@ -43,6 +76,8 @@ class CrawlJobModelTests(unittest.TestCase):
         self.assertEqual(CrawlPageChunkStatus.SPLIT_REQUIRED.value, "split_required")
         self.assertEqual(CrawlPageChunkStatus.SUPERSEDED.value, "superseded")
         self.assertEqual(CrawlPageChunkStatus.FAILED.value, "failed")
+        self.assertEqual(CrawlPageChunkStatus.FAILED_RETRYABLE.value, "failed_retryable")
+        self.assertEqual(CrawlPageChunkStatus.FAILED_TERMINAL.value, "failed_terminal")
 
 
 if __name__ == "__main__":

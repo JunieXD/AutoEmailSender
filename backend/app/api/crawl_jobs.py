@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,12 @@ from app.models import (
     CrawlJobStatus,
     CrawlPage,
     CrawlPageChunk,
+    CrawlPageChunkStatus,
+    CrawlPageTask,
+    CrawlPageTaskStatus,
+    CrawlCandidateEnrichmentTask,
+    CrawlCandidateEnrichmentTaskStatus,
+    CrawlWorkerTokenUsage,
     LLMProfile,
     Professor,
 )
@@ -49,6 +55,7 @@ from app.services.crawl_job_runs import (
 from app.services.operation_logs import record_operation_log
 from app.services.professor_management import is_valid_professor_email, normalize_professor_email
 from app.services.crawl_job_runtime import enrich_selected_crawl_candidates
+from app.services.crawler_v2_url_utils import normalize_url
 from app.core.database import get_session_factory
 
 
@@ -69,11 +76,21 @@ async def create_crawl_job(
         entry_type=payload.entry_type,
         llm_profile_id=payload.llm_profile_id,
         status=CrawlJobStatus.QUEUED.value,
+        runtime_version="v2",
         progress_current=0,
         progress_total=0,
     )
     session.add(job)
     await session.flush()
+    for start_url in job.start_urls or [job.start_url]:
+        session.add(
+            CrawlPageTask(
+                job_id=job.id,
+                normalized_url=normalize_url(start_url),
+                original_url=start_url,
+                status=CrawlPageTaskStatus.PENDING.value,
+            )
+        )
     await create_initial_crawl_job_run(session, job)
     await record_operation_log(
         session,
@@ -518,6 +535,40 @@ async def resume_crawl_job_review(
     return job
 
 
+async def _release_processing_v2_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
+    clear_values = {
+        "status": "pending",
+        "last_error": reason,
+        "worker_id": None,
+        "claimed_at": None,
+        "lease_expires_at": None,
+    }
+    await session.execute(
+        update(CrawlPageTask)
+        .where(
+            CrawlPageTask.job_id == job_id,
+            CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
+        )
+        .values(**clear_values),
+    )
+    await session.execute(
+        update(CrawlPageChunk)
+        .where(
+            CrawlPageChunk.job_id == job_id,
+            CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
+        )
+        .values(**clear_values),
+    )
+    await session.execute(
+        update(CrawlCandidateEnrichmentTask)
+        .where(
+            CrawlCandidateEnrichmentTask.job_id == job_id,
+            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+        )
+        .values(**clear_values),
+    )
+
+
 @router.post("/{job_id}/cancel", response_model=CrawlJobRead)
 async def cancel_crawl_job(
     job_id: int,
@@ -534,6 +585,7 @@ async def cancel_crawl_job(
     now = datetime.now(UTC)
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
+    await _release_processing_v2_work(session, job.id, reason="任务已取消，释放处理中工作项")
     await mark_crawl_job_run_finished(
         session,
         job,
@@ -567,6 +619,7 @@ async def pause_crawl_job(
     now = datetime.now(UTC)
     job.status = CrawlJobStatus.PAUSED.value
     job.updated_at = now
+    await _release_processing_v2_work(session, job.id, reason="任务已暂停，释放处理中工作项")
     await mark_crawl_job_run_paused(session, job, now=now)
     await record_operation_log(
         session,
@@ -630,6 +683,18 @@ async def retry_crawl_job(
             detail="仅允许重试状态为\"失败\"或\"已取消\"的抓取任务",
         )
 
+    if job.runtime_version == "v2":
+        await session.execute(
+            delete(CrawlCandidateEnrichmentTask).where(CrawlCandidateEnrichmentTask.job_id == job.id),
+        )
+        await session.execute(
+            delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id),
+        )
+        if payload.clear_existing_data:
+            await session.execute(
+                delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
+            )
+
     if payload.clear_existing_data:
         await session.execute(
             delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id),
@@ -649,6 +714,17 @@ async def retry_crawl_job(
             payload.llm_profile_id,
             trigger="retry",
         )
+
+    if job.runtime_version == "v2":
+        for start_url in job.start_urls or [job.start_url]:
+            session.add(
+                CrawlPageTask(
+                    job_id=job.id,
+                    normalized_url=normalize_url(start_url),
+                    original_url=start_url,
+                    status=CrawlPageTaskStatus.PENDING.value,
+                )
+            )
 
     now = datetime.now(UTC)
     job.status = CrawlJobStatus.QUEUED.value

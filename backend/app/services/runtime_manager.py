@@ -15,7 +15,7 @@ from app.services.batch_draft_generation_runtime import (
     BatchDraftGenerationCoordinator,
     run_queued_batch_drafts_once,
 )
-from app.services.crawl_job_runtime import run_queued_crawl_jobs_once
+from app.services.crawler_v2_scheduler import run_crawler_v2_once
 from app.services.match_analysis_job_runtime import run_queued_match_analysis_jobs_once
 from app.services.runtime_settings import get_runtime_settings
 from app.services.task_runtime import (
@@ -113,7 +113,7 @@ class RuntimeManager:
                 self._loop(
                     f"crawler-worker-{index}",
                     10,
-                    run_queued_crawl_jobs_once,
+                    run_crawler_v2_once,
                 ),
             )
             for index in range(1, worker_settings.crawler_worker_count + 1)
