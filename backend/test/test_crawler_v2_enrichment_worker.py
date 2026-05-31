@@ -70,6 +70,35 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         fetch_mock.assert_awaited_once()
         enrich_mock.assert_awaited_once()
 
+    async def test_enrichment_worker_does_not_write_after_job_is_paused(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
+
+        async def pause_job_during_enrichment(*_args, **_kwargs):
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                job = await session.get(CrawlJob, task.job_id)
+                assert job is not None
+                job.status = CrawlJobStatus.PAUSED.value
+                task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
+                task.worker_id = None
+                await session.commit()
+            return payload, {"input_tokens": 10, "output_tokens": 5, "cached_tokens": 0}
+
+        with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage", new=AsyncMock(side_effect=pause_job_during_enrichment)):
+            processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            token_usage = list(await session.scalars(select(CrawlWorkerTokenUsage)))
+        assert candidate is not None and task is not None
+        self.assertIsNone(candidate.email)
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.PENDING.value)
+        self.assertEqual(token_usage, [])
+
     async def test_enrichment_worker_does_not_write_after_lease_expires(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
         expired = datetime.now(UTC) - timedelta(seconds=1)

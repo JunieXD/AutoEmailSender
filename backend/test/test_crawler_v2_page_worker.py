@@ -59,6 +59,40 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/faculty", "https://example.edu/profile/zhang.html"])
 
+    async def test_page_worker_does_not_write_after_job_is_paused(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="师资队伍",
+            text="张三 教授",
+            html="<p>张三</p>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        async def pause_job_during_fetch(*_args, **_kwargs):
+            async with self.session_factory() as session:
+                job = await session.get(CrawlJob, job_id)
+                task = await session.get(CrawlPageTask, task_id)
+                assert job is not None and task is not None
+                job.status = CrawlJobStatus.PAUSED.value
+                task.status = CrawlPageTaskStatus.PENDING.value
+                task.worker_id = None
+                await session.commit()
+            return snapshot
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(side_effect=pause_job_during_fetch)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            pages = list(await session.scalars(select(CrawlPage).where(CrawlPage.job_id == job_id)))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
+        self.assertEqual(len(pages), 0)
+
     async def test_direct_failure_uses_browser_fallback_without_terminal_failure(self) -> None:
         _, task_id = await self._seed_page_task()
         direct = PageSnapshot(url="https://example.edu/faculty", text="", html="", links=[], fetch_method="http", status="failed", error_message="403")

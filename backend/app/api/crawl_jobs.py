@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,9 +18,11 @@ from app.models import (
     CrawlJobStatus,
     CrawlPage,
     CrawlPageChunk,
+    CrawlPageChunkStatus,
     CrawlPageTask,
     CrawlPageTaskStatus,
     CrawlCandidateEnrichmentTask,
+    CrawlCandidateEnrichmentTaskStatus,
     CrawlWorkerTokenUsage,
     LLMProfile,
     Professor,
@@ -533,6 +535,40 @@ async def resume_crawl_job_review(
     return job
 
 
+async def _release_processing_v2_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
+    clear_values = {
+        "status": "pending",
+        "last_error": reason,
+        "worker_id": None,
+        "claimed_at": None,
+        "lease_expires_at": None,
+    }
+    await session.execute(
+        update(CrawlPageTask)
+        .where(
+            CrawlPageTask.job_id == job_id,
+            CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
+        )
+        .values(**clear_values),
+    )
+    await session.execute(
+        update(CrawlPageChunk)
+        .where(
+            CrawlPageChunk.job_id == job_id,
+            CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
+        )
+        .values(**clear_values),
+    )
+    await session.execute(
+        update(CrawlCandidateEnrichmentTask)
+        .where(
+            CrawlCandidateEnrichmentTask.job_id == job_id,
+            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+        )
+        .values(**clear_values),
+    )
+
+
 @router.post("/{job_id}/cancel", response_model=CrawlJobRead)
 async def cancel_crawl_job(
     job_id: int,
@@ -549,6 +585,7 @@ async def cancel_crawl_job(
     now = datetime.now(UTC)
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
+    await _release_processing_v2_work(session, job.id, reason="任务已取消，释放处理中工作项")
     await mark_crawl_job_run_finished(
         session,
         job,
@@ -582,6 +619,7 @@ async def pause_crawl_job(
     now = datetime.now(UTC)
     job.status = CrawlJobStatus.PAUSED.value
     job.updated_at = now
+    await _release_processing_v2_work(session, job.id, reason="任务已暂停，释放处理中工作项")
     await mark_crawl_job_run_paused(session, job, now=now)
     await record_operation_log(
         session,

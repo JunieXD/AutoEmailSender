@@ -60,6 +60,37 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(enrichment_tasks[0].candidate_id, candidates[0].id)
 
 
+    async def test_chunk_worker_does_not_save_after_job_is_paused(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        async def pause_job_during_llm(*_args, **_kwargs):
+            async with self.session_factory() as session:
+                job = await session.get(CrawlJob, job_id)
+                chunk = await session.get(CrawlPageChunk, chunk_id)
+                assert job is not None and chunk is not None
+                job.status = CrawlJobStatus.PAUSED.value
+                chunk.status = CrawlPageChunkStatus.PENDING.value
+                chunk.worker_id = None
+                await session.commit()
+            return ({
+                "candidates": [{"name": "张三", "profile_url": "https://example.edu/zhang.html"}],
+                "discovered_urls": ["https://example.edu/page2.html"],
+                "chunk_status": "completed",
+            }, {"input_tokens": 10, "output_tokens": 5, "cached_tokens": 0})
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=pause_job_during_llm)):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+            token_usage = list(await session.scalars(select(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job_id)))
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.PENDING.value)
+        self.assertEqual(candidates, [])
+        self.assertEqual(token_usage, [])
+
     async def test_chunk_worker_without_llm_profile_marks_retryable(self) -> None:
         _, chunk_id = await self._seed_processing_chunk()
 

@@ -134,6 +134,8 @@ async def run_crawler_v2_chunk_worker_once(
         else:
             payload = chunk_agent_result
             usage = None
+        if not await _chunk_task_can_commit(session_factory, chunk_id=chunk_id, worker_id=worker_id):
+            return 0
         if usage is not None:
             await record_crawler_v2_token_usage(
                 session_factory,
@@ -159,7 +161,7 @@ async def run_crawler_v2_chunk_worker_once(
     except Exception as exc:
         async with session_factory() as session:
             chunk = await session.get(CrawlPageChunk, chunk_id)
-            if chunk is not None:
+            if chunk is not None and chunk.status == CrawlPageChunkStatus.PROCESSING.value and chunk.worker_id == worker_id and not _lease_expired(chunk.lease_expires_at) and await ensure_job_active(session, chunk.job_id):
                 chunk.last_error = str(exc)
                 chunk.status = (
                     CrawlPageChunkStatus.FAILED_TERMINAL.value
@@ -171,6 +173,23 @@ async def run_crawler_v2_chunk_worker_once(
                 chunk.lease_expires_at = None
             await session.commit()
         return 1
+
+
+async def _chunk_task_can_commit(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    chunk_id: int,
+    worker_id: str,
+) -> bool:
+    async with session_factory() as session:
+        chunk = await session.get(CrawlPageChunk, chunk_id)
+        if chunk is None:
+            return False
+        if chunk.status != CrawlPageChunkStatus.PROCESSING.value or chunk.worker_id != worker_id:
+            return False
+        if _lease_expired(chunk.lease_expires_at):
+            return False
+        return await ensure_job_active(session, chunk.job_id)
 
 
 async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob):

@@ -52,6 +52,8 @@ async def run_crawler_v2_enrichment_worker_once(
         else:
             payload = enrichment_result
             usage = None
+        if not await _enrichment_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
+            return 0
         if usage is not None:
             await record_crawler_v2_token_usage(
                 session_factory,
@@ -69,6 +71,8 @@ async def run_crawler_v2_enrichment_worker_once(
             candidate = await session.get(CrawlCandidate, candidate.id)
             if task is None or candidate is None or not _enrichment_task_owned_by_worker(task, worker_id):
                 return 0
+            if not await ensure_job_active(session, task.job_id):
+                return 0
             _apply_enrichment(candidate, payload)
             task.status = CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
             task.worker_id = None
@@ -79,7 +83,7 @@ async def run_crawler_v2_enrichment_worker_once(
     except Exception as exc:
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
-            if task is not None and _enrichment_task_owned_by_worker(task, worker_id):
+            if task is not None and _enrichment_task_owned_by_worker(task, worker_id) and await ensure_job_active(session, task.job_id):
                 task.last_error = str(exc)
                 task.status = (
                     CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
@@ -100,6 +104,19 @@ async def enrich_candidate_once(
 ) -> CandidateEnrichmentPayload:
     payload, _ = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
     return payload
+
+async def _enrichment_task_can_commit(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    worker_id: str,
+) -> bool:
+    async with session_factory() as session:
+        task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        if task is None or not _enrichment_task_owned_by_worker(task, worker_id):
+            return False
+        return await ensure_job_active(session, task.job_id)
+
 
 def _enrichment_task_owned_by_worker(task: CrawlCandidateEnrichmentTask, worker_id: str) -> bool:
     if task.status != CrawlCandidateEnrichmentTaskStatus.PROCESSING.value or task.worker_id != worker_id:
