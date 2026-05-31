@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
+
+from app.core.time import as_utc_aware, as_utc_naive, utc_now
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,7 +49,7 @@ async def list_token_usage_records(
     if (
         start_at is not None
         and end_at is not None
-        and _to_utc_naive(start_at) > _to_utc_naive(end_at)
+        and as_utc_naive(start_at) > as_utc_naive(end_at)
     ):
         raise ValueError("开始时间不能晚于结束时间")
 
@@ -214,16 +216,16 @@ def _filter_records(
     if resolved_model_name is not None:
         filtered = [item for item in filtered if item.model_name == resolved_model_name]
     if start_at is not None:
-        comparable_start = _to_utc_naive(start_at)
+        comparable_start = as_utc_naive(start_at)
         filtered = [
             item
             for item in filtered
-            if _to_utc_naive(item.created_at) >= comparable_start
+            if as_utc_naive(item.created_at) >= comparable_start
         ]
     if end_at is not None:
-        comparable_end = _to_utc_naive(end_at)
+        comparable_end = as_utc_naive(end_at)
         filtered = [
-            item for item in filtered if _to_utc_naive(item.created_at) <= comparable_end
+            item for item in filtered if as_utc_naive(item.created_at) <= comparable_end
         ]
     return filtered
 
@@ -521,7 +523,7 @@ def _resolve_chart_range(
     end_at: datetime | None,
     now: datetime | None,
 ) -> tuple[datetime, datetime, TokenUsageChartGranularity]:
-    resolved_now = _as_utc_aware(now or datetime.now(UTC))
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     if preset == "last_6_hours":
         range_end = _floor_hour(resolved_now)
         return range_end - timedelta(hours=5), range_end, "hour"
@@ -537,11 +539,11 @@ def _resolve_chart_range(
 
     if start_at is None or end_at is None:
         raise ValueError("自定义趋势图需要开始时间和结束时间")
-    if _as_utc_aware(start_at) > _as_utc_aware(end_at):
+    if as_utc_aware(start_at) > as_utc_aware(end_at):
         raise ValueError("开始时间不能晚于结束时间")
 
-    range_start = _as_utc_aware(start_at)
-    range_end = _as_utc_aware(end_at)
+    range_start = as_utc_aware(start_at)
+    range_end = as_utc_aware(end_at)
     if range_end - range_start <= timedelta(hours=48):
         return _floor_hour(range_start), _floor_hour(range_end), "hour"
     return _floor_day(range_start), _floor_day(range_end), "day"
@@ -560,7 +562,7 @@ def _resolve_chart_filter_range(
     if preset == "custom":
         if start_at is None or end_at is None:
             raise ValueError("自定义趋势图需要开始时间和结束时间")
-        return _as_utc_aware(start_at), _as_utc_aware(end_at)
+        return as_utc_aware(start_at), as_utc_aware(end_at)
     return range_start, range_end + _bucket_duration(granularity) - timedelta(microseconds=1)
 
 def _aggregate_chart_buckets(
@@ -606,7 +608,7 @@ def _bucket_start(
     value: datetime,
     granularity: TokenUsageChartGranularity,
 ) -> datetime:
-    utc_value = _as_utc_aware(value)
+    utc_value = as_utc_aware(value)
     if granularity == "hour":
         return _floor_hour(utc_value)
     return _floor_day(utc_value)
@@ -637,23 +639,12 @@ def _format_bucket_label(
 
 
 def _floor_hour(value: datetime) -> datetime:
-    return _as_utc_aware(value).replace(minute=0, second=0, microsecond=0)
+    return as_utc_aware(value).replace(minute=0, second=0, microsecond=0)
 
 
 def _floor_day(value: datetime) -> datetime:
-    return _as_utc_aware(value).replace(hour=0, minute=0, second=0, microsecond=0)
+    return as_utc_aware(value).replace(hour=0, minute=0, second=0, microsecond=0)
 
-
-def _as_utc_aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
-def _to_utc_naive(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _build_summary(records: list[TokenUsageRecordRead]) -> TokenUsageSummaryRead:

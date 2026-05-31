@@ -11,9 +11,27 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import AppSetting, Base
-from app.services.runtime_manager import RuntimeManager
+from datetime import UTC, datetime, timedelta, timezone
+
+from app.services.task_runtime import _has_future_scheduled_at
+from app.services.runtime_manager import RuntimeManager, _run_match_analysis_worker_once
 
 
+
+class TaskRuntimeTimeHandlingTests(unittest.TestCase):
+    def test_has_future_scheduled_at_treats_naive_sqlite_timestamp_as_utc(self) -> None:
+        shanghai = timezone(timedelta(hours=8))
+        scheduled_at = datetime(2026, 5, 31, 1, 0, 0)
+        now_utc = datetime(2026, 5, 31, 0, 30, 0, tzinfo=UTC)
+
+        self.assertTrue(
+            _has_future_scheduled_at(
+                scheduled_at,
+                now_utc,
+                scheduled_dates=["2026-05-31"],
+                local_timezone=shanghai,
+            )
+        )
 class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_creates_multiple_crawler_workers_from_settings(self) -> None:
         session = object()
@@ -229,8 +247,6 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             "app.services.runtime_manager.run_queued_match_analysis_jobs_once",
             new=AsyncMock(return_value=1),
         ) as mocked_run:
-            from app.services.runtime_manager import _run_match_analysis_worker_once
-
             processed = await _run_match_analysis_worker_once(session_factory)
 
         self.assertEqual(processed, 1)

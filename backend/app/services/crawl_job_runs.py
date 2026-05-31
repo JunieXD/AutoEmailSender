@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import as_utc_aware, utc_now
 from app.models import CrawlJob, CrawlJobRun, CrawlJobStatus
 
 
@@ -34,7 +35,7 @@ async def create_initial_crawl_job_run(
     *,
     now: datetime | None = None,
 ) -> CrawlJobRun:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = CrawlJobRun(
         job_id=job.id,
         attempt_number=1,
@@ -54,7 +55,7 @@ async def create_retry_crawl_job_run(
     *,
     now: datetime | None = None,
 ) -> CrawlJobRun:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     max_attempt = await session.scalar(
         select(func.max(CrawlJobRun.attempt_number)).where(CrawlJobRun.job_id == job.id)
     )
@@ -90,7 +91,7 @@ async def mark_crawl_job_run_running(
     *,
     now: datetime | None = None,
 ) -> CrawlJobRun:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = await get_or_create_current_crawl_job_run(session, job, now=resolved_now)
     run.status = CrawlJobStatus.RUNNING.value
     if run.started_at is None:
@@ -106,7 +107,7 @@ async def mark_crawl_job_run_paused(
     *,
     now: datetime | None = None,
 ) -> CrawlJobRun:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = await get_or_create_current_crawl_job_run(session, job, now=resolved_now)
     _settle_active_segment(run, now=resolved_now)
     run.status = CrawlJobStatus.PAUSED.value
@@ -121,7 +122,7 @@ async def mark_crawl_job_run_queued(
     *,
     now: datetime | None = None,
 ) -> CrawlJobRun:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = await get_or_create_current_crawl_job_run(session, job, now=resolved_now)
     run.status = CrawlJobStatus.QUEUED.value
     run.updated_at = resolved_now
@@ -136,7 +137,7 @@ async def mark_crawl_job_run_finished(
     error_message: str | None = None,
     now: datetime | None = None,
 ) -> CrawlJobRun:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = await get_or_create_current_crawl_job_run(session, job, now=resolved_now)
     _settle_active_segment(run, now=resolved_now)
     run.status = status
@@ -165,7 +166,7 @@ async def accumulate_crawl_job_run_tokens(
     cached_tokens = usage.get("cached_tokens")
     if cached_tokens is not None:
         run.cached_tokens = (run.cached_tokens or 0) + cached_tokens
-    run.updated_at = datetime.now(UTC)
+    run.updated_at = utc_now()
     return True
 
 
@@ -237,10 +238,11 @@ def _extract_cached_tokens(haystack: str) -> int | None:
 
 
 def _settle_active_segment(run: CrawlJobRun, *, now: datetime) -> None:
-    active_started_at = _ensure_datetime(run.active_started_at)
+    active_started_at = as_utc_aware(run.active_started_at) if isinstance(run.active_started_at, datetime) else None
     if active_started_at is None:
         return
-    run.active_seconds += max(0, int((now - active_started_at).total_seconds()))
+    resolved_now = as_utc_aware(now)
+    run.active_seconds += max(0, int((resolved_now - active_started_at).total_seconds()))
     run.active_started_at = None
 
 
@@ -257,10 +259,3 @@ def _stringify_trace_payload(event: dict[str, object]) -> str:
         parts.append(str(event))
     return "\n".join(parts)
 
-
-def _ensure_datetime(value: object) -> datetime | None:
-    if not isinstance(value, datetime):
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.core.time import as_utc_aware, local_now as get_local_now, utc_now
 from app.models import (
     BatchTask,
     BatchTaskStatus,
@@ -258,8 +259,8 @@ def _resolve_dispatch_clocks(
     now: datetime | None,
     local_timezone: tzinfo | None,
 ) -> tuple[datetime, datetime]:
-    now_utc = now.astimezone(UTC) if now is not None else datetime.now(UTC)
-    resolved_timezone = local_timezone or datetime.now().astimezone().tzinfo or UTC
+    now_utc = as_utc_aware(now) if now is not None else utc_now()
+    resolved_timezone = local_timezone or get_local_now().tzinfo or UTC
     return now_utc, now_utc.astimezone(resolved_timezone)
 
 
@@ -365,10 +366,7 @@ def _has_future_scheduled_at(
 ) -> bool:
     if scheduled_at is None:
         return False
-    if scheduled_at.tzinfo is None:
-        scheduled_at_utc = scheduled_at.replace(tzinfo=UTC)
-    else:
-        scheduled_at_utc = scheduled_at.astimezone(UTC)
+    scheduled_at_utc = as_utc_aware(scheduled_at)
     timezone = local_timezone or UTC
     scheduled_date = scheduled_at_utc.astimezone(timezone).date().isoformat()
     if scheduled_date not in set(normalize_scheduled_dates(scheduled_dates)):
@@ -430,7 +428,7 @@ async def recover_stale_sending_tasks(
     stale_after: timedelta = STALE_SENDING_TASK_AFTER,
     now: datetime | None = None,
 ) -> int:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     cutoff = resolved_now - stale_after
     async with session_factory() as session:
         tasks = list(
@@ -464,7 +462,7 @@ async def recover_interrupted_match_analysis_runs(
     *,
     now: datetime | None = None,
 ) -> int:
-    resolved_now = now or datetime.now(UTC)
+    resolved_now = as_utc_aware(now) if now is not None else utc_now()
     async with session_factory() as session:
         runs = list(
             await session.scalars(
@@ -518,7 +516,7 @@ async def generate_task_draft(
                     status=EmailTaskStatus.GENERATING_DRAFT.value,
                     draft_generation_previous_status=task.status,
                     last_error=None,
-                    updated_at=datetime.now(UTC),
+                    updated_at=utc_now(),
                 ),
             )
             if claim_result.rowcount != 1:
@@ -660,7 +658,7 @@ async def generate_task_draft(
             else:
                 task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
                 task.draft_generation_previous_status = None
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             if automatic_batch:
                 return task.professor_id, task.identity_id, task.llm_profile_id
@@ -676,7 +674,7 @@ async def generate_task_draft(
             else:
                 task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
                 task.draft_generation_previous_status = None
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             if automatic_batch:
                 return task.professor_id, task.identity_id, task.llm_profile_id
@@ -694,7 +692,7 @@ async def generate_task_draft(
         task.generated_content_html = body_html
         task.status = EmailTaskStatus.REVIEW_REQUIRED.value
         task.draft_generation_previous_status = None
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
         task.last_error = None
 
         session.add(
@@ -779,7 +777,7 @@ async def calculate_task_match(
                 error_kind="canceled",
                 error_message="匹配分析任务已取消",
             )
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             raise
         except llm_runtime.LLMRuntimeError as exc:
@@ -792,7 +790,7 @@ async def calculate_task_match(
                 status_code=exc.status_code,
             )
             task.last_error = str(exc)
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             return _match_action_result(task, run_id=run.id)
         except Exception as exc:
@@ -802,7 +800,7 @@ async def calculate_task_match(
                 error_message=str(exc),
             )
             task.last_error = str(exc)
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             raise
 
@@ -812,7 +810,7 @@ async def calculate_task_match(
                 error_kind="canceled",
                 error_message="匹配分析任务已取消",
             )
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             raise MatchCalculationCanceledError("匹配分析任务已取消")
 
@@ -831,7 +829,7 @@ async def calculate_task_match(
         run.stable_prefix_hash = generation.stable_prefix_hash
         run.error_kind = None
         run.error_message = None
-        run.finished_at = datetime.now(UTC)
+        run.finished_at = utc_now()
         task.match_score = result.match_score
         task.match_reason = result.match_reason
         task.fit_points = result.fit_points
@@ -843,7 +841,7 @@ async def calculate_task_match(
             EmailTaskStatus.DRAFT_FAILED.value,
         }:
             task.status = EmailTaskStatus.MATCHED.value
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
         task.last_error = None
         await _record_email_task_log(
             session,
@@ -966,7 +964,7 @@ async def _create_running_match_analysis_run(
         llm_profile_id=task.llm_profile_id,
         status="running",
         success=False,
-        started_at=datetime.now(UTC),
+        started_at=utc_now(),
     )
     session.add(run)
     try:
@@ -993,7 +991,7 @@ def _mark_match_analysis_run_failed(
     run.duration_ms = duration_ms
     run.endpoint_kind = endpoint_kind
     run.status_code = status_code
-    run.finished_at = datetime.now(UTC)
+    run.finished_at = utc_now()
 
 
 async def calculate_task_match_once(
@@ -1027,7 +1025,7 @@ async def update_task_primary_material(
         task.approved_at = None
         task.scheduled_at = None
         task.last_error = None
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
         await _record_email_task_log(
             session,
             task,
@@ -1082,7 +1080,7 @@ async def update_task_outreach_config(
         task.approved_at = None
         task.scheduled_at = None
         task.last_error = None
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
         await _record_email_task_log(
             session,
             task,
@@ -1166,7 +1164,7 @@ async def approve_and_schedule_task(
         await _snapshot_approval(session, task, payload)
         task.status = EmailTaskStatus.SCHEDULED.value
         task.scheduled_at = payload.scheduled_at.astimezone(UTC)
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
         await _record_email_task_log(
             session,
             task,
@@ -1191,7 +1189,7 @@ async def cancel_scheduled_task(
         _ensure_task_allows_legacy_manual_actions(task)
         task.status = EmailTaskStatus.REVIEW_REQUIRED.value
         task.scheduled_at = None
-        task.updated_at = datetime.now(UTC)
+        task.updated_at = utc_now()
         await _record_email_task_log(session, task, "email_task.schedule_canceled")
         await session.commit()
         return task.professor_id, task.identity_id, task.llm_profile_id
@@ -1294,7 +1292,7 @@ async def dispatch_email_task(
         if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
             return task_identity
 
-        claimed_at = datetime.now(UTC)
+        claimed_at = utc_now()
         if _is_task_scheduled_for_future(task, claimed_at):
             return task_identity
         claim_result = await session.execute(
@@ -1332,7 +1330,7 @@ async def dispatch_email_task(
             else:
                 task.status = EmailTaskStatus.CANCELED.value
                 task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             return task_identity
 
@@ -1342,7 +1340,7 @@ async def dispatch_email_task(
         context = build_send_template_context(
             task.identity,
             task.professor,
-            local_timezone=datetime.now().astimezone().tzinfo,
+            local_timezone=get_local_now().tzinfo,
         )
         subject = render_template_with_context(subject_template, context).strip()
         body_text = render_template_with_context(body_text_template, context).strip()
@@ -1354,7 +1352,7 @@ async def dispatch_email_task(
         if not subject or not body_text:
             task.status = EmailTaskStatus.SEND_FAILED.value
             task.last_error = "任务缺少可发送的主题或正文"
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             await session.commit()
             return task.professor_id, task.identity_id, task.llm_profile_id
 
@@ -1377,10 +1375,10 @@ async def dispatch_email_task(
             provider_payload = result.provider_payload
 
             task.status = EmailTaskStatus.SENT.value
-            task.sent_at = datetime.now(UTC)
+            task.sent_at = utc_now()
             task.last_rfc_message_id = rfc_message_id
             task.last_error = None
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             session.add(
                 EmailLog(
                     email_task_id=task.id,
@@ -1408,7 +1406,7 @@ async def dispatch_email_task(
         except mail_runtime.MailRuntimeError as exc:
             task.status = EmailTaskStatus.SEND_FAILED.value
             task.last_error = str(exc)
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             session.add(
                 EmailLog(
                     email_task_id=task.id,
@@ -1518,7 +1516,7 @@ async def sync_identity_incremental_once(
     async with session_factory() as session:
         state = await _get_or_create_mailbox_state(session, identity_id)
         state.last_seen_uid = max_seen_uid
-        state.last_sync_at = datetime.now(UTC)
+        state.last_sync_at = utc_now()
         state.last_error = None
         await session.commit()
     return detected
@@ -1616,7 +1614,7 @@ async def _process_incoming_reply_messages(
 
             task.is_replied = True
             task.status = EmailTaskStatus.REPLY_DETECTED.value
-            task.updated_at = datetime.now(UTC)
+            task.updated_at = utc_now()
             try:
                 session.add(
                     EmailLog(
@@ -1716,7 +1714,7 @@ def _get_reply_created_at(message: mail_runtime.ReceivedEmail) -> datetime:
 def _datetimes_match(left: datetime, right: datetime) -> bool:
     def normalize(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
+            return as_utc_aware(value)
         return value.astimezone(UTC)
 
     return normalize(left) == normalize(right)
@@ -1738,8 +1736,8 @@ async def _snapshot_approval(
     task.approved_body_html = rendered.html
     if payload.selected_material_ids is not None:
         task.selected_material_ids = payload.selected_material_ids
-    task.approved_at = datetime.now(UTC)
-    task.updated_at = datetime.now(UTC)
+    task.approved_at = utc_now()
+    task.updated_at = utc_now()
     task.last_error = None
 
 
@@ -1942,7 +1940,7 @@ def _restore_or_cancel_interrupted_draft_generation(
         task.status = EmailTaskStatus.CANCELED.value
         task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
     task.draft_generation_previous_status = None
-    task.updated_at = datetime.now(UTC)
+    task.updated_at = utc_now()
 
 
 def _restore_or_cancel_interrupted_send(task: EmailTask) -> None:
@@ -1970,7 +1968,7 @@ def _ensure_batch_task_has_future_window(task: EmailTask) -> None:
     if batch_task is None or batch_task.schedule_type != "scheduled":
         return
 
-    local_now = datetime.now().astimezone()
+    local_now = get_local_now()
     if batch_task.status == BatchTaskStatus.EXPIRED.value or not has_future_batch_window(
         local_now,
         scheduled_dates=batch_task.scheduled_dates,
@@ -1986,7 +1984,7 @@ def _is_scheduled_batch_task(task: EmailTask) -> bool:
 def _is_task_scheduled_for_future(task: EmailTask, now: datetime) -> bool:
     if task.scheduled_at is None:
         return False
-    scheduled_at = task.scheduled_at.replace(tzinfo=UTC) if task.scheduled_at.tzinfo is None else task.scheduled_at
+    scheduled_at = as_utc_aware(task.scheduled_at)
     return scheduled_at.astimezone(UTC) > now.astimezone(UTC)
 
 
@@ -2090,7 +2088,7 @@ def _create_manual_child_task(
     reuse_existing_draft: bool,
     minimum_status: str | None = None,
 ) -> EmailTask:
-    now = datetime.now(UTC)
+    now = utc_now()
     return EmailTask(
         source=EmailTaskSource.MANUAL.value,
         batch_task_id=None,

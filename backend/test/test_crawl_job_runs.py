@@ -1,10 +1,27 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 
-from app.services.crawl_job_runs import extract_token_usage, extract_token_usage_from_llm_response
+from app.models import CrawlJobRun
+from app.services.crawl_job_runs import _settle_active_segment, extract_token_usage, extract_token_usage_from_llm_response
 
 
+
+class CrawlJobRunDurationTests(unittest.TestCase):
+    def test_settle_active_segment_treats_naive_sqlite_timestamp_as_utc(self) -> None:
+        run = CrawlJobRun(
+            job_id=1,
+            attempt_number=1,
+            status="running",
+            active_started_at=datetime(2026, 5, 31, 6, 0, 0),
+            active_seconds=30,
+        )
+
+        _settle_active_segment(run, now=datetime(2026, 5, 31, 6, 10, 0, tzinfo=UTC))
+
+        self.assertEqual(run.active_seconds, 630)
+        self.assertIsNone(run.active_started_at)
 class _FakeLLMResponse:
     def __init__(self) -> None:
         self.response_metadata = {

@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.core.time import utc_now
 from app.models import (
     EmailTask,
     EmailTaskSource,
@@ -73,7 +74,7 @@ async def create_match_analysis_job(
         if not professors:
             raise ValueError("没有可分析的导师")
 
-        now = datetime.now(UTC)
+        now = utc_now()
         job = MatchAnalysisJob(
             name=name or f"批量匹配分析 {now:%Y-%m-%d %H:%M}",
             identity_id=identity_id,
@@ -225,7 +226,7 @@ async def request_match_analysis_job_cancel(
         if job is None:
             raise ValueError("匹配分析任务不存在")
 
-        now = datetime.now(UTC)
+        now = utc_now()
         if job.status == MatchAnalysisJobStatus.QUEUED.value:
             job.status = MatchAnalysisJobStatus.CANCELED.value
             job.cancel_requested_at = now
@@ -357,7 +358,7 @@ async def _claim_next_match_analysis_job(
         if job_id is None:
             return None
 
-        now = datetime.now(UTC)
+        now = utc_now()
         claim_result = await session.execute(
             update(MatchAnalysisJob)
             .where(
@@ -424,7 +425,7 @@ async def _recover_interrupted_match_analysis_job(
                 .order_by(MatchAnalysisJobItem.id.asc()),
             )
         )
-        now = datetime.now(UTC)
+        now = utc_now()
         if not unfinished_item_ids:
             await session.rollback()
             await _refresh_match_analysis_job_summary(session_factory, job_id)
@@ -512,7 +513,7 @@ async def _run_match_analysis_job_item(
     job_id: int,
     item_id: int,
 ) -> None:
-    now = datetime.now(UTC)
+    now = utc_now()
     async with session_factory() as session:
         job = await session.get(MatchAnalysisJob, job_id)
         item = await session.get(
@@ -645,7 +646,7 @@ async def _mark_item_succeeded(
         item = await session.get(MatchAnalysisJobItem, item_id)
         if item is None:
             return
-        now = datetime.now(UTC)
+        now = utc_now()
         item.status = MatchAnalysisJobItemStatus.SUCCEEDED.value
         item.match_analysis_run_id = run_id
         item.prompt_tokens = prompt_tokens
@@ -666,7 +667,7 @@ async def _mark_item_canceled(
         item = await session.get(MatchAnalysisJobItem, item_id)
         if item is None:
             return
-        now = datetime.now(UTC)
+        now = utc_now()
         item.status = MatchAnalysisJobItemStatus.CANCELED.value
         item.error_message = None
         item.skip_reason = None
@@ -685,7 +686,7 @@ async def _mark_item_skipped(
         item = await session.get(MatchAnalysisJobItem, item_id)
         if item is None:
             return
-        now = datetime.now(UTC)
+        now = utc_now()
         item.status = MatchAnalysisJobItemStatus.SKIPPED.value
         item.skip_reason = skip_reason
         item.error_message = None
@@ -704,7 +705,7 @@ async def _mark_item_failed(
         item = await session.get(MatchAnalysisJobItem, item_id)
         if item is None:
             return
-        now = datetime.now(UTC)
+        now = utc_now()
         item.status = MatchAnalysisJobItemStatus.FAILED.value
         item.error_message = error_message
         item.finished_at = now
@@ -751,7 +752,7 @@ async def _refresh_match_analysis_job_summary(
         job.total_prompt_tokens = sum(item.prompt_tokens for item in items)
         job.total_completion_tokens = sum(item.completion_tokens for item in items)
         job.total_tokens = sum(item.total_tokens for item in items)
-        job.updated_at = datetime.now(UTC)
+        job.updated_at = utc_now()
         job.finished_at = job.updated_at
 
         if canceled_count > 0:
