@@ -331,6 +331,8 @@ describe("DashboardPage", () => {
       screen.getByTestId("match-distribution-plot"),
     );
     expect(screen.getByTestId("match-distribution-plot")).toHaveClass("h-40");
+    expect(screen.getByTestId("match-distribution-plot")).not.toHaveClass("border-b");
+    expect(within(screen.getByTestId("match-distribution-plot")).getByText("0 位").parentElement).toHaveClass("z-30");
     expect(screen.getByTestId("match-distribution-chart-window")).not.toHaveClass("overflow-x-auto");
     expect(screen.getByTestId("match-distribution-chart-body")).toHaveClass("w-full");
     expect(screen.getByTestId("match-distribution-chart-body")).not.toHaveClass("min-w-[520px]");
@@ -503,6 +505,12 @@ describe("DashboardPage", () => {
       toJSON: () => ({}),
     });
     fireEvent.mouseMove(interactionLayer, { clientX: 660, clientY: 180 });
+
+    const hoverHighlight = screen.getByTestId("match-distribution-hover-highlight");
+    expect(hoverHighlight).toHaveClass("z-0");
+    expect(hoverHighlight).toHaveClass("inset-x-0");
+    expect(within(screen.getByTestId("match-distribution-plot")).getAllByText("1 位")[0].parentElement).toHaveClass("z-10");
+    expect(within(screen.getByTestId("match-distribution-plot")).getByText("0 位").parentElement).toHaveClass("z-30");
 
     expect(screen.getByRole("tooltip")).toHaveTextContent("90-100");
     expect(screen.getByRole("tooltip")).toHaveTextContent("导师数");

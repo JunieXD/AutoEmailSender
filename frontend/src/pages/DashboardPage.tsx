@@ -246,6 +246,7 @@ const MatchDistributionChart = ({
   const total = data.reduce((sum, item) => sum + item.count, 0);
   const activeTooltipItem = tooltip ? data.find((item) => item.bucket === tooltip.bucket) ?? null : null;
   const activeTooltipShare = activeTooltipItem && total > 0 ? activeTooltipItem.count / total : 0;
+  const activeBucketIndex = activeBucket === null ? -1 : data.findIndex((item) => item.bucket === activeBucket);
 
   const handlePlotMouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {
     const itemIndex = resolveMatchDistributionBucketIndex(event.clientX, event.currentTarget.getBoundingClientRect(), data.length);
@@ -273,13 +274,29 @@ const MatchDistributionChart = ({
         className="min-w-0 max-w-full overflow-hidden rounded-xl border border-stone-200 bg-white px-3 py-5 sm:px-4"
       >
         <div data-testid="match-distribution-chart-body" className="w-full pl-14 pr-1 sm:pl-16 sm:pr-3">
-          <div data-testid="match-distribution-plot" className="relative h-40 border-b border-stone-500">
+          <div data-testid="match-distribution-plot" className="relative h-40">
+            {activeBucketIndex >= 0 ? (
+              <div
+                data-testid="match-distribution-hover-highlight"
+                className="pointer-events-none absolute inset-x-0 inset-y-0 z-0 flex justify-between gap-2 sm:gap-3"
+              >
+                {data.map((item, index) => (
+                  <div
+                    key={item.bucket}
+                    className={clsx(
+                      "min-w-0 flex-1",
+                      index === activeBucketIndex && "bg-teal-50/70",
+                    )}
+                  />
+                ))}
+              </div>
+            ) : null}
             {ticks.map((tick) => (
               <div
                 key={tick}
                 className={clsx(
                   'absolute left-0 right-0',
-                  tick === 0 ? 'border-t border-stone-500' : 'border-t border-dashed border-stone-200',
+                  tick === 0 ? 'z-30 border-t border-stone-500' : 'z-10 border-t border-dashed border-stone-200',
                 )}
                 style={{ bottom: `${(tick / axisMax) * 100}%` }}
               >
@@ -290,7 +307,7 @@ const MatchDistributionChart = ({
             ))}
             <div
               data-testid="match-distribution-interaction-layer"
-              className="relative z-10 flex h-full items-end justify-between gap-2 sm:gap-3"
+              className="relative z-20 flex h-full items-end justify-between gap-2 sm:gap-3"
               onMouseMove={handlePlotMouseMove}
               onMouseLeave={() => {
                 setActiveBucket(null);
@@ -300,11 +317,9 @@ const MatchDistributionChart = ({
               {data.map((item) => {
                 const share = total > 0 ? item.count / total : 0;
                 const height = item.count > 0 ? Math.max((item.count / axisMax) * 100, 1.5) : 0;
-                const active = activeBucket === item.bucket;
 
                 return (
                   <div key={item.bucket} className="relative flex h-full min-w-0 flex-1 flex-col items-center justify-end">
-                    {active ? <div className="pointer-events-none absolute inset-y-0 -left-1.5 -right-1.5 bg-teal-50/70 sm:-left-2 sm:-right-2" /> : null}
                     <button
                       type="button"
                       aria-label={`${item.label} ${formatNumber(item.count)} 位，占比 ${formatPercent(share)}`}
