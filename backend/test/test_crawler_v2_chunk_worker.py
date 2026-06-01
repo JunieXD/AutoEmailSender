@@ -18,6 +18,22 @@ from app.services.crawler_tools import ProfessorCandidatePayload
 
 
 class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
+    def test_chunk_prompt_includes_v1_quality_constraints(self) -> None:
+        from app.services.crawler_v2_chunk_worker import build_v2_chunk_prompt
+
+        prompt = build_v2_chunk_prompt(
+            university="示例大学",
+            school="计算机学院",
+            source_url="https://example.edu/faculty",
+            chunk_content="[张三](https://example.edu/zhang.html) 教授",
+        )
+
+        self.assertIn("最多 10 个候选", prompt)
+        self.assertIn("缺少 email 且缺少 profile_url", prompt)
+        self.assertIn("Markdown", prompt)
+        self.assertIn("导师个人主页", prompt)
+        self.assertIn("不能放入 discovered_urls", prompt)
+        self.assertIn("只输出一个 JSON 对象", prompt)
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)

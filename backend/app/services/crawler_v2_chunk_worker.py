@@ -66,9 +66,16 @@ async def invoke_v2_chunk_agent(
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
     return (
         "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
-        "请从当前 chunk 中提取候选导师，并发现明确出现的新 URL。\n"
-        "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。\n"
+        "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。不要输出解释文字。\n"
         "chunk_status 只能是 completed、no_candidates 或 split_required。\n"
+        "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
+        "candidates 最多 10 个候选；如果当前 chunk 明确超过 10 个候选，chunk_status 必须是 split_required，candidates 必须为空。\n"
+        "缺少 email 且缺少 profile_url 的候选不可提交；无法确认有效候选时使用 no_candidates。\n"
+        "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
+        "导师个人主页链接属于候选 profile_url，不能放入 discovered_urls。\n"
+        "discovered_urls 只放候选列表页、分页页、教师目录页等继续抓取入口。\n"
+        "每个候选字段使用英文键：name、email、title、university、school、department、research_direction、recent_papers、profile_url、source_url、confidence、field_confidence、evidence。\n"
+        "confidence 和 field_confidence 必须是 0 到 1 的数字；evidence 只写简短摘要，不复制大段原文。\n"
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"来源 URL：{source_url}\n"
