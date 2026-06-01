@@ -215,6 +215,16 @@ class CandidateBatchFailure(TypedDict):
     reason: str
 
 
+class SharedCandidateSaveResult(TypedDict):
+    attempted_count: int
+    saved_count: int
+    merged_count: int
+    skipped_duplicate_count: int
+    rejected_count: int
+    rejected_items: list[CandidateBatchFailure]
+    saved: list[CrawlCandidate]
+
+
 class CandidateBatchSaveResult(TypedDict):
     batch_status: Literal["saved", "rejected", "duplicate_loop"]
     attempted_count: int
@@ -1649,11 +1659,12 @@ async def save_candidates(
     return persistence.saved
 
 
-async def save_candidate_batch(
+
+
+def _normalize_candidate_payloads_for_save(
     ctx: CrawlToolContext,
-    candidates: Sequence[ProfessorCandidatePayload],
-) -> CandidateBatchSaveResult:
-    await _ensure_crawl_job_can_continue_for_context(ctx)
+    candidates: Sequence[ProfessorCandidatePayload | dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[CandidateBatchFailure]]:
     payloads: list[dict[str, Any]] = []
     failed_items: list[CandidateBatchFailure] = []
     for index, candidate in enumerate(candidates):
@@ -1673,6 +1684,63 @@ async def save_candidate_batch(
                     "reason": str(exc),
                 }
             )
+    return payloads, failed_items
+
+
+def _filter_accepted_candidate_payloads(
+    payloads: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[CandidateBatchFailure]]:
+    accepted_payloads: list[dict[str, Any]] = []
+    rejected_items: list[CandidateBatchFailure] = []
+    for index, payload in enumerate(payloads):
+        if _candidate_missing_contact_path(payload):
+            rejected_items.append(
+                {
+                    "index": index,
+                    "name": _clean_optional(payload.get("name")),
+                    "reason": "缺少邮箱和详情页链接，无法用于联系或后续补全",
+                }
+            )
+            continue
+        accepted_payloads.append(payload)
+    return accepted_payloads, rejected_items
+
+
+async def save_candidate_payloads_shared(
+    ctx: CrawlToolContext,
+    candidates: Sequence[ProfessorCandidatePayload | dict[str, Any]],
+) -> SharedCandidateSaveResult:
+    payloads, failed_items = _normalize_candidate_payloads_for_save(ctx, candidates)
+    if failed_items:
+        return {
+            "attempted_count": len(candidates),
+            "saved_count": 0,
+            "merged_count": 0,
+            "skipped_duplicate_count": 0,
+            "rejected_count": 0,
+            "rejected_items": failed_items,
+            "saved": [],
+        }
+    accepted_payloads, rejected_items = _filter_accepted_candidate_payloads(payloads)
+    persistence = await _save_normalized_candidate_payloads(ctx, accepted_payloads)
+    return {
+        "attempted_count": len(candidates),
+        "saved_count": len(persistence.saved),
+        "merged_count": persistence.merged_count,
+        "skipped_duplicate_count": persistence.skipped_duplicate_count,
+        "rejected_count": len(rejected_items),
+        "rejected_items": rejected_items,
+        "saved": persistence.saved,
+    }
+
+
+async def save_candidate_batch(
+    ctx: CrawlToolContext,
+    candidates: Sequence[ProfessorCandidatePayload],
+) -> CandidateBatchSaveResult:
+    await _ensure_crawl_job_can_continue_for_context(ctx)
+    payloads, failed_items = _normalize_candidate_payloads_for_save(ctx, candidates)
+
 
     if failed_items:
         await _ensure_crawl_job_can_continue_for_context(ctx)
@@ -1693,19 +1761,8 @@ async def save_candidate_batch(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return result
 
-    accepted_payloads: list[dict[str, Any]] = []
-    rejected_items: list[CandidateBatchFailure] = []
-    for index, payload in enumerate(payloads):
-        if _candidate_missing_contact_path(payload):
-            rejected_items.append(
-                {
-                    "index": index,
-                    "name": _clean_optional(payload.get("name")),
-                    "reason": "缺少邮箱和详情页链接，无法用于联系或后续补全",
-                }
-            )
-            continue
-        accepted_payloads.append(payload)
+    accepted_payloads, rejected_items = _filter_accepted_candidate_payloads(payloads)
+
 
     persistence = await _save_normalized_candidate_payloads(ctx, accepted_payloads)
     record_save_batch_success(ctx)
