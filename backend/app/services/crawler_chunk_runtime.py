@@ -306,7 +306,9 @@ async def split_page_chunk_for_retry(
         chunk.lease_expires_at = None
         await session.commit()
         if child_count <= 0:
-            return {"status": "failed", "child_count": 0, "split_reason": reason}
+            chunk.status = CrawlPageChunkStatus.FAILED_TERMINAL.value
+            await session.commit()
+            return {"status": CrawlPageChunkStatus.FAILED_TERMINAL.value, "child_count": 0, "split_reason": reason}
         return {"status": CrawlPageChunkStatus.SPLIT_REQUIRED.value, "child_count": child_count, "split_reason": reason}
 
 async def _split_chunk_in_session(

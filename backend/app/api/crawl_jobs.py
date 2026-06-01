@@ -476,10 +476,9 @@ async def enrich_crawl_candidates(
                 )
                 await final_session.commit()
 
-    if summary.selected_count == 0:
-        raise HTTPException(status_code=400, detail="未找到可补全的候选导师")
-
     skipped_count = int(getattr(summary, "skipped_count", 0) or 0)
+    if summary.selected_count == 0 and skipped_count == 0:
+        raise HTTPException(status_code=400, detail="未找到可补全的候选导师")
     skipped_message = (
         f"跳过 {skipped_count} 位缺少详情页 URL 的候选。"
         if skipped_count > 0

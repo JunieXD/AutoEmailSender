@@ -48,6 +48,33 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+    async def test_complete_chunk_marks_terminal_when_split_cannot_continue(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "张三"
+            chunk.split_depth = 4
+            await session.commit()
+        candidates = [
+            ProfessorCandidatePayload(name=f"教师{i}", profile_url=f"https://example.edu/t{i}.html", confidence=0.9)
+            for i in range(11)
+        ]
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=candidates,
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["status"], CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_TERMINAL.value)
     async def test_chunk_worker_marks_retryable_when_payload_shape_is_invalid(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
 

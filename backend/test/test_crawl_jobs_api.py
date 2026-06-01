@@ -643,6 +643,34 @@ class CrawlJobsApiTests(unittest.TestCase):
         logs = self._list_operation_logs("crawl_job.llm_profile_refreshed", str(job_id))
         self.assertEqual(logs[-1]["metadata"]["trigger"], "retry")
 
+    def test_enrich_selected_candidates_returns_skip_summary_when_all_lack_profile_url(self) -> None:
+        profile_id = self._create_llm_profile("默认模型", "deepseek")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_status(job_id, "needs_review")
+        self._seed_candidate(job_id, name="王老师", profile_url="")
+        candidate_id = self._latest_candidate_id(job_id)
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        body = response.json()
+        self.assertEqual(body["selected_count"], 0)
+        self.assertEqual(body["skipped_count"], 1)
+        self.assertEqual(body["failed_count"], 0)
+        self.assertIn("跳过 1 位缺少详情页 URL", body["message"])
     def test_enrich_refreshes_job_llm_profile_before_running(self) -> None:
         old_profile_id = self._create_llm_profile("旧模型", "old-model")
         new_profile_id = self._create_llm_profile("新模型", "new-model")
