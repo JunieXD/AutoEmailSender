@@ -257,5 +257,6 @@ class CrawlJobEnrichResult(ApiSchema):
     enriched_count: int
     unchanged_count: int
     failed_count: int
+    skipped_count: int = 0
     message: str
 
