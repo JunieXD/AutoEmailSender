@@ -111,6 +111,16 @@ def _extract_message_text(response: object) -> str:
 
 
 
+
+def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Chunk Worker 返回结构不是 JSON 对象")
+    required = {"candidates", "discovered_urls", "chunk_status"}
+    missing = required.difference(payload)
+    if missing:
+        raise ValueError(f"Chunk Worker 返回缺少字段：{', '.join(sorted(missing))}")
+    return payload
+
 async def run_crawler_v2_chunk_worker_once(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -162,6 +172,7 @@ async def run_crawler_v2_chunk_worker_once(
                 cached_tokens=usage.get("cached_tokens") or 0,
                 raw_usage=dict(usage),
             )
+        payload = _validate_chunk_agent_payload(payload)
         candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
         await complete_current_chunk(
             session_factory,

@@ -48,6 +48,34 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+    async def test_chunk_worker_marks_retryable_when_payload_shape_is_invalid(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=({"candidates": []}, None))):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertEqual(candidates, [])
+
+    async def test_chunk_worker_marks_retryable_when_llm_output_is_invalid_json(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("invalid json"))):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertIn("invalid json", chunk.last_error)
+        self.assertEqual(candidates, [])
     async def test_complete_chunk_splits_when_candidate_count_exceeds_limit(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
         async with self.session_factory() as session:
