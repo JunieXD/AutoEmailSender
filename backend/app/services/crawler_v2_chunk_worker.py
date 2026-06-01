@@ -26,6 +26,7 @@ from app.models import (
 from pydantic import BaseModel, Field
 
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
+from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
@@ -34,6 +35,7 @@ from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import parse_structured_result
 
 MAX_CHUNK_ATTEMPTS = 2
+MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 
@@ -289,6 +291,22 @@ async def complete_current_chunk(
         if job is None:
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
 
+        if chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value or len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT:
+            reason = "candidate_count_exceeded" if len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT else "llm_split_required"
+            split_result = await split_page_chunk_for_retry(
+                session_factory,
+                job_id=chunk.job_id,
+                chunk_pk=chunk.id,
+                reason=reason,
+            )
+            return {
+                "status": split_result["status"],
+                "saved_count": 0,
+                "url_count": 0,
+                "enrichment_count": 0,
+                "rejected_count": 0,
+                "child_count": split_result["child_count"],
+            }
         ctx = CrawlToolContext(
             job_id=chunk.job_id,
             start_url=job.start_url,

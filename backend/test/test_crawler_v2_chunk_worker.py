@@ -48,6 +48,35 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+    async def test_complete_chunk_splits_when_candidate_count_exceeds_limit(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "\n".join(f"教师{i} [详情](https://example.edu/t{i}.html) 研究方向 软件工程 人工智能 数据挖掘 机器学习 教学科研项目 招生信息 联系方式 学术成果" for i in range(80))
+            await session.commit()
+        candidates = [
+            ProfessorCandidatePayload(name=f"教师{i}", profile_url=f"https://example.edu/t{i}.html", confidence=0.9)
+            for i in range(11)
+        ]
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=candidates,
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["status"], "split_required")
+        self.assertEqual(result["saved_count"], 0)
+        async with self.session_factory() as session:
+            saved = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id).order_by(CrawlPageChunk.id)))
+        self.assertEqual(saved, [])
+        self.assertEqual(chunks[0].status, CrawlPageChunkStatus.SUPERSEDED.value)
+        self.assertGreaterEqual(len(chunks), 2)
     async def test_complete_chunk_does_not_enqueue_candidate_profile_url(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
 
