@@ -48,6 +48,46 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+    async def test_complete_chunk_does_not_enqueue_candidate_profile_url(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/zhang.html", confidence=0.9)],
+            discovered_urls=["https://example.edu/zhang.html"],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["url_count"], 0)
+        async with self.session_factory() as session:
+            tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+        self.assertEqual(tasks, [])
+    async def test_complete_chunk_fills_profile_url_from_markdown_link(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "[张三](https://example.edu/zhang.html) 教授，研究方向：软件工程"
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[ProfessorCandidatePayload(name="张三", confidence=0.9)],
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["rejected_count"], 0)
+        async with self.session_factory() as session:
+            row = await session.scalar(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+        assert row is not None
+        self.assertEqual(row.profile_url, "https://example.edu/zhang.html")
     async def test_complete_chunk_rejects_candidate_without_email_and_profile_url(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+import re
 from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
@@ -33,6 +34,7 @@ from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import parse_structured_result
 
 MAX_CHUNK_ATTEMPTS = 2
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 
 class V2ChunkAgentPayload(BaseModel):
@@ -226,6 +228,44 @@ def candidate_needs_enrichment(candidate: CrawlCandidate) -> bool:
     )
 
 
+
+def _normalize_person_name_for_link_match(value: str | None) -> str:
+    return "".join(str(value or "").split()).casefold()
+
+
+def _extract_markdown_profile_links(chunk_content: str, *, base_url: str) -> dict[str, str]:
+    links: dict[str, str] = {}
+    for match in _MARKDOWN_LINK_PATTERN.finditer(chunk_content):
+        key = _normalize_person_name_for_link_match(match.group(1))
+        if not key:
+            continue
+        normalized = normalize_url(match.group(2), base_url=base_url)
+        if normalized:
+            links.setdefault(key, normalized)
+    return links
+
+
+def _fill_candidate_profile_urls_from_chunk(
+    candidates: Sequence[ProfessorCandidatePayload],
+    *,
+    chunk_content: str,
+    source_url: str,
+) -> list[ProfessorCandidatePayload]:
+    link_map = _extract_markdown_profile_links(chunk_content, base_url=source_url)
+    filled: list[ProfessorCandidatePayload] = []
+    for candidate in candidates:
+        if candidate.profile_url:
+            filled.append(candidate)
+            continue
+        profile_url = link_map.get(_normalize_person_name_for_link_match(candidate.name))
+        if profile_url is None:
+            filled.append(candidate)
+            continue
+        data = candidate.model_dump()
+        data["profile_url"] = profile_url
+        filled.append(ProfessorCandidatePayload.model_validate(data))
+    return filled
+
 async def complete_current_chunk(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -256,7 +296,12 @@ async def complete_current_chunk(
             school=job.school,
             session_factory=session_factory,
         )
-        save_result = await save_candidate_payloads_shared(ctx, candidates)
+        enriched_candidates = _fill_candidate_profile_urls_from_chunk(
+            candidates,
+            chunk_content=chunk.content,
+            source_url=chunk.source_url,
+        )
+        save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
         saved_candidates = save_result["saved"]
         enrichment_count = 0
         for candidate in saved_candidates:
@@ -279,10 +324,18 @@ async def complete_current_chunk(
             )
             enrichment_count += 1
 
+        candidate_profile_urls = {
+            normalized
+            for candidate in enriched_candidates
+            if candidate.profile_url
+            if (normalized := normalize_url(candidate.profile_url, base_url=chunk.source_url))
+        }
         url_count = 0
         seen_urls: set[str] = set()
         for url in discovered_urls:
             normalized = normalize_url(url, base_url=chunk.source_url)
+            if normalized in candidate_profile_urls:
+                continue
             if normalized in seen_urls or not is_same_domain(normalized, job.start_url):
                 continue
             seen_urls.add(normalized)
