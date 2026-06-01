@@ -476,18 +476,24 @@ async def enrich_crawl_candidates(
                 )
                 await final_session.commit()
 
-    if summary.selected_count == 0:
+    skipped_count = int(getattr(summary, "skipped_count", 0) or 0)
+    if summary.selected_count == 0 and skipped_count == 0:
         raise HTTPException(status_code=400, detail="未找到可补全的候选导师")
-
+    skipped_message = (
+        f"跳过 {skipped_count} 位缺少详情页 URL 的候选。"
+        if skipped_count > 0
+        else ""
+    )
     return CrawlJobEnrichResult(
         selected_count=summary.selected_count,
         enriched_count=summary.enriched_count,
         unchanged_count=summary.unchanged_count,
         failed_count=summary.failed_count,
+        skipped_count=skipped_count,
         message=(
             f"补全完成：选中 {summary.selected_count} 位，成功补全 "
             f"{summary.enriched_count} 位，未变化 {summary.unchanged_count} 位，"
-            f"失败 {summary.failed_count} 位。"
+            f"失败 {summary.failed_count} 位。{skipped_message}"
         ),
     )
 

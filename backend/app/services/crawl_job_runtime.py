@@ -139,6 +139,7 @@ class SelectedCandidateEnrichmentSummary:
     enriched_count: int
     unchanged_count: int
     failed_count: int
+    skipped_count: int = 0
 
 
 @dataclass(slots=True)
@@ -781,18 +782,30 @@ async def _enrich_selected_candidates_concurrent(
             0,
         )
 
+    enrichable_candidates = [candidate for candidate in candidates if (candidate.profile_url or "").strip()]
+    skipped_count = len(candidates) - len(enrichable_candidates)
+    if not enrichable_candidates:
+        return SelectedCandidateEnrichmentSummary(
+            selected_count=0,
+            enriched_count=0,
+            unchanged_count=0,
+            failed_count=0,
+            skipped_count=skipped_count,
+        )
+
     enriched, unchanged, failed = await _enrich_candidate_collection_concurrent(
         session_factory,
         ctx,
-        candidates,
+        enrichable_candidates,
         llm_profile=llm_profile,
         trace_callback=trace_callback,
     )
     return SelectedCandidateEnrichmentSummary(
-        selected_count=len(candidates),
+        selected_count=len(enrichable_candidates),
         enriched_count=enriched,
         unchanged_count=unchanged,
         failed_count=failed,
+        skipped_count=skipped_count,
     )
 
 

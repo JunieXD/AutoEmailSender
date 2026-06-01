@@ -18,6 +18,22 @@ from app.services.crawler_tools import ProfessorCandidatePayload
 
 
 class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
+    def test_chunk_prompt_includes_v1_quality_constraints(self) -> None:
+        from app.services.crawler_v2_chunk_worker import build_v2_chunk_prompt
+
+        prompt = build_v2_chunk_prompt(
+            university="示例大学",
+            school="计算机学院",
+            source_url="https://example.edu/faculty",
+            chunk_content="[张三](https://example.edu/zhang.html) 教授",
+        )
+
+        self.assertIn("最多 10 个候选", prompt)
+        self.assertIn("缺少 email 且缺少 profile_url", prompt)
+        self.assertIn("Markdown", prompt)
+        self.assertIn("导师个人主页", prompt)
+        self.assertIn("不能放入 discovered_urls", prompt)
+        self.assertIn("只输出一个 JSON 对象", prompt)
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -32,6 +48,150 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+    async def test_complete_chunk_marks_terminal_when_split_cannot_continue(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "张三"
+            chunk.split_depth = 4
+            await session.commit()
+        candidates = [
+            ProfessorCandidatePayload(name=f"教师{i}", profile_url=f"https://example.edu/t{i}.html", confidence=0.9)
+            for i in range(11)
+        ]
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=candidates,
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["status"], CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_TERMINAL.value)
+    async def test_chunk_worker_marks_retryable_when_payload_shape_is_invalid(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=({"candidates": []}, None))):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertEqual(candidates, [])
+
+    async def test_chunk_worker_marks_retryable_when_llm_output_is_invalid_json(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("invalid json"))):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertIn("invalid json", chunk.last_error)
+        self.assertEqual(candidates, [])
+    async def test_complete_chunk_splits_when_candidate_count_exceeds_limit(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "\n".join(f"教师{i} [详情](https://example.edu/t{i}.html) 研究方向 软件工程 人工智能 数据挖掘 机器学习 教学科研项目 招生信息 联系方式 学术成果" for i in range(80))
+            await session.commit()
+        candidates = [
+            ProfessorCandidatePayload(name=f"教师{i}", profile_url=f"https://example.edu/t{i}.html", confidence=0.9)
+            for i in range(11)
+        ]
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=candidates,
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["status"], "split_required")
+        self.assertEqual(result["saved_count"], 0)
+        async with self.session_factory() as session:
+            saved = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id).order_by(CrawlPageChunk.id)))
+        self.assertEqual(saved, [])
+        self.assertEqual(chunks[0].status, CrawlPageChunkStatus.SUPERSEDED.value)
+        self.assertGreaterEqual(len(chunks), 2)
+    async def test_complete_chunk_does_not_enqueue_candidate_profile_url(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/zhang.html", confidence=0.9)],
+            discovered_urls=["https://example.edu/zhang.html"],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["url_count"], 0)
+        async with self.session_factory() as session:
+            tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+        self.assertEqual(tasks, [])
+    async def test_complete_chunk_fills_profile_url_from_markdown_link(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "[张三](https://example.edu/zhang.html) 教授，研究方向：软件工程"
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[ProfessorCandidatePayload(name="张三", confidence=0.9)],
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["rejected_count"], 0)
+        async with self.session_factory() as session:
+            row = await session.scalar(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+        assert row is not None
+        self.assertEqual(row.profile_url, "https://example.edu/zhang.html")
+    async def test_complete_chunk_rejects_candidate_without_email_and_profile_url(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[
+                ProfessorCandidatePayload(name="张三", confidence=0.8),
+                ProfessorCandidatePayload(name="李四", profile_url="https://example.edu/li.html", confidence=0.9),
+            ],
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["rejected_count"], 1)
+        async with self.session_factory() as session:
+            rows = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        self.assertEqual([row.name for row in rows], ["李四"])
     async def test_complete_chunk_saves_candidates_urls_and_enrichment_tasks_atomically(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
         candidate = ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/zhang.html", source_url="https://example.edu/faculty", confidence=0.9)
@@ -175,14 +335,11 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_complete_chunk_keeps_candidate_save_when_url_insert_hits_unique_conflict(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
-        flush_calls = 0
-
         async def flush_with_url_conflict(self_session, *args, **kwargs):
-            nonlocal flush_calls
-            flush_calls += 1
-            if flush_calls == 2:
+            if any(isinstance(item, CrawlPageTask) for item in self_session.new):
                 raise IntegrityError("insert", {}, Exception("unique conflict"))
             return await original_flush(self_session, *args, **kwargs)
+
 
         async with self.session_factory() as probe_session:
             original_flush = type(probe_session).flush

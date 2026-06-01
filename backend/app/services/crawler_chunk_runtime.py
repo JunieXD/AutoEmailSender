@@ -289,6 +289,28 @@ async def _mark_chunk_split_required(ctx: CrawlToolContext, chunk_id: str, reaso
         }
 
 
+async def split_page_chunk_for_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    job_id: int,
+    chunk_pk: int,
+    reason: str,
+) -> dict[str, Any]:
+    async with session_factory() as session:
+        chunk = await session.get(CrawlPageChunk, chunk_pk)
+        if chunk is None or chunk.job_id != job_id:
+            return {"status": "missing_chunk", "child_count": 0, "split_reason": reason}
+        child_count = await _split_chunk_in_session(session, job_id, chunk, reason)
+        chunk.worker_id = None
+        chunk.claimed_at = None
+        chunk.lease_expires_at = None
+        await session.commit()
+        if child_count <= 0:
+            chunk.status = CrawlPageChunkStatus.FAILED_TERMINAL.value
+            await session.commit()
+            return {"status": CrawlPageChunkStatus.FAILED_TERMINAL.value, "child_count": 0, "split_reason": reason}
+        return {"status": CrawlPageChunkStatus.SPLIT_REQUIRED.value, "child_count": child_count, "split_reason": reason}
+
 async def _split_chunk_in_session(
     session: AsyncSession,
     job_id: int,
