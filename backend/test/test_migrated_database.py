@@ -62,5 +62,33 @@ class MigratedDatabaseTests(unittest.TestCase):
             self.assertEqual(first_db.read_text(encoding="utf-8"), "test-local-change")
 
 
+
+class SchemaDatabaseTests(unittest.TestCase):
+    def test_reuses_schema_template_for_multiple_databases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first_db = root / "first.db"
+            second_db = root / "second.db"
+            template_root = root / "templates"
+
+            from test import schema_database
+
+            created_templates: list[Path] = []
+
+            def fake_create_template(template_path: Path) -> None:
+                template_path.parent.mkdir(parents=True, exist_ok=True)
+                template_path.write_text("schema", encoding="utf-8")
+                created_templates.append(template_path)
+
+            with patch("test.schema_database._create_template_database", side_effect=fake_create_template):
+                schema_database.create_schema_sqlite_database(first_db, template_root=template_root)
+                first_db.write_text("test-local-change", encoding="utf-8")
+
+                schema_database.create_schema_sqlite_database(second_db, template_root=template_root)
+
+            self.assertEqual(len(created_templates), 1)
+            self.assertEqual(second_db.read_text(encoding="utf-8"), "schema")
+            self.assertEqual(first_db.read_text(encoding="utf-8"), "test-local-change")
+
 if __name__ == "__main__":
     unittest.main()

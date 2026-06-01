@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from test.schema_database import create_schema_sqlite_database
 
-from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus, CrawlWorkerTokenUsage, LLMProfile
+from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload
 from app.services.crawler_v2_enrichment_worker import enrich_candidate_once, run_crawler_v2_enrichment_worker_once
 
@@ -19,9 +20,8 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
+        create_schema_sqlite_database(Path(self.db_path))
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def asyncTearDown(self) -> None:

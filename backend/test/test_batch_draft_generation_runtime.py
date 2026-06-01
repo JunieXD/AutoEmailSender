@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
-    Base,
     AppSetting,
     BatchTask,
     BatchTaskStatus,
@@ -24,6 +23,7 @@ from app.models import (
     Professor,
 )
 from app.services import llm_runtime
+from test.schema_database import create_schema_sqlite_database
 from app.services.batch_draft_generation_runtime import (
     BatchDraftGenerationCoordinator,
     recover_stale_generating_drafts,
@@ -35,6 +35,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "batch_draft_generation_test.db"
+        create_schema_sqlite_database(self.db_path)
         self.engine = create_async_engine(
             f"sqlite+aiosqlite:///{self.db_path.as_posix()}",
             future=True,
@@ -305,8 +306,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertTrue(self._run_async(scenario()))
 
     async def _create_schema(self) -> None:
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        return None
 
     async def _create_batch_with_tasks(
         self,

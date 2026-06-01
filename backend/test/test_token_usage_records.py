@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
-    Base,
     BatchTask,
     BatchTaskStatus,
     CrawlJob,
@@ -30,12 +29,14 @@ from app.models import (
     Professor,
 )
 from app.services.token_usage_records import list_token_usage_records
+from test.schema_database import create_schema_sqlite_database
 
 
 class TokenUsageRecordsServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "token_usage_records_test.db"
+        create_schema_sqlite_database(self.db_path)
         self.engine = create_async_engine(
             f"sqlite+aiosqlite:///{self.db_path.as_posix()}",
             future=True,
@@ -55,8 +56,7 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
         return asyncio.run(awaitable)
 
     async def _create_schema(self) -> None:
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        return None
 
     async def _seed_records(self) -> None:
         now = datetime(2026, 4, 29, 10, 0, 0, tzinfo=UTC)

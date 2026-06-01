@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
-    Base,
     EmailDirection,
     EmailLog,
     EmailTask,
@@ -20,12 +19,14 @@ from app.models import (
     Professor,
 )
 from app.services.dashboard_stats import build_dashboard_overview
+from test.schema_database import create_schema_sqlite_database
 
 
 class DashboardStatsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "dashboard_stats_test.db"
+        create_schema_sqlite_database(self.db_path)
         self.engine = create_async_engine(
             f"sqlite+aiosqlite:///{self.db_path.as_posix()}",
             future=True,
@@ -45,8 +46,7 @@ class DashboardStatsTests(unittest.TestCase):
         return asyncio.run(awaitable)
 
     async def _create_schema(self) -> None:
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        return None
 
     async def _seed_dashboard_data(self) -> tuple[int, int]:
         now = datetime.now(UTC)

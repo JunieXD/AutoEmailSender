@@ -12,7 +12,6 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
-    Base,
     BatchTask,
     BatchTaskStatus,
     EmailTask,
@@ -24,6 +23,7 @@ from app.models import (
     Professor,
 )
 from app.services.mail_runtime import SendMailResult
+from test.schema_database import create_schema_sqlite_database
 from app.schemas.email_task import EmailTaskApprovalRequest
 from app.services.task_runtime import (
     approve_and_send_task,
@@ -37,6 +37,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "dispatch_schedule_test.db"
+        create_schema_sqlite_database(self.db_path)
         self.engine = create_async_engine(
             f"sqlite+aiosqlite:///{self.db_path.as_posix()}",
             future=True,
@@ -726,8 +727,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         mocked_send.assert_not_called()
 
     async def _create_schema(self) -> None:
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        return None
 
     async def _create_batch_task_with_approved_task(
         self,

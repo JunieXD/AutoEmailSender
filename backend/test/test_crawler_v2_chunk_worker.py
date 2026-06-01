@@ -10,8 +10,9 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from test.schema_database import create_schema_sqlite_database
 
-from app.models import Base, CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, CrawlWorkerTokenUsage, LLMProfile
+from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_v2_chunk_worker import complete_current_chunk, run_crawler_v2_chunk_worker_once
 from app.services.crawler_tools import ProfessorCandidatePayload
 
@@ -20,9 +21,8 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
+        create_schema_sqlite_database(Path(self.db_path))
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def asyncTearDown(self) -> None:

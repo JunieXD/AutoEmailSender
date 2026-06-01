@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from test.schema_database import create_schema_sqlite_database
 
-from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
+from app.models import CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_tools import PageSnapshot
 from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 
@@ -19,9 +20,8 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
+        create_schema_sqlite_database(Path(self.db_path))
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def asyncTearDown(self) -> None:

@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageFetchState
-from app.models.base import Base
 from app.services.crawler_tools import (
     CrawlJobSaveBudgetExceeded,
     CrawlJobCanceled,
@@ -41,6 +40,7 @@ from app.services.crawler_tools import (
     _resolve_safe_public_crawl_url,
 )
 from app.services import crawler_tools
+from test.schema_database import create_schema_sqlite_database
 
 
 class CrawlerToolTests(unittest.TestCase):
@@ -2602,14 +2602,13 @@ class _RealCrawlerSessionHarness:
         asyncio.get_running_loop().slow_callback_duration = 1.0
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self._temp_dir.name) / "crawler_tools.db"
+        create_schema_sqlite_database(db_path)
         self._engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             autoflush=False,
             expire_on_commit=False,
         )
-        async with self._engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
         return self
 
     async def __aexit__(self, *args: object) -> None:

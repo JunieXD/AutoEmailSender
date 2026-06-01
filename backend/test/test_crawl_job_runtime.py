@@ -13,8 +13,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import Base, CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
+from app.models import CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services import crawl_job_runtime
+from test.schema_database import create_schema_sqlite_database
 from app.services.crawl_job_runtime import (
     crawl_job_has_pending_work,
     create_chunks_for_successful_page_snapshot,
@@ -157,6 +158,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self.temp_dir.name) / "crawl_job_runtime.db"
+        create_schema_sqlite_database(db_path)
         self.debug_dir = Path(self.temp_dir.name) / "crawler-debug"
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
         self.session_factory = async_sessionmaker(
@@ -164,9 +166,6 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             autoflush=False,
             expire_on_commit=False,
         )
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-
         # Stub thinking adaptation so legacy tests don't hit the network.
         # Behaviour matches a non-thinking model (no extra_body required), preserving
         # pre-task-8 semantics for tests written before the adaptation hook.
