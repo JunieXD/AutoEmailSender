@@ -14,8 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
     CrawlCandidate,
-    CrawlCandidateEnrichmentTask,
-    CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
     CrawlWorkerKind,
     CrawlPageChunk,
@@ -230,17 +228,6 @@ async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob):
     )
 
 
-def candidate_needs_enrichment(candidate: CrawlCandidate) -> bool:
-    return bool(
-        (candidate.profile_url or "").strip()
-        and (
-            not (candidate.email or "").strip()
-            or not (candidate.department or "").strip()
-            or not (candidate.research_direction or "").strip()
-        )
-    )
-
-
 
 def _normalize_person_name_for_link_match(value: str | None) -> str:
     return "".join(str(value or "").split()).casefold()
@@ -331,28 +318,7 @@ async def complete_current_chunk(
             source_url=chunk.source_url,
         )
         save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
-        saved_candidates = save_result["saved"]
         enrichment_count = 0
-        for candidate in saved_candidates:
-            if not candidate_needs_enrichment(candidate):
-                continue
-            exists = await session.scalar(
-                select(CrawlCandidateEnrichmentTask.id).where(
-                    CrawlCandidateEnrichmentTask.job_id == chunk.job_id,
-                    CrawlCandidateEnrichmentTask.candidate_id == candidate.id,
-                )
-            )
-            if exists is not None:
-                continue
-            session.add(
-                CrawlCandidateEnrichmentTask(
-                    job_id=chunk.job_id,
-                    candidate_id=candidate.id,
-                    status=CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-                )
-            )
-            enrichment_count += 1
-
         candidate_profile_urls = {
             normalized
             for candidate in enriched_candidates

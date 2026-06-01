@@ -192,7 +192,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         async with self.session_factory() as session:
             rows = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
         self.assertEqual([row.name for row in rows], ["李四"])
-    async def test_complete_chunk_saves_candidates_urls_and_enrichment_tasks_atomically(self) -> None:
+    async def test_complete_chunk_saves_candidates_and_urls_without_auto_enrichment_tasks(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
         candidate = ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/zhang.html", source_url="https://example.edu/faculty", confidence=0.9)
 
@@ -216,8 +216,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].name, "张三")
         self.assertEqual([task.normalized_url for task in page_tasks], ["https://example.edu/page2.html"])
-        self.assertEqual(len(enrichment_tasks), 1)
-        self.assertEqual(enrichment_tasks[0].candidate_id, candidates[0].id)
+        self.assertEqual(enrichment_tasks, [])
 
 
     async def test_chunk_worker_does_not_save_after_job_is_paused(self) -> None:
