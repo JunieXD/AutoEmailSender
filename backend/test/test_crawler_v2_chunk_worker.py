@@ -48,6 +48,26 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+    async def test_complete_chunk_rejects_candidate_without_email_and_profile_url(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[
+                ProfessorCandidatePayload(name="张三", confidence=0.8),
+                ProfessorCandidatePayload(name="李四", profile_url="https://example.edu/li.html", confidence=0.9),
+            ],
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["rejected_count"], 1)
+        async with self.session_factory() as session:
+            rows = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        self.assertEqual([row.name for row in rows], ["李四"])
     async def test_complete_chunk_saves_candidates_urls_and_enrichment_tasks_atomically(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
         candidate = ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/zhang.html", source_url="https://example.edu/faculty", confidence=0.9)
@@ -191,14 +211,11 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_complete_chunk_keeps_candidate_save_when_url_insert_hits_unique_conflict(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
-        flush_calls = 0
-
         async def flush_with_url_conflict(self_session, *args, **kwargs):
-            nonlocal flush_calls
-            flush_calls += 1
-            if flush_calls == 2:
+            if any(isinstance(item, CrawlPageTask) for item in self_session.new):
                 raise IntegrityError("insert", {}, Exception("unique conflict"))
             return await original_flush(self_session, *args, **kwargs)
+
 
         async with self.session_factory() as probe_session:
             original_flush = type(probe_session).flush

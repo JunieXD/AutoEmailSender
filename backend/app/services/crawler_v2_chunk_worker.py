@@ -24,7 +24,7 @@ from app.models import (
 )
 from pydantic import BaseModel, Field
 
-from app.services.crawler_tools import ProfessorCandidatePayload
+from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
@@ -249,35 +249,15 @@ async def complete_current_chunk(
         if job is None:
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
 
-        saved_candidates: list[CrawlCandidate] = []
-        for payload in candidates:
-            candidate = CrawlCandidate(
-                job_id=chunk.job_id,
-                name=payload.name.strip(),
-                email=_clean(payload.email),
-                title=_clean(payload.title),
-                university=_clean(payload.university) or job.university,
-                school=_clean(payload.school) or job.school,
-                department=_clean(payload.department),
-                research_direction=_clean(payload.research_direction),
-                recent_papers=payload.recent_papers,
-                profile_url=_clean(payload.profile_url),
-                source_url=_clean(payload.source_url) or chunk.source_url,
-                confidence=payload.confidence,
-                field_confidence=payload.field_confidence,
-                evidence=payload.evidence,
-                source_chunk_id=chunk.chunk_id,
-                source_kind="chunk",
-                boundary_risk=payload.boundary_risk,
-                identity_key=payload.identity_key,
-                merge_history=payload.merge_history,
-                field_sources=payload.field_sources,
-                conflicts=payload.conflicts,
-            )
-            session.add(candidate)
-            saved_candidates.append(candidate)
-        await session.flush()
-
+        ctx = CrawlToolContext(
+            job_id=chunk.job_id,
+            start_url=job.start_url,
+            university=job.university,
+            school=job.school,
+            session_factory=session_factory,
+        )
+        save_result = await save_candidate_payloads_shared(ctx, candidates)
+        saved_candidates = save_result["saved"]
         enrichment_count = 0
         for candidate in saved_candidates:
             if not candidate_needs_enrichment(candidate):
@@ -336,9 +316,12 @@ async def complete_current_chunk(
         await session.commit()
         return {
             "status": "saved",
-            "saved_count": len(saved_candidates),
+            "saved_count": save_result["saved_count"],
             "url_count": url_count,
             "enrichment_count": enrichment_count,
+            "rejected_count": save_result["rejected_count"],
+            "merged_count": save_result["merged_count"],
+            "skipped_duplicate_count": save_result["skipped_duplicate_count"],
         }
 
 def _lease_expired(lease_expires_at: datetime | None) -> bool:
