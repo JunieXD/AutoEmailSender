@@ -12,18 +12,22 @@ import {
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { DashboardProfessorRow } from "@/components/molecules/DashboardProfessorRow";
+import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
+  DEFAULT_DASHBOARD_KEYWORD_FIELDS,
   buildDashboardFilterOptions,
   createDefaultDashboardFilters,
   filterDashboardProfessors,
   getActiveDashboardFilterCount,
+  normalizeDashboardKeywordFields,
   pruneDashboardFilters,
   type DashboardFilterState,
+  type DashboardKeywordField,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
@@ -59,6 +63,18 @@ import type {
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
+
+const dashboardKeywordFieldOptions: Array<{
+  value: DashboardKeywordField;
+  label: string;
+}> = [
+  { value: "name", label: "姓名" },
+  { value: "university", label: "学校" },
+  { value: "school", label: "学院" },
+  { value: "department", label: "系所" },
+  { value: "title", label: "职称" },
+  { value: "research_direction", label: "研究方向" },
+];
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -112,6 +128,9 @@ const readStoredDashboardFilters = (
         typeof parsedValue.keyword === "string"
           ? parsedValue.keyword
           : defaults.keyword,
+      keywordFields: normalizeDashboardKeywordFields(
+        parsedValue.keywordFields,
+      ),
       universities: readStringArray(parsedValue.universities),
       schools: readStringArray(parsedValue.schools),
       departments: readStringArray(parsedValue.departments),
@@ -366,6 +385,25 @@ export const HomePage = () => {
 
   const updateFilters = (nextFilters: Partial<DashboardFilterState>) => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
+  };
+
+  const toggleDashboardKeywordField = (field: DashboardKeywordField) => {
+    setFilters((previous) => {
+      const currentFields = normalizeDashboardKeywordFields(
+        previous.keywordFields,
+      );
+      const nextFields = currentFields.includes(field)
+        ? currentFields.filter((item) => item !== field)
+        : [...currentFields, field];
+
+      return {
+        ...previous,
+        keywordFields:
+          nextFields.length > 0
+            ? nextFields
+            : [...DEFAULT_DASHBOARD_KEYWORD_FIELDS],
+      };
+    });
   };
 
   const toggleStringFilterValue = (
@@ -784,7 +822,15 @@ export const HomePage = () => {
                     updateFilters({ keyword: event.target.value })
                   }
                   placeholder="导师、学校、学院、系所、职称、研究方向"
-                  className="w-full bg-transparent leading-5 outline-none"
+                  className="w-full min-w-0 bg-transparent leading-5 outline-none"
+                />
+                <KeywordSearchScopeSelect
+                  label="搜索范围"
+                  options={dashboardKeywordFieldOptions}
+                  selectedValues={normalizeDashboardKeywordFields(
+                    filters.keywordFields,
+                  )}
+                  onToggle={toggleDashboardKeywordField}
                 />
               </div>
             </label>
