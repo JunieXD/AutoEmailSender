@@ -42,7 +42,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
-    async def test_claims_page_before_chunk_and_enrichment(self) -> None:
+    async def test_claims_chunk_before_page_and_enrichment(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:
             session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a"))
@@ -55,13 +55,31 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
 
-        self.assertEqual(claimed.kind, CrawlerV2WorkKind.PAGE)
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.CHUNK)
         async with self.session_factory() as session:
-            task = await session.get(CrawlPageTask, claimed.work_item_id)
-            assert task is not None
-            self.assertEqual(task.status, CrawlPageTaskStatus.PROCESSING.value)
-            self.assertEqual(task.worker_id, "w1")
-            self.assertIsNotNone(task.lease_expires_at)
+            chunk = await session.get(CrawlPageChunk, claimed.work_item_id)
+            assert chunk is not None
+            self.assertEqual(chunk.status, CrawlPageChunkStatus.PROCESSING.value)
+            self.assertEqual(chunk.worker_id, "w1")
+            self.assertIsNotNone(chunk.lease_expires_at)
+
+
+    async def test_does_not_claim_new_page_while_chunk_is_pending(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/page2", original_url="https://example.edu/page2"))
+            session.add(CrawlPageChunk(job_id=job_id, page_id=None, source_url="https://example.edu/faculty", page_fingerprint="p", chunk_id="c1", chunk_index=0, chunk_hash="h", content="张三"))
+            await session.commit()
+
+        claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.CHUNK)
+        async with self.session_factory() as session:
+            page_task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+            chunk = await session.get(CrawlPageChunk, claimed.work_item_id)
+        assert page_task is not None and chunk is not None
+        self.assertEqual(page_task.status, CrawlPageTaskStatus.PENDING.value)
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.PROCESSING.value)
 
     async def test_does_not_claim_when_job_paused(self) -> None:
         job_id = await self._create_job(status=CrawlJobStatus.PAUSED.value)

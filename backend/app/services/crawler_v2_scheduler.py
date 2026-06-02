@@ -40,11 +40,11 @@ async def claim_next_v2_work(
     async with session_factory() as session:
         now = utc_now()
         lease_expires_at = now + timedelta(seconds=config.lease_seconds)
-        claimed = await _claim_page_task(session, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at, config=config)
+        claimed = await _claim_chunk(session, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at, config=config)
         if claimed.kind is not CrawlerV2WorkKind.IDLE:
             await session.commit()
             return claimed
-        claimed = await _claim_chunk(session, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at, config=config)
+        claimed = await _claim_page_task(session, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at, config=config)
         if claimed.kind is not CrawlerV2WorkKind.IDLE:
             await session.commit()
             return claimed

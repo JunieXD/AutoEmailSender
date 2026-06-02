@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 import re
+from urllib.parse import parse_qsl, urlsplit
 from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
+from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
@@ -182,15 +184,40 @@ async def run_crawler_v2_chunk_worker_once(
                 cached_tokens=usage.get("cached_tokens") or 0,
                 raw_usage=dict(usage),
             )
+        append_crawler_v2_debug_event(
+            job.id,
+            worker_kind="chunk",
+            event_name="llm_response",
+            work_item_id=chunk_id,
+            payload={
+                "chunk_id": chunk.chunk_id,
+                "source_url": chunk.source_url,
+                "chunk_content": chunk.content,
+                "raw_payload": payload,
+                "token_usage": dict(usage) if usage is not None else None,
+            },
+        )
         payload = _validate_chunk_agent_payload(payload)
         candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
-        await complete_current_chunk(
+        save_result = await complete_current_chunk(
             session_factory,
             chunk_id=chunk_id,
             worker_id=worker_id,
             candidates=candidates,
             discovered_urls=[str(url) for url in payload.get("discovered_urls", [])],
             chunk_status=str(payload.get("chunk_status") or "completed"),
+        )
+        append_crawler_v2_debug_event(
+            job.id,
+            worker_kind="chunk",
+            event_name="chunk_completed",
+            work_item_id=chunk_id,
+            payload={
+                "chunk_id": chunk.chunk_id,
+                "source_url": chunk.source_url,
+                "parsed_payload": payload,
+                "save_result": save_result,
+            },
         )
         return 1
     except Exception as exc:
@@ -345,6 +372,8 @@ async def complete_current_chunk(
                 continue
             if normalized in seen_urls or not is_same_domain(normalized, job.start_url):
                 continue
+            if not _is_explicit_list_or_pagination_url(normalized):
+                continue
             seen_urls.add(normalized)
             exists = await session.scalar(
                 select(CrawlPageTask.id).where(
@@ -383,6 +412,28 @@ async def complete_current_chunk(
             "merged_count": save_result["merged_count"],
             "skipped_duplicate_count": save_result["skipped_duplicate_count"],
         }
+
+
+def _is_explicit_list_or_pagination_url(url: str | None) -> bool:
+    if not url:
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    path = parsed.path.lower()
+    segments = [segment for segment in path.split("/") if segment]
+    query_keys = {key.lower() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+    pagination_query_keys = {"page", "p", "current", "pageindex", "pageno", "page_no"}
+    if query_keys & pagination_query_keys:
+        return True
+
+    broad_path_markers = ("list", "faculty", "teacher", "teachers", "staff", "team", "directory", "导师", "教师", "师资")
+    if any(marker in path for marker in broad_path_markers):
+        return True
+
+    directory_segments = {"people", "professors", "members"}
+    return bool(segments and segments[-1].split(".", 1)[0] in directory_segments)
 
 def _lease_expired(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:

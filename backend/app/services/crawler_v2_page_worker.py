@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
+from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_tools import CrawlToolContext, PageSnapshot, browser_investigate, crawl_page_with_http
 from app.services.crawler_v2_scheduler import ensure_job_active
 
@@ -74,8 +75,29 @@ async def run_crawler_v2_page_worker_once(
             else:
                 _mark_page_failed(task, snapshot.error_message or "页面抓取失败")
             await session.commit()
+        append_crawler_v2_debug_event(
+            job.id,
+            worker_kind="page",
+            event_name="page_fetched",
+            work_item_id=task_id,
+            payload={
+                "target_url": target_url,
+                "fetch_mode": fetch_mode,
+                "direct_status": direct_status,
+                "fallback_reason": fallback_reason,
+                "browser_status": browser_status,
+                "snapshot": _snapshot_debug_payload(snapshot),
+            },
+        )
         if snapshot.status == "succeeded":
-            await _create_chunks_for_page_snapshot(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
+            chunk_result = await _create_chunks_for_page_snapshot(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
+            append_crawler_v2_debug_event(
+                job.id,
+                worker_kind="page",
+                event_name="page_chunked",
+                work_item_id=task_id,
+                payload={"page_id": page_id, "target_url": target_url, "chunk_result": chunk_result},
+            )
         return 1
     except Exception as exc:
         async with session_factory() as session:
@@ -235,3 +257,18 @@ async def _create_chunks_for_page_snapshot(
         )
         job_id = task.job_id
     await create_chunks_for_page(session_factory, job_id=job_id, page_id=page_id, drafts=drafts)
+
+
+def _snapshot_debug_payload(snapshot: PageSnapshot) -> dict[str, object]:
+    return {
+        "url": snapshot.url,
+        "status": snapshot.status,
+        "title": getattr(snapshot, "title", None),
+        "fetch_method": snapshot.fetch_method,
+        "error_message": snapshot.error_message,
+        "suspicious_empty": snapshot.suspicious_empty,
+        "text": snapshot.text or "",
+        "html": snapshot.html or "",
+        "markdown": getattr(snapshot, "markdown", "") or "",
+        "links_count": len(snapshot.links or []),
+    }

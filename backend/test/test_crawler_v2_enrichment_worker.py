@@ -119,6 +119,25 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert candidate is not None and task is not None
         self.assertIsNone(candidate.email)
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.PROCESSING.value)
+
+    async def test_enrichment_worker_writes_v2_debug_jsonl(self) -> None:
+        _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
+        usage = {"input_tokens": 90, "output_tokens": 10, "cached_tokens": 70, "total_tokens": 100}
+
+        with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage", new=AsyncMock(return_value=(payload, usage))), patch("app.services.crawler_v2_enrichment_worker.append_crawler_v2_debug_event") as debug_mock:
+            processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        events = [call.kwargs["event_name"] for call in debug_mock.call_args_list]
+        self.assertIn("llm_response", events)
+        self.assertIn("enrichment_completed", events)
+        llm_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "llm_response")
+        self.assertEqual(llm_call.kwargs["worker_kind"], "enrichment")
+        self.assertEqual(llm_call.kwargs["work_item_id"], task_id)
+        self.assertEqual(llm_call.kwargs["payload"]["raw_payload"], payload.model_dump())
+        self.assertEqual(llm_call.kwargs["payload"]["token_usage"], usage)
+
     async def test_enrichment_worker_records_llm_token_usage(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
         payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})

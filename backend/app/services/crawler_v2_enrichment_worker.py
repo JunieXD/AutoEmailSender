@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlWorkerKind, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_crawl4ai
+from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
@@ -58,6 +59,18 @@ async def run_crawler_v2_enrichment_worker_once(
             usage = None
         if not await _enrichment_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
             return 0
+        append_crawler_v2_debug_event(
+            job_id,
+            worker_kind="enrichment",
+            event_name="llm_response",
+            work_item_id=task_id,
+            payload={
+                "candidate_id": candidate.id,
+                "profile_url": candidate.profile_url,
+                "raw_payload": payload.model_dump() if hasattr(payload, "model_dump") else payload,
+                "token_usage": dict(usage) if usage is not None else None,
+            },
+        )
         if usage is not None:
             await record_crawler_v2_token_usage(
                 session_factory,
@@ -78,6 +91,13 @@ async def run_crawler_v2_enrichment_worker_once(
             if not await ensure_job_active(session, task.job_id):
                 return 0
             _apply_enrichment(candidate, payload)
+            append_crawler_v2_debug_event(
+                task.job_id,
+                worker_kind="enrichment",
+                event_name="enrichment_completed",
+                work_item_id=task_id,
+                payload={"candidate_id": candidate.id, "email": candidate.email, "department": candidate.department},
+            )
             task.status = CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
             task.worker_id = None
             task.claimed_at = None

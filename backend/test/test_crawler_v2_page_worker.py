@@ -97,6 +97,33 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
         self.assertEqual(len(pages), 0)
 
+
+    async def test_page_worker_writes_v2_debug_jsonl(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            status="succeeded",
+            title="教师名录",
+            text="张三 教授",
+            html="<html>张三</html>",
+            markdown="[张三](https://example.edu/zhang.html)",
+            links=[],
+            fetch_method="http",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), patch("app.services.crawler_v2_page_worker.append_crawler_v2_debug_event") as debug_mock:
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        events = [call.kwargs["event_name"] for call in debug_mock.call_args_list]
+        self.assertIn("page_fetched", events)
+        self.assertIn("page_chunked", events)
+        page_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "page_fetched")
+        self.assertEqual(page_call.args[0], job_id)
+        self.assertEqual(page_call.kwargs["worker_kind"], "page")
+        self.assertEqual(page_call.kwargs["work_item_id"], task_id)
+        self.assertEqual(page_call.kwargs["payload"]["snapshot"]["status"], "succeeded")
+
     async def test_direct_failure_uses_browser_fallback_without_terminal_failure(self) -> None:
         _, task_id = await self._seed_page_task()
         direct = PageSnapshot(url="https://example.edu/faculty", text="", html="", links=[], fetch_method="http", status="failed", error_message="403")

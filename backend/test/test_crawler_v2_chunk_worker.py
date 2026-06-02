@@ -183,6 +183,32 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
         self.assertIn("invalid json", chunk.last_error)
         self.assertEqual(candidates, [])
+
+    async def test_chunk_worker_writes_v2_debug_jsonl(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        payload = {
+            "candidates": [
+                {"name": "张三", "email": "zhang@example.edu", "confidence": 0.9},
+            ],
+            "discovered_urls": [],
+            "chunk_status": "completed",
+        }
+        usage = {"input_tokens": 20, "output_tokens": 30, "cached_tokens": 10, "total_tokens": 50}
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage))), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        events = [call.kwargs["event_name"] for call in debug_mock.call_args_list]
+        self.assertIn("llm_response", events)
+        self.assertIn("chunk_completed", events)
+        llm_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "llm_response")
+        self.assertEqual(llm_call.args[0], job_id)
+        self.assertEqual(llm_call.kwargs["worker_kind"], "chunk")
+        self.assertEqual(llm_call.kwargs["work_item_id"], chunk_id)
+        self.assertEqual(llm_call.kwargs["payload"]["raw_payload"], payload)
+        self.assertEqual(llm_call.kwargs["payload"]["token_usage"], usage)
+
     async def test_complete_chunk_splits_when_candidate_count_exceeds_limit(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
         async with self.session_factory() as session:
@@ -281,7 +307,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk_id=chunk_id,
             worker_id="w1",
             candidates=[candidate],
-            discovered_urls=["https://example.edu/page2.html", "https://other.edu/nope"],
+            discovered_urls=["https://example.edu/faculty/list2.html", "https://other.edu/nope"],
             chunk_status="completed",
         )
 
@@ -295,7 +321,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].name, "张三")
-        self.assertEqual([task.normalized_url for task in page_tasks], ["https://example.edu/page2.html"])
+        self.assertEqual([task.normalized_url for task in page_tasks], ["https://example.edu/faculty/list2.html"])
         self.assertEqual(enrichment_tasks, [])
 
 
@@ -313,7 +339,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 await session.commit()
             return ({
                 "candidates": [{"name": "张三", "profile_url": "https://example.edu/zhang.html"}],
-                "discovered_urls": ["https://example.edu/page2.html"],
+                "discovered_urls": ["https://example.edu/faculty/list2.html"],
                 "chunk_status": "completed",
             }, {"input_tokens": 10, "output_tokens": 5, "cached_tokens": 0})
 
@@ -359,7 +385,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                     "confidence": 0.9,
                 }
             ],
-            "discovered_urls": ["https://example.edu/page2.html"],
+            "discovered_urls": ["https://example.edu/faculty/list2.html"],
             "chunk_status": "completed",
         }
 
@@ -381,7 +407,35 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert chunk is not None
         self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
         self.assertEqual([candidate.name for candidate in candidates], ["张三"])
-        self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/page2.html"])
+        self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/faculty/list2.html"])
+
+
+    async def test_complete_chunk_only_enqueues_explicit_list_or_pagination_urls(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/people/zhang.html", confidence=0.9)],
+            discovered_urls=[
+                "https://example.edu/people/li.html",
+                "https://example.edu/about.html",
+                "https://example.edu/news/2024.html",
+                "https://example.edu/faculty/list2.html",
+                "https://example.edu/teachers?page=2",
+            ],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["url_count"], 2)
+        async with self.session_factory() as session:
+            tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id).order_by(CrawlPageTask.id)))
+        self.assertEqual(
+            [task.normalized_url for task in tasks],
+            ["https://example.edu/faculty/list2.html", "https://example.edu/teachers?page=2"],
+        )
 
     async def test_complete_chunk_idempotently_ignores_url_already_found_by_page_worker(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
@@ -389,8 +443,8 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             session.add(
                 CrawlPageTask(
                     job_id=job_id,
-                    normalized_url="https://example.edu/page2.html",
-                    original_url="https://example.edu/page2.html",
+                    normalized_url="https://example.edu/faculty/list2.html",
+                    original_url="https://example.edu/faculty/list2.html",
                 )
             )
             await session.commit()
@@ -400,7 +454,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk_id=chunk_id,
             worker_id="w1",
             candidates=[ProfessorCandidatePayload(name="张三", email="zhang@example.edu", confidence=0.9)],
-            discovered_urls=["https://example.edu/page2.html", "https://example.edu/page2.html#section"],
+            discovered_urls=["https://example.edu/faculty/list2.html", "https://example.edu/faculty/list2.html#section"],
             chunk_status="completed",
         )
 
@@ -459,7 +513,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk_id=chunk_id,
             worker_id="w1",
             candidates=[candidate],
-            discovered_urls=["https://example.edu/page2.html"],
+            discovered_urls=["https://example.edu/faculty/list2.html"],
             chunk_status="completed",
         )
 
