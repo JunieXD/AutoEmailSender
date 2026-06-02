@@ -100,28 +100,51 @@ def build_crawl_job_events(
             },
         )
 
-    for candidate in candidates:
-        candidate_id = _get_attr(candidate, "id")
-        name = _get_attr(candidate, "name") or "未知导师"
+    for batch_index, candidate_batch in enumerate(_group_candidates_by_created_at(candidates)):
+        candidate_ids = [_get_attr(candidate, "id") for candidate in candidate_batch]
+        names = [_get_attr(candidate, "name") or "未知导师" for candidate in candidate_batch]
+        first_candidate = candidate_batch[0]
+        first_candidate_id = candidate_ids[0] if candidate_ids else None
         events.append(
             {
-                "id": f"job:{job_id}:candidate:{candidate_id or len(events)}",
+                "id": f"job:{job_id}:candidate:{first_candidate_id or batch_index}",
                 "job_id": job_id,
                 "event_type": "candidate",
-                "message": f"发现候选导师：{name}",
-                "created_at": _to_event_time(_get_attr(candidate, "created_at")),
+                "message": f"发现候选导师：{'、'.join(names)}",
+                "created_at": _to_event_time(_get_attr(first_candidate, "created_at")),
                 "raw": {
-                    "id": candidate_id,
-                    "name": _get_attr(candidate, "name"),
-                    "email": _get_attr(candidate, "email"),
-                    "source_url": _get_attr(candidate, "source_url"),
-                    "confidence": _get_attr(candidate, "confidence"),
+                    "id": first_candidate_id,
+                    "candidate_ids": candidate_ids,
+                    "names": names,
+                    "count": len(candidate_batch),
+                    "candidates": [
+                        {
+                            "id": _get_attr(candidate, "id"),
+                            "name": _get_attr(candidate, "name"),
+                            "email": _get_attr(candidate, "email"),
+                            "source_url": _get_attr(candidate, "source_url"),
+                            "confidence": _get_attr(candidate, "confidence"),
+                        }
+                        for candidate in candidate_batch
+                    ],
                 },
             },
         )
 
     return sorted(events, key=lambda event: str(event.get("created_at") or ""))
 
+
+
+def _group_candidates_by_created_at(candidates: list[Any]) -> list[list[Any]]:
+    groups: list[list[Any]] = []
+    group_by_time: dict[str, list[Any]] = {}
+    for candidate in candidates:
+        key = str(_to_event_time(_get_attr(candidate, "created_at")) or "")
+        if key not in group_by_time:
+            group_by_time[key] = []
+            groups.append(group_by_time[key])
+        group_by_time[key].append(candidate)
+    return groups
 
 def normalize_agent_trace_event(event: dict[str, object]) -> dict[str, object]:
     raw = event if isinstance(event, dict) else {}

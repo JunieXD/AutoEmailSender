@@ -31,6 +31,7 @@ from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runtime import build_faculty_crawler_model
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import parse_structured_result
 
@@ -52,8 +53,9 @@ async def invoke_v2_chunk_agent(
     school: str,
     source_url: str,
     chunk_content: str,
+    thinking_extra_body: dict[str, object] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int | None] | None, str]:
-    model = build_faculty_crawler_model(llm_profile)
+    model = build_faculty_crawler_model(llm_profile, extra_body=thinking_extra_body)
     prompt = build_v2_chunk_prompt(
         university=university,
         school=school,
@@ -157,6 +159,7 @@ async def run_crawler_v2_chunk_worker_once(
             chunk.lease_expires_at = None
             await session.commit()
             return 1
+        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
     try:
         chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
@@ -164,6 +167,7 @@ async def run_crawler_v2_chunk_worker_once(
             school=job.school,
             source_url=chunk.source_url,
             chunk_content=chunk.content,
+            thinking_extra_body=thinking_extra_body,
         )
         raw_model_text = None
         if isinstance(chunk_agent_result, tuple):

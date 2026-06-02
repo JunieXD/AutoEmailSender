@@ -101,6 +101,30 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertGreater(len(chunks), 2)
         self.assertLessEqual(max(chunk.token_estimate for chunk in chunks), 1300)
 
+
+    def test_default_recursive_split_config_supports_dense_small_chunks(self) -> None:
+        config = ChunkingConfig()
+
+        self.assertEqual(config.min_split_tokens, 150)
+        self.assertEqual(config.max_split_depth, 7)
+
+    def test_split_chunk_content_reduces_overlap_for_small_chunks(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        content = "\n".join(f"教师{i} [详情](https://cs.example.edu/t{i}.htm)" for i in range(20))
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            config=ChunkingConfig(min_split_tokens=150, overlap_tokens=180),
+        )
+
+        self.assertEqual(len(drafts), 2)
+        self.assertLess(drafts[1].token_estimate, estimate_tokens(content))
+        self.assertLess(drafts[1].token_estimate - drafts[0].token_estimate, 80)
+
     def test_fingerprint_page_is_stable(self) -> None:
         self.assertEqual(fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四"))
 

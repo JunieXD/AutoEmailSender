@@ -14,8 +14,8 @@ class ChunkingConfig:
     soft_max_tokens: int = 2800
     hard_max_tokens: int = 3200
     overlap_tokens: int = 180
-    min_split_tokens: int = 500
-    max_split_depth: int = 4
+    min_split_tokens: int = 150
+    max_split_depth: int = 7
     single_chunk_max_tokens: int = 2200
     min_balanced_target_tokens: int = 1200
     max_balanced_target_tokens: int = 2200
@@ -214,7 +214,8 @@ def split_chunk_content(
     lines = content.splitlines()
     midpoint = max(1, len(lines) // 2)
     left_lines = lines[:midpoint]
-    right_lines = [*_overlap_tail(left_lines, selected_config.overlap_tokens), *lines[midpoint:]]
+    overlap_tokens = _dynamic_overlap_tokens(content, selected_config)
+    right_lines = [*_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]
     drafts: list[PageChunkDraft] = []
     for index, child_lines in enumerate((left_lines, right_lines)):
         normalized = _normalize_lines("\n".join(child_lines))
@@ -239,6 +240,15 @@ def split_chunk_content(
         )
     return drafts
 
+
+
+def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
+    content_tokens = estimate_tokens(content)
+    if content_tokens <= config.min_split_tokens * 2:
+        return min(config.overlap_tokens, max(0, content_tokens // 8))
+    if content_tokens <= config.min_split_tokens * 4:
+        return min(config.overlap_tokens, max(0, content_tokens // 6))
+    return config.overlap_tokens
 
 def _overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
     selected: list[str] = []

@@ -860,7 +860,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertIn("任务进入待审核", messages)
         self.assertIn("Agent 调用 crawl_page", messages)
         self.assertIn("已抓取页面：Faculty", messages)
-        self.assertIn("发现候选导师：高分导师", messages)
+        self.assertIn("发现候选导师：高分导师、低分导师、无邮箱导师", messages)
 
     def test_approve_requires_candidate_ids(self) -> None:
         create_response = self.client.post(
