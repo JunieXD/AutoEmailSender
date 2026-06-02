@@ -52,7 +52,7 @@ async def invoke_v2_chunk_agent(
     school: str,
     source_url: str,
     chunk_content: str,
-) -> tuple[dict[str, Any], dict[str, int | None] | None]:
+) -> tuple[dict[str, Any], dict[str, int | None] | None, str]:
     model = build_faculty_crawler_model(llm_profile)
     prompt = build_v2_chunk_prompt(
         university=university,
@@ -64,7 +64,7 @@ async def invoke_v2_chunk_agent(
     content = _extract_message_text(response)
     payload = parse_structured_result(content, V2ChunkAgentPayload)
     usage = extract_token_usage_from_llm_response(response)
-    return payload.model_dump(), usage
+    return payload.model_dump(), usage, content
 
 
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
@@ -165,8 +165,12 @@ async def run_crawler_v2_chunk_worker_once(
             source_url=chunk.source_url,
             chunk_content=chunk.content,
         )
+        raw_model_text = None
         if isinstance(chunk_agent_result, tuple):
-            payload, usage = chunk_agent_result
+            if len(chunk_agent_result) >= 3:
+                payload, usage, raw_model_text = chunk_agent_result[:3]
+            else:
+                payload, usage = chunk_agent_result
         else:
             payload = chunk_agent_result
             usage = None
@@ -194,6 +198,7 @@ async def run_crawler_v2_chunk_worker_once(
                 "source_url": chunk.source_url,
                 "chunk_content": chunk.content,
                 "raw_payload": payload,
+                "raw_model_text": raw_model_text,
                 "token_usage": dict(usage) if usage is not None else None,
             },
         )

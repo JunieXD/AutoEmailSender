@@ -42,6 +42,10 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
+
+    async def test_default_chunk_concurrency_is_three(self) -> None:
+        self.assertEqual(CrawlerV2WorkerConfig().chunk_concurrency, 3)
+
     async def test_claims_chunk_before_page_and_enrichment(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:

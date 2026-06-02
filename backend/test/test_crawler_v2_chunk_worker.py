@@ -195,7 +195,8 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         }
         usage = {"input_tokens": 20, "output_tokens": 30, "cached_tokens": 10, "total_tokens": 50}
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage))), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+        raw_model_text = "模型原始输出：{\"chunk_status\":\"completed\"}"
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, raw_model_text))), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -207,6 +208,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm_call.kwargs["worker_kind"], "chunk")
         self.assertEqual(llm_call.kwargs["work_item_id"], chunk_id)
         self.assertEqual(llm_call.kwargs["payload"]["raw_payload"], payload)
+        self.assertEqual(llm_call.kwargs["payload"]["raw_model_text"], raw_model_text)
         self.assertEqual(llm_call.kwargs["payload"]["token_usage"], usage)
 
     async def test_complete_chunk_splits_when_candidate_count_exceeds_limit(self) -> None:

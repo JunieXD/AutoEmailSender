@@ -52,8 +52,12 @@ async def run_crawler_v2_enrichment_worker_once(
 
     try:
         enrichment_result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate.id)
+        raw_model_text = None
         if isinstance(enrichment_result, tuple):
-            payload, usage = enrichment_result
+            if len(enrichment_result) >= 3:
+                payload, usage, raw_model_text = enrichment_result[:3]
+            else:
+                payload, usage = enrichment_result
         else:
             payload = enrichment_result
             usage = None
@@ -68,6 +72,7 @@ async def run_crawler_v2_enrichment_worker_once(
                 "candidate_id": candidate.id,
                 "profile_url": candidate.profile_url,
                 "raw_payload": payload.model_dump() if hasattr(payload, "model_dump") else payload,
+                "raw_model_text": raw_model_text,
                 "token_usage": dict(usage) if usage is not None else None,
             },
         )
@@ -126,8 +131,8 @@ async def enrich_candidate_once(
     *,
     candidate_id: int,
 ) -> CandidateEnrichmentPayload:
-    payload, _ = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
-    return payload
+    result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
+    return result[0]
 
 async def _enrichment_task_can_commit(
     session_factory: async_sessionmaker[AsyncSession],
@@ -153,7 +158,7 @@ async def enrich_candidate_once_with_usage(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     candidate_id: int,
-) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None]:
+) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     async with session_factory() as session:
         candidate = await session.get(CrawlCandidate, candidate_id)
         if candidate is None:
@@ -181,7 +186,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
     llm_profile: LLMProfile,
     candidate: CrawlCandidate,
     page_text: str,
-) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None]:
+) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     from app.services.crawl_job_runtime import build_candidate_enrichment_prompt
     from app.services.crawl_job_runtime import _extract_model_message_content, _build_structured_retry_prompt
     from app.services.crawl_job_runtime import DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS
@@ -202,7 +207,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
         else:
             try:
                 payload = parse_structured_result(content, CandidateEnrichmentPayload)
-                return payload, extract_token_usage_from_llm_response(response)
+                return payload, extract_token_usage_from_llm_response(response), content
             except LLMRuntimeError as exc:
                 last_error = exc
         if attempt + 1 >= DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS:
