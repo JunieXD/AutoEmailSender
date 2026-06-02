@@ -235,6 +235,7 @@ describe("filterManagementProfessors", () => {
 
   it("prunes filters when universities or options disappear", () => {
     const pruned = pruneManagementFilters(professors, {
+      ...createDefaultManagementFilters(),
       keyword: "",
       universities: ["MIT", "Unknown"],
       schools: ["AI Institute", "School of Medicine"],
@@ -247,6 +248,7 @@ describe("filterManagementProfessors", () => {
     expect(pruned.departments).toEqual([]);
 
     const schoolPruned = pruneManagementFilters(professors, {
+      ...createDefaultManagementFilters(),
       keyword: "",
       universities: ["MIT"],
       schools: ["AI Institute"],
