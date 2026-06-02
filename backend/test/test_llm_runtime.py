@@ -1266,6 +1266,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不要修改或删除用户已写的日期", "\n".join(payload["instructions"]))
         self.assertIn("不要新增日期", "\n".join(payload["instructions"]))
 
+
+    def test_draft_rewrite_system_prompt_includes_replacements_output_example(self) -> None:
+        self.assertIn("输出示例", SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"replacements"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"segment_id"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"runs"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"marks"', SYSTEM_DRAFT_REWRITE_PROMPT)
+
     def test_build_draft_rewrite_prompt_injects_custom_instruction_with_guardrails(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.template_draft_rewrite import build_draft_rewrite_document

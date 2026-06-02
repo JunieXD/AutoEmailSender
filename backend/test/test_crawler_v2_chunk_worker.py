@@ -34,6 +34,12 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("导师个人主页", prompt)
         self.assertIn("不能放入 discovered_urls", prompt)
         self.assertIn("只输出一个 JSON 对象", prompt)
+        self.assertIn("输出示例", prompt)
+        self.assertIn('"chunk_status": "completed"', prompt)
+        self.assertIn('"chunk_status": "no_candidates"', prompt)
+        self.assertIn('"chunk_status": "too_many_candidates"', prompt)
+        self.assertIn('"candidates": []', prompt)
+        self.assertIn('"discovered_urls": []', prompt)
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -75,6 +81,80 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk = await session.get(CrawlPageChunk, chunk_id)
         assert chunk is not None
         self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_TERMINAL.value)
+    async def test_complete_chunk_too_many_candidates_triggers_backend_split(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "\n".join(f"教师{i} https://example.edu/t{i}.html 研究方向 软件工程 人工智能 数据挖掘" for i in range(80))
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[],
+            discovered_urls=[],
+            chunk_status="too_many_candidates",
+        )
+
+        self.assertEqual(result["status"], CrawlPageChunkStatus.SPLIT_REQUIRED.value)
+        self.assertGreaterEqual(result["child_count"], 1)
+        async with self.session_factory() as session:
+            parent = await session.get(CrawlPageChunk, chunk_id)
+            children = list(
+                await session.scalars(
+                    select(CrawlPageChunk).where(CrawlPageChunk.parent_chunk_id == "c1").order_by(CrawlPageChunk.id)
+                )
+            )
+        assert parent is not None
+        self.assertEqual(parent.status, CrawlPageChunkStatus.SUPERSEDED.value)
+        self.assertEqual(parent.split_reason, "too_many_candidates")
+        self.assertGreaterEqual(len(children), 1)
+
+    async def test_complete_chunk_ignores_legacy_split_required_status(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[],
+            discovered_urls=[],
+            chunk_status="split_required",
+        )
+
+        self.assertEqual(result["status"], "saved")
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            children = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.parent_chunk_id == "c1")))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
+        self.assertEqual(children, [])
+
+    async def test_complete_chunk_exactly_ten_candidates_does_not_split(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        candidates = [
+            ProfessorCandidatePayload(name=f"教师{i}", profile_url=f"https://example.edu/t{i}.html", confidence=0.9)
+            for i in range(10)
+        ]
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=candidates,
+            discovered_urls=[],
+            chunk_status="completed",
+        )
+
+        self.assertEqual(result["status"], "saved")
+        self.assertEqual(result["saved_count"], 10)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            children = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.parent_chunk_id == "c1")))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
+        self.assertEqual(children, [])
     async def test_chunk_worker_marks_retryable_when_payload_shape_is_invalid(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
 

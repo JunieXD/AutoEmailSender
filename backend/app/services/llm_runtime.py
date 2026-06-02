@@ -176,6 +176,22 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     - text
     - marks
 
+    输出示例：
+    {
+      "replacements": [
+        {
+          "segment_id": "seg_1",
+          "runs": [
+            {"text": "李老师，您好：", "marks": []},
+            {"text": "我关注到您在信息抽取方向的研究。", "marks": ["strong"]}
+          ]
+        }
+      ]
+    }
+
+    如没有任何块需要改写，输出：
+    {"replacements": []}
+
     额外要求：
     - 只能返回输入中存在的 segment_id。
     - 不要新增、删除、合并、拆分或重排块。

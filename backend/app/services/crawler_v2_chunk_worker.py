@@ -69,15 +69,22 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
     return (
         "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
         "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。不要输出解释文字。\n"
-        "chunk_status 只能是 completed、no_candidates 或 split_required。\n"
+        "chunk_status 只能是 completed、no_candidates 或 too_many_candidates。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
-        "candidates 最多 10 个候选；如果当前 chunk 明确超过 10 个候选，chunk_status 必须是 split_required，candidates 必须为空。\n"
+        "candidates 最多 10 个候选；只有当前 chunk 正文内明确可见超过 10 个导师候选时，chunk_status 才能是 too_many_candidates，且 candidates 必须为空。\n"
+        "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能使用 too_many_candidates。\n"
         "缺少 email 且缺少 profile_url 的候选不可提交；无法确认有效候选时使用 no_candidates。\n"
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
         "导师个人主页链接属于候选 profile_url，不能放入 discovered_urls。\n"
         "discovered_urls 只放候选列表页、分页页、教师目录页等继续抓取入口。\n"
         "每个候选字段使用英文键：name、email、title、university、school、department、research_direction、recent_papers、profile_url、source_url、confidence、field_confidence、evidence。\n"
         "confidence 和 field_confidence 必须是 0 到 1 的数字；evidence 只写简短摘要，不复制大段原文。\n"
+        "输出示例（正常保存）：\n"
+        '{"chunk_status": "completed", "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": {"name": 0.95, "email": 0.9, "profile_url": 0.95}, "evidence": {"summary": "当前 chunk 中姓名链接和邮箱明确出现"}}], "discovered_urls": []}\n'
+        "输出示例（无候选）：\n"
+        '{"chunk_status": "no_candidates", "candidates": [], "discovered_urls": []}\n'
+        "输出示例（当前 chunk 明确超过 10 个候选）：\n"
+        '{"chunk_status": "too_many_candidates", "candidates": [], "discovered_urls": []}\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"来源 URL：{source_url}\n"
@@ -117,6 +124,11 @@ def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
     missing = required.difference(payload)
     if missing:
         raise ValueError(f"Chunk Worker 返回缺少字段：{', '.join(sorted(missing))}")
+    chunk_status = str(payload.get("chunk_status") or "")
+    if chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
+        raise ValueError("Chunk Worker 返回了已废弃的 split_required；只有当前 chunk 明确超过 10 个候选时才能返回 too_many_candidates")
+    if chunk_status not in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, "too_many_candidates"}:
+        raise ValueError(f"Chunk Worker 返回了不支持的 chunk_status：{chunk_status}")
     return payload
 
 async def run_crawler_v2_chunk_worker_once(
@@ -289,8 +301,8 @@ async def complete_current_chunk(
         if job is None:
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
 
-        if chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value or len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT:
-            reason = "candidate_count_exceeded" if len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT else "llm_split_required"
+        if chunk_status == "too_many_candidates" or len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT:
+            reason = "candidate_count_exceeded" if len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT else "too_many_candidates"
             split_result = await split_page_chunk_for_retry(
                 session_factory,
                 job_id=chunk.job_id,
@@ -379,7 +391,7 @@ def _lease_expired(lease_expires_at: datetime | None) -> bool:
 
 
 def _normalize_chunk_status(chunk_status: str) -> str:
-    if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, CrawlPageChunkStatus.SPLIT_REQUIRED.value}:
+    if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value}:
         return chunk_status
     return CrawlPageChunkStatus.COMPLETED.value
 

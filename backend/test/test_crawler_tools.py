@@ -560,6 +560,9 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("最可能属于该导师", prompt)
         self.assertIn("[@]", prompt)
         self.assertIn("字段值尽量保持页面原文", prompt)
+        self.assertIn("输出示例", prompt)
+        self.assertIn('"email"', prompt)
+        self.assertIn('"recent_papers": []', prompt)
 
     def test_build_profile_candidate_prompt_requires_preserving_source_language_values(self) -> None:
         prompt = build_profile_candidate_prompt(
@@ -577,6 +580,10 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("最可能属于该导师", prompt)
         self.assertIn("[@]", prompt)
         self.assertIn("recent_papers 必须是 JSON 数组", prompt)
+        self.assertIn("输出示例", prompt)
+        self.assertIn('"field_confidence"', prompt)
+        self.assertIn('"recent_papers": []', prompt)
+        self.assertIn('"evidence"', prompt)
 
     def test_candidate_enrichment_payload_defaults(self) -> None:
         payload = CandidateEnrichmentPayload.model_validate({})
