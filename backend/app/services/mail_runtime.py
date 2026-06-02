@@ -53,6 +53,19 @@ REPLY_QUOTE_HTML_PATTERNS = (
     re.compile(r"-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
     re.compile(r"<blockquote\b", re.IGNORECASE),
 )
+CHINESE_REPLY_HEADER_PATTERN = re.compile(
+    r"(?:^|\n)\s*发件人：.+?"
+    r"(?=\n\s*(?:发件时间|收件人|主题)：)"
+    r"(?:\n\s*发件时间：.+?)?"
+    r"(?:\n\s*收件人：.+?)?"
+    r"(?:\n\s*主题：.+?)?",
+    re.DOTALL,
+)
+CHINESE_REPLY_HTML_HEADER_PATTERN = re.compile(r"发件人\s*(?:：|:)")
+CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN = re.compile(
+    r"发件人：.+?\n\s*(?:发件时间|收件人|主题)：",
+    re.DOTALL,
+)
 HTML_TEXT_BLOCK_TAGS = {
     "br",
     "div",
@@ -69,6 +82,25 @@ HTML_TEXT_BLOCK_TAGS = {
     "h5",
     "h6",
 }
+HTML_TEXT_IGNORED_CONTAINER_TAGS = {
+    "head",
+    "style",
+    "script",
+    "title",
+}
+HTML_TEXT_IGNORED_EMPTY_TAGS = {
+    "meta",
+    "link",
+}
+HTML_REPLY_QUOTE_BLOCK_TAGS = (
+    "<table",
+    "<tbody",
+    "<tr",
+    "<td",
+    "<div",
+    "<blockquote",
+    "<p",
+)
 
 
 class MailRuntimeError(RuntimeError):
@@ -104,16 +136,35 @@ class _HtmlTextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
+        self.ignored_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() in HTML_TEXT_BLOCK_TAGS:
+        normalized_tag = tag.lower()
+        if normalized_tag in HTML_TEXT_IGNORED_EMPTY_TAGS:
+            return
+        if normalized_tag in HTML_TEXT_IGNORED_CONTAINER_TAGS:
+            self.ignored_depth += 1
+            return
+        if self.ignored_depth > 0:
+            return
+        if normalized_tag in HTML_TEXT_BLOCK_TAGS:
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in HTML_TEXT_BLOCK_TAGS:
+        normalized_tag = tag.lower()
+        if normalized_tag in HTML_TEXT_IGNORED_EMPTY_TAGS:
+            return
+        if normalized_tag in HTML_TEXT_IGNORED_CONTAINER_TAGS:
+            self.ignored_depth = max(0, self.ignored_depth - 1)
+            return
+        if self.ignored_depth > 0:
+            return
+        if normalized_tag in HTML_TEXT_BLOCK_TAGS:
             self.parts.append("\n")
 
     def handle_data(self, data: str) -> None:
+        if self.ignored_depth > 0:
+            return
         self.parts.append(data)
 
     def get_text(self) -> str:
@@ -697,6 +748,9 @@ def strip_quoted_reply_text(content: str) -> str:
         if marker_index >= 0:
             next_content = next_content[:marker_index]
             break
+    match = CHINESE_REPLY_HEADER_PATTERN.search(next_content)
+    if match:
+        next_content = next_content[: match.start()]
     return next_content.strip()
 
 
@@ -713,7 +767,28 @@ def strip_quoted_reply_html(content: str) -> str:
         if last_tag_start > last_tag_end:
             marker_index = last_tag_start
         next_content = next_content[:marker_index]
+    chinese_marker_index = _find_chinese_reply_header_html_index(next_content)
+    if chinese_marker_index is not None:
+        next_content = next_content[:chinese_marker_index]
     return next_content.strip()
+
+
+def _find_chinese_reply_header_html_index(content: str) -> int | None:
+    match = CHINESE_REPLY_HTML_HEADER_PATTERN.search(content)
+    if not match:
+        return None
+    text_before_and_after_marker = convert_html_to_text(content[match.start() :])
+    if not CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN.search(text_before_and_after_marker):
+        return None
+    marker_index = match.start()
+    block_index = max(content.rfind(tag, 0, marker_index) for tag in HTML_REPLY_QUOTE_BLOCK_TAGS)
+    if block_index >= 0:
+        return block_index
+    last_tag_start = content.rfind("<", 0, marker_index)
+    last_tag_end = content.rfind(">", 0, marker_index)
+    if last_tag_start > last_tag_end:
+        return last_tag_start
+    return marker_index
 
 
 def decode_mime_header(value: str | None) -> str | None:
