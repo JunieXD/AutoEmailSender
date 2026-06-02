@@ -28,6 +28,12 @@ export const approveDraft = (taskId: number, payload: EmailTaskApprovalPayloadDT
     body: JSON.stringify(payload),
   });
 
+export const saveDraft = (taskId: number, payload: EmailTaskApprovalPayloadDTO) =>
+  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/save-draft`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
 export const approveAndSend = (taskId: number, payload: EmailTaskApprovalPayloadDTO) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/approve-and-send`, {
     method: 'POST',

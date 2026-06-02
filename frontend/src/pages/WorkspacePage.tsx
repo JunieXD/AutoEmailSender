@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useBeforeUnload, useBlocker, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, Loader2, X } from 'lucide-react';
 import { WorkspaceComposerDock } from '@/components/organisms/WorkspaceComposerDock';
 import { WorkspaceMessageThread } from '@/components/organisms/WorkspaceMessageThread';
 import { WorkspaceSidebar } from '@/components/organisms/WorkspaceSidebar';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
+import { useWorkspaceDraftGuard } from '@/context/WorkspaceDraftGuardContext';
 import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
 import { bootstrapWorkspaceThread } from '@/features/workspace/client/openWorkspaceThread';
@@ -17,6 +18,7 @@ import {
   cancelScheduledTask,
   continueManually,
   generateDraft,
+  saveDraft,
   startFollowUp,
   updateTaskOutreachConfig,
 } from '@/lib/api/emailTasksApi';
@@ -354,8 +356,9 @@ export const WorkspacePage = () => {
   const { id } = useParams<{ id: string }>();
   const professorId = Number(id);
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
-  const { confirm, dialog: confirmDialog } = useConfirmDialog();
+  const { confirm, choose, dialog: confirmDialog } = useConfirmDialog();
   const { selectedIdentityId, selectedLlmProfileId } = useSelectionContext();
+  const { registerWorkspaceDraftGuard } = useWorkspaceDraftGuard();
   const [thread, setThread] = useState<WorkspaceThreadDTO | null>(null);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
@@ -372,11 +375,15 @@ export const WorkspacePage = () => {
   const [threadRefreshing, setThreadRefreshing] = useState(false);
   const [lastThreadCheckedAt, setLastThreadCheckedAt] = useState<Date | null>(null);
   const [newReceivedCount, setNewReceivedCount] = useState(0);
+  const [composerDirty, setComposerDirty] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [savingBeforeNavigate, setSavingBeforeNavigate] = useState(false);
   const loadedThreadKeyRef = useRef<string | null>(null);
   const activeThreadRequestKeyRef = useRef<string | null>(null);
   const latestThreadRequestIdRef = useRef(0);
   const currentWorkspaceRequestKeyRef = useRef<string | null>(null);
   const latestActionRequestIdRef = useRef(0);
+  const latestDraftSaveRequestIdRef = useRef(0);
   const knownReceivedMessageIdsRef = useRef<Set<number>>(new Set());
   const composerDirtyRef = useRef(false);
   const workspaceRequestKey =
@@ -411,6 +418,11 @@ export const WorkspacePage = () => {
         '',
       contentHtml: draftContentHtml,
     });
+    const hasSavedDraftRecord = Boolean(
+      currentTask?.approved_subject != null ||
+        currentTask?.approved_body_text != null ||
+        currentTask?.approved_body_html != null,
+    );
     const hasDraftRecord = Boolean(
       draftSubject.trim() || draftContentText.trim() || draftContentHtml?.trim(),
     );
@@ -419,7 +431,8 @@ export const WorkspacePage = () => {
     const renderedTemplateContentHtml = currentTask?.rendered_template_body_html ?? null;
     const shouldUseDraftRecord =
       hasDraftRecord &&
-      (currentTask?.outreach_generation_mode !== 'template' ||
+      (hasSavedDraftRecord ||
+        currentTask?.outreach_generation_mode !== 'template' ||
         draftMatchesTemplate({
           draftSubject,
           draftContentText,
@@ -467,6 +480,7 @@ export const WorkspacePage = () => {
         : getDefaultScheduledAtValue(),
     );
     composerDirtyRef.current = false;
+    setComposerDirty(false);
   }, []);
 
   const loadThread = useCallback(async (options: { refreshReplies?: boolean; silent?: boolean } = {}) => {
@@ -483,6 +497,7 @@ export const WorkspacePage = () => {
       setLastThreadCheckedAt(null);
       setNewReceivedCount(0);
       composerDirtyRef.current = false;
+      setComposerDirty(false);
       return;
     }
 
@@ -602,7 +617,9 @@ export const WorkspacePage = () => {
     setThreadRefreshing(false);
     setLastThreadCheckedAt(null);
     setNewReceivedCount(0);
+    setDraftSaving(false);
     composerDirtyRef.current = false;
+    setComposerDirty(false);
   }, [workspaceRequestKey]);
 
   useEffect(() => {
@@ -645,6 +662,24 @@ export const WorkspacePage = () => {
   }, [loadThread]);
   const preparedBodyText = deriveBodyTextFromDraft({ content, contentHtml });
   const hasDraft = composerHasSendableDraft;
+  const buildDraftPayload = useCallback(
+    () => ({
+      subject: subject.trim() || null,
+      body_text: preparedBodyText,
+      body_html: contentHtml,
+      selected_material_ids: selectedMaterialIds,
+    }),
+    [contentHtml, preparedBodyText, selectedMaterialIds, subject],
+  );
+  const buildSavedDraftPayload = useCallback(
+    () => ({
+      subject: subject.trim(),
+      body_text: preparedBodyText,
+      body_html: contentHtml,
+      selected_material_ids: selectedMaterialIds,
+    }),
+    [contentHtml, preparedBodyText, selectedMaterialIds, subject],
+  );
   const nextStep = currentTask
     ? getWorkspaceNextStep({
         status: currentTask.status ?? 'discovered',
@@ -663,8 +698,10 @@ export const WorkspacePage = () => {
       fallbackTitle: string,
       fallbackMessage: string,
       onSuccess?: (data: WorkspaceThreadDTO) => void,
+      options: { preserveDirtyComposer?: boolean } = {},
     ) => {
       const actionRequestKey = workspaceRequestKey;
+      const actionTaskId = currentTaskId;
       const actionRequestId = latestActionRequestIdRef.current + 1;
       latestActionRequestIdRef.current = actionRequestId;
       setActing(true);
@@ -678,7 +715,12 @@ export const WorkspacePage = () => {
         }
         setThread(data);
         setLoadFailed(false);
-        syncComposer(data);
+        const nextTaskId = data.current_task?.id ?? null;
+        const shouldPreserveDirtyComposer =
+          options.preserveDirtyComposer === true &&
+          actionTaskId != null &&
+          nextTaskId === actionTaskId;
+        syncComposer(data, { preserveDirty: shouldPreserveDirtyComposer });
         onSuccess?.(data);
       } catch (actionError) {
         if (
@@ -698,16 +740,50 @@ export const WorkspacePage = () => {
         }
       }
     },
-    [notifyError, syncComposer, workspaceRequestKey],
+    [currentTaskId, notifyError, syncComposer, workspaceRequestKey],
   );
+
+  const saveCurrentDraft = useCallback(async () => {
+    if (!currentTaskId) {
+      throw new Error('当前工作区没有可保存的草稿');
+    }
+
+    const draftSaveRequestKey = workspaceRequestKey;
+    const draftSaveRequestId = latestDraftSaveRequestIdRef.current + 1;
+    latestDraftSaveRequestIdRef.current = draftSaveRequestId;
+    setDraftSaving(true);
+    try {
+      return await saveDraft(currentTaskId, buildSavedDraftPayload());
+    } finally {
+      if (
+        latestDraftSaveRequestIdRef.current === draftSaveRequestId &&
+        currentWorkspaceRequestKeyRef.current === draftSaveRequestKey
+      ) {
+        setDraftSaving(false);
+      }
+    }
+  }, [buildSavedDraftPayload, currentTaskId, workspaceRequestKey]);
+
+  const handleSaveDraft = useCallback(() => {
+    void runAction(
+      saveCurrentDraft,
+      '保存草稿失败',
+      '保存草稿失败',
+      () => {
+        notifySuccess('草稿已保存', '工作区草稿已更新。');
+      },
+    );
+  }, [notifySuccess, runAction, saveCurrentDraft]);
 
   const handleSubjectChange = useCallback((value: string) => {
     composerDirtyRef.current = true;
+    setComposerDirty(true);
     setSubject(value);
   }, []);
 
   const handleContentChange = useCallback((value: { html: string; text: string }) => {
     composerDirtyRef.current = true;
+    setComposerDirty(true);
     setContent(value.text);
     setContentHtml(value.html);
     setComposerHasSendableDraft(hasMeaningfulBody({
@@ -718,6 +794,7 @@ export const WorkspacePage = () => {
 
   const handleSelectedMaterialIdsChange = useCallback((ids: number[]) => {
     composerDirtyRef.current = true;
+    setComposerDirty(true);
     setSelectedMaterialIds(ids);
   }, []);
 
@@ -740,12 +817,7 @@ export const WorkspacePage = () => {
 
       await runAction(
         () =>
-          approveAndSend(currentTaskId, {
-            subject: subject.trim() || null,
-            body_text: preparedBodyText,
-            body_html: contentHtml,
-            selected_material_ids: selectedMaterialIds,
-          }),
+          approveAndSend(currentTaskId, buildDraftPayload()),
         '发送失败',
         '发送失败',
         () => setComposerExpanded(false),
@@ -753,12 +825,10 @@ export const WorkspacePage = () => {
     })();
   }, [
     confirm,
-    contentHtml,
     currentTaskId,
-    preparedBodyText,
+    buildDraftPayload,
     runAction,
     selectedMaterialIds,
-    subject,
     thread?.professor.email,
   ]);
 
@@ -786,10 +856,7 @@ export const WorkspacePage = () => {
     void runAction(
       () =>
         approveAndSchedule(currentTaskId, {
-          subject: subject.trim() || null,
-          body_text: preparedBodyText,
-          body_html: contentHtml,
-          selected_material_ids: selectedMaterialIds,
+          ...buildDraftPayload(),
           scheduled_at: scheduleDate.toISOString(),
         }),
       '定时发送失败',
@@ -801,14 +868,11 @@ export const WorkspacePage = () => {
       },
     );
   }, [
-    contentHtml,
+    buildDraftPayload,
     currentTaskId,
     notifyFormErrors,
     pendingScheduledAt,
-    preparedBodyText,
     runAction,
-    selectedMaterialIds,
-    subject,
   ]);
 
   const handleCancelSchedule = useCallback(() => {
@@ -816,7 +880,13 @@ export const WorkspacePage = () => {
       return;
     }
 
-    void runAction(() => cancelScheduledTask(currentTaskId), '取消定时失败', '取消定时失败');
+    void runAction(
+      () => cancelScheduledTask(currentTaskId),
+      '取消定时失败',
+      '取消定时失败',
+      undefined,
+      { preserveDirtyComposer: true },
+    );
   }, [currentTaskId, runAction]);
 
   const handleContinueManually = useCallback(() => {
@@ -829,6 +899,7 @@ export const WorkspacePage = () => {
       '继续联系失败',
       '继续联系失败',
       () => setComposerExpanded(true),
+      { preserveDirtyComposer: true },
     );
   }, [currentTaskId, runAction]);
 
@@ -842,6 +913,7 @@ export const WorkspacePage = () => {
       '创建跟进邮件失败',
       '创建跟进邮件失败',
       () => setComposerExpanded(true),
+      { preserveDirtyComposer: true },
     );
   }, [currentTaskId, runAction]);
 
@@ -850,7 +922,13 @@ export const WorkspacePage = () => {
       return;
     }
 
-    void runAction(async () => (await calculateMatch(currentTaskId)).thread, '计算匹配失败', '计算匹配失败');
+    void runAction(
+      async () => (await calculateMatch(currentTaskId)).thread,
+      '计算匹配失败',
+      '计算匹配失败',
+      undefined,
+      { preserveDirtyComposer: true },
+    );
   }, [currentTaskId, runAction]);
 
   const handleGenerateDraft = useCallback(() => {
@@ -886,10 +964,107 @@ export const WorkspacePage = () => {
           }),
         '切换模式失败',
         '切换模式失败',
+        undefined,
+        { preserveDirtyComposer: true },
       );
     },
     [currentTaskId, currentTaskMode, runAction],
   );
+
+  const confirmDirtyDraftExit = useCallback(async () => {
+    const action = await choose({
+      title: '保存草稿修改？',
+      description: '你编辑了工作区草稿。离开前可以保存修改，或不保存直接离开。',
+      confirmLabel: '保存并离开',
+      secondaryLabel: '不保存离开',
+      cancelLabel: '继续编辑',
+    });
+
+    if (action === 'cancel') {
+      return false;
+    }
+
+    if (action === 'secondary') {
+      composerDirtyRef.current = false;
+      setComposerDirty(false);
+      return true;
+    }
+
+    await saveCurrentDraft();
+    composerDirtyRef.current = false;
+    setComposerDirty(false);
+    notifySuccess('草稿已保存', '工作区草稿已更新。');
+    return true;
+  }, [choose, notifySuccess, saveCurrentDraft]);
+
+  const hasDirtyDraft = Boolean(composerDirty && currentTaskId);
+  const shouldBlockNavigation = hasDirtyDraft;
+  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+    shouldBlockNavigation && currentLocation.pathname !== nextLocation.pathname,
+  );
+
+  useBeforeUnload(
+    useCallback(
+      (event) => {
+        if (!shouldBlockNavigation) {
+          return;
+        }
+        event.preventDefault();
+        event.returnValue = '';
+      },
+      [shouldBlockNavigation],
+    ),
+  );
+
+  useEffect(() => {
+    if (blocker.state !== 'blocked' || savingBeforeNavigate) {
+      return;
+    }
+
+    if (acting || draftSaving) {
+      notifyError('操作正在进行', '请等待当前操作完成后再离开工作区。');
+      blocker.reset();
+      return;
+    }
+
+    void (async () => {
+      setSavingBeforeNavigate(true);
+      try {
+        const canLeave = await confirmDirtyDraftExit();
+        if (canLeave) {
+          blocker.proceed();
+        } else {
+          blocker.reset();
+        }
+      } catch (saveError) {
+        const message = saveError instanceof Error ? saveError.message : '保存草稿失败';
+        notifyError('保存草稿失败', message);
+        blocker.reset();
+      } finally {
+        setSavingBeforeNavigate(false);
+      }
+    })();
+  }, [acting, blocker, confirmDirtyDraftExit, draftSaving, notifyError, savingBeforeNavigate]);
+
+  useEffect(() => {
+    return registerWorkspaceDraftGuard(async () => {
+      if (!composerDirtyRef.current || !currentTaskId) {
+        return true;
+      }
+      if (acting || draftSaving) {
+        notifyError('草稿正在保存', '请等待当前操作完成后再切换身份或模型。');
+        return false;
+      }
+
+      try {
+        return await confirmDirtyDraftExit();
+      } catch (saveError) {
+        const message = saveError instanceof Error ? saveError.message : '保存草稿失败';
+        notifyError('保存草稿失败', message);
+        return false;
+      }
+    });
+  }, [acting, confirmDirtyDraftExit, currentTaskId, draftSaving, notifyError, registerWorkspaceDraftGuard]);
 
   if (!Number.isFinite(professorId)) {
     return <Navigate to="/404" replace />;
@@ -1015,6 +1190,7 @@ export const WorkspacePage = () => {
                   canContinueManually={Boolean(currentTask.can_continue_manually)}
                   canStartFollowUp={Boolean(currentTask.can_write_follow_up)}
                   canSubmitDraft={canSubmitDraft}
+                  draftSaving={draftSaving}
                   composerExpanded={composerExpanded}
                   onToggleExpanded={() =>
                     setComposerExpanded((current) => !current)
@@ -1022,6 +1198,7 @@ export const WorkspacePage = () => {
                   onSubjectChange={handleSubjectChange}
                   onContentChange={handleContentChange}
                   onSelectedMaterialIdsChange={handleSelectedMaterialIdsChange}
+                  onSaveDraft={handleSaveDraft}
                   onSendNow={handleSendNow}
                   onScheduleSend={handleScheduleSend}
                   onCancelSchedule={handleCancelSchedule}

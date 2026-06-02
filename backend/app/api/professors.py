@@ -61,7 +61,7 @@ async def list_professors(
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
     sent_count_by_professor: dict[int, int] = defaultdict(int)
 
-    if identity_id is not None and llm_profile_id is not None:
+    if identity_id is not None:
         task_result = await session.execute(
             select(EmailTask)
             .where(

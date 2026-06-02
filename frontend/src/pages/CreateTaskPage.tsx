@@ -83,13 +83,13 @@ export const CreateTaskPage = () => {
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
   const professorsRequestKey =
-    selectedIdentityId && selectedLlmProfileId && selectedProfessorIds.length > 0
-      ? `${selectedIdentityId}:${selectedLlmProfileId}:${selectedProfessorIds.join(',')}`
+    selectedIdentityId && selectedProfessorIds.length > 0
+      ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
       : null;
 
   useEffect(() => {
     const loadProfessors = async () => {
-      if (!professorsRequestKey || !selectedIdentityId || !selectedLlmProfileId || selectedProfessorIds.length === 0) {
+      if (!professorsRequestKey || !selectedIdentityId || selectedProfessorIds.length === 0) {
         latestProfessorsRequestIdRef.current += 1;
         activeProfessorsRequestKeyRef.current = null;
         loadedProfessorsKeyRef.current = null;
@@ -104,7 +104,6 @@ export const CreateTaskPage = () => {
       try {
         const data = await listProfessors({
           identityId: selectedIdentityId,
-          llmProfileId: selectedLlmProfileId,
           ids: selectedProfessorIds,
         });
         if (
@@ -138,7 +137,7 @@ export const CreateTaskPage = () => {
     };
 
     void loadProfessors();
-  }, [notifyError, professorsRequestKey, selectedIdentityId, selectedLlmProfileId, selectedProfessorIds]);
+  }, [notifyError, professorsRequestKey, selectedIdentityId, selectedProfessorIds]);
 
   useEffect(() => {
     if (!selectedIdentity) {

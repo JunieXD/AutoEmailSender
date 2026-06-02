@@ -82,6 +82,16 @@ DISPATCHABLE_EMAIL_TASK_STATUSES = (
 STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
 INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
 
+SAVE_DRAFT_ALLOWED_STATUSES = {
+    EmailTaskStatus.DISCOVERED.value,
+    EmailTaskStatus.MATCHED.value,
+    EmailTaskStatus.DRAFT_FAILED.value,
+    EmailTaskStatus.REVIEW_REQUIRED.value,
+    EmailTaskStatus.APPROVED.value,
+    EmailTaskStatus.SCHEDULED.value,
+    EmailTaskStatus.SEND_FAILED.value,
+}
+
 MANUAL_DRAFT_CLAIMABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
     EmailTaskStatus.MATCHED.value,
@@ -1150,6 +1160,28 @@ async def approve_draft_task(
         return task.professor_id, task.identity_id, task.llm_profile_id
 
 
+async def save_task_draft(
+    session_factory: async_sessionmaker[AsyncSession],
+    task_id: int,
+    payload: EmailTaskApprovalRequest,
+) -> tuple[int, int, int]:
+    async with session_factory() as session:
+        task = await _load_email_task(session, task_id)
+        if not task:
+            raise ValueError(f"EmailTask {task_id} 不存在")
+        _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_allows_draft_save(task)
+        await _snapshot_saved_draft(session, task, payload)
+        await _record_email_task_log(
+            session,
+            task,
+            "email_task.draft_saved",
+            metadata={"selected_material_ids": task.selected_material_ids},
+        )
+        await session.commit()
+        return task.professor_id, task.identity_id, task.llm_profile_id
+
+
 async def approve_and_schedule_task(
     session_factory: async_sessionmaker[AsyncSession],
     task_id: int,
@@ -1742,6 +1774,33 @@ async def _snapshot_approval(
     task.last_error = None
 
 
+async def _snapshot_saved_draft(
+    session: AsyncSession,
+    task: EmailTask,
+    payload: EmailTaskApprovalRequest,
+) -> None:
+    await _validate_selected_material_ids(session, task.identity_id, payload.selected_material_ids)
+
+    body_text = payload.body_text.strip()
+    body_html = payload.body_html or ""
+    if not body_text:
+        normalized_body_html = ""
+    elif body_html.strip():
+        rendered = normalize_email_html(body_html)
+        body_text = rendered.text
+        normalized_body_html = rendered.html
+    else:
+        normalized_body_html = text_to_email_html(body_text).html
+    task.approved_subject = (payload.subject or "").strip()
+    task.approved_body_text = body_text
+    task.approved_body_html = normalized_body_html
+    if payload.selected_material_ids is not None:
+        task.selected_material_ids = payload.selected_material_ids
+    task.approved_at = utc_now()
+    task.updated_at = utc_now()
+    task.last_error = None
+
+
 async def _validate_primary_material_id(
     session: AsyncSession,
     identity_id: int,
@@ -2180,6 +2239,12 @@ def _ensure_task_allows_approval(task: EmailTask) -> None:
         raise ValueError("该草稿已从批量任务中移除，不能再审核或发送")
     if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
         raise ValueError("草稿正在生成，请稍后再审核")
+
+
+def _ensure_task_allows_draft_save(task: EmailTask) -> None:
+    _ensure_task_allows_approval(task)
+    if task.status not in SAVE_DRAFT_ALLOWED_STATUSES:
+        raise ValueError("当前状态不能保存草稿")
 
 
 def extract_message_ids(*headers: str | None) -> set[str]:

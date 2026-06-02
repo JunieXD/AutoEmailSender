@@ -21,6 +21,7 @@ type SubjectTemplateInputProps = {
   onChange: (value: string) => void;
   placeholder?: string;
   required?: boolean;
+  disabled?: boolean;
   className?: string;
   inputClassName?: string;
 };
@@ -107,6 +108,7 @@ export const SubjectTemplateInput = ({
   onChange,
   placeholder,
   required = false,
+  disabled = false,
   className = "block",
   inputClassName = "min-h-10 w-full rounded-xl border border-stone-200 bg-white px-4 py-2 pr-28 text-sm leading-6 text-stone-700 outline-none transition-all hover:border-stone-300 focus:border-primary focus:ring-2 focus:ring-primary/20",
 }: SubjectTemplateInputProps) => {
@@ -117,6 +119,9 @@ export const SubjectTemplateInput = ({
   const lastRangeRef = useRef<Range | null>(null);
 
   const saveSelectionRange = () => {
+    if (disabled) {
+      return;
+    }
     const editor = editorRef.current;
     if (!editor) {
       return;
@@ -155,6 +160,9 @@ export const SubjectTemplateInput = ({
   };
 
   const emitEditorValue = () => {
+    if (disabled) {
+      return;
+    }
     const editor = editorRef.current;
     if (!editor) {
       return;
@@ -165,6 +173,9 @@ export const SubjectTemplateInput = ({
   };
 
   const insertPlaceholder = (option: TemplatePlaceholderOption) => {
+    if (disabled) {
+      return;
+    }
     const editor = editorRef.current;
     if (!editor) {
       return;
@@ -182,6 +193,10 @@ export const SubjectTemplateInput = ({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
     }
@@ -189,6 +204,9 @@ export const SubjectTemplateInput = ({
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (disabled) {
+      return;
+    }
 
     const editor = editorRef.current;
     if (!editor) {
@@ -225,7 +243,8 @@ export const SubjectTemplateInput = ({
           aria-labelledby={labelId}
           aria-required={required}
           aria-multiline={false}
-          contentEditable
+          aria-disabled={disabled}
+          contentEditable={!disabled}
           suppressContentEditableWarning
           onFocus={saveSelectionRange}
           onMouseUp={saveSelectionRange}
@@ -233,7 +252,7 @@ export const SubjectTemplateInput = ({
           onKeyDown={handleKeyDown}
           onInput={emitEditorValue}
           onPaste={handlePaste}
-          className={`${inputClassName} cursor-text whitespace-pre-wrap break-words selection:bg-primary/15`}
+          className={`${inputClassName} ${disabled ? "cursor-not-allowed opacity-60" : "cursor-text"} whitespace-pre-wrap break-words selection:bg-primary/15`}
         />
         {!value && placeholder ? (
           <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-stone-400">
@@ -247,9 +266,14 @@ export const SubjectTemplateInput = ({
             type="button"
             aria-label="主题占位符菜单"
             aria-expanded={open}
+            disabled={disabled}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setOpen((current) => !current)}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-stone-200 bg-white px-2 text-xs font-medium text-stone-600 transition hover:border-stone-300 hover:bg-stone-50"
+            onClick={() => {
+              if (!disabled) {
+                setOpen((current) => !current);
+              }
+            }}
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-stone-200 bg-white px-2 text-xs font-medium text-stone-600 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Braces className="h-3.5 w-3.5" />
             占位符

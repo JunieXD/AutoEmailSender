@@ -66,10 +66,9 @@ const dashboardStatusValues = new Set(
 
 const getDashboardFiltersSessionKey = (
   selectedIdentityId: number | null,
-  selectedLlmProfileId: number | null,
 ) =>
-  selectedIdentityId !== null && selectedLlmProfileId !== null
-    ? `${FILTERS_SESSION_KEY_PREFIX}:${selectedIdentityId}:${selectedLlmProfileId}`
+  selectedIdentityId !== null
+    ? `${FILTERS_SESSION_KEY_PREFIX}:${selectedIdentityId}`
     : null;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -224,7 +223,6 @@ export const HomePage = () => {
   } = useSelectionContext();
   const dashboardFiltersSessionKey = getDashboardFiltersSessionKey(
     selectedIdentityId,
-    selectedLlmProfileId,
   );
   const [professors, setProfessors] = useState<ProfessorDashboardItemDTO[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -249,8 +247,8 @@ export const HomePage = () => {
   const filtersSessionKeyRef = useRef(dashboardFiltersSessionKey);
   const skipNextFiltersPersistRef = useRef(false);
   const professorsRequestKey =
-    selectedIdentityId && selectedLlmProfileId
-      ? `${selectedIdentityId}:${selectedLlmProfileId}`
+    selectedIdentityId
+      ? `${selectedIdentityId}`
       : null;
 
   useEffect(() => {
@@ -273,7 +271,7 @@ export const HomePage = () => {
   }, [dashboardFiltersSessionKey, filters]);
 
   const loadProfessors = useCallback(async () => {
-    if (!professorsRequestKey || !selectedIdentityId || !selectedLlmProfileId) {
+    if (!professorsRequestKey || !selectedIdentityId) {
       latestProfessorsRequestIdRef.current += 1;
       activeProfessorsRequestKeyRef.current = null;
       loadedProfessorsKeyRef.current = null;
@@ -293,7 +291,6 @@ export const HomePage = () => {
     try {
       const data = await listProfessors({
         identityId: selectedIdentityId,
-        llmProfileId: selectedLlmProfileId,
       });
       if (
         latestProfessorsRequestIdRef.current !== requestId ||
@@ -343,7 +340,6 @@ export const HomePage = () => {
     notifyError,
     professorsRequestKey,
     selectedIdentityId,
-    selectedLlmProfileId,
   ]);
 
   useEffect(() => {
@@ -733,9 +729,7 @@ export const HomePage = () => {
 
   if (
     !selectedIdentityId ||
-    !selectedLlmProfileId ||
-    !selectedIdentity ||
-    !selectedLlmProfile
+    !selectedIdentity
   ) {
     return null;
   }

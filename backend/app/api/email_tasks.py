@@ -26,6 +26,7 @@ from app.services.task_runtime import (
     MatchAnalysisAlreadyRunningError,
     regenerate_task_draft,
     preview_task_draft,
+    save_task_draft,
     start_follow_up_task,
     update_task_outreach_config,
     update_task_primary_material,
@@ -165,6 +166,19 @@ async def approve_draft(
         session,
         task_id,
         lambda: approve_draft_task(get_session_factory(), task_id, payload),
+    )
+
+
+@router.post("/{task_id}/save-draft", response_model=WorkspaceThreadRead)
+async def save_draft(
+    task_id: int,
+    payload: EmailTaskApprovalRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    return await _run_workspace_action(
+        session,
+        task_id,
+        lambda: save_task_draft(get_session_factory(), task_id, payload),
     )
 
 

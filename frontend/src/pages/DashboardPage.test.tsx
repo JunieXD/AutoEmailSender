@@ -531,7 +531,6 @@ describe("DashboardPage", () => {
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
         identityId: 1,
-        llmProfileId: 2,
         university: "示例大学",
         school: null,
         emailUniversity: null,
@@ -546,7 +545,6 @@ describe("DashboardPage", () => {
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
         identityId: 1,
-        llmProfileId: 2,
         university: "示例大学",
         school: "计算机学院",
         emailUniversity: null,
@@ -648,7 +646,6 @@ describe("DashboardPage", () => {
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
         identityId: 1,
-        llmProfileId: 2,
         university: null,
         school: null,
         emailUniversity: "示例大学",
@@ -693,7 +690,6 @@ describe("DashboardPage", () => {
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenCalledWith({
         identityId: 1,
-        llmProfileId: 2,
         university: null,
         school: null,
         emailUniversity: null,
@@ -719,7 +715,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("1 / 2 位导师")).toBeInTheDocument();
   });
 
-  it("shows a setup prompt when identity or model is missing", async () => {
+  it("shows a setup prompt when identity is missing", async () => {
     selectionState = {
       selectedIdentityId: null,
       selectedLlmProfileId: null,
@@ -734,6 +730,6 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("请先选择身份和模型。")).toBeInTheDocument();
+    expect(screen.getByText("请先选择身份。")).toBeInTheDocument();
   });
 });

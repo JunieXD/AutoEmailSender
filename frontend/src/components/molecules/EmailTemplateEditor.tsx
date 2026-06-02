@@ -60,6 +60,7 @@ type EmailTemplateEditorProps = {
   label: string;
   html: string;
   placeholder?: string;
+  disabled?: boolean;
   onChange: (value: { html: string; text: string }) => void;
   onFileDrop?: (file: File) => void;
 };
@@ -76,6 +77,7 @@ type ToolbarMenuProps = {
   buttonLabel: string;
   options: Array<{ label: string; value: string }>;
   selectedValue: string | null;
+  disabled?: boolean;
   onSelect: (value: string) => void;
   onToggle: () => void;
   onClose: () => void;
@@ -122,6 +124,7 @@ const ToolbarMenu = ({
   buttonLabel,
   options,
   selectedValue,
+  disabled = false,
   onSelect,
   onToggle,
   onClose,
@@ -135,8 +138,9 @@ const ToolbarMenu = ({
         type="button"
         aria-label={ariaLabel}
         aria-expanded={active}
+        disabled={disabled}
         onClick={onToggle}
-        className="inline-flex min-w-[88px] items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 transition hover:border-stone-300 hover:bg-stone-50"
+        className="inline-flex min-w-[88px] items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="truncate">{buttonLabel}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-stone-400" />
@@ -175,6 +179,7 @@ export const EmailTemplateEditor = ({
   label,
   html,
   placeholder,
+  disabled = false,
   onChange,
   onFileDrop,
 }: EmailTemplateEditorProps) => {
@@ -264,6 +269,9 @@ export const EmailTemplateEditor = ({
       },
     },
     onUpdate: ({ editor: currentEditor }) => {
+      if (disabled) {
+        return;
+      }
       const nextHtml = serializeTemplatePlaceholderHtml(currentEditor.getHTML());
       lastLocalHtmlRef.current = nextHtml;
       onChange({
@@ -272,6 +280,10 @@ export const EmailTemplateEditor = ({
       });
     },
   });
+
+  useEffect(() => {
+    editor?.setEditable(!disabled);
+  }, [disabled, editor]);
 
   useEffect(() => {
     const preparedHtml = prepareTemplateEditorHtml(html);
@@ -311,67 +323,90 @@ export const EmailTemplateEditor = ({
             active={openMenu === "placeholder"}
             ariaLabel="占位符菜单"
             buttonLabel="占位符"
+            disabled={disabled}
             options={TEMPLATE_PLACEHOLDER_OPTIONS.map((option) => ({
               label: option.label,
               value: option.key,
             }))}
             selectedValue={null}
             onSelect={(value) => {
-              editor
-                .chain()
-                .focus()
-                .insertTemplatePlaceholder(value as TemplatePlaceholderKey)
-                .run();
+              if (!disabled) {
+                editor
+                  .chain()
+                  .focus()
+                  .insertTemplatePlaceholder(value as TemplatePlaceholderKey)
+                  .run();
+              }
             }}
-            onToggle={() =>
-              setOpenMenu((current) => (current === "placeholder" ? null : "placeholder"))
-            }
+            onToggle={() => {
+              if (!disabled) {
+                setOpenMenu((current) => (current === "placeholder" ? null : "placeholder"));
+              }
+            }}
             onClose={() => setOpenMenu(null)}
           />
           <ToolbarMenu
             active={openMenu === "font"}
             ariaLabel="字体菜单"
             buttonLabel={currentFontLabel}
+            disabled={disabled}
             options={EMAIL_FONT_OPTIONS}
             selectedValue={textStyleAttributes.fontFamily}
             onSelect={(value) => {
-              editor.chain().focus().setMark("textStyle", { fontFamily: value }).run();
+              if (!disabled) {
+                editor.chain().focus().setMark("textStyle", { fontFamily: value }).run();
+              }
             }}
-            onToggle={() => setOpenMenu((current) => (current === "font" ? null : "font"))}
+            onToggle={() => {
+              if (!disabled) {
+                setOpenMenu((current) => (current === "font" ? null : "font"));
+              }
+            }}
             onClose={() => setOpenMenu(null)}
           />
           <ToolbarMenu
             active={openMenu === "fontSize"}
             ariaLabel="字号菜单"
             buttonLabel={currentFontSize}
+            disabled={disabled}
             options={EMAIL_FONT_SIZE_OPTIONS.map((option) => ({ label: option, value: option }))}
             selectedValue={textStyleAttributes.fontSize}
             onSelect={(value) => {
-              editor.chain().focus().setMark("textStyle", { fontSize: value }).run();
+              if (!disabled) {
+                editor.chain().focus().setMark("textStyle", { fontSize: value }).run();
+              }
             }}
-            onToggle={() =>
-              setOpenMenu((current) => (current === "fontSize" ? null : "fontSize"))
-            }
+            onToggle={() => {
+              if (!disabled) {
+                setOpenMenu((current) => (current === "fontSize" ? null : "fontSize"));
+              }
+            }}
             onClose={() => setOpenMenu(null)}
           />
           <ToolbarMenu
             active={openMenu === "lineHeight"}
             ariaLabel="行距菜单"
             buttonLabel={currentLineHeight}
+            disabled={disabled}
             options={EMAIL_LINE_HEIGHT_OPTIONS}
             selectedValue={paragraphAttributes.lineHeight}
             onSelect={(value) => {
-              editor.chain().focus().updateAttributes("paragraph", { lineHeight: value }).run();
+              if (!disabled) {
+                editor.chain().focus().updateAttributes("paragraph", { lineHeight: value }).run();
+              }
             }}
-            onToggle={() =>
-              setOpenMenu((current) => (current === "lineHeight" ? null : "lineHeight"))
-            }
+            onToggle={() => {
+              if (!disabled) {
+                setOpenMenu((current) => (current === "lineHeight" ? null : "lineHeight"));
+              }
+            }}
             onClose={() => setOpenMenu(null)}
           />
           <ToolbarMenu
             active={openMenu === "indent"}
             ariaLabel="首行缩进菜单"
             buttonLabel={currentIndent}
+            disabled={disabled}
             options={[
               { label: "无缩进", value: "0" },
               ...EMAIL_FIRST_LINE_INDENT_OPTIONS.filter((option) => option !== "0").map((option) => ({
@@ -381,15 +416,21 @@ export const EmailTemplateEditor = ({
             ]}
             selectedValue={paragraphAttributes.firstLineIndent ?? "0"}
             onSelect={(value) => {
-              editor
-                .chain()
-                .focus()
-                .updateAttributes("paragraph", {
-                  firstLineIndent: value === "0" ? null : value,
-                })
-                .run();
+              if (!disabled) {
+                editor
+                  .chain()
+                  .focus()
+                  .updateAttributes("paragraph", {
+                    firstLineIndent: value === "0" ? null : value,
+                  })
+                  .run();
+              }
             }}
-            onToggle={() => setOpenMenu((current) => (current === "indent" ? null : "indent"))}
+            onToggle={() => {
+              if (!disabled) {
+                setOpenMenu((current) => (current === "indent" ? null : "indent"));
+              }
+            }}
             onClose={() => setOpenMenu(null)}
           />
         </div>
@@ -399,46 +440,52 @@ export const EmailTemplateEditor = ({
         <button
           type="button"
           aria-label="加粗"
+          disabled={disabled}
           onClick={() => editor.chain().focus().toggleBold().run()}
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Bold className="h-4 w-4" />
         </button>
         <button
           type="button"
           aria-label="斜体"
+          disabled={disabled}
           onClick={() => editor.chain().focus().toggleItalic().run()}
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Italic className="h-4 w-4" />
         </button>
         <button
           type="button"
           aria-label="下划线"
+          disabled={disabled}
           onClick={() => editor.chain().focus().toggleUnderline().run()}
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <UnderlineIcon className="h-4 w-4" />
         </button>
         <button
           type="button"
           aria-label="无序列表"
+          disabled={disabled}
           onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <List className="h-4 w-4" />
         </button>
         <button
           type="button"
           aria-label="有序列表"
+          disabled={disabled}
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <ListOrdered className="h-4 w-4" />
         </button>
         <button
           type="button"
           aria-label="插入链接"
+          disabled={disabled}
           onClick={() =>
             editor
               .chain()
@@ -446,13 +493,14 @@ export const EmailTemplateEditor = ({
               .setLink({ href: "https://example.com" })
               .run()
           }
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Link2 className="h-4 w-4" />
         </button>
         <button
           type="button"
           aria-label="插入表格"
+          disabled={disabled}
           onClick={() =>
             editor
               .chain()
@@ -460,7 +508,7 @@ export const EmailTemplateEditor = ({
               .insertTable({ rows: 2, cols: 2, withHeaderRow: false })
               .run()
           }
-          className="rounded-xl p-2 text-stone-600 hover:bg-white"
+          className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Table2 className="h-4 w-4" />
         </button>
@@ -475,72 +523,81 @@ export const EmailTemplateEditor = ({
           <button
             type="button"
             aria-label="上方插入行"
+            disabled={disabled}
             onClick={() => editor.chain().focus().addRowBefore().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             上方插入行
           </button>
           <button
             type="button"
             aria-label="下方插入行"
+            disabled={disabled}
             onClick={() => editor.chain().focus().addRowAfter().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             下方插入行
           </button>
           <button
             type="button"
             aria-label="左侧插入列"
+            disabled={disabled}
             onClick={() => editor.chain().focus().addColumnBefore().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             左侧插入列
           </button>
           <button
             type="button"
             aria-label="右侧插入列"
+            disabled={disabled}
             onClick={() => editor.chain().focus().addColumnAfter().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             右侧插入列
           </button>
           <button
             type="button"
             aria-label="删除行"
+            disabled={disabled}
             onClick={() => editor.chain().focus().deleteRow().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             删除行
           </button>
           <button
             type="button"
             aria-label="删除列"
+            disabled={disabled}
             onClick={() => editor.chain().focus().deleteColumn().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             删除列
           </button>
           <button
             type="button"
             aria-label="合并单元格"
+            disabled={disabled}
             onClick={() => editor.chain().focus().mergeCells().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             合并单元格
           </button>
           <button
             type="button"
             aria-label="拆分单元格"
+            disabled={disabled}
             onClick={() => editor.chain().focus().splitCell().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             拆分单元格
           </button>
           <button
             type="button"
             aria-label="删除表格"
+            disabled={disabled}
             onClick={() => editor.chain().focus().deleteTable().run()}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-primary hover:bg-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-primary hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             删除表格
           </button>

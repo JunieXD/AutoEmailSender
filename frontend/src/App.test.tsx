@@ -12,6 +12,10 @@ vi.mock("@/pages/HomePage", () => {
   };
 });
 
+vi.mock("@/pages/WorkspacePage", () => ({
+  WorkspacePage: () => <main>工作区内容</main>,
+}));
+
 vi.mock("@/components/organisms/DesktopStartupStatusBanner", () => ({
   DesktopStartupStatusBanner: () => null,
 }));
@@ -27,6 +31,7 @@ vi.mock("@/components/organisms/TopNavBar", () => ({
 describe("App route loading", () => {
   beforeEach(() => {
     homePageModuleLoaded.mockClear();
+    Reflect.deleteProperty(window, "autoEmailSender");
     window.history.pushState({}, "", "/");
   });
 
@@ -38,5 +43,21 @@ describe("App route loading", () => {
 
     expect(await screen.findByText("首页内容")).toBeInTheDocument();
     expect(homePageModuleLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports desktop hash routes with navigation blockers", async () => {
+    window.autoEmailSender = {
+      getVersion: vi.fn(),
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: vi.fn(),
+    };
+    window.history.pushState({}, "", "/#/workspace/21");
+
+    render(<App />);
+
+    expect(await screen.findByText("工作区内容")).toBeInTheDocument();
   });
 });

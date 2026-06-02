@@ -43,8 +43,6 @@ async def list_match_analysis_jobs(
     )
     if identity_id is not None:
         statement = statement.where(MatchAnalysisJob.identity_id == identity_id)
-    if llm_profile_id is not None:
-        statement = statement.where(MatchAnalysisJob.llm_profile_id == llm_profile_id)
     if view == "trash":
         statement = statement.where(MatchAnalysisJob.deleted_at.is_not(None))
     elif view == "current":

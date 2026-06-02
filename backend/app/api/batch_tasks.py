@@ -79,8 +79,6 @@ async def list_batch_tasks(
     )
     if identity_id is not None:
         statement = statement.where(BatchTask.identity_id == identity_id)
-    if llm_profile_id is not None:
-        statement = statement.where(BatchTask.llm_profile_id == llm_profile_id)
     if view == "trash":
         statement = statement.where(BatchTask.deleted_at.is_not(None))
     elif view == "current":

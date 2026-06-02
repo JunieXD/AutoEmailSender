@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, LLMProfile, Professor
+from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, Professor
 from app.schemas.dashboard import (
     DashboardEmailFunnelBucketRead,
     DashboardEmailFollowUpRead,
@@ -63,7 +63,7 @@ async def build_dashboard_overview(
     session: AsyncSession,
     *,
     identity_id: int,
-    llm_profile_id: int,
+    llm_profile_id: int | None = None,
     university: str | None = None,
     school: str | None = None,
     email_university: str | None = None,
@@ -74,10 +74,6 @@ async def build_dashboard_overview(
     identity = await session.get(IdentityProfile, identity_id)
     if identity is None:
         raise ValueError("未找到身份")
-
-    llm_profile = await session.get(LLMProfile, llm_profile_id)
-    if llm_profile is None:
-        raise ValueError("未找到模型")
 
     professors = list(
         await session.scalars(
@@ -93,7 +89,6 @@ async def build_dashboard_overview(
             .options(selectinload(EmailTask.professor))
             .where(
                 EmailTask.identity_id == identity_id,
-                EmailTask.llm_profile_id == llm_profile_id,
                 EmailTask.parent_task_id.is_(None),
             )
             .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),

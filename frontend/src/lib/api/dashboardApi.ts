@@ -3,7 +3,6 @@ import type { DashboardOverviewDTO } from '@/types';
 
 export const getDashboardOverview = (params: {
   identityId: number;
-  llmProfileId: number;
   university?: string | null;
   school?: string | null;
   emailUniversity?: string | null;
@@ -13,7 +12,6 @@ export const getDashboardOverview = (params: {
 }) =>
   apiFetch<DashboardOverviewDTO>('/api/dashboard/overview', undefined, {
     identity_id: params.identityId,
-    llm_profile_id: params.llmProfileId,
     university: params.university || undefined,
     school: params.school || undefined,
     email_university: params.emailUniversity || undefined,
