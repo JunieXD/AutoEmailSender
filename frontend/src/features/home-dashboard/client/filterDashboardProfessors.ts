@@ -1,7 +1,29 @@
 import type { ProfessorDashboardItemDTO, ProfessorDashboardStatus } from "@/types";
 
+export type DashboardKeywordField =
+  | "name"
+  | "university"
+  | "school"
+  | "department"
+  | "title"
+  | "research_direction";
+
+export const DEFAULT_DASHBOARD_KEYWORD_FIELDS: DashboardKeywordField[] = [
+  "name",
+  "university",
+  "school",
+  "department",
+  "title",
+  "research_direction",
+];
+
+const dashboardKeywordFieldSet = new Set<string>(
+  DEFAULT_DASHBOARD_KEYWORD_FIELDS,
+);
+
 export type DashboardFilterState = {
   keyword: string;
+  keywordFields: DashboardKeywordField[];
   universities: string[];
   schools: string[];
   departments: string[];
@@ -19,6 +41,7 @@ export type DashboardFilterOptions = {
 
 export const createDefaultDashboardFilters = (): DashboardFilterState => ({
   keyword: "",
+  keywordFields: [...DEFAULT_DASHBOARD_KEYWORD_FIELDS],
   universities: [],
   schools: [],
   departments: [],
@@ -32,6 +55,25 @@ const normalize = (value: string | null | undefined): string =>
 
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
+
+export const normalizeDashboardKeywordFields = (
+  values: unknown,
+): DashboardKeywordField[] => {
+  if (!Array.isArray(values)) {
+    return [...DEFAULT_DASHBOARD_KEYWORD_FIELDS];
+  }
+
+  const nextValues = values.filter(
+    (value): value is DashboardKeywordField =>
+      typeof value === "string" && dashboardKeywordFieldSet.has(value),
+  );
+
+  if (nextValues.length === 0 || nextValues.length !== values.length) {
+    return [...DEFAULT_DASHBOARD_KEYWORD_FIELDS];
+  }
+
+  return nextValues;
+};
 
 const DASHBOARD_TITLE_SPLIT_PATTERN = /[、，,/／|｜；;]+/;
 
@@ -144,6 +186,11 @@ const parseMinimumMatchScore = (value: string): number | null => {
   return Math.min(100, Math.max(0, score));
 };
 
+const getDashboardKeywordValue = (
+  professor: ProfessorDashboardItemDTO,
+  field: DashboardKeywordField,
+): string | null | undefined => professor[field];
+
 export const getActiveDashboardFilterCount = (
   filters: DashboardFilterState,
 ): number =>
@@ -159,19 +206,15 @@ export const filterDashboardProfessors = (
   filters: DashboardFilterState,
 ): ProfessorDashboardItemDTO[] => {
   const keyword = normalize(filters.keyword);
+  const keywordFields = normalizeDashboardKeywordFields(filters.keywordFields);
   const minMatchScore = parseMinimumMatchScore(filters.minMatchScore);
 
   return professors.filter((professor) => {
     const keywordMatched =
       !keyword ||
-      [
-        professor.name,
-        professor.university,
-        professor.school,
-        professor.department,
-        professor.title,
-        professor.research_direction,
-      ].some((value) => normalize(value).includes(keyword));
+      keywordFields.some((field) =>
+        normalize(getDashboardKeywordValue(professor, field)).includes(keyword),
+      );
 
     const matchScoreMatched =
       minMatchScore === null ||

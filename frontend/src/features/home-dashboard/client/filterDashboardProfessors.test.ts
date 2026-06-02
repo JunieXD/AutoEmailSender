@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorDashboardItemDTO } from "@/types";
 import {
+  DEFAULT_DASHBOARD_KEYWORD_FIELDS,
   buildDashboardFilterOptions,
   createDefaultDashboardFilters,
   getActiveDashboardFilterCount,
   filterDashboardProfessors,
+  normalizeDashboardKeywordFields,
   pruneDashboardFilters,
   type DashboardFilterState,
 } from "./filterDashboardProfessors";
@@ -81,6 +83,39 @@ describe("filterDashboardProfessors", () => {
       "Bob",
       "Carol",
     ]);
+  });
+
+  it("limits keyword matching to selected dashboard fields", () => {
+    const scopedProfessors = [
+      buildProfessor({ id: 4, name: "副主任", title: "教授" }),
+      buildProfessor({ id: 5, name: "Normal", title: "副教授" }),
+    ];
+
+    expect(namesFor(scopedProfessors, { keyword: "副" })).toEqual([
+      "副主任",
+      "Normal",
+    ]);
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordFields: ["name"],
+      }),
+    ).toEqual(["副主任"]);
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordFields: ["title"],
+      }),
+    ).toEqual(["Normal"]);
+  });
+
+  it("normalizes invalid dashboard keyword fields to the default scope", () => {
+    const fields = normalizeDashboardKeywordFields(["name", "unknown"]);
+
+    expect(fields).toEqual(DEFAULT_DASHBOARD_KEYWORD_FIELDS);
+    expect(normalizeDashboardKeywordFields(["unknown"])).toEqual(
+      DEFAULT_DASHBOARD_KEYWORD_FIELDS,
+    );
   });
 
   it("uses OR within one multi-select group", () => {
