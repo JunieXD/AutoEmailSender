@@ -1,8 +1,32 @@
 import type { ProfessorManagementItemDTO } from "@/types";
 import { extractProfessorTitleTags } from "@/lib/professorTitle";
 
+export type ManagementKeywordField =
+  | "name"
+  | "email"
+  | "university"
+  | "school"
+  | "department"
+  | "title"
+  | "research_direction";
+
+export const DEFAULT_MANAGEMENT_KEYWORD_FIELDS: ManagementKeywordField[] = [
+  "name",
+  "email",
+  "university",
+  "school",
+  "department",
+  "title",
+  "research_direction",
+];
+
+const managementKeywordFieldSet = new Set<string>(
+  DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+);
+
 export type ProfessorManagementFilterState = {
   keyword: string;
+  keywordFields: ManagementKeywordField[];
   universities: string[];
   schools: string[];
   departments: string[];
@@ -21,6 +45,25 @@ const normalize = (value: string | null | undefined): string =>
 
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
+
+export const normalizeManagementKeywordFields = (
+  values: unknown,
+): ManagementKeywordField[] => {
+  if (!Array.isArray(values)) {
+    return [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS];
+  }
+
+  const nextValues = values.filter(
+    (value): value is ManagementKeywordField =>
+      typeof value === "string" && managementKeywordFieldSet.has(value),
+  );
+
+  if (nextValues.length === 0 || nextValues.length !== values.length) {
+    return [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS];
+  }
+
+  return nextValues;
+};
 
 const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
   const trimmed = value?.trim();
@@ -49,11 +92,17 @@ const filterTitleMatches = (
 
 export const createDefaultManagementFilters = (): ProfessorManagementFilterState => ({
   keyword: "",
+  keywordFields: [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS],
   universities: [],
   schools: [],
   departments: [],
   titles: [],
 });
+
+const getManagementKeywordValue = (
+  professor: ProfessorManagementItemDTO,
+  field: ManagementKeywordField,
+): string | null | undefined => professor[field];
 
 export const buildManagementFilterOptions = (
   professors: ProfessorManagementItemDTO[],
@@ -112,21 +161,14 @@ export const filterManagementProfessors = (
   filters: ProfessorManagementFilterState,
 ): ProfessorManagementItemDTO[] => {
   const keyword = normalize(filters.keyword);
+  const keywordFields = normalizeManagementKeywordFields(filters.keywordFields);
 
   return professors.filter((professor) => {
     const keywordMatched =
       !keyword ||
-      [
-        professor.name,
-        professor.email,
-        professor.university,
-        professor.school,
-        professor.department,
-        professor.title,
-        professor.research_direction,
-      ]
-        .filter(Boolean)
-        .some((value) => normalize(value).includes(keyword));
+      keywordFields.some((field) =>
+        normalize(getManagementKeywordValue(professor, field)).includes(keyword),
+      );
 
     return (
       keywordMatched &&

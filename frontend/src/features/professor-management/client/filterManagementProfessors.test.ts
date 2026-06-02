@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorManagementItemDTO } from "@/types";
 import {
+  DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
   buildManagementFilterOptions,
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
+  normalizeManagementKeywordFields,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
 } from "./filterManagementProfessors";
@@ -81,6 +83,60 @@ describe("filterManagementProfessors", () => {
       "Bob",
     ]);
     expect(namesFor(professors, { keyword: "博导" })).toEqual(["Alice"]);
+  });
+
+  it("limits keyword matching to selected management fields", () => {
+    const scopedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "副主任",
+        email: "director@example.edu",
+        title: "教授",
+      }),
+      buildProfessor({
+        id: 5,
+        name: "Normal",
+        email: "normal@example.edu",
+        title: "副教授",
+      }),
+    ];
+
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordFields: ["name"],
+      }),
+    ).toEqual(["副主任"]);
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordFields: ["title"],
+      }),
+    ).toEqual(["Normal"]);
+  });
+
+  it("supports email-only keyword matching on management page", () => {
+    expect(
+      namesFor(professors, {
+        keyword: "bob@example.edu",
+        keywordFields: ["email"],
+      }),
+    ).toEqual(["Bob"]);
+    expect(
+      namesFor(professors, {
+        keyword: "bob@example.edu",
+        keywordFields: ["name"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("normalizes invalid management keyword fields to the default scope", () => {
+    expect(normalizeManagementKeywordFields(["name", "unknown"])).toEqual(
+      DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+    );
+    expect(normalizeManagementKeywordFields(["unknown"])).toEqual(
+      DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+    );
   });
 
   it("uses OR within one multi-select group and AND across groups", () => {
