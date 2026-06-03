@@ -4,6 +4,8 @@ import { ProfessorIdentityBlock } from "@/components/molecules/ProfessorIdentity
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { ProfessorDashboardItemDTO } from "@/types";
 
+export type DashboardProfessorRowTimeHighlight = "sent" | "replied" | null;
+
 type DashboardProfessorRowProps = {
   professor: ProfessorDashboardItemDTO;
   selected: boolean;
@@ -11,6 +13,8 @@ type DashboardProfessorRowProps = {
   scoring: boolean;
   canCalculateMatch: boolean;
   statusLabel: string;
+  timeHighlight: DashboardProfessorRowTimeHighlight;
+  timeLabel: string | null;
   onToggleSelection: () => void;
   onCalculateMatch: () => void;
   onOpenWorkspace: () => void;
@@ -22,6 +26,22 @@ const formatMatchLabel = (score: number | null) =>
 const formatSentLabel = (sentCount: number) =>
   sentCount === 0 ? "未发送" : `已发送 ${sentCount} 次`;
 
+const getRowBackgroundClass = (
+  selected: boolean,
+  timeHighlight: DashboardProfessorRowTimeHighlight,
+) => {
+  if (selected) {
+    return "bg-primary/5";
+  }
+  if (timeHighlight === "sent") {
+    return "bg-emerald-50 hover:bg-emerald-100/70";
+  }
+  if (timeHighlight === "replied") {
+    return "bg-emerald-50 hover:bg-emerald-100/70";
+  }
+  return "bg-white hover:bg-[#fcfbf8]";
+};
+
 export const DashboardProfessorRow = ({
   professor,
   selected,
@@ -29,14 +49,17 @@ export const DashboardProfessorRow = ({
   scoring,
   canCalculateMatch,
   statusLabel,
+  timeHighlight,
+  timeLabel,
   onToggleSelection,
   onCalculateMatch,
   onOpenWorkspace,
 }: DashboardProfessorRowProps) => (
   <article
+    data-testid={`dashboard-professor-row-${professor.id}`}
     className={clsx(
       "grid gap-4 px-6 py-5 transition lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_auto] lg:items-center",
-      selected ? "bg-primary/5" : "bg-white hover:bg-[#fcfbf8]",
+      getRowBackgroundClass(selected, timeHighlight),
     )}
   >
     <div className="flex min-w-0 items-center gap-8">
@@ -62,6 +85,11 @@ export const DashboardProfessorRow = ({
       <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600">
         {formatSentLabel(professor.sent_count)}
       </span>
+      {timeLabel ? (
+        <span className="rounded-full border border-stone-200 bg-white/80 px-3 py-1.5 text-sm font-medium text-stone-700">
+          {timeLabel}
+        </span>
+      ) : null}
       <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
         {statusLabel}
       </span>
