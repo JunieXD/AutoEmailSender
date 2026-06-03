@@ -54,16 +54,16 @@ REPLY_QUOTE_HTML_PATTERNS = (
     re.compile(r"<blockquote\b", re.IGNORECASE),
 )
 CHINESE_REPLY_HEADER_PATTERN = re.compile(
-    r"(?:^|\n)\s*发件人：.+?"
+    r"(?:^|\n)\s*发件人：[^\n]*"
     r"(?=\n\s*(?:发件时间|收件人|主题)：)"
-    r"(?:\n\s*发件时间：.+?)?"
-    r"(?:\n\s*收件人：.+?)?"
-    r"(?:\n\s*主题：.+?)?",
+    r"(?:\n\s*发件时间：[^\n]*)?"
+    r"(?:\n\s*收件人：[^\n]*)?"
+    r"(?:\n\s*主题：[^\n]*)?",
     re.DOTALL,
 )
 CHINESE_REPLY_HTML_HEADER_PATTERN = re.compile(r"发件人\s*(?:：|:)")
 CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN = re.compile(
-    r"发件人：.+?\n\s*(?:发件时间|收件人|主题)：",
+    r"发件人\s*(?:：|:)[^\n]*\n\s*(?:发件时间|收件人|主题)\s*(?:：|:)",
     re.DOTALL,
 )
 HTML_TEXT_BLOCK_TAGS = {
@@ -774,21 +774,26 @@ def strip_quoted_reply_html(content: str) -> str:
 
 
 def _find_chinese_reply_header_html_index(content: str) -> int | None:
-    match = CHINESE_REPLY_HTML_HEADER_PATTERN.search(content)
-    if not match:
-        return None
-    text_before_and_after_marker = convert_html_to_text(content[match.start() :])
-    if not CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN.search(text_before_and_after_marker):
-        return None
-    marker_index = match.start()
-    block_index = max(content.rfind(tag, 0, marker_index) for tag in HTML_REPLY_QUOTE_BLOCK_TAGS)
-    if block_index >= 0:
-        return block_index
-    last_tag_start = content.rfind("<", 0, marker_index)
-    last_tag_end = content.rfind(">", 0, marker_index)
-    if last_tag_start > last_tag_end:
-        return last_tag_start
-    return marker_index
+    for match in CHINESE_REPLY_HTML_HEADER_PATTERN.finditer(content):
+        marker_index = match.start()
+        text_from_marker = convert_html_to_text(content[marker_index:])
+        sequence_match = CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN.match(text_from_marker)
+        if not sequence_match:
+            continue
+        block_index = _find_previous_html_quote_block_index(content, marker_index)
+        if block_index >= 0:
+            return block_index
+        last_tag_start = content.rfind("<", 0, marker_index)
+        last_tag_end = content.rfind(">", 0, marker_index)
+        if last_tag_start > last_tag_end:
+            return last_tag_start
+        return marker_index
+    return None
+
+
+def _find_previous_html_quote_block_index(content: str, marker_index: int) -> int:
+    lower_content = content.lower()
+    return max(lower_content.rfind(tag, 0, marker_index) for tag in HTML_REPLY_QUOTE_BLOCK_TAGS)
 
 
 def decode_mime_header(value: str | None) -> str | None:
