@@ -7,19 +7,25 @@ import type {
   WorkspaceThreadDTO,
 } from '@/types';
 
-export const regenerateDraft = (taskId: number) =>
+const buildRuntimeProfileBody = (llmProfileId?: number | null) =>
+  JSON.stringify({ llm_profile_id: llmProfileId ?? null });
+
+export const regenerateDraft = (taskId: number, llmProfileId?: number | null) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/regenerate-draft`, {
     method: 'POST',
+    body: buildRuntimeProfileBody(llmProfileId),
   });
 
-export const calculateMatch = (taskId: number) =>
+export const calculateMatch = (taskId: number, llmProfileId?: number | null) =>
   apiFetch<MatchCalculationResultDTO>(`/api/email-tasks/${taskId}/calculate-match`, {
     method: 'POST',
+    body: buildRuntimeProfileBody(llmProfileId),
   });
 
-export const generateDraft = (taskId: number) =>
+export const generateDraft = (taskId: number, llmProfileId?: number | null) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/generate-draft`, {
     method: 'POST',
+    body: buildRuntimeProfileBody(llmProfileId),
   });
 
 export const approveDraft = (taskId: number, payload: EmailTaskApprovalPayloadDTO) =>

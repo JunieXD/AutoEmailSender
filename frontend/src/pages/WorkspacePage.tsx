@@ -923,13 +923,13 @@ export const WorkspacePage = () => {
     }
 
     void runAction(
-      async () => (await calculateMatch(currentTaskId)).thread,
+      async () => (await calculateMatch(currentTaskId, selectedLlmProfileId)).thread,
       '计算匹配失败',
       '计算匹配失败',
       undefined,
       { preserveDirtyComposer: true },
     );
-  }, [currentTaskId, runAction]);
+  }, [currentTaskId, runAction, selectedLlmProfileId]);
 
   const handleGenerateDraft = useCallback(() => {
     if (!currentTaskId) {
@@ -938,7 +938,7 @@ export const WorkspacePage = () => {
 
     const startedAt = Date.now();
     void runAction(
-      () => generateDraft(currentTaskId),
+      () => generateDraft(currentTaskId, selectedLlmProfileId),
       '生成草稿失败',
       '生成草稿失败',
       (data) => {
@@ -949,7 +949,7 @@ export const WorkspacePage = () => {
         );
       },
     );
-  }, [currentTaskId, notifySuccess, runAction]);
+  }, [currentTaskId, notifySuccess, runAction, selectedLlmProfileId]);
 
   const handleChangeMode = useCallback(
     (nextMode: OutreachGenerationMode) => {

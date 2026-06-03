@@ -597,7 +597,7 @@ describe("WorkspacePage draft saving", () => {
     fireEvent.click(screen.getByRole("button", { name: "分析匹配度" }));
 
     await waitFor(() => {
-      expect(apiMocks.calculateMatch).toHaveBeenCalledWith(101);
+      expect(apiMocks.calculateMatch).toHaveBeenCalledWith(101, 2);
     });
     expect(screen.getByLabelText("邮件主题")).toHaveValue("未保存的本地主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>未保存的本地正文</p>");
@@ -663,7 +663,7 @@ describe("WorkspacePage draft saving", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成草稿" }));
 
     await waitFor(() => {
-      expect(apiMocks.generateDraft).toHaveBeenCalledWith(101);
+      expect(apiMocks.generateDraft).toHaveBeenCalledWith(101, 2);
     });
     expect(screen.getByLabelText("邮件主题")).toHaveValue("新生成主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>新生成正文</p>");

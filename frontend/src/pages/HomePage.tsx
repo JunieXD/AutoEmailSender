@@ -555,7 +555,7 @@ export const HomePage = () => {
       if (!workspace.current_task.id) {
         throw new Error("未能为该导师准备工作区任务");
       }
-      const result = await calculateMatch(workspace.current_task.id);
+      const result = await calculateMatch(workspace.current_task.id, selectedLlmProfileId);
       return result.usage;
     },
     [selectedIdentityId, selectedLlmProfileId],

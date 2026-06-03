@@ -1377,6 +1377,136 @@ class ApiEndpointTests(unittest.TestCase):
                 self.assertEqual(workspace_after_ensure.status_code, 200, msg=workspace_after_ensure.text)
                 self.assertEqual(workspace_after_ensure.json()["current_task"]["id"], current_task["id"])
 
+    def test_workspace_thread_keeps_current_task_visible_after_model_switch(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm(name="旧模型", model_name="gpt-old-visible")
+        second_llm_id = self._create_llm(name="新模型", model_name="gpt-new-visible")
+        professor_id = self._create_professor(email="visible-after-model-switch@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=first_llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="旧模型创建的任务",
+            generated_content_text="这条任务切换模型后仍应显示",
+            generated_content_html="<p>这条任务切换模型后仍应显示</p>",
+        )
+
+        response = self.client.get(
+            f"/api/workspaces/{professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["llm_profile"]["id"], second_llm_id)
+        self.assertEqual(payload["current_task"]["id"], task_id)
+        self.assertEqual(payload["current_task"]["generated_subject"], "旧模型创建的任务")
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), first_llm_id)
+
+    def test_template_generation_does_not_rebind_task_to_selected_model(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm(name="原任务模型", model_name="gpt-original-template")
+        second_llm_id = self._create_llm(name="当前选择模型", model_name="gpt-selected-template")
+        professor_id = self._create_professor(email="template-model-switch@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=first_llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=None,
+            outreach_generation_mode="template",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft",
+            json={"llm_profile_id": second_llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["llm_profile"]["id"], first_llm_id)
+        self.assertEqual(payload["current_task"]["id"], task_id)
+        self.assertEqual(payload["current_task"]["status"], "review_required")
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), first_llm_id)
+
+    def test_workspace_llm_actions_use_selected_model_after_model_switch(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm()
+        second_llm_id = self._create_llm(name="切换后的执行模型", model_name="gpt-runtime-selected")
+        material_id = self._upload_material(
+            identity_id,
+            filename="runtime-model-resume.txt",
+            content=b"My research background is in AI agents and workflow automation.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="runtime-model-switch@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=first_llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=material_id,
+            match_score=82,
+            match_reason="方向匹配",
+        )
+
+        captured_profiles: list[tuple[str, int, str]] = []
+
+        async def fake_generate_draft_content(**kwargs):
+            llm_profile = kwargs["llm_profile"]
+            captured_profiles.append(("draft", llm_profile.id, llm_profile.model_name))
+            return self._build_draft_generation_result(
+                subject="切换模型生成主题",
+                body_text="切换模型生成正文",
+                body_html="<p>切换模型生成正文</p>",
+                prompt_tokens=11,
+                completion_tokens=7,
+            )
+
+        async def fake_generate_match_evaluation(**kwargs):
+            llm_profile = kwargs["llm_profile"]
+            captured_profiles.append(("match", llm_profile.id, llm_profile.model_name))
+            return self._build_match_evaluation_result(match_score=91)
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fake_generate_draft_content),
+        ):
+            draft_response = self.client.post(
+                f"/api/email-tasks/{task_id}/generate-draft",
+                json={"llm_profile_id": second_llm_id},
+            )
+
+        self.assertEqual(draft_response.status_code, 200, msg=draft_response.text)
+        draft_payload = draft_response.json()
+        self.assertEqual(captured_profiles, [("draft", second_llm_id, "gpt-runtime-selected")])
+        self.assertEqual(draft_payload["llm_profile"]["id"], second_llm_id)
+        self.assertEqual(draft_payload["current_task"]["generated_subject"], "切换模型生成主题")
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            AsyncMock(side_effect=fake_generate_match_evaluation),
+        ):
+            match_response = self.client.post(
+                f"/api/email-tasks/{task_id}/calculate-match",
+                json={"llm_profile_id": second_llm_id},
+            )
+
+        self.assertEqual(match_response.status_code, 200, msg=match_response.text)
+        match_payload = match_response.json()
+        self.assertEqual(
+            captured_profiles,
+            [
+                ("draft", second_llm_id, "gpt-runtime-selected"),
+                ("match", second_llm_id, "gpt-runtime-selected"),
+            ],
+        )
+        self.assertEqual(match_payload["thread"]["llm_profile"]["id"], second_llm_id)
+        self.assertEqual(match_payload["thread"]["current_task"]["match_score"], 91)
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -7708,15 +7838,20 @@ class ApiEndpointTests(unittest.TestCase):
             "is_default": True,
         }
 
-    def _create_llm(self) -> int:
+    def _create_llm(
+        self,
+        *,
+        name: str = "默认模型",
+        model_name: str = "gpt-4o-mini",
+    ) -> int:
         response = self.client.post(
             "/api/llm-profiles",
             json={
-                "name": "默认模型",
+                "name": name,
                 "provider": "openai",
                 "api_base_url": "https://api.example.com/v1",
                 "api_key": "sk-test-key",
-                "model_name": "gpt-4o-mini",
+                "model_name": model_name,
                 "matcher_prompt_template": "matcher",
                 "writer_prompt_template": "writer",
                 "temperature": 0.2,
@@ -8092,6 +8227,15 @@ class ApiEndpointTests(unittest.TestCase):
         selected_material_ids = json.loads(row[1]) if row[1] is not None else None
         return row[0], selected_material_ids
 
+    def _get_email_task_llm_profile_id(self, task_id: int) -> int:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            return connection.execute(
+                "SELECT llm_profile_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
     def _get_email_task_delete_state(self, task_id: int) -> dict[str, object | None]:
         connection = sqlite3.connect(self.db_path)
         try:

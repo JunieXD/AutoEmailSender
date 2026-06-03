@@ -3,13 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.workspace_support import build_workspace_thread, build_workspace_thread_for_task
+from app.api.workspace_support import build_workspace_thread
 from app.core.database import get_async_session, get_session_factory
 from app.schemas.email_task import (
     DraftPreviewRead,
     EmailTaskApprovalRequest,
     EmailTaskOutreachConfigRequest,
     EmailTaskPrimaryMaterialRequest,
+    EmailTaskRuntimeProfileRequest,
     EmailTaskScheduleRequest,
     MatchCalculationResultRead,
     TokenUsageRead,
@@ -32,29 +33,37 @@ from app.services.task_runtime import (
     update_task_primary_material,
 )
 
-
 router = APIRouter(prefix="/api/email-tasks", tags=["email-tasks"])
 
 
 @router.post("/{task_id}/regenerate-draft", response_model=WorkspaceThreadRead)
 async def regenerate_draft(
     task_id: int,
+    payload: EmailTaskRuntimeProfileRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
-        lambda: regenerate_task_draft(get_session_factory(), task_id),
+        lambda: regenerate_task_draft(
+            get_session_factory(),
+            task_id,
+            llm_profile_id=payload.llm_profile_id if payload else None,
+        ),
     )
 
 
 @router.post("/{task_id}/calculate-match", response_model=MatchCalculationResultRead)
 async def calculate_match(
     task_id: int,
+    payload: EmailTaskRuntimeProfileRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> MatchCalculationResultRead:
     try:
-        result = await calculate_task_match_once(get_session_factory(), task_id)
+        result = await calculate_task_match_once(
+            get_session_factory(),
+            task_id,
+            llm_profile_id=payload.llm_profile_id if payload else None,
+        )
     except MatchAnalysisAlreadyRunningError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -83,21 +92,30 @@ async def calculate_match(
 @router.post("/{task_id}/generate-draft", response_model=WorkspaceThreadRead)
 async def generate_draft(
     task_id: int,
+    payload: EmailTaskRuntimeProfileRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
-        lambda: regenerate_task_draft(get_session_factory(), task_id),
+        lambda: regenerate_task_draft(
+            get_session_factory(),
+            task_id,
+            llm_profile_id=payload.llm_profile_id if payload else None,
+        ),
     )
 
 
 @router.post("/{task_id}/draft-preview", response_model=DraftPreviewRead)
 async def draft_preview(
     task_id: int,
+    payload: EmailTaskRuntimeProfileRequest | None = None,
 ) -> DraftPreviewRead:
     try:
-        generation = await preview_task_draft(get_session_factory(), task_id)
+        generation = await preview_task_draft(
+            get_session_factory(),
+            task_id,
+            llm_profile_id=payload.llm_profile_id if payload else None,
+        )
     except ValueError as exc:
         detail = str(exc)
         status_code = 404 if "不存在" in detail else 400
@@ -127,7 +145,6 @@ async def change_primary_material(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: update_task_primary_material(
             get_session_factory(),
             task_id,
@@ -144,7 +161,6 @@ async def change_outreach_config(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: update_task_outreach_config(
             get_session_factory(),
             task_id,
@@ -164,7 +180,6 @@ async def approve_draft(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: approve_draft_task(get_session_factory(), task_id, payload),
     )
 
@@ -177,7 +192,6 @@ async def save_draft(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: save_task_draft(get_session_factory(), task_id, payload),
     )
 
@@ -190,7 +204,6 @@ async def approve_and_send(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: approve_and_send_task(get_session_factory(), task_id, payload),
     )
 
@@ -203,7 +216,6 @@ async def approve_and_schedule(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: approve_and_schedule_task(get_session_factory(), task_id, payload),
     )
 
@@ -215,7 +227,6 @@ async def cancel_schedule(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: cancel_scheduled_task(get_session_factory(), task_id),
     )
 
@@ -227,9 +238,7 @@ async def continue_manually(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: continue_task_manually(get_session_factory(), task_id),
-        response_scope="workspace",
     )
 
 
@@ -240,18 +249,13 @@ async def start_follow_up(
 ) -> WorkspaceThreadRead:
     return await _run_workspace_action(
         session,
-        task_id,
         lambda: start_follow_up_task(get_session_factory(), task_id),
-        response_scope="workspace",
     )
 
 
 async def _run_workspace_action(
     session: AsyncSession,
-    task_id: int,
     action,
-    *,
-    response_scope: str = "task",
 ) -> WorkspaceThreadRead:
     try:
         professor_id, identity_id, llm_profile_id = await action()
@@ -263,12 +267,9 @@ async def _run_workspace_action(
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
     session.expire_all()
-    if response_scope == "workspace":
-        return await build_workspace_thread(
-            session,
-            professor_id=professor_id,
-            identity_id=identity_id,
-            llm_profile_id=llm_profile_id,
-        )
-    return await build_workspace_thread_for_task(session, task_id=task_id)
-
+    return await build_workspace_thread(
+        session,
+        professor_id=professor_id,
+        identity_id=identity_id,
+        llm_profile_id=llm_profile_id,
+    )
