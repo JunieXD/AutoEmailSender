@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 import re
-from urllib.parse import parse_qsl, urlsplit
 from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
@@ -75,9 +74,13 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。不要输出解释文字。\n"
         "chunk_status 只能是 completed、no_candidates 或 too_many_candidates。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
+        "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且链接文本像人名、URL 像个人主页时，这就是明确的姓名 + profile_url 候选证据。\n"
+        "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
         "candidates 最多 10 个候选；只有当前 chunk 正文内明确可见超过 10 个导师候选时，chunk_status 才能是 too_many_candidates，且 candidates 必须为空。\n"
+        "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，必须返回 too_many_candidates，不要输出前 10 个，也不要返回 no_candidates。\n"
         "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能使用 too_many_candidates。\n"
-        "缺少 email 且缺少 profile_url 的候选不可提交；无法确认有效候选时使用 no_candidates。\n"
+        "缺少 email 且缺少 profile_url 的候选不可提交；但有姓名 + profile_url 的候选即使缺少 email 也可提交。\n"
+        "no_candidates 只允许在当前 chunk 内没有任何姓名+邮箱、姓名+profile_url、教师卡片或教师表格行时使用。\n"
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
         "导师个人主页链接属于候选 profile_url，不能放入 discovered_urls。\n"
         "discovered_urls 只放候选列表页、分页页、教师目录页等继续抓取入口。\n"
@@ -85,10 +88,10 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "confidence 和 field_confidence 必须是 0 到 1 的数字；evidence 只写简短摘要，不复制大段原文。\n"
         "输出示例（正常保存）：\n"
         '{"chunk_status": "completed", "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": {"name": 0.95, "email": 0.9, "profile_url": 0.95}, "evidence": {"summary": "当前 chunk 中姓名链接和邮箱明确出现"}}], "discovered_urls": []}\n'
-        "输出示例（无候选）：\n"
-        '{"chunk_status": "no_candidates", "candidates": [], "discovered_urls": []}\n'
         "输出示例（当前 chunk 明确超过 10 个候选）：\n"
         '{"chunk_status": "too_many_candidates", "candidates": [], "discovered_urls": []}\n'
+        "输出示例（无候选）：\n"
+        '{"chunk_status": "no_candidates", "candidates": [], "discovered_urls": []}\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"来源 URL：{source_url}\n"
@@ -381,8 +384,6 @@ async def complete_current_chunk(
                 continue
             if normalized in seen_urls or not is_same_domain(normalized, job.start_url):
                 continue
-            if not _is_explicit_list_or_pagination_url(normalized):
-                continue
             seen_urls.add(normalized)
             exists = await session.scalar(
                 select(CrawlPageTask.id).where(
@@ -422,27 +423,6 @@ async def complete_current_chunk(
             "skipped_duplicate_count": save_result["skipped_duplicate_count"],
         }
 
-
-def _is_explicit_list_or_pagination_url(url: str | None) -> bool:
-    if not url:
-        return False
-    try:
-        parsed = urlsplit(url)
-    except ValueError:
-        return False
-    path = parsed.path.lower()
-    segments = [segment for segment in path.split("/") if segment]
-    query_keys = {key.lower() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}
-    pagination_query_keys = {"page", "p", "current", "pageindex", "pageno", "page_no"}
-    if query_keys & pagination_query_keys:
-        return True
-
-    broad_path_markers = ("list", "faculty", "teacher", "teachers", "staff", "team", "directory", "导师", "教师", "师资")
-    if any(marker in path for marker in broad_path_markers):
-        return True
-
-    directory_segments = {"people", "professors", "members"}
-    return bool(segments and segments[-1].split(".", 1)[0] in directory_segments)
 
 def _lease_expired(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:

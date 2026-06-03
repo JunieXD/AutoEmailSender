@@ -40,6 +40,27 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"chunk_status": "too_many_candidates"', prompt)
         self.assertIn('"candidates": []', prompt)
         self.assertIn('"discovered_urls": []', prompt)
+    def test_chunk_prompt_treats_markdown_profile_links_as_candidates(self) -> None:
+        from app.services.crawler_v2_chunk_worker import build_v2_chunk_prompt
+
+        chunk_content = "\n".join(
+            f"[教师{i}](https://faculty.example.edu/t{i}/main.psp)"
+            for i in range(12)
+        )
+
+        prompt = build_v2_chunk_prompt(
+            university="示例大学",
+            school="计算机学院",
+            source_url="https://example.edu/faculty",
+            chunk_content=chunk_content,
+        )
+
+        self.assertIn("姓名 + profile_url", prompt)
+        self.assertIn("不是 no_candidates", prompt)
+        self.assertIn("必须返回 too_many_candidates", prompt)
+        self.assertIn("no_candidates 只允许", prompt)
+        self.assertLess(prompt.index("输出示例（当前 chunk 明确超过 10 个候选）"), prompt.index("输出示例（无候选）"))
+
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -418,31 +439,38 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/faculty/list2.html"])
 
 
-    async def test_complete_chunk_only_enqueues_explicit_list_or_pagination_urls(self) -> None:
+    async def test_complete_chunk_enqueues_worker_discovered_safe_same_domain_urls(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
 
         result = await complete_current_chunk(
             self.session_factory,
             chunk_id=chunk_id,
             worker_id="w1",
-            candidates=[ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/people/zhang.html", confidence=0.9)],
+            candidates=[ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/people/li.html", confidence=0.9)],
             discovered_urls=[
                 "https://example.edu/people/li.html",
                 "https://example.edu/about.html",
                 "https://example.edu/news/2024.html",
                 "https://example.edu/faculty/list2.html",
                 "https://example.edu/teachers?page=2",
+                "https://example.edu/faculty/index1.htm",
             ],
             chunk_status="completed",
         )
 
         self.assertEqual(result["saved_count"], 1)
-        self.assertEqual(result["url_count"], 2)
+        self.assertEqual(result["url_count"], 5)
         async with self.session_factory() as session:
             tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id).order_by(CrawlPageTask.id)))
         self.assertEqual(
             [task.normalized_url for task in tasks],
-            ["https://example.edu/faculty/list2.html", "https://example.edu/teachers?page=2"],
+            [
+                "https://example.edu/about.html",
+                "https://example.edu/news/2024.html",
+                "https://example.edu/faculty/list2.html",
+                "https://example.edu/teachers?page=2",
+                "https://example.edu/faculty/index1.htm",
+            ],
         )
 
     async def test_complete_chunk_idempotently_ignores_url_already_found_by_page_worker(self) -> None:
