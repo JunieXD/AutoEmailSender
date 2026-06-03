@@ -125,6 +125,52 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLess(drafts[1].token_estimate, estimate_tokens(content))
         self.assertLess(drafts[1].token_estimate - drafts[0].token_estimate, 80)
 
+    def test_split_chunk_content_uses_dynamic_fanout_for_too_many_candidates(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        content = "\n".join(
+            f"教师{i} 研究方向 数据库 人工智能 [详情](https://cs.example.edu/t{i}.htm)"
+            for i in range(120)
+        )
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="too_many_candidates",
+            config=ChunkingConfig(min_split_tokens=150, overlap_tokens=180),
+        )
+
+        self.assertEqual(len(drafts), 10)
+        self.assertTrue(all(draft.parent_chunk_id == "c1" for draft in drafts))
+        self.assertTrue(all(draft.split_depth == 1 for draft in drafts))
+        self.assertGreaterEqual(min(draft.token_estimate for draft in drafts), 150)
+        self.assertLessEqual(max(draft.token_estimate for draft in drafts), 500)
+
+    def test_split_chunk_content_caps_retry_overlap_at_thirty_tokens(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        content = "\n".join(
+            f"教师{i} 研究方向 数据库 人工智能 [详情](https://cs.example.edu/t{i}.htm)"
+            for i in range(80)
+        )
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="candidate_count_exceeded",
+            config=ChunkingConfig(min_split_tokens=150, overlap_tokens=180),
+        )
+
+        self.assertGreater(len(drafts), 2)
+        first_lines = set(drafts[0].content.splitlines())
+        second_lines = drafts[1].content.splitlines()
+        repeated_prefix = [line for line in second_lines if line in first_lines]
+        repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        self.assertLessEqual(repeated_tokens, 35)
     def test_fingerprint_page_is_stable(self) -> None:
         self.assertEqual(fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四"))
 

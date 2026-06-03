@@ -330,6 +330,7 @@ async def _split_chunk_in_session(
         page_fingerprint=chunk.page_fingerprint,
         split_depth=chunk.split_depth + 1,
         config=config,
+        split_reason=reason,
     )
     if not drafts:
         chunk.status = CrawlPageChunkStatus.FAILED.value

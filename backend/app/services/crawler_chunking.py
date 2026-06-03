@@ -16,6 +16,9 @@ class ChunkingConfig:
     overlap_tokens: int = 180
     min_split_tokens: int = 150
     max_split_depth: int = 7
+    retry_split_target_tokens: int = 200
+    retry_split_max_parts: int = 10
+    retry_split_overlap_tokens: int = 30
     single_chunk_max_tokens: int = 2200
     min_balanced_target_tokens: int = 1200
     max_balanced_target_tokens: int = 2200
@@ -207,17 +210,19 @@ def split_chunk_content(
     page_fingerprint: str,
     split_depth: int,
     config: ChunkingConfig | None = None,
+    split_reason: str | None = None,
 ) -> list[PageChunkDraft]:
     selected_config = config or ChunkingConfig()
     if estimate_tokens(content) <= selected_config.min_split_tokens:
         return []
     lines = content.splitlines()
-    midpoint = max(1, len(lines) // 2)
-    left_lines = lines[:midpoint]
-    overlap_tokens = _dynamic_overlap_tokens(content, selected_config)
-    right_lines = [*_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]
+    child_groups = (
+        _split_retry_candidate_dense_lines(lines, content, selected_config)
+        if _is_candidate_dense_split(split_reason)
+        else _split_binary_lines(lines, content, selected_config)
+    )
     drafts: list[PageChunkDraft] = []
-    for index, child_lines in enumerate((left_lines, right_lines)):
+    for index, child_lines in enumerate(child_groups):
         normalized = _normalize_lines("\n".join(child_lines))
         if not normalized:
             continue
@@ -242,6 +247,43 @@ def split_chunk_content(
 
 
 
+def _is_candidate_dense_split(split_reason: str | None) -> bool:
+    return split_reason in {"too_many_candidates", "candidate_count_exceeded"}
+
+
+def _split_binary_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:
+    midpoint = max(1, len(lines) // 2)
+    left_lines = lines[:midpoint]
+    overlap_tokens = _dynamic_overlap_tokens(content, config)
+    return [left_lines, [*_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]]
+
+
+def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:
+    content_tokens = estimate_tokens(content)
+    target_tokens = max(config.min_split_tokens, config.retry_split_target_tokens)
+    part_count = min(
+        max(2, config.retry_split_max_parts),
+        max(2, ceil(content_tokens / target_tokens)),
+        len(lines),
+    )
+    overlap_tokens = min(config.overlap_tokens, config.retry_split_overlap_tokens)
+    groups: list[list[str]] = []
+    bounds = [
+        (round(index * len(lines) / part_count), round((index + 1) * len(lines) / part_count))
+        for index in range(part_count)
+    ]
+    for index, (start, end) in enumerate(bounds):
+        child_lines = lines[start:end]
+        if index > 0:
+            previous_start, previous_end = bounds[index - 1]
+            child_lines = [
+                *_strict_overlap_tail(lines[previous_start:previous_end], overlap_tokens),
+                *child_lines,
+            ]
+        if child_lines:
+            groups.append(child_lines)
+    return groups
+
 def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
     content_tokens = estimate_tokens(content)
     if content_tokens <= config.min_split_tokens * 2:
@@ -249,6 +291,17 @@ def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
     if content_tokens <= config.min_split_tokens * 4:
         return min(config.overlap_tokens, max(0, content_tokens // 6))
     return config.overlap_tokens
+
+def _strict_overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
+    selected: list[str] = []
+    total = 0
+    for line in reversed(lines):
+        line_tokens = estimate_tokens(line)
+        if total + line_tokens > overlap_tokens:
+            break
+        total += line_tokens
+        selected.append(line)
+    return list(reversed(selected))
 
 def _overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
     selected: list[str] = []
