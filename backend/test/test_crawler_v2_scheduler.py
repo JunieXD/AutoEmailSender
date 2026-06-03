@@ -386,7 +386,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         assert job is not None
         self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
 
-    async def test_terminal_failures_with_candidates_mark_partially_completed_when_no_retryable_work(self) -> None:
+    async def test_terminal_failures_with_candidates_mark_needs_review_when_no_retryable_work(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:
             session.add(CrawlCandidate(job_id=job_id, name="张三"))
@@ -399,7 +399,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         async with self.session_factory() as session:
             job = await session.get(CrawlJob, job_id)
             assert job is not None
-            self.assertEqual(job.status, CrawlJobStatus.PARTIALLY_COMPLETED.value)
+            self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
 
     async def test_retryable_failures_are_claimed_before_job_completion(self) -> None:
         job_id = await self._create_job()

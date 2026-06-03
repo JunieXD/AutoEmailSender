@@ -92,14 +92,11 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
     for job in jobs:
         if await _job_has_available_or_leased_work(session, job_id=job.id, now=now):
             continue
-        terminal_failures = await _job_has_terminal_failures(session, job_id=job.id)
         has_candidates = await _job_has_candidates(session, job_id=job.id)
         error_message = None
         if not has_candidates:
             final_status = CrawlJobStatus.FAILED.value
             error_message = "抓取未发现候选导师"
-        elif terminal_failures:
-            final_status = CrawlJobStatus.PARTIALLY_COMPLETED.value
         else:
             final_status = CrawlJobStatus.NEEDS_REVIEW.value
         job.status = final_status
@@ -403,15 +400,6 @@ async def _job_has_candidates(session: AsyncSession, *, job_id: int) -> bool:
     candidate = await session.scalar(select(CrawlCandidate.id).where(CrawlCandidate.job_id == job_id).limit(1))
     return candidate is not None
 
-async def _job_has_terminal_failures(session: AsyncSession, *, job_id: int) -> bool:
-    page = await session.scalar(select(CrawlPageTask.id).where(CrawlPageTask.job_id == job_id, CrawlPageTask.status == CrawlPageTaskStatus.FAILED_TERMINAL.value).limit(1))
-    if page is not None:
-        return True
-    chunk = await session.scalar(select(CrawlPageChunk.id).where(CrawlPageChunk.job_id == job_id, CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_TERMINAL.value).limit(1))
-    if chunk is not None:
-        return True
-    enrichment = await session.scalar(select(CrawlCandidateEnrichmentTask.id).where(CrawlCandidateEnrichmentTask.job_id == job_id, CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value).limit(1))
-    return enrichment is not None
 async def run_crawler_v2_once(
     session_factory: async_sessionmaker[AsyncSession],
     *,
