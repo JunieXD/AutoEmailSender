@@ -12,9 +12,9 @@ from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
 from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_tools import CrawlToolContext, PageSnapshot, browser_investigate, crawl_page_with_http
+from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 
-MAX_PAGE_ATTEMPTS = 3
 
 
 async def run_crawler_v2_page_worker_once(
@@ -171,11 +171,12 @@ async def _skip_page_task_from_ledger(session: AsyncSession, task: CrawlPageTask
     return False
 
 def _mark_page_failed(task: CrawlPageTask, message: str) -> None:
-    task.last_error = message
-    if int(task.attempt_count or 0) >= MAX_PAGE_ATTEMPTS:
-        task.status = CrawlPageTaskStatus.FAILED_TERMINAL.value
-    else:
-        task.status = CrawlPageTaskStatus.FAILED_RETRYABLE.value
+    mark_crawler_v2_failed(
+        task,
+        message=message,
+        retryable_status=CrawlPageTaskStatus.FAILED_RETRYABLE.value,
+        terminal_status=CrawlPageTaskStatus.FAILED_TERMINAL.value,
+    )
 
 
 async def _record_page_and_state(

@@ -415,6 +415,31 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
 
+    async def test_retryable_page_in_backoff_is_not_claimed_until_delay_expires(self) -> None:
+        job_id = await self._create_job()
+        delayed_until = datetime.now(UTC) + timedelta(seconds=30)
+        async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a", status=CrawlPageTaskStatus.FAILED_RETRYABLE.value, lease_expires_at=delayed_until))
+            await session.commit()
+
+        claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.IDLE)
+
+    async def test_scheduler_does_not_finalize_job_with_retryable_page_in_backoff(self) -> None:
+        job_id = await self._create_job()
+        delayed_until = datetime.now(UTC) + timedelta(seconds=30)
+        async with self.session_factory() as session:
+            session.add(CrawlPageTask(job_id=job_id, normalized_url="https://example.edu/a", original_url="https://example.edu/a", status=CrawlPageTaskStatus.FAILED_RETRYABLE.value, lease_expires_at=delayed_until))
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
     async def test_claim_skips_row_when_conditional_update_loses_race(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:

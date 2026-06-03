@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
 from app.services.crawler_debug import append_crawler_v2_debug_event
+from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
@@ -34,7 +35,6 @@ from app.services.thinking_adaptation import ensure_thinking_adaptation
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import parse_structured_result
 
-MAX_CHUNK_ATTEMPTS = 2
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
@@ -155,11 +155,12 @@ async def run_crawler_v2_chunk_worker_once(
             return 0
         llm_profile = await _resolve_llm_profile(session, job)
         if llm_profile is None:
-            chunk.status = CrawlPageChunkStatus.FAILED_RETRYABLE.value
-            chunk.last_error = "缺少可用的 LLM Profile"
-            chunk.worker_id = None
-            chunk.claimed_at = None
-            chunk.lease_expires_at = None
+            mark_crawler_v2_failed(
+                chunk,
+                message="缺少可用的 LLM Profile",
+                retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+                terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
+            )
             await session.commit()
             return 1
         thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
@@ -236,15 +237,12 @@ async def run_crawler_v2_chunk_worker_once(
         async with session_factory() as session:
             chunk = await session.get(CrawlPageChunk, chunk_id)
             if chunk is not None and chunk.status == CrawlPageChunkStatus.PROCESSING.value and chunk.worker_id == worker_id and not _lease_expired(chunk.lease_expires_at) and await ensure_job_active(session, chunk.job_id):
-                chunk.last_error = str(exc)
-                chunk.status = (
-                    CrawlPageChunkStatus.FAILED_TERMINAL.value
-                    if int(chunk.attempt_count or 0) >= MAX_CHUNK_ATTEMPTS
-                    else CrawlPageChunkStatus.FAILED_RETRYABLE.value
+                mark_crawler_v2_failed(
+                    chunk,
+                    message=str(exc),
+                    retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+                    terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
                 )
-                chunk.worker_id = None
-                chunk.claimed_at = None
-                chunk.lease_expires_at = None
             await session.commit()
         return 1
 

@@ -120,6 +120,21 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(candidate.email)
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.PROCESSING.value)
 
+    async def test_enrichment_worker_failure_sets_retry_backoff(self) -> None:
+        _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+
+        with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
+            processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value)
+        self.assertIn("429", task.last_error or "")
+        self.assertIsNone(task.worker_id)
+        self.assertIsNone(task.claimed_at)
+        self.assertIsNotNone(task.lease_expires_at)
     async def test_enrichment_worker_writes_v2_debug_jsonl(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
         payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})

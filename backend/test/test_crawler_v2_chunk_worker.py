@@ -211,6 +211,21 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("invalid json", chunk.last_error)
         self.assertEqual(candidates, [])
 
+    async def test_chunk_worker_failure_sets_retry_backoff(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertIn("429", chunk.last_error or "")
+        self.assertIsNone(chunk.worker_id)
+        self.assertIsNone(chunk.claimed_at)
+        self.assertIsNotNone(chunk.lease_expires_at)
     async def test_chunk_worker_writes_v2_debug_jsonl(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
         payload = {

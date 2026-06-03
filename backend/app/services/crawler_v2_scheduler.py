@@ -264,7 +264,7 @@ def _page_task_claimable(now: datetime):
     return or_(
         CrawlPageTask.status == CrawlPageTaskStatus.PENDING.value,
         (CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value) & (CrawlPageTask.lease_expires_at <= now),
-        CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value,
+        (CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value) & ((CrawlPageTask.lease_expires_at.is_(None)) | (CrawlPageTask.lease_expires_at <= now)),
     )
 
 
@@ -272,6 +272,7 @@ def _page_task_unfinished(now: datetime):
     return or_(
         _page_task_claimable(now),
         CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
+        CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value,
     )
 
 
@@ -279,7 +280,7 @@ def _chunk_claimable(now: datetime):
     return or_(
         CrawlPageChunk.status == CrawlPageChunkStatus.PENDING.value,
         (CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value) & (CrawlPageChunk.lease_expires_at <= now),
-        CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+        (CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value) & ((CrawlPageChunk.lease_expires_at.is_(None)) | (CrawlPageChunk.lease_expires_at <= now)),
     )
 
 
@@ -287,6 +288,7 @@ def _chunk_unfinished(now: datetime):
     return or_(
         _chunk_claimable(now),
         CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
+        CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value,
     )
 
 
@@ -294,7 +296,7 @@ def _enrichment_task_claimable(now: datetime):
     return or_(
         CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
         (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value) & (CrawlCandidateEnrichmentTask.lease_expires_at <= now),
-        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+        (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value) & ((CrawlCandidateEnrichmentTask.lease_expires_at.is_(None)) | (CrawlCandidateEnrichmentTask.lease_expires_at <= now)),
     )
 
 
@@ -302,6 +304,7 @@ def _enrichment_task_unfinished(now: datetime):
     return or_(
         _enrichment_task_claimable(now),
         CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
     )
 
 

@@ -98,6 +98,21 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pages), 0)
 
 
+    async def test_page_worker_failure_sets_retry_backoff(self) -> None:
+        _, task_id = await self._seed_page_task()
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.FAILED_RETRYABLE.value)
+        self.assertIn("429", task.last_error or "")
+        self.assertIsNone(task.worker_id)
+        self.assertIsNone(task.claimed_at)
+        self.assertIsNotNone(task.lease_expires_at)
     async def test_page_worker_writes_v2_debug_jsonl(self) -> None:
         job_id, task_id = await self._seed_page_task()
         snapshot = PageSnapshot(

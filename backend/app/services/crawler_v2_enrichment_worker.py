@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlWorkerKind, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_crawl4ai
 from app.services.crawler_debug import append_crawler_v2_debug_event
+from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.thinking_adaptation import ensure_thinking_adaptation
 
-MAX_ENRICHMENT_ATTEMPTS = 3
 
 
 async def run_crawler_v2_enrichment_worker_once(
@@ -114,15 +114,12 @@ async def run_crawler_v2_enrichment_worker_once(
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             if task is not None and _enrichment_task_owned_by_worker(task, worker_id) and await ensure_job_active(session, task.job_id):
-                task.last_error = str(exc)
-                task.status = (
-                    CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
-                    if int(task.attempt_count or 0) >= MAX_ENRICHMENT_ATTEMPTS
-                    else CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value
+                mark_crawler_v2_failed(
+                    task,
+                    message=str(exc),
+                    retryable_status=CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                    terminal_status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
                 )
-                task.worker_id = None
-                task.claimed_at = None
-                task.lease_expires_at = None
             await session.commit()
         return 1
 
