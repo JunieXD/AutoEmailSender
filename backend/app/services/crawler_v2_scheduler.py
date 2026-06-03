@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from app.core.time import utc_now
 
@@ -19,6 +20,7 @@ from app.models import (
     CrawlPageTaskStatus,
 )
 from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
+from app.services.runtime_settings import get_runtime_settings
 from app.services.crawl_job_runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
@@ -38,6 +40,15 @@ async def claim_next_v2_work(
 ) -> CrawlerV2ClaimedWork:
     config = config or CrawlerV2WorkerConfig()
     async with session_factory() as session:
+        runtime_settings = await get_runtime_settings(session)
+        config = CrawlerV2WorkerConfig(
+            page_concurrency=config.page_concurrency,
+            page_domain_concurrency=config.page_domain_concurrency,
+            chunk_concurrency=config.chunk_concurrency,
+            enrichment_concurrency=max(1, int(runtime_settings.crawler_profile_enrichment_concurrency or config.enrichment_concurrency)),
+            enrichment_host_concurrency=max(1, int(runtime_settings.crawler_host_concurrency or config.enrichment_host_concurrency)),
+            lease_seconds=config.lease_seconds,
+        )
         now = utc_now()
         lease_expires_at = now + timedelta(seconds=config.lease_seconds)
         claimed = await _claim_chunk(session, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at, config=config)
@@ -185,17 +196,28 @@ async def _claim_enrichment_task(
     )
     if int(active_count or 0) >= config.enrichment_concurrency:
         return CrawlerV2ClaimedWork.idle()
-    task = await session.scalar(
-        select(CrawlCandidateEnrichmentTask)
-        .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
-        .where(
-            CrawlJob.runtime_version == "v2",
-            CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
-            _enrichment_task_claimable(now),
+    active_hosts = await _active_enrichment_host_counts(session, now=now)
+    rows = list(
+        await session.execute(
+            select(CrawlCandidateEnrichmentTask, CrawlCandidate.profile_url)
+            .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
+            .join(CrawlCandidate, CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id)
+            .where(
+                CrawlJob.runtime_version == "v2",
+                CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
+                _enrichment_task_claimable(now),
+            )
+            .order_by(CrawlCandidateEnrichmentTask.id.asc())
+            .limit(20)
         )
-        .order_by(CrawlCandidateEnrichmentTask.id.asc())
-        .limit(1)
     )
+    task = None
+    for candidate_task, profile_url in rows:
+        host = _candidate_profile_host(profile_url)
+        if host and active_hosts.get(host, 0) >= config.enrichment_host_concurrency:
+            continue
+        task = candidate_task
+        break
     if task is None:
         return CrawlerV2ClaimedWork.idle()
     result = await _conditional_claim_enrichment_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
@@ -205,6 +227,33 @@ async def _claim_enrichment_task(
     await _mark_job_running_for_claimed_work(session, job_id=task.job_id, now=now)
     return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.ENRICHMENT, work_item_id=task.id, job_id=task.job_id)
 
+
+
+async def _active_enrichment_host_counts(session: AsyncSession, *, now: datetime) -> dict[str, int]:
+    rows = await session.execute(
+        select(CrawlCandidate.profile_url)
+        .select_from(CrawlCandidateEnrichmentTask)
+        .join(CrawlCandidate, CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id)
+        .where(
+            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+            CrawlCandidateEnrichmentTask.lease_expires_at > now,
+        )
+    )
+    counts: dict[str, int] = {}
+    for profile_url in rows.scalars():
+        host = _candidate_profile_host(profile_url)
+        if host:
+            counts[host] = counts.get(host, 0) + 1
+    return counts
+
+
+def _candidate_profile_host(profile_url: str | None) -> str | None:
+    if not profile_url:
+        return None
+    try:
+        return (urlparse(profile_url).hostname or "").lower() or None
+    except ValueError:
+        return None
 
 async def _mark_job_running_for_claimed_work(session: AsyncSession, *, job_id: int, now: datetime) -> None:
     job = await session.get(CrawlJob, job_id)

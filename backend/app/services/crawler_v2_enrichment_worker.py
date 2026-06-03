@@ -14,6 +14,7 @@ from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 
 MAX_ENRICHMENT_ATTEMPTS = 3
 
@@ -169,17 +170,18 @@ async def enrich_candidate_once_with_usage(
         llm_profile = await _resolve_llm_profile(session, job)
         if llm_profile is None:
             raise ValueError("缺少可用的 LLM Profile")
+        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
         ctx = CrawlToolContext(
             session_factory=session_factory,
             job_id=job.id,
             university=job.university,
             school=job.school,
             start_url=job.start_url,
+            thinking_extra_body=thinking_extra_body,
         )
         profile_url = candidate.profile_url or ""
     page_text = await fetch_profile_text(ctx, profile_url)
-    payload, usage = await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
-    return payload, usage
+    return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
 
 async def enrich_candidate_profile_with_llm_with_usage(
     ctx: CrawlToolContext,

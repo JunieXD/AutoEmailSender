@@ -17,6 +17,7 @@ class CrawlerV2WorkerConfig:
     page_domain_concurrency: int = 2
     chunk_concurrency: int = 4
     enrichment_concurrency: int = 3
+    enrichment_host_concurrency: int = 1
     lease_seconds: int = 300
 
 

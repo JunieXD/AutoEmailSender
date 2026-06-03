@@ -134,6 +134,55 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert task is not None
             self.assertEqual(task.worker_id, "new")
 
+    async def test_claim_uses_runtime_enrichment_concurrency_setting(self) -> None:
+        job_id = await self._create_job()
+        active_until = datetime.now(UTC) + timedelta(minutes=5)
+        async with self.session_factory() as session:
+            from app.models.app_setting import AppSetting
+
+            session.add(AppSetting(crawler_profile_enrichment_concurrency=1, crawler_host_concurrency=1))
+            first = CrawlCandidate(job_id=job_id, name="张三", profile_url="https://example.edu/a")
+            second = CrawlCandidate(job_id=job_id, name="李四", profile_url="https://example.edu/b")
+            session.add_all([first, second])
+            await session.flush()
+            session.add_all([
+                CrawlCandidateEnrichmentTask(job_id=job_id, candidate_id=first.id, status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value, worker_id="active", lease_expires_at=active_until),
+                CrawlCandidateEnrichmentTask(job_id=job_id, candidate_id=second.id, status=CrawlCandidateEnrichmentTaskStatus.PENDING.value),
+            ])
+            await session.commit()
+
+        claimed = await claim_next_v2_work(self.session_factory, worker_id="w1")
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.IDLE)
+
+    async def test_claim_respects_runtime_host_concurrency_for_enrichment(self) -> None:
+        job_id = await self._create_job()
+        active_until = datetime.now(UTC) + timedelta(minutes=5)
+        async with self.session_factory() as session:
+            from app.models.app_setting import AppSetting
+
+            session.add(AppSetting(crawler_profile_enrichment_concurrency=3, crawler_host_concurrency=1))
+            active = CrawlCandidate(job_id=job_id, name="张三", profile_url="https://same.example.edu/a")
+            same_host = CrawlCandidate(job_id=job_id, name="李四", profile_url="https://same.example.edu/b")
+            other_host = CrawlCandidate(job_id=job_id, name="王五", profile_url="https://other.example.edu/c")
+            session.add_all([active, same_host, other_host])
+            await session.flush()
+            session.add_all([
+                CrawlCandidateEnrichmentTask(job_id=job_id, candidate_id=active.id, status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value, worker_id="active", lease_expires_at=active_until),
+                CrawlCandidateEnrichmentTask(job_id=job_id, candidate_id=same_host.id, status=CrawlCandidateEnrichmentTaskStatus.PENDING.value),
+                CrawlCandidateEnrichmentTask(job_id=job_id, candidate_id=other_host.id, status=CrawlCandidateEnrichmentTaskStatus.PENDING.value),
+            ])
+            await session.commit()
+            other_id = other_host.id
+
+        claimed = await claim_next_v2_work(self.session_factory, worker_id="w1")
+
+        self.assertEqual(claimed.kind, CrawlerV2WorkKind.ENRICHMENT)
+        async with self.session_factory() as session:
+            claimed_task = await session.get(CrawlCandidateEnrichmentTask, claimed.work_item_id)
+        assert claimed_task is not None
+        self.assertEqual(claimed_task.candidate_id, other_id)
+
     async def test_scheduler_marks_job_failed_when_no_work_and_no_candidates_remain(self) -> None:
         job_id = await self._create_job()
 
