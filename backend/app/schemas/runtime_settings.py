@@ -41,7 +41,7 @@ class RuntimeSettingsUpdate(BaseModel):
     match_analysis_job_interval_seconds: int = Field(ge=1, le=300)
     crawler_worker_count: int = Field(ge=1, le=8)
     crawler_profile_enrichment_concurrency: int = Field(ge=1, le=20)
-    crawler_host_concurrency: int = Field(ge=1, le=8)
+    crawler_host_concurrency: int = Field(ge=1, le=10)
     crawler_agent_max_chunks_per_run: int = Field(default=2, ge=1, le=20)
     draft_max_tokens: int = Field(ge=256, le=32000)
     batch_draft_generation_concurrency: int = Field(ge=1, le=20)
