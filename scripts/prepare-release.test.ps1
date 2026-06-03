@@ -49,8 +49,11 @@ try {
   }
 
   $notes = Get-Content -Raw -Encoding UTF8 $notesPath
-  if ($notes -notmatch "# v1.0.1" -or $notes -notmatch "fix\(更新\): 修复公告弹窗高度") {
-    throw "公告草稿内容不符合预期。`n$notes"
+  if ($notes -notmatch "# v1.0.1" -or $notes -notmatch "### 新增功能" -or $notes -notmatch "### 体验优化" -or $notes -notmatch "### 问题修复") {
+    throw "公告模板内容不符合预期。`n$notes"
+  }
+  if ($notes -match "fix\(更新\): 修复公告弹窗高度") {
+    throw "公告模板不应该直接包含 commit subject。`n$notes"
   }
   if ($output -notmatch "请编辑 docs/releases/v1.0.1.md") {
     throw "输出里缺少润色提示。`n$output"
