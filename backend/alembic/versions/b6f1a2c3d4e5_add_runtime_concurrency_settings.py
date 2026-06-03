@@ -57,7 +57,7 @@ def upgrade() -> None:
             sa.Column(
                 "crawler_profile_enrichment_concurrency",
                 sa.Integer(),
-                server_default=sa.text("5"),
+                server_default=sa.text("3"),
                 nullable=False,
             ),
         )
@@ -65,7 +65,7 @@ def upgrade() -> None:
             sa.Column(
                 "crawler_host_concurrency",
                 sa.Integer(),
-                server_default=sa.text("1"),
+                server_default=sa.text("2"),
                 nullable=False,
             ),
         )

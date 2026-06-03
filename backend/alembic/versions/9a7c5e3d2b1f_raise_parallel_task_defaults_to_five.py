@@ -19,7 +19,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 CONCURRENCY_COLUMNS = (
     "match_analysis_job_item_concurrency",
-    "crawler_profile_enrichment_concurrency",
     "batch_draft_generation_concurrency",
 )
 

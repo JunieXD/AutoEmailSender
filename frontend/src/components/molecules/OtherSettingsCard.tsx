@@ -251,7 +251,7 @@ export function OtherSettingsCard() {
 
   const summary = useMemo(() => {
     const matchConcurrency = form.match_analysis_job_item_concurrency || "5";
-    const crawlConcurrency = form.crawler_profile_enrichment_concurrency || "5";
+    const crawlConcurrency = form.crawler_profile_enrichment_concurrency || "3";
     const draftMaxTokens = form.draft_max_tokens || "6000";
     const draftConcurrency = form.batch_draft_generation_concurrency || "5";
     const draftMode =

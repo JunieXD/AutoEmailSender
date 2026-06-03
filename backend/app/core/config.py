@@ -97,9 +97,9 @@ def get_settings() -> Settings:
         crawler_worker_count=_get_int_env("CRAWLER_WORKER_COUNT", 8),
         crawler_profile_enrichment_concurrency=_get_int_env(
             "CRAWLER_PROFILE_ENRICHMENT_CONCURRENCY",
-            5,
+            3,
         ),
-        crawler_host_concurrency=_get_int_env("CRAWLER_HOST_CONCURRENCY", 1),
+        crawler_host_concurrency=_get_int_env("CRAWLER_HOST_CONCURRENCY", 2),
         crawler_profile_fetch_max_retries=_get_int_env(
             "CRAWLER_PROFILE_FETCH_MAX_RETRIES",
             2,
