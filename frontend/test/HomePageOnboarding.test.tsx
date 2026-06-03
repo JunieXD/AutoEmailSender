@@ -193,7 +193,6 @@ describe("HomePage onboarding", () => {
     await waitFor(() => {
       expect(mockedListProfessors).toHaveBeenCalledWith({
         identityId: 1,
-        llmProfileId: 1,
       });
     });
 

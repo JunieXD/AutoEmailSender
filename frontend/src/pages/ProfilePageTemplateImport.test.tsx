@@ -30,7 +30,7 @@ vi.mock("@/context/NotificationContext", () => ({
   }),
 }));
 
-vi.mock("@/context/WorkspaceDraftGuardContext", () => ({
+vi.mock("@/context/useWorkspaceDraftGuard", () => ({
   useWorkspaceDraftGuard: () => ({
     requestWorkspaceDraftGuard: mockedRequestWorkspaceDraftGuard,
   }),

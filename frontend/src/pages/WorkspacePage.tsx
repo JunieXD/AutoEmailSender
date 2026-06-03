@@ -7,7 +7,7 @@ import { WorkspaceMessageThread } from '@/components/organisms/WorkspaceMessageT
 import { WorkspaceSidebar } from '@/components/organisms/WorkspaceSidebar';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
-import { useWorkspaceDraftGuard } from '@/context/WorkspaceDraftGuardContext';
+import { useWorkspaceDraftGuard } from '@/context/useWorkspaceDraftGuard';
 import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
 import { bootstrapWorkspaceThread } from '@/features/workspace/client/openWorkspaceThread';

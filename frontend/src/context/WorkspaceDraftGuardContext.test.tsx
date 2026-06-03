@@ -1,10 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  WorkspaceDraftGuardProvider,
-  useWorkspaceDraftGuard,
-} from "@/context/WorkspaceDraftGuardContext";
+import { WorkspaceDraftGuardProvider } from "@/context/WorkspaceDraftGuardContext";
+import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
+
 
 const Harness = ({
   guard,

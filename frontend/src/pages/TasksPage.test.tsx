@@ -744,6 +744,7 @@ describe("TasksPage crawl job monitor", () => {
     await waitFor(() => {
       expect(apiMocks.listBatchTasks).toHaveBeenCalledWith({
         identityId: 1,
+        llmProfileId: 2,
         view: "current",
       });
     });
@@ -760,6 +761,7 @@ describe("TasksPage crawl job monitor", () => {
     await waitFor(() => {
       expect(apiMocks.listBatchTasks).toHaveBeenCalledWith({
         identityId: 2,
+        llmProfileId: 2,
         view: "current",
       });
     });

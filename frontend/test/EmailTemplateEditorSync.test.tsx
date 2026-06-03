@@ -3,6 +3,7 @@ import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const setContent = vi.fn();
+const setEditable = vi.fn();
 let currentEditorHtml = "";
 let latestEditorOptions: { onUpdate?: (payload: { editor: typeof editor }) => void } | null =
   null;
@@ -11,6 +12,7 @@ const editor = {
   commands: {
     setContent,
   },
+  setEditable,
   getAttributes: vi.fn(() => ({})),
   getHTML: vi.fn(() => currentEditorHtml),
   isActive: vi.fn(() => false),
@@ -53,6 +55,7 @@ const ControlledEditor = () => {
 describe("EmailTemplateEditor local sync", () => {
   beforeEach(() => {
     setContent.mockClear();
+    setEditable.mockClear();
     latestEditorOptions = null;
     currentEditorHtml = '<p><span style="font-size: 12pt">老师您好</span></p>';
   });

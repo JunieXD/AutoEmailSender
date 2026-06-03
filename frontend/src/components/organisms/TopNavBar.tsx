@@ -4,7 +4,7 @@ import { BrainCircuit, Mail, UserCircle2 } from "lucide-react";
 import { DesktopUpdateButton } from "@/components/molecules/DesktopUpdateButton";
 import { TopBarSelectMenu } from "@/components/atoms/TopBarSelectMenu";
 import { useSelectionContext } from "@/context/SelectionContext";
-import { useWorkspaceDraftGuard } from "@/context/WorkspaceDraftGuardContext";
+import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
 
 export const TopNavBar = () => {
   const {

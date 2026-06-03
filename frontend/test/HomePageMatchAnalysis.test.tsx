@@ -214,7 +214,7 @@ describe("HomePage match analysis", () => {
     fireEvent.click(await screen.findByRole("button", { name: "分析匹配度" }));
 
     await waitFor(() => {
-      expect(mockedCalculateMatch).toHaveBeenCalledWith(1101);
+      expect(mockedCalculateMatch).toHaveBeenCalledWith(1101, 1);
     });
   });
 

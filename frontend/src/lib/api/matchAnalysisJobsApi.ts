@@ -8,6 +8,7 @@ import type {
 
 export const listMatchAnalysisJobs = (params?: {
   identityId?: number | null;
+  llmProfileId?: number | null;
   view?: TaskListView;
 }) =>
   apiFetch<MatchAnalysisJobDTO[]>(
@@ -15,6 +16,7 @@ export const listMatchAnalysisJobs = (params?: {
     undefined,
     {
       identity_id: params?.identityId ?? undefined,
+      llm_profile_id: params?.llmProfileId ?? undefined,
       view: params?.view ?? undefined,
     },
   );

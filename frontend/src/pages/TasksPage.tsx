@@ -968,6 +968,7 @@ const selectedCrawlJobCanReview =
     try {
       const data = await listBatchTasks({
         identityId: selectedIdentityId,
+        llmProfileId: selectedLlmProfileId,
         view: taskListViews.batch,
       });
       const currentData =
@@ -975,6 +976,7 @@ const selectedCrawlJobCanReview =
           ? data
           : await listBatchTasks({
               identityId: selectedIdentityId,
+              llmProfileId: selectedLlmProfileId,
               view: "current",
             });
       if (
@@ -1014,6 +1016,7 @@ const selectedCrawlJobCanReview =
   }, [
     notifyError,
     selectedIdentityId,
+    selectedLlmProfileId,
     taskListViews.batch,
     tasksRequestKey,
   ]);
@@ -1081,6 +1084,7 @@ const selectedCrawlJobCanReview =
     try {
       const data = await listMatchAnalysisJobs({
         identityId: selectedIdentityId,
+        llmProfileId: selectedLlmProfileId,
         view: taskListViews.match,
       });
       const currentData =
@@ -1088,6 +1092,7 @@ const selectedCrawlJobCanReview =
           ? data
           : await listMatchAnalysisJobs({
               identityId: selectedIdentityId,
+              llmProfileId: selectedLlmProfileId,
               view: "current",
             });
       if (latestMatchJobsRequestIdRef.current !== requestId) {
@@ -1120,7 +1125,7 @@ const selectedCrawlJobCanReview =
         setMatchJobsLoading(false);
       }
     }
-  }, [notifyError, selectedIdentityId, taskListViews.match]);
+  }, [notifyError, selectedIdentityId, selectedLlmProfileId, taskListViews.match]);
 
   const loadMatchJobDetails = useCallback(
     async (jobId: number) => {

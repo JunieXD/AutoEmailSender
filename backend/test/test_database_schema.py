@@ -15,7 +15,7 @@ from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "b2e7c9f1a4d6"
+HEAD_REVISION = "d6e4b8c2a1f0"
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
 
 

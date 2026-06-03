@@ -272,7 +272,7 @@ class OperationLogTests(unittest.TestCase):
 
             async with get_session_factory()() as session:
                 loaded = (await session.scalars(select(OperationLog))).one()
-                self.assertIsNone(loaded.created_at.tzinfo)
+                self.assertEqual(loaded.created_at.tzinfo, UTC)
                 deleted = await cleanup_old_operation_logs(session, retention_days=30, now=now)
                 await session.commit()
                 return deleted

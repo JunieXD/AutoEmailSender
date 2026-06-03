@@ -25,7 +25,7 @@ vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionMock,
 }));
 
-vi.mock("@/context/WorkspaceDraftGuardContext", () => ({
+vi.mock("@/context/useWorkspaceDraftGuard", () => ({
   useWorkspaceDraftGuard: () => draftGuardMock,
 }));
 

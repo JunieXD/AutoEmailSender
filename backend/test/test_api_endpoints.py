@@ -2755,11 +2755,8 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(task_response.status_code, 201)
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
-        task_id = workspace.json()["current_task"]["id"]
+        batch_task_id = task_response.json()["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
 
         with patch(
             "app.services.task_runtime.llm_runtime.generate_draft_content",
@@ -4164,12 +4161,15 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(selected_professor["status"], "preparing")
         self.assertIsNone(selected_professor["match_score"])
 
-        workspace_before = self.client.get(
-            f"/api/workspaces/{selected_professor_ids[0]}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        batch_task_id = task_response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
+        task_id = next(
+            item["id"]
+            for item in batch_items
+            if item["professor_id"] == selected_professor_ids[0]
         )
+        workspace_before = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
         self.assertEqual(workspace_before.status_code, 200)
-        task_id = workspace_before.json()["current_task"]["id"]
         self.assertEqual(
             workspace_before.json()["current_task"]["primary_material_id"],
             resume_material_id,
@@ -4213,18 +4213,19 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(match_workspace.status_code, 200)
-        self.assertEqual(match_workspace.json()["thread"]["current_task"]["status"], "matched")
-        self.assertEqual(match_workspace.json()["thread"]["current_task"]["match_score"], 93)
+        matched_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(matched_thread["current_task"]["match_score"], 93)
         self.assertEqual(generated_workspace.status_code, 200)
-        self.assertEqual(generated_workspace.json()["current_task"]["status"], "review_required")
-        self.assertEqual(generated_workspace.json()["current_task"]["generated_subject"], "更新后的套磁申请")
-        self.assertEqual(generated_workspace.json()["current_task"]["last_draft_prompt_tokens"], 612)
-        self.assertEqual(generated_workspace.json()["current_task"]["last_draft_completion_tokens"], 248)
-        self.assertEqual(generated_workspace.json()["current_task"]["last_draft_total_tokens"], 860)
-        self.assertGreater(generated_workspace.json()["current_task"]["estimated_prompt_tokens"], 0)
-        self.assertEqual(generated_workspace.json()["messages"][-1]["prompt_tokens"], 612)
-        self.assertEqual(generated_workspace.json()["messages"][-1]["completion_tokens"], 248)
-        self.assertEqual(generated_workspace.json()["messages"][-1]["total_tokens"], 860)
+        generated_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(generated_thread["current_task"]["status"], "review_required")
+        self.assertEqual(generated_thread["current_task"]["generated_subject"], "更新后的套磁申请")
+        self.assertEqual(generated_thread["current_task"]["last_draft_prompt_tokens"], 612)
+        self.assertEqual(generated_thread["current_task"]["last_draft_completion_tokens"], 248)
+        self.assertEqual(generated_thread["current_task"]["last_draft_total_tokens"], 860)
+        self.assertGreater(generated_thread["current_task"]["estimated_prompt_tokens"], 0)
+        self.assertEqual(generated_thread["messages"][-1]["prompt_tokens"], 612)
+        self.assertEqual(generated_thread["messages"][-1]["completion_tokens"], 248)
+        self.assertEqual(generated_thread["messages"][-1]["total_tokens"], 860)
         operation_logs = self.client.get(
             "/api/diagnostics/operation-logs",
             params={"event_name": "email_task.draft_generated"},
@@ -4235,8 +4236,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(draft_generated_metadata["completion_tokens"], 248)
         self.assertEqual(draft_generated_metadata["total_tokens"], 860)
         self.assertEqual(switched_workspace.status_code, 200)
-        self.assertEqual(switched_workspace.json()["current_task"]["primary_material_id"], publication_material_id)
-        self.assertEqual(switched_workspace.json()["current_task"]["status"], "review_required")
+        switched_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(switched_thread["current_task"]["primary_material_id"], publication_material_id)
+        self.assertEqual(switched_thread["current_task"]["status"], "review_required")
 
         with patch(
             "app.services.task_runtime.mail_runtime.send_email",
@@ -4256,7 +4258,7 @@ class ApiEndpointTests(unittest.TestCase):
                     "selected_material_ids": [],
                 },
             )
-        payload = workspace_after.json()
+        payload = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(workspace_after.status_code, 200)
         self.assertEqual(payload["current_task"]["status"], "sent")
         self.assertNotIn("delivery_mode", payload["current_task"])
@@ -6012,12 +6014,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
-        task_id = workspace.json()["current_task"]["id"]
-        self.assertIsNone(workspace.json()["current_task"]["primary_material_id"])
+        batch_task_id = response.json()["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        task_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
+        self.assertIsNone(task_thread.json()["current_task"]["primary_material_id"])
 
         regenerate_response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
         self.assertEqual(regenerate_response.status_code, 400)
@@ -6042,7 +6042,8 @@ class ApiEndpointTests(unittest.TestCase):
                 },
             )
         self.assertEqual(send_response.status_code, 200)
-        self.assertEqual(send_response.json()["current_task"]["status"], "sent")
+        sent_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(sent_thread["current_task"]["status"], "sent")
 
     def test_template_polish_mode_requires_complete_template_when_creating_batch_task(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -6160,7 +6161,7 @@ class ApiEndpointTests(unittest.TestCase):
         llm_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
         professor_id = self.client.get("/api/professors").json()[0]["id"]
-        self.client.post(
+        response = self.client.post(
             "/api/batch-tasks",
             json={
                 "identity_id": identity_id,
@@ -6178,11 +6179,9 @@ class ApiEndpointTests(unittest.TestCase):
             },
         )
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        ).json()
-        task_id = workspace["current_task"]["id"]
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        batch_task_id = response.json()["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
 
         schedule_time = datetime.now(UTC) + timedelta(hours=1)
         with patch(
@@ -6209,10 +6208,7 @@ class ApiEndpointTests(unittest.TestCase):
             self._run_async(self._force_task_due(task_id))
             self._run_async(self._dispatch_due_tasks())
 
-        sent_workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        ).json()
+        sent_workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(sent_workspace["current_task"]["status"], "sent")
         self.assertEqual(sent_workspace["current_task"]["last_rfc_message_id"], "<msg-1@example.com>")
 
@@ -6240,10 +6236,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
             self.assertEqual(refresh_response.status_code, 200, msg=refresh_response.text)
 
-        replied_workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        ).json()
+        replied_workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(replied_workspace["current_task"]["status"], "reply_detected")
         self.assertTrue(replied_workspace["current_task"]["is_replied"])
         received_message = next(
@@ -6605,7 +6598,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         response = self.client.post(
-            f"/api/email-tasks/{first_task_id}/approve",
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/approve",
             json={
                 "subject": "较早任务已审核",
                 "body_text": "较早任务审核正文",
@@ -7517,10 +7510,10 @@ class ApiEndpointTests(unittest.TestCase):
             ),
         )
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
+        batch_task_id = response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
+        task_id = next(item["id"] for item in batch_items if item["professor_id"] == professor_id)
+        workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
         self.assertEqual(workspace.status_code, 200, msg=workspace.text)
         payload = workspace.json()
         self.assertEqual(payload["current_task"]["outreach_generation_mode"], "template")
@@ -7595,10 +7588,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         self.assertEqual(create_response.json()["email_subject"], batch_subject)
 
-        workspace_before_generate = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
+        batch_task_id = create_response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
+        task_id = next(item["id"] for item in batch_items if item["professor_id"] == professor_id)
+        workspace_before_generate = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
         self.assertEqual(workspace_before_generate.status_code, 200, msg=workspace_before_generate.text)
         task_before_generate = workspace_before_generate.json()["current_task"]
         self.assertEqual(task_before_generate["outreach_template_subject"], batch_subject)
@@ -7625,7 +7618,8 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
-        generated_task = generate_response.json()["current_task"]
+        generated_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_before_generate['id']}/thread").json()
+        generated_task = generated_thread["current_task"]
         self.assertEqual(generated_task["generated_subject"], f"润色后: {batch_subject}")
         self.assertEqual(generated_task["generated_content_text"], f"润色后正文: {batch_body_text}")
         mocked_generate.assert_awaited_once()
@@ -8461,5 +8455,3 @@ class ApiEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

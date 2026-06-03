@@ -10,6 +10,7 @@ import type {
 
 export const listBatchTasks = (params?: {
   identityId?: number | null;
+  llmProfileId?: number | null;
   view?: TaskListView;
 }) =>
   apiFetch<BatchTaskCardDTO[]>(
@@ -17,6 +18,7 @@ export const listBatchTasks = (params?: {
     undefined,
     {
       identity_id: params?.identityId ?? undefined,
+      llm_profile_id: params?.llmProfileId ?? undefined,
       view: params?.view ?? undefined,
     },
   );
