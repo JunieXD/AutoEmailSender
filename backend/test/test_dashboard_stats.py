@@ -48,7 +48,7 @@ class DashboardStatsTests(unittest.TestCase):
     async def _create_schema(self) -> None:
         return None
 
-    async def _seed_dashboard_data(self) -> tuple[int, int]:
+    async def _seed_dashboard_data(self) -> tuple[int, int, int]:
         now = datetime.now(UTC)
         async with self.session_factory() as session:
             identity = IdentityProfile(
@@ -70,7 +70,13 @@ class DashboardStatsTests(unittest.TestCase):
                 api_key="test-key",
                 model_name="gpt-test",
             )
-            session.add_all([identity, llm_profile])
+            alternate_llm_profile = LLMProfile(
+                name="备用模型",
+                provider="openai",
+                api_key="test-key-2",
+                model_name="gpt-test-2",
+            )
+            session.add_all([identity, llm_profile, alternate_llm_profile])
             await session.flush()
 
             professors = [
@@ -279,10 +285,10 @@ class DashboardStatsTests(unittest.TestCase):
                 ]
             )
             await session.commit()
-            return identity.id, llm_profile.id
+            return identity.id, llm_profile.id, alternate_llm_profile.id
 
     def test_dashboard_service_builds_mentor_and_email_sections(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def run_query():
             async with self.session_factory() as session:
@@ -336,8 +342,24 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.follow_ups[0].name, "赵老师")
         self.assertEqual(result.email.follow_ups[0].reason, "发送失败")
 
+    def test_dashboard_service_is_identity_scoped_not_llm_scoped(self) -> None:
+        identity_id, _, alternate_llm_profile_id = self._run_async(self._seed_dashboard_data())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=alternate_llm_profile_id,
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.mentor.summary.matched_professors, 6)
+        self.assertEqual(result.email.summary.sent_count, 3)
+
     def test_dashboard_service_filters_mentor_analysis_by_university_and_school(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def run_query():
             async with self.session_factory() as session:
@@ -374,7 +396,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.mentor.active_filter.school, "计算机学院")
 
     def test_dashboard_service_filters_email_metrics_by_university_and_school(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def run_query():
             async with self.session_factory() as session:
@@ -397,7 +419,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertTrue(all(item.failed_count == 0 for item in result.email.trend_30_days))
 
     def test_dashboard_service_filters_email_metrics_by_sent_date_range(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
         today = datetime.now(UTC).date()
         start_date = (today - timedelta(days=3)).isoformat()
         end_date = (today - timedelta(days=3)).isoformat()
@@ -421,7 +443,7 @@ class DashboardStatsTests(unittest.TestCase):
 
 
     def test_dashboard_service_excludes_replies_outside_date_range(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
         today = datetime.now(UTC).date()
         start_date = (today - timedelta(days=3)).isoformat()
         end_date = (today - timedelta(days=3)).isoformat()
@@ -445,7 +467,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertTrue(all(item.replied_count == 0 for item in result.email.trend_30_days))
 
     def test_dashboard_endpoint_returns_overview(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         from app.core.database import get_async_session
         from main import create_app
@@ -471,8 +493,34 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["email"]["summary"]["sent_count"], 3)
         self.assertEqual(payload["email"]["follow_ups"][0]["task_id"], 4)
 
+    def test_dashboard_endpoint_does_not_require_llm_profile(self) -> None:
+        identity_id, _, _ = self._run_async(self._seed_dashboard_data())
+
+        from app.core.database import get_async_session
+        from main import create_app
+
+        async def override_session():
+            async with self.session_factory() as session:
+                yield session
+
+        app = create_app()
+        app.dependency_overrides[get_async_session] = override_session
+        client = TestClient(app)
+        try:
+            response = client.get(
+                "/api/dashboard/overview",
+                params={"identity_id": identity_id},
+            )
+        finally:
+            client.close()
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["mentor"]["summary"]["matched_professors"], 6)
+        self.assertEqual(payload["email"]["summary"]["sent_count"], 3)
+
     def test_dashboard_endpoint_accepts_mentor_filters(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         from app.core.database import get_async_session
         from main import create_app
@@ -509,7 +557,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["mentor"]["active_filter"]["school"], "计算机学院")
 
     def test_dashboard_endpoint_accepts_email_date_filters(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         from app.core.database import get_async_session
         from main import create_app
@@ -540,7 +588,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["email"]["summary"]["replied_count"], 0)
 
     def test_dashboard_endpoint_accepts_email_school_filters(self) -> None:
-        identity_id, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         from app.core.database import get_async_session
         from main import create_app
@@ -573,7 +621,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["email"]["summary"]["contacted_professor_count"], 1)
 
     def test_dashboard_endpoint_rejects_missing_identity(self) -> None:
-        _, llm_profile_id = self._run_async(self._seed_dashboard_data())
+        _, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         from app.core.database import get_async_session
         from main import create_app

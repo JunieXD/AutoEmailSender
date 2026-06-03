@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
     Base,
+    EmailTask,
+    EmailTaskStatus,
     IdentityMaterial,
     IdentityMaterialType,
     IdentityProfile,
@@ -131,6 +133,47 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.succeeded_count, 1)
         self.assertEqual(stored.failed_count, 0)
         self.assertEqual(stored.total_tokens, 100)
+
+    def test_run_queued_job_reuses_existing_identity_task_across_llm_profiles(self) -> None:
+        identity_id, first_llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        second_llm_profile_id = self._run_async(self._create_llm_profile(name="备用匹配模型"))
+        existing_task_id = self._run_async(
+            self._create_email_task(
+                identity_id=identity_id,
+                llm_profile_id=first_llm_profile_id,
+                professor_id=professor_ids[0],
+            ),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=second_llm_profile_id,
+                professor_ids=[professor_ids[0]],
+                name=None,
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=93)),
+        ):
+            processed = self._run_async(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+            )
+
+        items = self._run_async(self._get_job_items(job.id))
+        task_ids = self._run_async(
+            self._list_email_task_ids(identity_id=identity_id, professor_id=professor_ids[0]),
+        )
+        self.assertEqual(processed, 1)
+        self.assertEqual(items[0].email_task_id, existing_task_id)
+        self.assertEqual(task_ids, [existing_task_id])
 
     def test_run_queued_job_records_completion_operation_log(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
@@ -422,6 +465,50 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                     select(OperationLog)
                     .where(OperationLog.event_name == event_name)
                     .order_by(OperationLog.id.asc()),
+                ),
+            )
+
+    async def _create_llm_profile(self, *, name: str) -> int:
+        async with self.session_factory() as session:
+            llm_profile = LLMProfile(
+                name=name,
+                provider="openai",
+                api_base_url="https://api-alt.example.com/v1",
+                api_key="sk-test-alt",
+                model_name="gpt-alt",
+            )
+            session.add(llm_profile)
+            await session.commit()
+            return llm_profile.id
+
+    async def _create_email_task(
+        self,
+        *,
+        identity_id: int,
+        llm_profile_id: int,
+        professor_id: int,
+    ) -> int:
+        async with self.session_factory() as session:
+            task = EmailTask(
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_id=professor_id,
+                status=EmailTaskStatus.DISCOVERED.value,
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
+
+    async def _list_email_task_ids(self, *, identity_id: int, professor_id: int) -> list[int]:
+        async with self.session_factory() as session:
+            return list(
+                await session.scalars(
+                    select(EmailTask.id)
+                    .where(
+                        EmailTask.identity_id == identity_id,
+                        EmailTask.professor_id == professor_id,
+                    )
+                    .order_by(EmailTask.id.asc()),
                 ),
             )
 

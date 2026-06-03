@@ -7,6 +7,7 @@ import type { IdentityDTO, LLMProfileDTO } from "@/types";
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedUseDesktopBackend = vi.hoisted(() => vi.fn());
 const mockedConfirm = vi.hoisted(() => vi.fn());
+const mockedRequestWorkspaceDraftGuard = vi.hoisted(() => vi.fn());
 const mockedImportIdentityTemplate = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifyFormErrors = vi.hoisted(() => vi.fn());
@@ -26,6 +27,12 @@ vi.mock("@/context/NotificationContext", () => ({
     notifyError: mockedNotifyError,
     notifyFormErrors: mockedNotifyFormErrors,
     notifySuccess: mockedNotifySuccess,
+  }),
+}));
+
+vi.mock("@/context/WorkspaceDraftGuardContext", () => ({
+  useWorkspaceDraftGuard: () => ({
+    requestWorkspaceDraftGuard: mockedRequestWorkspaceDraftGuard,
   }),
 }));
 
@@ -167,6 +174,8 @@ describe("ProfilePage default template import", () => {
   beforeEach(() => {
     latestTemplateImportHandler = null;
     mockedConfirm.mockReset();
+    mockedRequestWorkspaceDraftGuard.mockReset();
+    mockedRequestWorkspaceDraftGuard.mockResolvedValue(true);
     mockedImportIdentityTemplate.mockReset();
     mockedNotifyError.mockReset();
     mockedNotifyFormErrors.mockReset();
@@ -226,5 +235,65 @@ describe("ProfilePage default template import", () => {
       "模板导入成功",
       expect.stringContaining("已导入 DOCX 模板文件"),
     );
+  });
+
+  it("does not switch current identity when workspace draft guard blocks it", async () => {
+    const setSelectedIdentityId = vi.fn();
+    mockedRequestWorkspaceDraftGuard.mockResolvedValue(false);
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [
+        selectedIdentity,
+        { ...selectedIdentity, id: 2, name: "备用身份", profile_name: "备用身份", is_default: false },
+      ],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: selectedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId,
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    });
+
+    renderProfilePage();
+    fireEvent.click(screen.getByRole("button", { name: /发件身份/, expanded: false }));
+    fireEvent.click(screen.getByRole("button", { name: /备用身份/ }));
+    fireEvent.click(screen.getByRole("button", { name: "设为当前" }));
+
+    await waitFor(() => {
+      expect(mockedRequestWorkspaceDraftGuard).toHaveBeenCalled();
+    });
+    expect(setSelectedIdentityId).not.toHaveBeenCalled();
+  });
+
+  it("does not switch current model when workspace draft guard blocks it", async () => {
+    const setSelectedLlmProfileId = vi.fn();
+    mockedRequestWorkspaceDraftGuard.mockResolvedValue(false);
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentity],
+      llmProfiles: [
+        selectedLlmProfile,
+        { ...selectedLlmProfile, id: 2, name: "备用模型", is_default: false },
+      ],
+      selectedIdentityId: selectedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId,
+      refreshSelections: vi.fn(),
+      loading: false,
+    });
+
+    renderProfilePage();
+    fireEvent.click(screen.getByRole("button", { name: /模型配置/, expanded: false }));
+    fireEvent.click(screen.getByRole("button", { name: /备用模型/ }));
+    fireEvent.click(screen.getByRole("button", { name: "设为当前" }));
+
+    await waitFor(() => {
+      expect(mockedRequestWorkspaceDraftGuard).toHaveBeenCalled();
+    });
+    expect(setSelectedLlmProfileId).not.toHaveBeenCalled();
   });
 });

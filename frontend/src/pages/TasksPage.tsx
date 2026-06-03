@@ -641,8 +641,7 @@ export const TasksPage = () => {
   const { selectedIdentityId, selectedLlmProfileId } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
-  const hasTaskSelection =
-    selectedIdentityId !== null && selectedLlmProfileId !== null;
+  const hasTaskSelection = selectedIdentityId !== null;
   const [activeTab, setActiveTab] = useState<TasksTab>(() =>
     hasTaskSelection ? "batch" : "crawl",
   );
@@ -734,6 +733,7 @@ export const TasksPage = () => {
   const lastCrawlJobDetailsLoadErrorRef = useRef<string | null>(null);
   const loadedTasksKeyRef = useRef<string | null>(null);
   const crawlJobsPreloadedRef = useRef(false);
+  const batchTasksPreloadedKeyRef = useRef<string | null>(null);
   const matchJobsPreloadedKeyRef = useRef<string | null>(null);
   const activeTasksRequestKeyRef = useRef<string | null>(null);
   const latestTasksRequestIdRef = useRef(0);
@@ -745,8 +745,8 @@ export const TasksPage = () => {
   const latestCrawlJobDetailsRequestIdRef = useRef(0);
   const activeTaskListView = taskListViews[activeTab];
   const tasksRequestKey =
-    selectedIdentityId && selectedLlmProfileId
-      ? `${selectedIdentityId}:${selectedLlmProfileId}:${taskListViews.batch}`
+    selectedIdentityId
+      ? `${selectedIdentityId}:${taskListViews.batch}`
       : null;
   const batchRunningCount = useMemo(
     () => currentBatchTasks.filter((task) => task.status === "running").length,
@@ -951,7 +951,7 @@ const selectedCrawlJobCanReview =
   }, [taskListViews.match]);
 
   const loadTasks = useCallback(async () => {
-    if (!tasksRequestKey || !selectedIdentityId || !selectedLlmProfileId) {
+    if (!tasksRequestKey || !selectedIdentityId) {
       latestTasksRequestIdRef.current += 1;
       activeTasksRequestKeyRef.current = null;
       loadedTasksKeyRef.current = null;
@@ -968,7 +968,6 @@ const selectedCrawlJobCanReview =
     try {
       const data = await listBatchTasks({
         identityId: selectedIdentityId,
-        llmProfileId: selectedLlmProfileId,
         view: taskListViews.batch,
       });
       const currentData =
@@ -976,7 +975,6 @@ const selectedCrawlJobCanReview =
           ? data
           : await listBatchTasks({
               identityId: selectedIdentityId,
-              llmProfileId: selectedLlmProfileId,
               view: "current",
             });
       if (
@@ -1016,7 +1014,6 @@ const selectedCrawlJobCanReview =
   }, [
     notifyError,
     selectedIdentityId,
-    selectedLlmProfileId,
     taskListViews.batch,
     tasksRequestKey,
   ]);
@@ -1069,7 +1066,7 @@ const selectedCrawlJobCanReview =
   );
 
   const loadMatchAnalysisJobs = useCallback(async (options?: { showLoading?: boolean }) => {
-    if (!selectedIdentityId || !selectedLlmProfileId) {
+    if (!selectedIdentityId) {
       setMatchAnalysisJobs([]);
       setCurrentMatchAnalysisJobs([]);
       lastMatchJobsLoadErrorRef.current = null;
@@ -1084,7 +1081,6 @@ const selectedCrawlJobCanReview =
     try {
       const data = await listMatchAnalysisJobs({
         identityId: selectedIdentityId,
-        llmProfileId: selectedLlmProfileId,
         view: taskListViews.match,
       });
       const currentData =
@@ -1092,7 +1088,6 @@ const selectedCrawlJobCanReview =
           ? data
           : await listMatchAnalysisJobs({
               identityId: selectedIdentityId,
-              llmProfileId: selectedLlmProfileId,
               view: "current",
             });
       if (latestMatchJobsRequestIdRef.current !== requestId) {
@@ -1125,7 +1120,7 @@ const selectedCrawlJobCanReview =
         setMatchJobsLoading(false);
       }
     }
-  }, [notifyError, selectedIdentityId, selectedLlmProfileId, taskListViews.match]);
+  }, [notifyError, selectedIdentityId, taskListViews.match]);
 
   const loadMatchJobDetails = useCallback(
     async (jobId: number) => {
@@ -1296,6 +1291,22 @@ const selectedCrawlJobCanReview =
     crawlJobsPreloadedRef.current = true;
     void loadCrawlJobs({ showLoading: false });
   }, [loadCrawlJobs]);
+
+  useEffect(() => {
+    if (activeTab === "batch") {
+      return;
+    }
+    if (!tasksRequestKey) {
+      batchTasksPreloadedKeyRef.current = null;
+      void loadTasks();
+      return;
+    }
+    if (batchTasksPreloadedKeyRef.current === tasksRequestKey) {
+      return;
+    }
+    batchTasksPreloadedKeyRef.current = tasksRequestKey;
+    void loadTasks();
+  }, [activeTab, loadTasks, tasksRequestKey]);
 
   useEffect(() => {
     if (!tasksRequestKey) {

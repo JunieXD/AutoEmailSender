@@ -56,7 +56,6 @@ class EmailTask(Base):
             "uq_email_tasks_workspace_task",
             "professor_id",
             "identity_id",
-            "llm_profile_id",
             unique=True,
             sqlite_where=text("source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"),
         ),
