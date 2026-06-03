@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -114,6 +115,7 @@ class RuntimeManager:
                     f"crawler-worker-{index}",
                     10,
                     run_crawler_v2_once,
+                    processed_jitter_seconds=(2, 10),
                 ),
             )
             for index in range(1, worker_settings.crawler_worker_count + 1)
@@ -181,6 +183,8 @@ class RuntimeManager:
         worker_name: str,
         interval_seconds: int,
         worker: Callable[[async_sessionmaker[AsyncSession]], Awaitable[int]],
+        *,
+        processed_jitter_seconds: tuple[float, float] | None = None,
     ) -> None:
         while not self._stopped.is_set():
             processed = 0
@@ -192,6 +196,13 @@ class RuntimeManager:
                 logger.exception("%s 执行失败", worker_name)
 
             if processed > 0:
+                if processed_jitter_seconds is None:
+                    continue
+                min_seconds, max_seconds = processed_jitter_seconds
+                try:
+                    await asyncio.wait_for(self._stopped.wait(), timeout=random.uniform(min_seconds, max_seconds))
+                except TimeoutError:
+                    continue
                 continue
 
             try:
