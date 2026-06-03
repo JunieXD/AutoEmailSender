@@ -60,8 +60,8 @@ class RuntimeManager:
     ) -> RuntimeWorkerStartupSettings:
         fallback = RuntimeWorkerStartupSettings(
             crawler_worker_count=_positive_int(
-                getattr(settings, "crawler_worker_count", 2),
-                2,
+                getattr(settings, "crawler_worker_count", 8),
+                8,
             ),
             match_analysis_job_worker_count=_positive_int(
                 getattr(settings, "match_analysis_job_worker_count", 1),
@@ -183,17 +183,22 @@ class RuntimeManager:
         worker: Callable[[async_sessionmaker[AsyncSession]], Awaitable[int]],
     ) -> None:
         while not self._stopped.is_set():
+            processed = 0
             try:
-                await worker(self._session_factory)
+                processed = await worker(self._session_factory)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("%s 执行失败", worker_name)
 
+            if processed > 0:
+                continue
+
             try:
                 await asyncio.wait_for(self._stopped.wait(), timeout=interval_seconds)
             except TimeoutError:
                 continue
+
 
 
 async def _run_match_analysis_worker_once(

@@ -50,6 +50,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
         self.assertEqual(payload["match_analysis_job_item_concurrency"], 5)
+        self.assertEqual(payload["crawler_worker_count"], 8)
         self.assertEqual(payload["crawler_host_concurrency"], 1)
         self.assertEqual(payload["crawler_agent_max_chunks_per_run"], 2)
         self.assertEqual(payload["draft_max_tokens"], 6000)

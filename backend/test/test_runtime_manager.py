@@ -229,6 +229,55 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.match_analysis_job_interval_seconds, 7)
         self.assertEqual(app_settings_count, 0)
 
+    async def test_loop_immediately_continues_after_processing_work(self) -> None:
+        session_factory = Mock()
+        manager = RuntimeManager(session_factory)
+        processed_results = [1, 0]
+        worker_calls = 0
+        sleep_calls: list[float] = []
+
+        async def worker(session_factory_arg: object) -> int:
+            nonlocal worker_calls
+            self.assertIs(session_factory_arg, session_factory)
+            worker_calls += 1
+            if worker_calls == 2:
+                manager._stopped.set()
+            return processed_results.pop(0)
+
+        async def fake_wait_for(awaitable: object, timeout: float) -> object:
+            sleep_calls.append(timeout)
+            manager._stopped.set()
+            return await awaitable
+
+        with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+            await manager._loop("crawler-worker-1", 10, worker)
+
+        self.assertEqual(worker_calls, 2)
+        self.assertEqual(sleep_calls, [10])
+    async def test_worker_startup_settings_default_crawler_worker_count_is_eight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "runtime-manager-defaults.db"
+            engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            manager = RuntimeManager(session_factory)
+            settings_stub = type(
+                "SettingsStub",
+                (),
+                {
+                    "match_analysis_job_worker_count": 1,
+                    "match_analysis_job_interval_seconds": 10,
+                },
+            )()
+
+            try:
+                resolved = await manager._resolve_worker_startup_settings(settings_stub)
+            finally:
+                await engine.dispose()
+
+        self.assertEqual(resolved.crawler_worker_count, 8)
     async def test_match_analysis_worker_uses_runtime_item_concurrency(self) -> None:
         session = object()
         session_context = MagicMock()
