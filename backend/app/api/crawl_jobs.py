@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -436,6 +437,14 @@ async def enrich_crawl_candidates(
         trigger="enrich",
     )
 
+    if job.runtime_version == "v2":
+        return await _enqueue_v2_crawl_candidate_enrichment_tasks(
+            session,
+            job,
+            candidate_ids=payload.candidate_ids,
+            llm_profile_id=llm_profile.id,
+        )
+
     now = utc_now()
     job.status = CrawlJobStatus.RUNNING.value
     job.error_message = None
@@ -495,6 +504,106 @@ async def enrich_crawl_candidates(
             f"{summary.enriched_count} 位，未变化 {summary.unchanged_count} 位，"
             f"失败 {summary.failed_count} 位。{skipped_message}"
         ),
+    )
+
+
+async def _enqueue_v2_crawl_candidate_enrichment_tasks(
+    session: AsyncSession,
+    job: CrawlJob,
+    *,
+    candidate_ids: list[int],
+    llm_profile_id: int | None,
+) -> CrawlJobEnrichResult:
+    unique_ids = list(dict.fromkeys(candidate_ids))
+    candidates = list(
+        await session.scalars(
+            select(CrawlCandidate)
+            .where(
+                CrawlCandidate.job_id == job.id,
+                CrawlCandidate.id.in_(unique_ids),
+            )
+            .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc())
+        )
+    )
+    enrichable_candidates = [candidate for candidate in candidates if (candidate.profile_url or "").strip()]
+    skipped_count = len(candidates) - len(enrichable_candidates)
+    if not enrichable_candidates:
+        await session.commit()
+        return CrawlJobEnrichResult(
+            selected_count=0,
+            enriched_count=0,
+            unchanged_count=0,
+            failed_count=0,
+            skipped_count=skipped_count,
+            message=f"跳过 {skipped_count} 位缺少详情页 URL 的候选。",
+        )
+
+    now = utc_now()
+    enqueued_count = 0
+    existing_count = 0
+    runnable_existing_count = 0
+    for candidate in enrichable_candidates:
+        existing_task = await session.scalar(
+            select(CrawlCandidateEnrichmentTask).where(
+                CrawlCandidateEnrichmentTask.job_id == job.id,
+                CrawlCandidateEnrichmentTask.candidate_id == candidate.id,
+            )
+        )
+        if existing_task is not None:
+            if existing_task.status == CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value:
+                existing_count += 1
+                continue
+            if existing_task.status in {
+                CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+            }:
+                existing_count += 1
+                runnable_existing_count += 1
+                continue
+            existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
+            existing_task.worker_id = None
+            existing_task.claimed_at = None
+            existing_task.lease_expires_at = None
+            existing_task.last_error = None
+            existing_task.updated_at = now
+            enqueued_count += 1
+            continue
+        try:
+            async with session.begin_nested():
+                session.add(
+                    CrawlCandidateEnrichmentTask(
+                        job_id=job.id,
+                        candidate_id=candidate.id,
+                        status=CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                    )
+                )
+                await session.flush()
+        except IntegrityError:
+            existing_count += 1
+            runnable_existing_count += 1
+            continue
+        enqueued_count += 1
+
+    if enqueued_count > 0 or runnable_existing_count > 0:
+        job.status = CrawlJobStatus.RUNNING.value
+        job.error_message = None
+        job.updated_at = now
+        await mark_crawl_job_run_running(session, job, now=now)
+
+    await session.commit()
+    selected_count = len(enrichable_candidates)
+    skipped_message = f"跳过 {skipped_count} 位缺少详情页 URL 的候选。" if skipped_count > 0 else ""
+    if enqueued_count > 0:
+        message = f"已加入补全队列：选中 {selected_count} 位，入队 {enqueued_count} 位。{skipped_message}"
+    else:
+        message = f"选中的 {selected_count} 位候选已在补全队列中或已补全。{skipped_message}"
+    return CrawlJobEnrichResult(
+        selected_count=selected_count,
+        enriched_count=0,
+        unchanged_count=existing_count,
+        failed_count=0,
+        skipped_count=skipped_count,
+        message=message,
     )
 
 
