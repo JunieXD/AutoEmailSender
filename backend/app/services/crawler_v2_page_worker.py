@@ -38,6 +38,7 @@ async def run_crawler_v2_page_worker_once(
             await session.commit()
             return 1
         target_url = task.original_url
+        fetch_intent = "profile" if job.entry_type == "profile" else "generic"
         ctx = CrawlToolContext(
             session_factory=session_factory,
             job_id=job.id,
@@ -50,7 +51,7 @@ async def run_crawler_v2_page_worker_once(
         if await _prefer_browser_for_task_domain(session_factory, task.job_id, target_url):
             direct_status = "skipped_by_domain_browser_preference"
             fallback_reason = "same_domain_previously_required_browser"
-            browser_snapshot = await fetch_page_browser(ctx, target_url)
+            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
             browser_status = browser_snapshot.status
             snapshot = browser_snapshot
             fetch_mode = "browser"
@@ -63,7 +64,7 @@ async def run_crawler_v2_page_worker_once(
             browser_status = None
             if _should_use_browser_fallback(direct_snapshot):
                 fallback_reason = _fallback_reason(direct_snapshot)
-                browser_snapshot = await fetch_page_browser(ctx, target_url)
+                browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
                 browser_status = browser_snapshot.status
                 snapshot = browser_snapshot
                 fetch_mode = "browser"
@@ -133,8 +134,8 @@ async def fetch_page_direct(ctx: CrawlToolContext, url: str) -> PageSnapshot:
     return await crawl_page_with_http(ctx, url)
 
 
-async def fetch_page_browser(ctx: CrawlToolContext, url: str) -> PageSnapshot:
-    return await browser_investigate(ctx, url, goal="", intent="generic")
+async def fetch_page_browser(ctx: CrawlToolContext, url: str, *, intent: str = "generic") -> PageSnapshot:
+    return await browser_investigate(ctx, url, goal="", intent=intent)
 
 
 async def _prefer_browser_for_task_domain(

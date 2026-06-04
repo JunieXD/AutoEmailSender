@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.schema_database import create_schema_sqlite_database
 
-from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, LLMProfile
+from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_tools import PageSnapshot
 from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 
@@ -143,6 +143,138 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("详情页未识别到导师候选", task.last_error or "")
         self.assertEqual(len(candidates), 0)
         self.assertEqual(len(chunks), 0)
+    async def test_profile_entry_browser_fallback_uses_profile_intent(self) -> None:
+        _, task_id = await self._seed_page_task(
+            original_url="https://example.edu/teacher/zhang.html",
+            entry_type="profile",
+        )
+        direct = PageSnapshot(url="https://example.edu/teacher/zhang.html", text="", html="", links=[], fetch_method="http", status="failed", error_message="403")
+        browser = PageSnapshot(url="https://example.edu/teacher/zhang.html", text="张三", html="<p>张三</p>", links=[], fetch_method="browser", status="succeeded")
+        extraction = SimpleNamespace(
+            payload={"status": "candidate", "candidate": {"name": "张三", "profile_url": "https://example.edu/teacher/zhang.html"}},
+            usage=None,
+            attempts=[],
+            page_text_hash="hash",
+            page_text_length=2,
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
+            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(browser_mock.await_args.kwargs["intent"], "profile")
+
+    async def test_fetch_page_browser_accepts_profile_intent(self) -> None:
+        ctx = object()
+        browser_snapshot = PageSnapshot(url="https://example.edu/teacher/zhang.html", text="张三", html="", links=[], fetch_method="browser", status="succeeded")
+
+        with patch("app.services.crawler_v2_page_worker.browser_investigate", new=AsyncMock(return_value=browser_snapshot)) as browser_mock:
+            result = await fetch_page_browser(ctx, "https://example.edu/teacher/zhang.html", intent="profile")
+
+        self.assertEqual(result.fetch_method, "browser")
+        browser_mock.assert_awaited_once_with(ctx, "https://example.edu/teacher/zhang.html", goal="", intent="profile")
+
+    async def test_profile_entry_does_not_save_after_pause_during_llm(self) -> None:
+        job_id, task_id = await self._seed_page_task(entry_type="profile")
+        snapshot = PageSnapshot(url="https://example.edu/faculty", text="张三", html="<p>张三</p>", links=[], fetch_method="http", status="succeeded")
+
+        async def pause_then_return(*_args, **_kwargs):
+            async with self.session_factory() as session:
+                job = await session.get(CrawlJob, job_id)
+                task = await session.get(CrawlPageTask, task_id)
+                assert job is not None and task is not None
+                job.status = CrawlJobStatus.PAUSED.value
+                task.status = CrawlPageTaskStatus.PENDING.value
+                task.worker_id = None
+                await session.commit()
+            return SimpleNamespace(
+                payload={"status": "candidate", "candidate": {"name": "张三", "profile_url": "https://example.edu/faculty"}},
+                usage={"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0},
+                attempts=[],
+                page_text_hash="hash",
+                page_text_length=2,
+            )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(side_effect=pause_then_return)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
+        self.assertEqual(len(candidates), 0)
+
+    async def test_profile_entry_records_page_worker_token_usage(self) -> None:
+        job_id, task_id = await self._seed_page_task(entry_type="profile")
+        snapshot = PageSnapshot(url="https://example.edu/faculty", text="张三", html="<p>张三</p>", links=[], fetch_method="http", status="succeeded")
+        extraction = SimpleNamespace(
+            payload={"status": "candidate", "candidate": {"name": "张三", "profile_url": "https://example.edu/faculty"}},
+            usage={"input_tokens": 12, "output_tokens": 5, "cached_tokens": 2},
+            attempts=[],
+            page_text_hash="hash",
+            page_text_length=2,
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+            await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        async with self.session_factory() as session:
+            usage = await session.scalar(select(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job_id))
+        assert usage is not None
+        self.assertEqual(usage.worker_kind, CrawlWorkerKind.PAGE.value)
+        self.assertEqual(usage.work_item_id, str(task_id))
+        self.assertEqual(usage.input_tokens, 12)
+        self.assertEqual(usage.output_tokens, 5)
+        self.assertEqual(usage.cached_tokens, 2)
+
+    async def test_profile_entry_writes_debug_events_without_page_text(self) -> None:
+        _, task_id = await self._seed_page_task(entry_type="profile")
+        snapshot = PageSnapshot(url="https://example.edu/faculty", text="张三", html="<p>张三</p>", links=[], fetch_method="http", status="succeeded")
+        attempt = SimpleNamespace(
+            attempt_number=1,
+            raw_model_text="{\"status\":\"candidate\"}",
+            raw_payload={"status": "candidate"},
+            error=None,
+            usage={"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0},
+        )
+        extraction = SimpleNamespace(
+            payload={"status": "candidate", "candidate": {"name": "张三", "profile_url": "https://example.edu/faculty"}},
+            usage={"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0},
+            attempts=[attempt],
+            page_text_hash="hash",
+            page_text_length=2,
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)), \
+            patch("app.services.crawler_v2_page_worker.append_crawler_v2_debug_event") as debug_mock:
+            await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        events = [call.kwargs["event_name"] for call in debug_mock.call_args_list]
+        self.assertIn("page_fetched", events)
+        self.assertIn("profile_extract_requested", events)
+        self.assertIn("profile_extract_llm_response", events)
+        self.assertIn("profile_extract_completed", events)
+        llm_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "profile_extract_llm_response")
+        payload = llm_call.kwargs["payload"]
+        self.assertEqual(payload["source_url"], "https://example.edu/faculty")
+        self.assertEqual(payload["attempt_number"], 1)
+        self.assertEqual(payload["raw_model_text"], "{\"status\":\"candidate\"}")
+        self.assertEqual(payload["raw_payload"], {"status": "candidate"})
+        self.assertEqual(payload["page_text_hash"], "hash")
+        self.assertEqual(payload["page_text_length"], 2)
+        self.assertNotIn("page_text", payload)
+
     async def test_page_worker_does_not_write_after_job_is_paused(self) -> None:
         job_id, task_id = await self._seed_page_task()
         snapshot = PageSnapshot(
