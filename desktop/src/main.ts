@@ -1,10 +1,13 @@
-﻿import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
+﻿import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, type MenuItemConstructorOptions } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
 import { registerFileSelectionIpc } from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
 import { getStartupAtLoginStatus, setStartupAtLoginEnabled } from "./startup.js";
+import { bindTrayInteractions } from "./trayController.js";
+import { createTrayIcon } from "./trayIcon.js";
 import { checkForUpdatesOnStartup, registerUpdateIpc } from "./updates.js";
 import {
   restoreExistingWindow,
@@ -24,8 +27,20 @@ let currentBackendStatus: BackendStatus = createInitialBackendStatus();
 let currentStartupAtLoginStatus: StartupAtLoginStatus | null = null;
 const windowCreationState = { pendingCreation: null as Promise<void> | null };
 
+function appendDesktopMainLog(message: string): void {
+  try {
+    const logDirectory = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(logDirectory, { recursive: true });
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(path.join(logDirectory, "desktop-main.log"), `[${timestamp}] ${message}\n`, "utf8");
+  } catch {
+    // Avoid letting diagnostics affect tray/window behavior.
+  }
+}
+
 const repoRoot = path.resolve(app.getAppPath(), "..");
 const launchedAtStartup = process.argv.includes("--startup");
+app.setAppUserModelId("com.juniexd.autoemailsender");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -33,6 +48,7 @@ if (!hasSingleInstanceLock) {
 }
 
 function showMainWindow(): void {
+  appendDesktopMainLog(`window.show.request hasWindow=${mainWindow !== null}`);
   if (mainWindow === null) {
     void startWindowCreationOnce(windowCreationState, createWindow);
     return;
@@ -42,6 +58,7 @@ function showMainWindow(): void {
 }
 
 function quitFromTray(): void {
+  appendDesktopMainLog("tray.quit.request");
   isQuitting = true;
   app.quit();
 }
@@ -68,6 +85,7 @@ function getStartupInput() {
 }
 
 function refreshTrayContextMenu(): void {
+  appendDesktopMainLog(`tray.menu.refresh hasTray=${tray !== null}`);
   tray?.setContextMenu(buildTrayContextMenu());
 }
 
@@ -123,17 +141,26 @@ function ensureTray(): void {
     return;
   }
 
-  tray = new Tray(
-    getWindowIconPath({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      repoRoot,
-    }),
-  );
+  const trayIconPath = getWindowIconPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    repoRoot,
+  });
+  const trayIcon = createTrayIcon({
+    iconPath: trayIconPath,
+    nativeImage,
+  });
+  appendDesktopMainLog(`tray.create icon=${trayIconPath} ${trayIcon.description}`);
+  tray = new Tray(trayIcon.image);
   tray.setToolTip("Auto Email Sender");
   refreshTrayContextMenu();
   void loadStartupAtLoginForTray();
-  tray.on("click", showMainWindow);
+  bindTrayInteractions(tray, {
+    openWindow: showMainWindow,
+    buildContextMenu: buildTrayContextMenu,
+    logEvent: appendDesktopMainLog,
+  });
+  appendDesktopMainLog("tray.ready");
 }
 
 async function createWindow(): Promise<void> {
@@ -274,6 +301,10 @@ function getErrorMessage(error: unknown): string {
 }
 
 ipcMain.handle("app:get-version", () => app.getVersion());
+ipcMain.handle("app:quit", () => {
+  appendDesktopMainLog("app.quit.ipc");
+  quitFromTray();
+});
 ipcMain.handle("startup:get-status", async () => {
   currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
   refreshTrayContextMenu();
@@ -296,9 +327,13 @@ registerMaterialOpenIpc({
 });
 
 if (hasSingleInstanceLock) {
-  app.on("second-instance", showMainWindow);
+  app.on("second-instance", () => {
+    appendDesktopMainLog("app.second-instance");
+    showMainWindow();
+  });
 
   app.whenReady().then(() => {
+    appendDesktopMainLog(`app.ready packaged=${app.isPackaged} argv=${process.argv.join(" ")}`);
     startWindowCreationOnce(windowCreationState, createWindow).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       dialog.showErrorBox("启动失败", message);
@@ -314,6 +349,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  appendDesktopMainLog(`app.before-quit hasBackend=${backend !== null}`);
   isQuitting = true;
   if (backend === null) {
     return;

@@ -88,6 +88,7 @@ declare global {
       backendBaseUrl?: string;
       getBackendBaseUrl?: () => string | undefined;
       getVersion: () => Promise<string>;
+      quitApp?: () => Promise<void>;
       selectProfessorImportFile?: () => Promise<{
         name: string;
         type: string;

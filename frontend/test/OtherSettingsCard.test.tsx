@@ -190,6 +190,22 @@ describe("OtherSettingsCard", () => {
     expect(screen.getByText("仅安装后的 Windows 桌面版支持开机自启动。")).toBeInTheDocument();
   });
 
+
+  it("shows a desktop quit action when running in the desktop app", async () => {
+    const quitApp = vi.fn(async () => undefined);
+    window.autoEmailSender = buildDesktopApi({ quitApp });
+
+    render(<OtherSettingsCard />);
+
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    const quitButton = await screen.findByRole("button", { name: "退出桌面应用" });
+
+    fireEvent.click(quitButton);
+
+    await waitFor(() => {
+      expect(quitApp).toHaveBeenCalledOnce();
+    });
+  });
   it("loads and updates startup at login in the desktop app", async () => {
     const setStartupAtLoginEnabled = vi.fn(async (enabled: boolean) => ({
       supported: true,

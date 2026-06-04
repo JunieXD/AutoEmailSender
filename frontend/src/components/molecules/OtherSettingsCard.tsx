@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type TransitionEvent } from "react";
 import clsx from "clsx";
-import { ChevronDown, Loader2, Save, Settings } from "lucide-react";
+import { ChevronDown, Loader2, Power, Save, Settings } from "lucide-react";
 
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { quitDesktopApp } from "@/lib/desktopApi";
 import {
   defaultDraftRewritePreferences,
   getRuntimeSettings,
@@ -198,6 +199,8 @@ export function OtherSettingsCard() {
   const [startupLoading, setStartupLoading] = useState(false);
   const [startupSaving, setStartupSaving] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [quittingApp, setQuittingApp] = useState(false);
+  const [quitError, setQuitError] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -325,6 +328,17 @@ export function OtherSettingsCard() {
       setStartupError(getErrorMessage(saveError, "保存开机自启动设置失败"));
     } finally {
       setStartupSaving(false);
+    }
+  };
+
+  const handleQuitDesktopApp = async () => {
+    setQuittingApp(true);
+    setQuitError(null);
+    try {
+      await quitDesktopApp();
+    } catch (quitAppError) {
+      setQuitError(getErrorMessage(quitAppError, "退出桌面应用失败"));
+      setQuittingApp(false);
     }
   };
 
@@ -533,9 +547,37 @@ export function OtherSettingsCard() {
                       </span>
                     </span>
                   </label>
+                  {window.autoEmailSender?.quitApp ? (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-4">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-stone-900">退出桌面应用</div>
+                        <div className="mt-1 text-xs leading-5 text-stone-500">
+                          托盘菜单不可用时，可从这里关闭桌面端和后台服务。
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleQuitDesktopApp()}
+                        disabled={quittingApp}
+                        className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {quittingApp ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Power className="h-4 w-4" />
+                        )}
+                        退出桌面应用
+                      </button>
+                    </div>
+                  ) : null}
                   {startupError ? (
                     <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                       {startupError}
+                    </div>
+                  ) : null}
+                  {quitError ? (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {quitError}
                     </div>
                   ) : null}
                 </div>
