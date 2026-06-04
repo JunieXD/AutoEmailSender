@@ -31,6 +31,9 @@ try {
     --collect-all pdfminer `
     --collect-all pdfplumber `
     --collect-all pypdf `
+    --collect-all crawl4ai `
+    --collect-all playwright `
+    --collect-all patchright `
     --add-data "$AlembicIni;." `
     --add-data "$AlembicDir;alembic" `
     desktop_entry.py

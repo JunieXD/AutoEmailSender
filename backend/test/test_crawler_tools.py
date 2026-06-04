@@ -275,17 +275,20 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(ctx.save_failure_budget.total_save_failures, 1)
         self.assertIsNone(ctx.save_failure_budget.last_save_failure_summary)
 
-    def test_browser_run_config_for_profile_waits_for_body(self) -> None:
+    def test_browser_run_config_for_profile_uses_load_and_waits_for_body(self) -> None:
         config = crawler_tools._browser_run_config_for_intent("profile")
 
         self.assertEqual(config.wait_for, "css:body")
+        self.assertEqual(config.wait_until, "load")
 
-    def test_browser_run_config_for_generic_and_directory_waits_for_body(self) -> None:
+    def test_browser_run_config_for_generic_and_directory_use_load_and_wait_for_body(self) -> None:
         generic_config = crawler_tools._browser_run_config_for_intent("generic")
         directory_config = crawler_tools._browser_run_config_for_intent("directory")
 
         self.assertEqual(generic_config.wait_for, "css:body")
         self.assertEqual(directory_config.wait_for, "css:body")
+        self.assertEqual(generic_config.wait_until, "load")
+        self.assertEqual(directory_config.wait_until, "load")
 
     def test_browser_config_disables_chromium_https_upgrades(self) -> None:
         config = crawler_tools._browser_config_for_crawl4ai()
@@ -851,6 +854,77 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.status, "succeeded")
         self.assertFalse(ctx.is_denied_url("https://cs.example.edu/go-news"))
         self.assertFalse(ctx.is_denied_url("https://cs.example.edu/news/a.htm"))
+
+    async def test_crawl_page_with_crawl4ai_skips_direct_after_same_domain_browser_fallback(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            async with harness.session_factory() as session:
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url="https://teacher.example.edu/zhang",
+                        original_url="https://teacher.example.edu/zhang",
+                        status="succeeded",
+                        last_fetch_method="browser",
+                        fetch_mode="browser",
+                        direct_status="failed",
+                        fallback_reason="HTTP 412 blocked, browser fallback advised",
+                        browser_status="succeeded",
+                    )
+                )
+                await session.commit()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://teacher.example.edu/zhang",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            browser_snapshot = PageSnapshot(
+                url="https://teacher.example.edu/li",
+                title="李四",
+                text="李四 邮箱 li@example.edu",
+                html="<html>李四</html>",
+                links=[],
+                fetch_method="browser",
+                status="succeeded",
+            )
+
+            http_snapshot = PageSnapshot(
+                url="https://teacher.example.edu/li",
+                title="李四",
+                text="李四 HTTP",
+                html="<html>HTTP</html>",
+                links=[],
+                fetch_method="http",
+                status="succeeded",
+            )
+
+
+            with patch(
+                "app.services.crawler_tools.crawl_page_with_http",
+                new=AsyncMock(return_value=http_snapshot),
+            ) as http_fetch, patch(
+                "app.services.crawler_tools.browser_investigate",
+                new=AsyncMock(return_value=browser_snapshot),
+            ) as browser:
+                actual = await crawl_page_with_crawl4ai(ctx, "https://teacher.example.edu/li", intent="profile")
+
+            self.assertEqual(actual.fetch_method, "browser")
+            http_fetch.assert_not_awaited()
+            browser.assert_awaited_once()
+            async with harness.session_factory() as session:
+                state = await session.scalar(
+                    select(CrawlPageFetchState).where(
+                        CrawlPageFetchState.job_id == job_id,
+                        CrawlPageFetchState.normalized_url == "https://teacher.example.edu/li",
+                    )
+                )
+            assert state is not None
+            self.assertEqual(state.fetch_mode, "browser")
+            self.assertEqual(state.direct_status, "skipped_by_domain_browser_preference")
+            self.assertEqual(state.fallback_reason, "same_domain_previously_required_browser")
+            self.assertEqual(state.browser_status, "succeeded")
 
     async def test_crawl_page_with_crawl4ai_retries_browser_for_template_placeholders(self) -> None:
         ctx = CrawlToolContext(
@@ -2530,6 +2604,54 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot.status, "succeeded")
         self.assertEqual(calls, ["css:body", None])
+        self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
+
+    async def test_crawl4ai_browser_fetch_uses_load_without_networkidle_retry(self) -> None:
+        calls: list[str] = []
+
+        class _NavigationTimeoutCrawler:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "_NavigationTimeoutCrawler":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def arun(self, url: str, *, config: object) -> list[object]:
+                wait_until = getattr(config, "wait_until", "")
+                calls.append(wait_until)
+                if wait_until == "networkidle":
+                    raise TimeoutError(
+                        'Page.goto: Timeout 30000ms exceeded.\n'
+                        'Call log:\n  - navigating to "https://scs.bupt.edu.cn/szjs1/jsyl.htm", waiting until "networkidle"'
+                    )
+                return [
+                    types.SimpleNamespace(
+                        success=True,
+                        url=url,
+                        error_message="",
+                        html="<html><body>教师一览 周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>",
+                        redirected_url=url,
+                    )
+                ]
+
+        crawl4ai_module = types.SimpleNamespace(
+            AsyncWebCrawler=_NavigationTimeoutCrawler,
+            BrowserConfig=types.SimpleNamespace,
+            CrawlerRunConfig=crawler_tools._browser_run_config_for_intent("profile").__class__,
+        )
+
+        with patch.dict("sys.modules", {"crawl4ai": crawl4ai_module}):
+            snapshot = await crawler_tools._crawl_page_with_crawl4ai_browser_direct(
+                "https://scs.bupt.edu.cn/szjs1/jsyl.htm",
+                "",
+                "profile",
+            )
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertEqual(calls, ["load"])
         self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
 
 class _FakeSessionFactory:

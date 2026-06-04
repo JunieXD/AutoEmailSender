@@ -156,6 +156,45 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(task.direct_status, "failed")
             self.assertIsNotNone(task.fallback_reason)
 
+    async def test_same_job_same_domain_uses_browser_after_prior_direct_fallback(self) -> None:
+        job_id, task_id = await self._seed_page_task(original_url="https://example.edu/faculty/page2")
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageFetchState(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/faculty",
+                    original_url="https://example.edu/faculty",
+                    status=CrawlPageFetchStatus.SUCCEEDED.value,
+                    fetch_mode="browser",
+                    direct_status="failed",
+                    fallback_reason="HTTP 412 blocked, browser fallback advised",
+                    browser_status="succeeded",
+                ),
+            )
+            await session.commit()
+        browser = PageSnapshot(
+            url="https://example.edu/faculty/page2",
+            text="李四",
+            html="<p>李四</p>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock()) as direct_mock, \
+            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        direct_mock.assert_not_awaited()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertEqual(task.fetch_mode, "browser")
+        self.assertEqual(task.direct_status, "skipped_by_domain_browser_preference")
+        self.assertEqual(task.browser_status, "succeeded")
+
     async def test_successful_page_reuses_fetch_tool_page_record(self) -> None:
         job_id, task_id = await self._seed_page_task()
         async with self.session_factory() as session:
@@ -362,12 +401,12 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual([item.normalized_url for item in tasks], ["https://example.edu/faculty"])
-    async def _seed_page_task(self) -> tuple[int, int]:
+    async def _seed_page_task(self, *, original_url: str = "https://example.edu/faculty") -> tuple[int, int]:
         async with self.session_factory() as session:
             job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
             session.add(job)
             await session.flush()
-            task = CrawlPageTask(job_id=job.id, normalized_url="https://example.edu/faculty", original_url="https://example.edu/faculty", status=CrawlPageTaskStatus.PROCESSING.value, worker_id="w1")
+            task = CrawlPageTask(job_id=job.id, normalized_url=original_url, original_url=original_url, status=CrawlPageTaskStatus.PROCESSING.value, worker_id="w1")
             session.add(task)
             await session.commit()
             return job.id, task.id

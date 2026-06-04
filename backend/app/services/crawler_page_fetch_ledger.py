@@ -58,6 +58,15 @@ def normalize_fetch_url(url: str) -> str:
     return urlunsplit((scheme, netloc, path, parsed.query, ""))
 
 
+def fetch_url_host(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        return (urlsplit(url.strip()).hostname or "").lower() or None
+    except ValueError:
+        return None
+
+
 def classify_page_fetch_failure(snapshot: PageSnapshotLike) -> FetchFailureClassification:
     if snapshot.status != "failed":
         raise ValueError("Only failed snapshots can be classified")
@@ -126,6 +135,30 @@ async def get_page_fetch_decision(
         return PageFetchDecision(action="allow_retry", normalized_url=normalized_url, state_id=state.id, status=state.status)
 
 
+async def should_prefer_browser_for_fetch_domain(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    job_id: int,
+    url: str,
+) -> bool:
+    target_host = fetch_url_host(url)
+    if not target_host or not callable(session_factory):
+        return False
+    async with session_factory() as session:
+        states = list(
+            await session.scalars(
+                select(CrawlPageFetchState).where(
+                    CrawlPageFetchState.job_id == job_id,
+                    CrawlPageFetchState.fetch_mode == "browser",
+                    CrawlPageFetchState.direct_status.in_(["failed", "succeeded"]),
+                    CrawlPageFetchState.browser_status == "succeeded",
+                    CrawlPageFetchState.fallback_reason.is_not(None),
+                )
+            )
+        )
+    return any(fetch_url_host(state.normalized_url or state.original_url) == target_host for state in states)
+
+
 async def mark_page_fetch_result(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -133,6 +166,10 @@ async def mark_page_fetch_result(
     original_url: str,
     snapshot: PageSnapshotLike,
     generated_chunks: bool = False,
+    fetch_mode: str | None = None,
+    direct_status: str | None = None,
+    fallback_reason: str | None = None,
+    browser_status: str | None = None,
 ) -> None:
     if not callable(session_factory):
         return
@@ -161,6 +198,10 @@ async def mark_page_fetch_result(
         state.last_attempted_at = now
         state.updated_at = now
         state.last_error_message = snapshot.error_message
+        state.fetch_mode = fetch_mode
+        state.direct_status = direct_status
+        state.fallback_reason = fallback_reason
+        state.browser_status = browser_status
         if snapshot.status == "succeeded":
             state.status = (
                 CrawlPageFetchStatus.CHUNKED.value

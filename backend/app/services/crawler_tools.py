@@ -26,6 +26,7 @@ from app.services.crawler_page_fetch_ledger import (
     PageFetchDecision,
     get_page_fetch_decision,
     mark_page_fetch_result,
+    should_prefer_browser_for_fetch_domain,
 )
 from app.services.html_text import html_to_text
 from app.services.professor_field_normalization import (
@@ -1215,8 +1216,28 @@ async def crawl_page_with_crawl4ai(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return decision_snapshot
 
-    if ctx.is_http_blocked(absolute_url):
+    prefer_browser_for_domain = await should_prefer_browser_for_fetch_domain(
+        ctx.session_factory,
+        job_id=ctx.job_id,
+        url=absolute_url,
+    )
+    http_blocked_for_host = ctx.is_http_blocked(absolute_url)
+    if http_blocked_for_host or prefer_browser_for_domain:
         snapshot = await browser_investigate(ctx, absolute_url, goal="", intent=intent)
+        await mark_page_fetch_result(
+            ctx.session_factory,
+            job_id=ctx.job_id,
+            original_url=absolute_url,
+            snapshot=snapshot,
+            fetch_mode="browser",
+            direct_status="skipped_by_domain_browser_preference",
+            fallback_reason=(
+                "same_domain_previously_required_browser"
+                if prefer_browser_for_domain
+                else "same_host_http_previously_blocked"
+            ),
+            browser_status=snapshot.status,
+        )
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return snapshot
 
@@ -1241,6 +1262,10 @@ async def crawl_page_with_crawl4ai(
             job_id=ctx.job_id,
             original_url=absolute_url,
             snapshot=processed_browser_snapshot,
+            fetch_mode="browser",
+            direct_status=http_snapshot.status,
+            fallback_reason=http_snapshot.error_message or "direct_fetch_unusable",
+            browser_status=processed_browser_snapshot.status,
         )
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return processed_browser_snapshot
@@ -1254,6 +1279,8 @@ async def crawl_page_with_crawl4ai(
         job_id=ctx.job_id,
         original_url=absolute_url,
         snapshot=processed_snapshot,
+        fetch_mode="direct",
+        direct_status=processed_snapshot.status,
     )
     if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
@@ -1445,6 +1472,7 @@ def _browser_run_config_for_intent(
     intent: CrawlPageIntent,
     *,
     wait_for: str | None | object = _DEFAULT_BROWSER_WAIT_FOR,
+    wait_until: str = "load",
 ) -> "CrawlerRunConfig":
     from crawl4ai import CrawlerRunConfig
 
@@ -1455,7 +1483,7 @@ def _browser_run_config_for_intent(
     )
     return CrawlerRunConfig(
         process_in_browser=True,
-        wait_until="networkidle",
+        wait_until=wait_until,
         wait_for=selected_wait_for,
         wait_for_timeout=CRAWL4AI_BROWSER_WAIT_TIMEOUT_MS,
         delay_before_return_html=CRAWL4AI_BROWSER_DELAY_SECONDS,
@@ -1518,46 +1546,54 @@ async def _crawl_page_with_crawl4ai_browser_direct(
             error_message=_format_exception_for_snapshot(exc, "Failed to load Crawl4AI"),
         )
 
-    configs = (
+    first_failure = await _try_crawl4ai_browser_config(
+        absolute_url,
         _browser_run_config_for_intent(intent),
-        _browser_run_config_for_intent(intent, wait_for=None),
     )
-    last_failure: PageSnapshot | None = None
-    for index, config in enumerate(configs):
-        try:
-            async with AsyncWebCrawler(
-                config=_browser_config_for_crawl4ai(),
-                verbose=False,
-            ) as crawler:
-                crawl_result = await crawler.arun(absolute_url, config=config)
-        except Exception as exc:
-            failure = _failed_snapshot(
-                url=absolute_url,
-                fetch_method="browser",
-                error_message=_format_exception_for_snapshot(
-                    exc,
-                    "Crawl4AI browser fetch failed",
-                ),
-            )
-        else:
-            failure = _snapshot_from_crawl4ai_result(crawl_result, absolute_url)
-            if failure.status == "succeeded":
-                return failure
+    if first_failure.status == "succeeded":
+        return first_failure
 
-        last_failure = failure
-        if index == 0 and _is_wait_condition_failure(failure.error_message):
-            continue
-        return failure
+    if _is_wait_condition_failure(first_failure.error_message):
+        retry_failure = await _try_crawl4ai_browser_config(
+            absolute_url,
+            _browser_run_config_for_intent(intent, wait_for=None),
+        )
+        return retry_failure
 
-    return last_failure or _failed_snapshot(
-        url=absolute_url,
-        fetch_method="browser",
-        error_message="Crawl4AI browser returned no result",
-    )
 
+    return first_failure
+
+
+
+
+async def _try_crawl4ai_browser_config(
+    absolute_url: str,
+    config: Any,
+) -> PageSnapshot:
+    from crawl4ai import AsyncWebCrawler
+
+    try:
+        async with AsyncWebCrawler(
+            config=_browser_config_for_crawl4ai(),
+            verbose=False,
+        ) as crawler:
+            crawl_result = await crawler.arun(absolute_url, config=config)
+    except Exception as exc:
+        return _failed_snapshot(
+            url=absolute_url,
+            fetch_method="browser",
+            error_message=_format_exception_for_snapshot(
+                exc,
+                "Crawl4AI browser fetch failed",
+            ),
+        )
+
+    return _snapshot_from_crawl4ai_result(crawl_result, absolute_url)
 
 def _is_wait_condition_failure(message: str | None) -> bool:
     return "wait condition failed" in (message or "").lower()
+
+
 
 
 def _snapshot_from_crawl4ai_result(crawl_result: Any, absolute_url: str) -> PageSnapshot:

@@ -633,6 +633,9 @@ async def resume_crawl_job_review(
     job.error_message = None
     job.updated_at = now
 
+    if job.runtime_version == "v2":
+        await _freeze_unfinished_v2_discovery_work_for_review(session, job.id)
+
     if job.current_run is not None:
         job.current_run.status = CrawlJobStatus.NEEDS_REVIEW.value
         job.current_run.updated_at = now
@@ -652,6 +655,42 @@ async def resume_crawl_job_review(
     await session.refresh(job)
     return job
 
+
+async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
+    terminal_values = {
+        "status": "failed_terminal",
+        "last_error": "任务已转入待审核，停止继续发现新候选",
+        "worker_id": None,
+        "claimed_at": None,
+        "lease_expires_at": None,
+    }
+    page_discovery_statuses = [
+        CrawlPageTaskStatus.PENDING.value,
+        CrawlPageTaskStatus.PROCESSING.value,
+        CrawlPageTaskStatus.FAILED_RETRYABLE.value,
+    ]
+    chunk_discovery_statuses = [
+        CrawlPageChunkStatus.PENDING.value,
+        CrawlPageChunkStatus.PROCESSING.value,
+        CrawlPageChunkStatus.SPLIT_REQUIRED.value,
+        CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+    ]
+    await session.execute(
+        update(CrawlPageTask)
+        .where(
+            CrawlPageTask.job_id == job_id,
+            CrawlPageTask.status.in_(page_discovery_statuses),
+        )
+        .values(**terminal_values),
+    )
+    await session.execute(
+        update(CrawlPageChunk)
+        .where(
+            CrawlPageChunk.job_id == job_id,
+            CrawlPageChunk.status.in_(chunk_discovery_statuses),
+        )
+        .values(**terminal_values),
+    )
 
 async def _release_processing_v2_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
     clear_values = {

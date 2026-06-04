@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
+from app.services.crawler_page_fetch_ledger import should_prefer_browser_for_fetch_domain
 from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_tools import CrawlToolContext, PageSnapshot, browser_investigate, crawl_page_with_http
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
@@ -43,18 +44,26 @@ async def run_crawler_v2_page_worker_once(
         )
 
     try:
-        direct_snapshot = await fetch_page_direct(ctx, target_url)
-        snapshot = direct_snapshot
-        fetch_mode = "direct"
-        direct_status = direct_snapshot.status
-        fallback_reason = None
-        browser_status = None
-        if _should_use_browser_fallback(direct_snapshot):
-            fallback_reason = _fallback_reason(direct_snapshot)
+        if await _prefer_browser_for_task_domain(session_factory, task.job_id, target_url):
+            direct_status = "skipped_by_domain_browser_preference"
+            fallback_reason = "same_domain_previously_required_browser"
             browser_snapshot = await fetch_page_browser(ctx, target_url)
             browser_status = browser_snapshot.status
             snapshot = browser_snapshot
             fetch_mode = "browser"
+        else:
+            direct_snapshot = await fetch_page_direct(ctx, target_url)
+            snapshot = direct_snapshot
+            fetch_mode = "direct"
+            direct_status = direct_snapshot.status
+            fallback_reason = None
+            browser_status = None
+            if _should_use_browser_fallback(direct_snapshot):
+                fallback_reason = _fallback_reason(direct_snapshot)
+                browser_snapshot = await fetch_page_browser(ctx, target_url)
+                browser_status = browser_snapshot.status
+                snapshot = browser_snapshot
+                fetch_mode = "browser"
         async with session_factory() as session:
             if not await ensure_job_active(session, task.job_id):
                 return 0
@@ -114,6 +123,18 @@ async def fetch_page_direct(ctx: CrawlToolContext, url: str) -> PageSnapshot:
 
 async def fetch_page_browser(ctx: CrawlToolContext, url: str) -> PageSnapshot:
     return await browser_investigate(ctx, url, goal="", intent="generic")
+
+
+async def _prefer_browser_for_task_domain(
+    session_factory: async_sessionmaker[AsyncSession],
+    job_id: int,
+    target_url: str,
+) -> bool:
+    return await should_prefer_browser_for_fetch_domain(
+        session_factory,
+        job_id=job_id,
+        url=target_url,
+    )
 
 
 def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:

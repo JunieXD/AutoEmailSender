@@ -480,6 +480,37 @@ class CrawlJobsApiTests(unittest.TestCase):
             "enrichment_tasks": ["pending"],
         })
 
+    def test_resume_review_freezes_unfinished_discovery_work_before_enrichment(self) -> None:
+        profile_id = self._create_llm_profile("测试模型", "test-model")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._seed_pending_discovery_work_with_candidate(job_id)
+        self._set_job_status(job_id, "canceled")
+        candidate_id = self._latest_candidate_id(job_id)
+
+        review_response = self.client.post(f"/api/crawl-jobs/{job_id}/resume-review")
+        enrich_response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
+
+        self.assertEqual(review_response.status_code, 200, msg=review_response.text)
+        self.assertEqual(enrich_response.status_code, 200, msg=enrich_response.text)
+        self.assertEqual(self._list_v2_work_statuses(job_id), {
+            "page_tasks": ["failed_terminal"],
+            "chunks": ["failed_terminal"],
+            "enrichment_tasks": ["pending"],
+        })
+
     def test_pause_rejects_terminal_or_review_jobs(self) -> None:
         for job_status in ("needs_review", "partially_completed", "completed", "failed", "canceled"):
             with self.subTest(status=job_status):
@@ -1317,6 +1348,64 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "未找到抓取任务")
+
+    def _seed_pending_discovery_work_with_candidate(self, job_id: int) -> None:
+        async def _seed() -> None:
+            from sqlalchemy import select
+
+            from app.core.database import get_session_factory
+            from app.models import (
+                CrawlCandidate,
+                CrawlPage,
+                CrawlPageChunk,
+                CrawlPageChunkStatus,
+                CrawlPageStatus,
+                CrawlPageTask,
+                CrawlPageTaskStatus,
+            )
+
+            async with get_session_factory()() as session:
+                page = CrawlPage(
+                    job_id=job_id,
+                    url="https://example.edu/faculty",
+                    parent_url=None,
+                    fetch_method="browser",
+                    page_type="faculty_list",
+                    status=CrawlPageStatus.SUCCEEDED.value,
+                    title="Faculty",
+                    text_excerpt="Faculty page",
+                    error_message=None,
+                )
+                session.add(page)
+                await session.flush()
+                page_task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+                self.assertIsNotNone(page_task)
+                page_task.status = CrawlPageTaskStatus.PENDING.value
+                session.add(
+                    CrawlCandidate(
+                        job_id=job_id,
+                        name="待补全导师",
+                        profile_url="https://example.edu/profile",
+                        confidence=0.8,
+                    ),
+                )
+                session.add(
+                    CrawlPageChunk(
+                        job_id=job_id,
+                        page_id=page.id,
+                        source_url="https://example.edu/faculty",
+                        page_fingerprint="page-pending",
+                        chunk_id="chunk-pending",
+                        chunk_index=0,
+                        chunk_hash="hash-pending",
+                        status=CrawlPageChunkStatus.PENDING.value,
+                        content="待处理 chunk",
+                        token_estimate=10,
+                    ),
+                )
+                await session.commit()
+
+        asyncio.run(_seed())
 
     def _seed_processing_v2_work(self, job_id: int) -> None:
         async def _seed() -> None:
