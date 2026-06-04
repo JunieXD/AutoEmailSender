@@ -193,7 +193,7 @@ export async function waitForHealth(
   } = {},
 ): Promise<void> {
   const pollIntervalMs = options.pollIntervalMs ?? 400;
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  const timeoutMs = options.timeoutMs ?? 60_000;
   const slowStartupMs = options.slowStartupMs ?? 30_000;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;

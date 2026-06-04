@@ -210,6 +210,14 @@ describe("desktop backend helpers", () => {
     expect(terminatedPids).toEqual([1234]);
   });
 
+  it("uses a 60 second default health check timeout", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../src/backend.ts", import.meta.url), "utf8"),
+    );
+
+    expect(source).toContain("const timeoutMs = options.timeoutMs ?? 60_000;");
+  });
+
   it("keeps waiting after slow health startup threshold", async () => {
     const observed: string[] = [];
     const child = createRunningChildProcess();
