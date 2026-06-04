@@ -401,6 +401,62 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
 
+    async def test_profile_job_with_all_terminal_pages_and_no_candidates_fails(self) -> None:
+        job_id = await self._create_job(entry_type="profile")
+        async with self.session_factory() as session:
+            session.add_all([
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/teacher/a",
+                    original_url="https://example.edu/teacher/a",
+                    status=CrawlPageTaskStatus.FAILED_TERMINAL.value,
+                ),
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/teacher/b",
+                    original_url="https://example.edu/teacher/b",
+                    status=CrawlPageTaskStatus.FAILED_TERMINAL.value,
+                ),
+            ])
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+        self.assertEqual(job.error_message, "抓取未发现候选导师")
+
+    async def test_profile_job_with_candidate_enters_needs_review_after_terminal_pages(self) -> None:
+        job_id = await self._create_job(entry_type="profile")
+        async with self.session_factory() as session:
+            session.add(CrawlCandidate(job_id=job_id, name="张三", profile_url="https://example.edu/teacher/a"))
+            session.add_all([
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/teacher/a",
+                    original_url="https://example.edu/teacher/a",
+                    status=CrawlPageTaskStatus.SUCCEEDED.value,
+                ),
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu/teacher/b",
+                    original_url="https://example.edu/teacher/b",
+                    status=CrawlPageTaskStatus.FAILED_TERMINAL.value,
+                ),
+            ])
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
+        self.assertIsNone(job.error_message)
     async def test_retryable_failures_are_claimed_before_job_completion(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:
@@ -459,9 +515,9 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
         self.assertIsNone(task.worker_id)
 
-    async def _create_job(self, *, status: str = CrawlJobStatus.RUNNING.value) -> int:
+    async def _create_job(self, *, status: str = CrawlJobStatus.RUNNING.value, entry_type: str = "list") -> int:
         async with self.session_factory() as session:
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=status, runtime_version="v2")
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=status, runtime_version="v2", entry_type=entry_type)
             session.add(job)
             await session.commit()
             await session.refresh(job)
