@@ -7,7 +7,10 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listProfessorsForManagement } from "@/lib/api/professorsApi";
+import {
+  listProfessors,
+  listProfessorsForManagement,
+} from "@/lib/api/professorsApi";
 import type {
   IdentityDTO,
   LLMProfileDTO,
@@ -115,6 +118,8 @@ const createDashboardProfessor = (
   match_score: null,
   sent_count: 0,
   status: "not_contacted",
+  last_sent_at: null,
+  last_replied_at: null,
 });
 
 const dashboardProfessors: ProfessorDashboardItemDTO[] = Array.from(
@@ -179,6 +184,7 @@ describe("selection controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+    vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
     Object.assign(selectionContextValue, {
       identities: [selectedIdentity],
@@ -268,6 +274,97 @@ describe("selection controls", () => {
     expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
   });
 
+  it("switches time sort direction inside the sort menu and highlights replied rows", async () => {
+    vi.mocked(listProfessors).mockResolvedValue([
+      {
+        ...createDashboardProfessor(201, "Replied Mentor"),
+        last_replied_at: "2026-06-02T09:12:00Z",
+      },
+      createDashboardProfessor(202, "No Reply Mentor"),
+      {
+        ...createDashboardProfessor(203, "Older Reply Mentor"),
+        last_replied_at: "2026-06-01T08:05:00Z",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const sortButton = await screen.findByRole("button", { name: "排序" });
+
+    expect(sortButton).not.toHaveTextContent("回复时间 ↓");
+    expect(sortButton).not.toHaveTextContent("回复时间 ↑");
+
+    fireEvent.click(sortButton);
+    fireEvent.click(await screen.findByRole("button", { name: "回复时间" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("回复时间 ↓");
+    });
+    expect(screen.getByTestId("dashboard-professor-row-201")).toHaveClass(
+      "bg-emerald-50",
+    );
+    expect(screen.getByTestId("dashboard-professor-row-203")).toHaveClass(
+      "bg-emerald-50",
+    );
+    expect(screen.getByTestId("dashboard-professor-row-202")).not.toHaveClass(
+      "bg-emerald-50",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "排序" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "切换回复时间排序方向" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("回复时间 ↑");
+    });
+    expect(
+      screen.getAllByTestId(/dashboard-professor-row-/).map((row) => row.dataset.testid),
+    ).toEqual([
+      "dashboard-professor-row-203",
+      "dashboard-professor-row-201",
+      "dashboard-professor-row-202",
+    ]);
+    expect(
+      screen.queryByRole("button", { name: "最近回复在前" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the same green highlight for sent-time sorting", async () => {
+    vi.mocked(listProfessors).mockResolvedValue([
+      {
+        ...createDashboardProfessor(301, "Sent Mentor"),
+        last_sent_at: "2026-06-02T09:12:00Z",
+      },
+      createDashboardProfessor(302, "No Sent Mentor"),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "排序" }));
+    fireEvent.click(await screen.findByRole("button", { name: "发送时间" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("发送时间 ↓");
+    });
+    expect(screen.getByTestId("dashboard-professor-row-301")).toHaveClass(
+      "bg-emerald-50",
+    );
+    expect(screen.getByTestId("dashboard-professor-row-301")).not.toHaveClass(
+      "bg-cyan-50",
+    );
+    expect(screen.getByTestId("dashboard-professor-row-302")).not.toHaveClass(
+      "bg-emerald-50",
+    );
+  });
 
   it("shows a stable management skeleton before the first professor list load resolves", async () => {
     vi.mocked(listProfessorsForManagement).mockImplementation(

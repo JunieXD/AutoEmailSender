@@ -214,6 +214,8 @@ export interface ProfessorDashboardItemDTO {
   match_score: number | null;
   sent_count: number;
   status: ProfessorDashboardStatus;
+  last_sent_at: string | null;
+  last_replied_at: string | null;
 }
 
 export type ProfessorDashboardStatus =

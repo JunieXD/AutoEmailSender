@@ -35,6 +35,18 @@ from app.services.sample_professors import SAMPLE_PROFESSORS
 router = APIRouter(prefix="/api/professors", tags=["professors"])
 
 
+def _keep_latest_timestamp(
+    values: dict[int, datetime],
+    professor_id: int,
+    timestamp: datetime | None,
+) -> None:
+    if timestamp is None:
+        return
+    current = values.get(professor_id)
+    if current is None or timestamp > current:
+        values[professor_id] = timestamp
+
+
 @router.get("", response_model=list[ProfessorDashboardItemRead])
 async def list_professors(
     identity_id: int | None = None,
@@ -60,6 +72,8 @@ async def list_professors(
     professor_ids = [professor.id for professor in professors]
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
     sent_count_by_professor: dict[int, int] = defaultdict(int)
+    last_sent_at_by_professor: dict[int, datetime] = {}
+    last_replied_at_by_professor: dict[int, datetime] = {}
 
     if identity_id is not None:
         task_result = await session.execute(
@@ -82,17 +96,49 @@ async def list_professors(
             .where(
                 EmailLog.identity_id == identity_id,
                 EmailLog.professor_id.in_(professor_ids),
-                EmailLog.direction == EmailDirection.SENT.value,
+                EmailLog.direction.in_(
+                    [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
+                ),
             ),
         )
         for log in log_result.scalars():
-            sent_count_by_professor[log.professor_id] += 1
+            if log.direction == EmailDirection.SENT.value:
+                sent_count_by_professor[log.professor_id] += 1
+                _keep_latest_timestamp(
+                    last_sent_at_by_professor,
+                    log.professor_id,
+                    log.created_at,
+                )
+            elif log.direction == EmailDirection.RECEIVED.value:
+                _keep_latest_timestamp(
+                    last_replied_at_by_professor,
+                    log.professor_id,
+                    log.created_at,
+                )
 
     latest_match_task_by_professor: dict[int, EmailTask] = {}
     for professor_id, tasks in tasks_by_professor.items():
         latest_match = next((task for task in tasks if task.match_score is not None), None)
         if latest_match is not None:
             latest_match_task_by_professor[professor_id] = latest_match
+        has_sent_log = professor_id in last_sent_at_by_professor
+        has_reply_log = professor_id in last_replied_at_by_professor
+        for task in tasks:
+            if not has_sent_log:
+                _keep_latest_timestamp(
+                    last_sent_at_by_professor,
+                    professor_id,
+                    task.sent_at,
+                )
+            if (
+                not has_reply_log
+                and (task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value)
+            ):
+                _keep_latest_timestamp(
+                    last_replied_at_by_professor,
+                    professor_id,
+                    task.updated_at,
+                )
 
     return [
         ProfessorDashboardItemRead(
@@ -113,6 +159,8 @@ async def list_professors(
                 tasks_by_professor.get(professor.id, []),
                 sent_count_by_professor.get(professor.id, 0),
             ),
+            last_sent_at=last_sent_at_by_professor.get(professor.id),
+            last_replied_at=last_replied_at_by_professor.get(professor.id),
         )
         for professor in professors
     ]

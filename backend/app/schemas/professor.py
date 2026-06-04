@@ -52,6 +52,8 @@ class ProfessorDashboardItemRead(ApiSchema):
     match_score: int | None
     sent_count: int
     status: ProfessorDashboardStatus
+    last_sent_at: datetime | None = None
+    last_replied_at: datetime | None = None
 
 
 class ProfessorImportResult(ApiSchema):
