@@ -71,8 +71,7 @@ describe("windows installer packaging", () => {
     const script = readFileSync(scriptPath, "utf8");
 
     expect(existsSync(scriptPath)).toBe(true);
-    expect(script).toContain('Section /o "删除本地数据（数据库、材料、缓存和本地配置）" SEC_DELETE_APP_DATA');
-    expect(script).toContain("SectionSetFlags ${SEC_DELETE_APP_DATA} 1");
+    expect(script).toContain('Section /o "un.删除本地数据（数据库、材料、缓存和本地配置）"');
     expect(script).not.toContain("是否同时删除本地数据");
     expect(script).not.toContain('Section "un.DeleteAutoEmailSenderAppData"');
     expect(script).toContain("--delete-app-data");
@@ -80,6 +79,7 @@ describe("windows installer packaging", () => {
     expect(script).toContain("MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2");
     expect(script).toContain("$APPDATA\\Auto Email Sender");
     expect(script).toContain("!macro customUnInstallSection");
-    expect(script).toContain("un.DeleteAutoEmailSenderAppData");
+    expect(script).toContain("un.ConfirmAndDeleteAutoEmailSenderAppData");
+    expect(script).toContain("un.DeleteAutoEmailSenderAppDataFromFlag");
   });
 });
