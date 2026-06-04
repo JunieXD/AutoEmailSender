@@ -246,7 +246,12 @@ export const NativeSelectField = ({
 
           if (renderOption) {
             return (
-              <div key={option.value}>
+              <div
+                key={option.value}
+                role="option"
+                aria-selected={selected}
+                aria-disabled={option.disabled || undefined}
+              >
                 {renderOption(option, { selected, selectOption, closeMenu })}
               </div>
             );

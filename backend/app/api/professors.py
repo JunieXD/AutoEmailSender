@@ -121,15 +121,17 @@ async def list_professors(
         latest_match = next((task for task in tasks if task.match_score is not None), None)
         if latest_match is not None:
             latest_match_task_by_professor[professor_id] = latest_match
+        has_sent_log = professor_id in last_sent_at_by_professor
+        has_reply_log = professor_id in last_replied_at_by_professor
         for task in tasks:
-            if professor_id not in last_sent_at_by_professor:
+            if not has_sent_log:
                 _keep_latest_timestamp(
                     last_sent_at_by_professor,
                     professor_id,
                     task.sent_at,
                 )
             if (
-                professor_id not in last_replied_at_by_professor
+                not has_reply_log
                 and (task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value)
             ):
                 _keep_latest_timestamp(

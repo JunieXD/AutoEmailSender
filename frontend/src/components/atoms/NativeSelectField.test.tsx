@@ -23,4 +23,31 @@ describe("NativeSelectField", () => {
     expect(menu).toHaveClass("z-40");
     expect(menu).not.toHaveClass("z-50");
   });
+  it("keeps option semantics when rendering custom options", () => {
+    render(
+      <NativeSelectField
+        label="排序"
+        ariaLabel="排序"
+        value="sent"
+        onChange={vi.fn()}
+        renderOption={(option, { selectOption }) => (
+          <button type="button" onClick={selectOption}>
+            {option.label}
+          </button>
+        )}
+      >
+        <option value="sent">发送时间</option>
+        <option value="replied">回复时间</option>
+      </NativeSelectField>,
+    );
+
+    fireEvent.click(screen.getByLabelText("排序"));
+
+    expect(
+      screen.getByRole("option", { name: "发送时间" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("option", { name: "回复时间" }),
+    ).toHaveAttribute("aria-selected", "false");
+  });
 });
