@@ -34,6 +34,7 @@ from app.services.crawler_tools import (
     record_save_batch_success,
     record_page_snapshot,
     save_candidate_batch,
+    save_candidate_payloads_shared,
     save_candidate_batch_fingerprint,
     save_candidates,
     _crawl_page_with_crawl4ai_browser,
@@ -2502,6 +2503,95 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.links, ["https://cs.example.edu/news/b.htm"])
         self.assertFalse(ctx.is_denied_url("https://cs.example.edu/news/a.htm"))
         self.assertIsNone(snapshot.error_message)
+
+    async def test_save_candidate_payloads_preserves_profile_entry_start_url(self) -> None:
+        profile_url = "https://example.edu/teacher/zhang.html"
+        async with _RealCrawlerSessionHarness() as harness:
+            async with harness.session_factory() as session:
+                job = CrawlJob(
+                    university="示例大学",
+                    school="计算机学院",
+                    start_url=profile_url,
+                    start_urls=[profile_url],
+                    status=CrawlJobStatus.RUNNING.value,
+                    runtime_version="v2",
+                    entry_type="profile",
+                )
+                session.add(job)
+                await session.commit()
+                await session.refresh(job)
+                job_id = job.id
+
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=profile_url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+                entry_type="profile",
+            )
+            result = await save_candidate_payloads_shared(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url=profile_url,
+                        source_url=profile_url,
+                        source_kind="profile_page",
+                        confidence=0.9,
+                    )
+                ],
+            )
+
+            self.assertEqual(result["saved_count"], 1)
+            async with harness.session_factory() as session:
+                saved = await session.scalar(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            assert saved is not None
+            self.assertEqual(saved.profile_url, profile_url)
+
+    async def test_save_candidate_payloads_clears_listing_entry_start_url(self) -> None:
+        listing_url = "https://example.edu/faculty"
+        async with _RealCrawlerSessionHarness() as harness:
+            async with harness.session_factory() as session:
+                job = CrawlJob(
+                    university="示例大学",
+                    school="计算机学院",
+                    start_url=listing_url,
+                    start_urls=[listing_url],
+                    status=CrawlJobStatus.RUNNING.value,
+                    runtime_version="v2",
+                    entry_type="list",
+                )
+                session.add(job)
+                await session.commit()
+                await session.refresh(job)
+                job_id = job.id
+
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=listing_url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+                entry_type="list",
+            )
+            result = await save_candidate_payloads_shared(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="张三",
+                        profile_url=listing_url,
+                        source_url=listing_url,
+                        confidence=0.9,
+                    )
+                ],
+            )
+
+            self.assertEqual(result["saved_count"], 1)
+            async with harness.session_factory() as session:
+                saved = await session.scalar(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            assert saved is not None
+            self.assertIsNone(saved.profile_url)
 
     async def test_crawl4ai_browser_fetch_disables_chromium_https_upgrades(self) -> None:
         crawler_kwargs: list[dict[str, object]] = []
