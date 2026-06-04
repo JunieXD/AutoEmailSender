@@ -86,6 +86,8 @@ const selectedProfessor: ProfessorDashboardItemDTO = {
   match_score: null,
   sent_count: 0,
   status: "not_contacted",
+  last_sent_at: null,
+  last_replied_at: null,
 };
 
 vi.mock("react-router-dom", async () => {
