@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import clsx from "clsx";
 import {
+  ArrowDown,
+  ArrowUp,
+  Check,
   FolderOpen,
   Loader2,
   MailPlus,
@@ -11,7 +15,10 @@ import {
   SquareCheck,
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
-import { DashboardProfessorRow } from "@/components/molecules/DashboardProfessorRow";
+import {
+  DashboardProfessorRow,
+  type DashboardProfessorRowTimeHighlight,
+} from "@/components/molecules/DashboardProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
@@ -27,7 +34,9 @@ import {
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
+  isProfessorDashboardTimeSortKey,
   sortDashboardProfessors,
+  type ProfessorDashboardSortDirection,
   type ProfessorDashboardSortKey,
 } from "@/features/home-dashboard/client/sortDashboardProfessors";
 import { getOnboardingState } from "@/features/onboarding/client/getOnboardingState";
@@ -59,6 +68,18 @@ import type {
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
+type ProfessorDashboardTimeSortKey = Extract<
+  ProfessorDashboardSortKey,
+  "lastSentAt" | "lastRepliedAt"
+>;
+
+const DEFAULT_TIME_SORT_DIRECTIONS: Record<
+  ProfessorDashboardTimeSortKey,
+  ProfessorDashboardSortDirection
+> = {
+  lastSentAt: "desc",
+  lastRepliedAt: "desc",
+};
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -144,6 +165,55 @@ const writeStoredDashboardFilters = (
 const hasMatchEvidence = (professor: ProfessorDashboardItemDTO) =>
   Boolean(professor.research_direction?.trim()) ||
   professor.recent_papers.some((paper) => paper.trim());
+
+const formatDashboardTimeLabel = (label: string, value: string | null) => {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return `${label} ${date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })}`;
+};
+
+const getSortOptionLabel = (sortKey: ProfessorDashboardSortKey) =>
+  PROFESSOR_DASHBOARD_SORT_OPTIONS.find((option) => option.value === sortKey)?.label ??
+  "";
+
+const getTimeSortDirectionSymbol = (
+  direction: ProfessorDashboardSortDirection,
+) => (direction === "desc" ? "↓" : "↑");
+
+const getSortTriggerLabel = (
+  sortKey: ProfessorDashboardSortKey,
+  direction: ProfessorDashboardSortDirection,
+) => {
+  const label = getSortOptionLabel(sortKey);
+  if (!isProfessorDashboardTimeSortKey(sortKey)) {
+    return label;
+  }
+  return `${label} ${getTimeSortDirectionSymbol(direction)}`;
+};
+
+const getProfessorTimeHighlight = (
+  professor: ProfessorDashboardItemDTO,
+  sortKey: ProfessorDashboardSortKey,
+): DashboardProfessorRowTimeHighlight => {
+  if (sortKey === "lastSentAt" && professor.last_sent_at) {
+    return "sent";
+  }
+  if (sortKey === "lastRepliedAt" && professor.last_replied_at) {
+    return "replied";
+  }
+  return null;
+};
 
 const isMatchConflictError = (error: unknown): error is ApiError =>
   error instanceof ApiError && error.status === 409;
@@ -231,6 +301,9 @@ export const HomePage = () => {
   );
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [sortKey, setSortKey] = useState<ProfessorDashboardSortKey>("latest");
+  const [timeSortDirections, setTimeSortDirections] = useState<
+    Record<ProfessorDashboardTimeSortKey, ProfessorDashboardSortDirection>
+  >(DEFAULT_TIME_SORT_DIRECTIONS);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(() =>
     getStoredPageSize(HOME_PAGE_SIZE_STORAGE_KEY),
@@ -431,12 +504,17 @@ export const HomePage = () => {
   const resetAllFilters = () => {
     setFilters(createDefaultDashboardFilters());
     setSortKey("latest");
+    setTimeSortDirections({ ...DEFAULT_TIME_SORT_DIRECTIONS });
   };
 
+  const currentTimeSortDirection = isProfessorDashboardTimeSortKey(sortKey)
+    ? timeSortDirections[sortKey]
+    : "desc";
   const filteredProfessors = filterDashboardProfessors(professors, filters);
   const visibleProfessors = sortDashboardProfessors(
     filteredProfessors,
     sortKey,
+    currentTimeSortDirection,
   );
   const totalPages = getTotalPages(visibleProfessors.length, pageSize);
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -472,7 +550,7 @@ export const HomePage = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters, sortKey, professorsRequestKey]);
+  }, [filters, sortKey, currentTimeSortDirection, professorsRequestKey]);
 
   const handlePageSizeChange = (nextPageSize: number) => {
     setPageSize(nextPageSize);
@@ -790,11 +868,90 @@ export const HomePage = () => {
               <NativeSelectField
                 ariaLabel="排序"
                 value={sortKey}
+                selectedLabel={getSortTriggerLabel(sortKey, currentTimeSortDirection)}
                 onChange={(event) =>
                   setSortKey(event.target.value as ProfessorDashboardSortKey)
                 }
                 wrapperClassName="min-w-0 flex-1"
                 shellClassName="!min-h-0 h-8 border-0 bg-stone-50 px-3 py-0 shadow-none"
+                renderOption={(option, { selected, selectOption, closeMenu }) => {
+                  const optionKey = option.value as ProfessorDashboardSortKey;
+                  const isTimeOption = isProfessorDashboardTimeSortKey(optionKey);
+
+                  if (!isTimeOption) {
+                    return (
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        disabled={option.disabled}
+                        onClick={selectOption}
+                        className={clsx(
+                          "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 transition",
+                          option.disabled
+                            ? "cursor-not-allowed text-stone-300"
+                            : selected
+                              ? "bg-primary text-white shadow-sm shadow-primary/25"
+                              : "text-stone-700 hover:bg-stone-100/90 hover:text-stone-900",
+                        )}
+                      >
+                        <span className="truncate">{option.label}</span>
+                        {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                      </button>
+                    );
+                  }
+
+                  const direction = timeSortDirections[optionKey];
+
+                  return (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        aria-label={option.label}
+                        disabled={option.disabled}
+                        onClick={selectOption}
+                        className={clsx(
+                          "flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 transition",
+                          option.disabled
+                            ? "cursor-not-allowed text-stone-300"
+                            : selected
+                              ? "bg-primary text-white shadow-sm shadow-primary/25"
+                              : "text-stone-700 hover:bg-stone-100/90 hover:text-stone-900",
+                        )}
+                      >
+                        <span className="truncate">{option.label}</span>
+                        {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`切换${option.label}排序方向`}
+                        disabled={option.disabled}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setTimeSortDirections((previous) => ({
+                            ...previous,
+                            [optionKey]:
+                              previous[optionKey] === "desc" ? "asc" : "desc",
+                          }));
+                          setSortKey(optionKey);
+                          closeMenu();
+                        }}
+                        className={clsx(
+                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
+                          selected
+                            ? "border-primary/20 bg-primary/10 text-primary"
+                            : "border-stone-200 text-stone-500 hover:border-stone-300 hover:bg-stone-100 hover:text-stone-800",
+                        )}
+                      >
+                        {direction === "desc" ? (
+                          <ArrowDown className="h-4 w-4" />
+                        ) : (
+                          <ArrowUp className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                }}
               >
                 {PROFESSOR_DASHBOARD_SORT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -978,6 +1135,14 @@ export const HomePage = () => {
                   statusLabel={getProfessorDashboardStatusLabel(
                     professor.status,
                   )}
+                  timeHighlight={getProfessorTimeHighlight(professor, sortKey)}
+                  timeLabel={
+                    sortKey === "lastSentAt"
+                      ? formatDashboardTimeLabel("发送", professor.last_sent_at)
+                      : sortKey === "lastRepliedAt"
+                        ? formatDashboardTimeLabel("回复", professor.last_replied_at)
+                        : null
+                  }
                   onToggleSelection={() => toggleSelection(professor.id)}
                   onCalculateMatch={() => void handleGenerateOne(professor.id)}
                   onOpenWorkspace={() => navigate(`/workspace/${professor.id}`)}

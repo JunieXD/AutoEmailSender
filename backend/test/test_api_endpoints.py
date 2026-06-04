@@ -571,6 +571,175 @@ class ApiEndpointTests(unittest.TestCase):
                 {"matched", "scheduled", "sent", "skipped", "send_failed", "needs_attention"},
             )
 
+    def test_professor_dashboard_returns_last_sent_and_replied_times(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        replied_professor_id = self._create_professor(email="time-replied@example.edu")
+        sent_only_professor_id = self._create_professor(email="time-sent-only@example.edu")
+        untouched_professor_id = self._create_professor(email="time-empty@example.edu")
+
+        replied_task_id = self.client.post(
+            f"/api/workspaces/{replied_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+        sent_only_task_id = self.client.post(
+            f"/api/workspaces/{sent_only_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'reply_detected',
+                    sent_at = ?,
+                    updated_at = ?,
+                    is_replied = 1
+                WHERE id = ?
+                """,
+                (
+                    "2026-06-01T08:00:00+00:00",
+                    "2026-06-01T13:00:00+00:00",
+                    replied_task_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'sent',
+                    sent_at = ?
+                WHERE id = ?
+                """,
+                ("2026-06-01T07:00:00+00:00", sent_only_task_id),
+            )
+            connection.executemany(
+                """
+                INSERT INTO email_logs (
+                    email_task_id, identity_id, llm_profile_id, professor_id,
+                    direction, subject, content, rfc_message_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'subject', 'content', ?, ?)
+                """,
+                [
+                    (
+                        replied_task_id,
+                        identity_id,
+                        llm_id,
+                        replied_professor_id,
+                        "sent",
+                        "<sent-old@example.edu>",
+                        "2026-06-01T09:00:00+00:00",
+                    ),
+                    (
+                        replied_task_id,
+                        identity_id,
+                        llm_id,
+                        replied_professor_id,
+                        "sent",
+                        "<sent-new@example.edu>",
+                        "2026-06-01T10:30:00+00:00",
+                    ),
+                    (
+                        replied_task_id,
+                        identity_id,
+                        llm_id,
+                        replied_professor_id,
+                        "received",
+                        "<reply@example.edu>",
+                        "2026-06-01T12:00:00+00:00",
+                    ),
+                ],
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload_by_id = {item["id"]: item for item in response.json()}
+        self.assertEqual(
+            payload_by_id[replied_professor_id]["last_sent_at"],
+            "2026-06-01T10:30:00Z",
+        )
+        self.assertEqual(
+            payload_by_id[replied_professor_id]["last_replied_at"],
+            "2026-06-01T12:00:00Z",
+        )
+        self.assertEqual(
+            payload_by_id[sent_only_professor_id]["last_sent_at"],
+            "2026-06-01T07:00:00Z",
+        )
+        self.assertIsNone(payload_by_id[sent_only_professor_id]["last_replied_at"])
+        self.assertIsNone(payload_by_id[untouched_professor_id]["last_sent_at"])
+        self.assertIsNone(payload_by_id[untouched_professor_id]["last_replied_at"])
+
+    def test_professor_dashboard_fallback_times_use_latest_task_timestamp(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="time-fallback-latest@example.edu")
+
+        newer_task_id = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            older_task_id = connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    source, parent_task_id, identity_id, llm_profile_id,
+                    professor_id, status, sent_at, is_replied, created_at, updated_at
+                )
+                VALUES ('manual', ?, ?, ?, ?, 'reply_detected', ?, 1, ?, ?)
+                RETURNING id
+                """,
+                (
+                    newer_task_id,
+                    identity_id,
+                    llm_id,
+                    professor_id,
+                    "2026-06-02T11:00:00+00:00",
+                    "2026-06-01T08:00:00+00:00",
+                    "2026-06-02T12:30:00+00:00",
+                ),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'reply_detected',
+                    sent_at = ?,
+                    updated_at = ?,
+                    is_replied = 1,
+                    created_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "2026-06-01T09:00:00+00:00",
+                    "2026-06-01T10:00:00+00:00",
+                    "2026-06-02T08:00:00+00:00",
+                    newer_task_id,
+                ),
+            )
+            self.assertIsNotNone(older_task_id)
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        professor = next(item for item in response.json() if item["id"] == professor_id)
+        self.assertEqual(professor["last_sent_at"], "2026-06-02T11:00:00Z")
+        self.assertEqual(professor["last_replied_at"], "2026-06-02T12:30:00Z")
     def test_professor_dashboard_prioritizes_existing_contact_over_follow_up_draft(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
