@@ -1,4 +1,4 @@
-﻿!include LogicLib.nsh
+!include LogicLib.nsh
 
 !ifdef BUILD_UNINSTALLER
 Var /GLOBAL UninstallShouldDeleteAppData
@@ -14,53 +14,41 @@ Var /GLOBAL UninstallShouldDeleteAppData
 !macroend
 
 !macro customUnInstall
-  ${If} ${Silent}
-    Goto done
+  ${If} $UninstallShouldDeleteAppData == "1"
+    SectionSetFlags ${SEC_DELETE_APP_DATA} 1
   ${EndIf}
-
-  MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "是否同时删除本地数据（数据库、材料、缓存和本地配置）？选择否将保留本地数据，重新安装后仍可继续使用。" IDYES confirm_delete IDNO skip_delete
-
-  confirm_delete:
-    MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2 "这将永久删除 Auto Email Sender 的本地数据，包括数据库、上传材料、缓存和本地配置。删除后无法通过重新安装恢复。是否继续？" IDYES delete_data IDNO skip_delete
-
-  delete_data:
-    StrCpy $UninstallShouldDeleteAppData "1"
-    Goto done
-
-  skip_delete:
-    StrCpy $UninstallShouldDeleteAppData "0"
-    Goto done
-
-  done:
 !macroend
 
 !macro customUnInstallSection
-Section "un.DeleteAutoEmailSenderAppData"
+Section /o "删除本地数据（数据库、材料、缓存和本地配置）" SEC_DELETE_APP_DATA
   Call un.DeleteAutoEmailSenderAppData
 SectionEnd
 !macroend
 
 !ifdef BUILD_UNINSTALLER
 Function un.DeleteAutoEmailSenderAppData
-  ${If} $UninstallShouldDeleteAppData != "1"
+  ${IfNot} ${Silent}
+    MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2 "这将永久删除 Auto Email Sender 的本地数据，包括数据库、上传材料、缓存和本地配置。删除后无法通过重新安装恢复。是否继续？" IDYES delete_data IDNO skip_delete
+  ${EndIf}
+
+  delete_data:
+    SetShellVarContext current
+    StrCpy $R0 "$APPDATA\Auto Email Sender"
+
+    ${If} $R0 == ""
+      Return
+    ${EndIf}
+
+    ${If} $R0 == "$APPDATA"
+      Return
+    ${EndIf}
+
+    ${If} ${FileExists} "$R0\*.*"
+      RMDir /r "$R0"
+    ${EndIf}
     Return
-  ${EndIf}
 
-  SetShellVarContext current
-  StrCpy $R0 "$APPDATA\Auto Email Sender"
-
-  ${If} $R0 == ""
+  skip_delete:
     Return
-  ${EndIf}
-
-  ${If} $R0 == "$APPDATA"
-    Return
-  ${EndIf}
-
-  ${If} ${FileExists} "$R0\*.*"
-    RMDir /r "$R0"
-  ${EndIf}
 FunctionEnd
 !endif
-
-
