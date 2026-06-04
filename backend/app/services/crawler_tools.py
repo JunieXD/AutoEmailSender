@@ -21,7 +21,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage
+from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageTask
 from app.services.crawler_page_fetch_ledger import (
     PageFetchDecision,
     get_page_fetch_decision,
@@ -304,6 +304,27 @@ def normalize_candidate_profile_url(value: object, *, base_url: str | None = Non
     return normalize_navigable_url(value, base_url=base_url)
 
 
+
+def _normalize_listing_url(value: object, *, base_url: str | None = None) -> str | None:
+    return normalize_navigable_url(value, base_url=base_url)
+
+
+def _candidate_profile_url_matches_known_listing_url(profile_url: str | None, listing_urls: set[str]) -> bool:
+    return bool(profile_url and profile_url in listing_urls)
+
+
+def _clear_listing_profile_url(payload: dict[str, Any], removed_profile_url: str) -> None:
+    payload["profile_url"] = None
+    field_confidence = payload.get("field_confidence")
+    if isinstance(field_confidence, dict):
+        field_confidence.pop("profile_url", None)
+    evidence = payload.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    evidence["profile_url_removed_reason"] = "matches_known_listing_url"
+    evidence["removed_profile_url"] = removed_profile_url
+    payload["evidence"] = evidence
+
 def _candidate_missing_contact_path(payload: dict[str, Any]) -> bool:
     email = str(payload.get("email") or "").strip()
     profile_url = str(payload.get("profile_url") or "").strip()
@@ -458,6 +479,27 @@ def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) 
     return changed
 
 
+async def _known_listing_urls_for_job(session: AsyncSession, *, job_id: int, start_url: str) -> set[str]:
+    listing_urls: set[str] = set()
+    job = await session.get(CrawlJob, job_id)
+    if job is not None:
+        for url in [job.start_url, *(job.start_urls or [])]:
+            normalized = _normalize_listing_url(url, base_url=start_url)
+            if normalized:
+                listing_urls.add(normalized)
+    else:
+        normalized = _normalize_listing_url(start_url, base_url=start_url)
+        if normalized:
+            listing_urls.add(normalized)
+
+    rows = await session.scalars(select(CrawlPageTask.normalized_url).where(CrawlPageTask.job_id == job_id))
+    for url in rows:
+        normalized = _normalize_listing_url(url, base_url=start_url)
+        if normalized:
+            listing_urls.add(normalized)
+    return listing_urls
+
+
 async def _find_existing_candidate_for_payload(
     session: AsyncSession,
     *,
@@ -498,6 +540,7 @@ class CrawlToolContext:
     save_failure_budget: SaveFailureBudgetState = field(default_factory=SaveFailureBudgetState)
     duplicate_save_loop: DuplicateSaveLoopState = field(default_factory=DuplicateSaveLoopState)
     page_snapshot_cache: OrderedDict[str, PageSnapshot] = field(default_factory=OrderedDict)
+    known_listing_urls: set[str] = field(default_factory=set)
     thinking_extra_body: dict[str, object] | None = None
 
     def mark_http_blocked(self, url: str) -> None:
@@ -1831,6 +1874,9 @@ async def _save_normalized_candidate_payloads(
         if await _is_crawl_job_stopped(session, ctx.job_id):
             return CandidatePersistenceResult(saved=[])
 
+        known_listing_urls = await _known_listing_urls_for_job(session, job_id=ctx.job_id, start_url=ctx.start_url)
+        known_listing_urls.update(ctx.known_listing_urls)
+
         for payload in payloads:
             email = payload["email"]
             normalized_email = str(email).lower() if email else None
@@ -1838,7 +1884,10 @@ async def _save_normalized_candidate_payloads(
                 payload.get("profile_url"),
                 base_url=ctx.start_url,
             )
-            if normalized_profile_url:
+            if _candidate_profile_url_matches_known_listing_url(normalized_profile_url, known_listing_urls):
+                _clear_listing_profile_url(payload, normalized_profile_url or "")
+                normalized_profile_url = None
+            elif normalized_profile_url:
                 payload["profile_url"] = normalized_profile_url
 
             existing = await _find_existing_candidate_for_payload(

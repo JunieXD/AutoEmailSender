@@ -354,12 +354,19 @@ async def complete_current_chunk(
                 "rejected_count": 0,
                 "child_count": split_result["child_count"],
             }
+        discovered_listing_urls = {
+            normalized
+            for url in discovered_urls
+            if (normalized := normalize_url(url, base_url=chunk.source_url))
+            if is_same_domain(normalized, job.start_url)
+        }
         ctx = CrawlToolContext(
             job_id=chunk.job_id,
             start_url=job.start_url,
             university=job.university,
             school=job.school,
             session_factory=session_factory,
+            known_listing_urls=discovered_listing_urls,
         )
         enriched_candidates = _fill_candidate_profile_urls_from_chunk(
             candidates,
@@ -373,6 +380,7 @@ async def complete_current_chunk(
             for candidate in enriched_candidates
             if candidate.profile_url
             if (normalized := normalize_url(candidate.profile_url, base_url=chunk.source_url))
+            if normalized not in discovered_listing_urls
         }
         url_count = 0
         seen_urls: set[str] = set()
