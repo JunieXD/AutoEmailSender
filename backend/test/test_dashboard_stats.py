@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -341,6 +342,47 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(len(result.email.trend_30_days), 30)
         self.assertEqual(result.email.follow_ups[0].name, "赵老师")
         self.assertEqual(result.email.follow_ups[0].reason, "发送失败")
+
+    def test_dashboard_service_ignores_failed_send_logs_for_sent_metrics(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+
+        async def seed_failed_log() -> None:
+            async with self.session_factory() as session:
+                task = await session.scalar(
+                    select(EmailTask).where(EmailTask.status == EmailTaskStatus.SEND_FAILED.value)
+                )
+                assert task is not None
+                session.add(
+                    EmailLog(
+                        email_task_id=task.id,
+                        identity_id=identity_id,
+                        llm_profile_id=llm_profile_id,
+                        professor_id=task.professor_id,
+                        direction=EmailDirection.SENT.value,
+                        subject="申请交流",
+                        content="赵老师您好",
+                        failure_summary="网络不可达",
+                        created_at=datetime.now(UTC) - timedelta(hours=1),
+                    )
+                )
+                await session.commit()
+
+        self._run_async(seed_failed_log())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.sent_count, 3)
+        self.assertEqual(result.email.summary.contacted_professor_count, 2)
+        self.assertEqual(result.email.summary.send_failed_count, 1)
+        self.assertEqual(result.email.summary.send_failed_rate, 0.25)
 
     def test_dashboard_service_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id, _, alternate_llm_profile_id = self._run_async(self._seed_dashboard_data())

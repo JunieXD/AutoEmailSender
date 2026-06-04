@@ -571,6 +571,51 @@ class ApiEndpointTests(unittest.TestCase):
                 {"matched", "scheduled", "sent", "skipped", "send_failed", "needs_attention"},
             )
 
+    def test_professor_dashboard_ignores_failed_send_logs_for_contact_state(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="failed-log-dashboard@example.edu")
+        task_id = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'send_failed',
+                    last_error = '网络不可达'
+                WHERE id = ?
+                """,
+                (task_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO email_logs (
+                    email_task_id, identity_id, llm_profile_id, professor_id,
+                    direction, subject, content, failure_summary, created_at
+                )
+                VALUES (?, ?, ?, ?, 'sent', 'subject', 'content', '网络不可达', ?)
+                """,
+                (task_id, identity_id, llm_id, professor_id, "2026-06-01T10:30:00+00:00"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = next(item for item in response.json() if item["id"] == professor_id)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["sent_count"], 0)
+        self.assertIsNone(payload["last_sent_at"])
+
     def test_professor_dashboard_returns_last_sent_and_replied_times(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()

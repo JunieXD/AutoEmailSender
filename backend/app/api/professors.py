@@ -102,7 +102,7 @@ async def list_professors(
             ),
         )
         for log in log_result.scalars():
-            if log.direction == EmailDirection.SENT.value:
+            if log.direction == EmailDirection.SENT.value and not log.failure_summary:
                 sent_count_by_professor[log.professor_id] += 1
                 _keep_latest_timestamp(
                     last_sent_at_by_professor,

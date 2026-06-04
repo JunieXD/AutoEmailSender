@@ -337,7 +337,7 @@ async def _build_email_section(
             ),
         )
         for log in logs:
-            if log.direction == EmailDirection.SENT.value:
+            if log.direction == EmailDirection.SENT.value and not log.failure_summary:
                 sent_logs.append(log)
             elif log.direction == EmailDirection.RECEIVED.value:
                 received_logs.append(log)
@@ -474,6 +474,7 @@ async def _build_sent_count_by_professor(
         .where(
             EmailLog.email_task_id.in_(task_ids),
             EmailLog.direction == EmailDirection.SENT.value,
+            EmailLog.failure_summary.is_(None),
         )
         .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
     )
