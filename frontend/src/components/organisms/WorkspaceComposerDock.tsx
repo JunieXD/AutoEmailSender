@@ -133,9 +133,29 @@ const SummaryLine = ({
   </div>
 );
 
+const DATETIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+
+const formatLocalScheduleSummary = (value: string) => {
+  const [datePart, timePart] = value.split('T');
+  if (!datePart || !timePart) {
+    return null;
+  }
+
+  const [, month, day] = datePart.split('-');
+  if (!month || !day) {
+    return null;
+  }
+
+  return `${month}/${day} ${timePart}`;
+};
+
 const formatScheduleSummary = (value: string) => {
   if (!value) {
     return '未设置';
+  }
+
+  if (DATETIME_LOCAL_PATTERN.test(value)) {
+    return formatLocalScheduleSummary(value) ?? '未设置';
   }
 
   const summary = formatApiDateTime(value);

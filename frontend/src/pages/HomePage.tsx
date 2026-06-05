@@ -54,6 +54,7 @@ import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { listProfessors } from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
+import { parseApiDateTime } from "@/lib/dateTime";
 import {
   getPageItems,
   getStoredPageSize,
@@ -170,7 +171,7 @@ const formatDashboardTimeLabel = (label: string, value: string | null) => {
   if (!value) {
     return null;
   }
-  const date = new Date(value);
+  const date = parseApiDateTime(value);
   if (Number.isNaN(date.getTime())) {
     return null;
   }
