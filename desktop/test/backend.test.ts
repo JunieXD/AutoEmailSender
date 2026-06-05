@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -225,7 +226,7 @@ describe("desktop backend helpers", () => {
 
   it("uses a 60 second default health check timeout", async () => {
     const source = await import("node:fs/promises").then((fs) =>
-      fs.readFile(new URL("../src/backend.ts", import.meta.url), "utf8"),
+      fs.readFile(path.resolve("src", "backend.ts"), "utf8"),
     );
 
     expect(source).toContain("const timeoutMs = options.timeoutMs ?? 60_000;");
