@@ -131,6 +131,42 @@ describe("api client desktop base url", () => {
     await expect(request).resolves.toEqual({ status: "ok" });
   });
 
+  it("keeps waiting while desktop backend status is restarting", async () => {
+    let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok" })));
+    vi.stubGlobal("fetch", fetchMock);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onBackendStatus: (callback) => {
+        backendStatusCallback = callback;
+        return () => undefined;
+      },
+      onUpdateStatus: () => () => undefined,
+    };
+
+    const request = apiFetch<{ status: string }>("/health");
+    await Promise.resolve();
+
+    backendStatusCallback?.({ state: "restarting", code: null, signal: null });
+    await Promise.resolve();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    backendStatusCallback?.({
+      state: "ready",
+      baseUrl: "http://127.0.0.1:48124",
+      phase: "ready",
+      message: "系统已准备就绪",
+      elapsedSeconds: 12,
+    });
+
+    await expect(request).resolves.toEqual({ status: "ok" });
+  });
+
   it("uses a user-facing message when desktop backend startup fails", async () => {
     let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
     window.autoEmailSender = {

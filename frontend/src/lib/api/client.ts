@@ -277,7 +277,7 @@ function getDesktopBackendBaseUrl(): string | null {
   return baseUrl ? baseUrl.replace(/\/+$/, "") : null;
 }
 
-function getDesktopBackendStartupErrorMessage(status: DesktopBackendStatus): string {
+function getDesktopBackendStartupErrorMessage(status: Extract<DesktopBackendStatus, { state: "error" }>): string {
   if (status.state === "error" && status.databaseError?.code === "DATABASE_REQUIRES_NEWER_APP") {
     return [
       `当前数据需要 AutoEmailSender ${status.databaseError.minimumSupportedAppVersion} 或更高版本。`,
