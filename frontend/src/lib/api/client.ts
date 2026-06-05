@@ -1,4 +1,5 @@
 import { recordDiagnosticEvent } from "@/lib/diagnostics";
+import type { DesktopBackendStatus } from "@/types/desktop";
 
 let desktopBackendBaseUrlOverride: string | null = null;
 
@@ -276,8 +277,16 @@ function getDesktopBackendBaseUrl(): string | null {
   return baseUrl ? baseUrl.replace(/\/+$/, "") : null;
 }
 
-function getDesktopBackendStartupErrorMessage(statusMessage?: string): string {
-  if (statusMessage?.includes("系统准备时间过长")) {
+function getDesktopBackendStartupErrorMessage(status: DesktopBackendStatus): string {
+  if (status.state === "error" && status.databaseError?.code === "DATABASE_REQUIRES_NEWER_APP") {
+    return [
+      `当前数据需要 AutoEmailSender ${status.databaseError.minimumSupportedAppVersion} 或更高版本。`,
+      "请升级到新版继续使用。若必须回退旧版，请从升级前备份恢复数据库。",
+      `备份位置：${status.databaseError.backupDirectory}`,
+    ].join("\n");
+  }
+
+  if (status.message?.includes("系统准备时间过长")) {
     return "本地数据准备时间较长。请重启应用后再试；如果问题仍然存在，请导出诊断日志反馈。";
   }
 
@@ -321,7 +330,7 @@ async function waitForDesktopBackendBaseUrl(): Promise<string | null> {
       if (status.state === "error") {
         window.clearTimeout(timeout);
         unsubscribe();
-        reject(new Error(getDesktopBackendStartupErrorMessage(status.message)));
+        reject(new Error(getDesktopBackendStartupErrorMessage(status)));
       }
     });
   });
