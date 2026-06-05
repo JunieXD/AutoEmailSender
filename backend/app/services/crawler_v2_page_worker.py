@@ -7,14 +7,17 @@ from app.core.time import as_utc_aware, utc_now
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus
+from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, LLMProfile
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
 from app.services.crawler_page_fetch_ledger import should_prefer_browser_for_fetch_domain
 from app.services.crawler_debug import append_crawler_v2_debug_event
-from app.services.crawler_tools import CrawlToolContext, PageSnapshot, browser_investigate, crawl_page_with_http
+from app.services.crawler_tools import CrawlToolContext, PageSnapshot, ProfessorCandidatePayload, browser_investigate, crawl_page_with_http, save_candidate_payloads_shared
+from app.services.crawler_v2_profile_extraction import invoke_v2_profile_extraction_agent
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
+from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_scheduler import ensure_job_active
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 
 
 
@@ -35,6 +38,7 @@ async def run_crawler_v2_page_worker_once(
             await session.commit()
             return 1
         target_url = task.original_url
+        fetch_intent = "profile" if job.entry_type == "profile" else "generic"
         ctx = CrawlToolContext(
             session_factory=session_factory,
             job_id=job.id,
@@ -47,7 +51,7 @@ async def run_crawler_v2_page_worker_once(
         if await _prefer_browser_for_task_domain(session_factory, task.job_id, target_url):
             direct_status = "skipped_by_domain_browser_preference"
             fallback_reason = "same_domain_previously_required_browser"
-            browser_snapshot = await fetch_page_browser(ctx, target_url)
+            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
             browser_status = browser_snapshot.status
             snapshot = browser_snapshot
             fetch_mode = "browser"
@@ -60,7 +64,7 @@ async def run_crawler_v2_page_worker_once(
             browser_status = None
             if _should_use_browser_fallback(direct_snapshot):
                 fallback_reason = _fallback_reason(direct_snapshot)
-                browser_snapshot = await fetch_page_browser(ctx, target_url)
+                browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
                 browser_status = browser_snapshot.status
                 snapshot = browser_snapshot
                 fetch_mode = "browser"
@@ -79,9 +83,9 @@ async def run_crawler_v2_page_worker_once(
                 fallback_reason=fallback_reason,
                 browser_status=browser_status,
             )
-            if snapshot.status == "succeeded":
+            if snapshot.status == "succeeded" and job.entry_type != "profile":
                 task.status = CrawlPageTaskStatus.SUCCEEDED.value
-            else:
+            elif snapshot.status != "succeeded":
                 _mark_page_failed(task, snapshot.error_message or "页面抓取失败")
             await session.commit()
         append_crawler_v2_debug_event(
@@ -99,14 +103,23 @@ async def run_crawler_v2_page_worker_once(
             },
         )
         if snapshot.status == "succeeded":
-            chunk_result = await _create_chunks_for_page_snapshot(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
-            append_crawler_v2_debug_event(
-                job.id,
-                worker_kind="page",
-                event_name="page_chunked",
-                work_item_id=task_id,
-                payload={"page_id": page_id, "target_url": target_url, "chunk_result": chunk_result},
-            )
+            if job.entry_type == "profile":
+                await _extract_profile_for_page_snapshot(
+                    session_factory,
+                    task_id=task_id,
+                    worker_id=worker_id,
+                    page_id=page_id,
+                    snapshot=snapshot,
+                )
+            else:
+                chunk_result = await _create_chunks_for_page_snapshot(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
+                append_crawler_v2_debug_event(
+                    job.id,
+                    worker_kind="page",
+                    event_name="page_chunked",
+                    work_item_id=task_id,
+                    payload={"page_id": page_id, "target_url": target_url, "chunk_result": chunk_result},
+                )
         return 1
     except Exception as exc:
         async with session_factory() as session:
@@ -121,8 +134,8 @@ async def fetch_page_direct(ctx: CrawlToolContext, url: str) -> PageSnapshot:
     return await crawl_page_with_http(ctx, url)
 
 
-async def fetch_page_browser(ctx: CrawlToolContext, url: str) -> PageSnapshot:
-    return await browser_investigate(ctx, url, goal="", intent="generic")
+async def fetch_page_browser(ctx: CrawlToolContext, url: str, *, intent: str = "generic") -> PageSnapshot:
+    return await browser_investigate(ctx, url, goal="", intent=intent)
 
 
 async def _prefer_browser_for_task_domain(
@@ -256,6 +269,202 @@ async def _record_page_and_state(
     state.last_error_message = snapshot.error_message
     return page.id
 
+
+async def _extract_profile_for_page_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    worker_id: str,
+    page_id: int | None,
+    snapshot: PageSnapshot,
+) -> None:
+    async with session_factory() as session:
+        task = await session.get(CrawlPageTask, task_id)
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
+            return
+        if not await ensure_job_active(session, task.job_id):
+            return
+        job = await session.get(CrawlJob, task.job_id)
+        if job is None:
+            return
+        llm_profile = await _resolve_llm_profile(session, job)
+        if llm_profile is None:
+            _mark_page_failed(task, "缺少可用的 LLM Profile")
+            await session.commit()
+            return
+        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
+        job_id = job.id
+        university = job.university
+        school = job.school
+        start_url = job.start_url
+        model_name = llm_profile.model_name
+        original_url = task.original_url
+
+    source_url = snapshot.url or original_url
+    append_crawler_v2_debug_event(
+        job_id,
+        worker_kind="page",
+        event_name="profile_extract_requested",
+        work_item_id=task_id,
+        payload={"source_url": source_url, "page_id": page_id, "title": snapshot.title, "page_text_length": len(snapshot.text or "")},
+    )
+    result = await invoke_v2_profile_extraction_agent(
+        llm_profile,
+        university=university,
+        school=school,
+        source_url=source_url,
+        title=snapshot.title,
+        page_text=snapshot.text,
+        page_html_excerpt=snapshot.html,
+        thinking_extra_body=thinking_extra_body,
+    )
+    for attempt in result.attempts:
+        append_crawler_v2_debug_event(
+            job_id,
+            worker_kind="page",
+            event_name="profile_extract_llm_response",
+            work_item_id=task_id,
+            payload={
+                "source_url": source_url,
+                "attempt_number": attempt.attempt_number,
+                "raw_model_text": attempt.raw_model_text,
+                "raw_payload": attempt.raw_payload,
+                "error": attempt.error,
+                "token_usage": dict(attempt.usage) if attempt.usage is not None else None,
+                "page_text_hash": result.page_text_hash,
+                "page_text_length": result.page_text_length,
+            },
+        )
+    if not await _page_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
+        append_crawler_v2_debug_event(
+            job_id,
+            worker_kind="page",
+            event_name="profile_extract_skipped_inactive",
+            work_item_id=task_id,
+            payload={"source_url": source_url},
+        )
+        return
+    if result.usage is not None:
+        await record_crawler_v2_token_usage(
+            session_factory,
+            job_id=job_id,
+            worker_kind=CrawlWorkerKind.PAGE,
+            work_item_id=task_id,
+            model_name=model_name,
+            input_tokens=result.usage.get("input_tokens") or 0,
+            output_tokens=result.usage.get("output_tokens") or 0,
+            cached_tokens=result.usage.get("cached_tokens") or 0,
+            raw_usage=dict(result.usage),
+        )
+    await _complete_profile_page_extraction(
+        session_factory,
+        task_id=task_id,
+        worker_id=worker_id,
+        source_url=source_url,
+        payload=result.payload,
+        university=university,
+        school=school,
+        start_url=start_url,
+    )
+
+
+async def _page_task_can_commit(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    worker_id: str,
+) -> bool:
+    async with session_factory() as session:
+        task = await session.get(CrawlPageTask, task_id)
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
+            return False
+        return await ensure_job_active(session, task.job_id)
+
+
+async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:
+    if job.llm_profile_id is not None:
+        return await session.get(LLMProfile, job.llm_profile_id)
+    return await session.scalar(
+        select(LLMProfile)
+        .where(LLMProfile.is_default.is_(True))
+        .order_by(LLMProfile.id.asc())
+        .limit(1)
+    )
+
+
+async def _complete_profile_page_extraction(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    worker_id: str,
+    source_url: str,
+    payload: dict[str, object],
+    university: str,
+    school: str,
+    start_url: str,
+) -> None:
+    async with session_factory() as session:
+        task = await session.get(CrawlPageTask, task_id)
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
+            return
+        if not await ensure_job_active(session, task.job_id):
+            return
+        candidate_payload = payload.get("candidate") if isinstance(payload, dict) else None
+        status = str(payload.get("status") or "") if isinstance(payload, dict) else ""
+        if status != "candidate" or not isinstance(candidate_payload, dict) or not str(candidate_payload.get("name") or "").strip():
+            task.status = CrawlPageTaskStatus.FAILED_TERMINAL.value
+            task.last_error = "详情页未识别到导师候选"
+            task.worker_id = None
+            task.claimed_at = None
+            task.lease_expires_at = None
+            await session.commit()
+            append_crawler_v2_debug_event(
+                task.job_id,
+                worker_kind="page",
+                event_name="profile_extract_no_candidate",
+                work_item_id=task_id,
+                payload={"source_url": source_url, "raw_payload": payload},
+            )
+            return
+        candidate_data = dict(candidate_payload)
+        candidate_data["university"] = candidate_data.get("university") or university
+        candidate_data["school"] = candidate_data.get("school") or school
+        candidate_data["profile_url"] = source_url
+        candidate_data["source_url"] = source_url
+        candidate_data["source_kind"] = "profile_page"
+        candidate_data["boundary_risk"] = bool(candidate_data.get("boundary_risk") or False)
+        job_id = task.job_id
+
+    ctx = CrawlToolContext(
+        job_id=job_id,
+        start_url=start_url,
+        university=university,
+        school=school,
+        session_factory=session_factory,
+        entry_type="profile",
+    )
+    save_result = await save_candidate_payloads_shared(
+        ctx,
+        [ProfessorCandidatePayload.model_validate(candidate_data)],
+    )
+    async with session_factory() as session:
+        task = await session.get(CrawlPageTask, task_id)
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
+            return
+        if not await ensure_job_active(session, task.job_id):
+            return
+        task.status = CrawlPageTaskStatus.SUCCEEDED.value
+        task.worker_id = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        await session.commit()
+    append_crawler_v2_debug_event(
+        job_id,
+        worker_kind="page",
+        event_name="profile_extract_completed",
+        work_item_id=task_id,
+        payload={"source_url": source_url, "raw_payload": payload, "save_result": {key: value for key, value in save_result.items() if key != "saved"}},
+    )
 
 async def _create_chunks_for_page_snapshot(
     session_factory: async_sessionmaker[AsyncSession],

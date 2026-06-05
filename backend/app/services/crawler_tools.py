@@ -542,6 +542,7 @@ class CrawlToolContext:
     page_snapshot_cache: OrderedDict[str, PageSnapshot] = field(default_factory=OrderedDict)
     known_listing_urls: set[str] = field(default_factory=set)
     thinking_extra_body: dict[str, object] | None = None
+    entry_type: str | None = None
 
     def mark_http_blocked(self, url: str) -> None:
         host = (urlparse(url).hostname or "").lower()
@@ -1874,7 +1875,13 @@ async def _save_normalized_candidate_payloads(
         if await _is_crawl_job_stopped(session, ctx.job_id):
             return CandidatePersistenceResult(saved=[])
 
-        known_listing_urls = await _known_listing_urls_for_job(session, job_id=ctx.job_id, start_url=ctx.start_url)
+        known_listing_urls: set[str] = set()
+        if ctx.entry_type != "profile":
+            known_listing_urls = await _known_listing_urls_for_job(
+                session,
+                job_id=ctx.job_id,
+                start_url=ctx.start_url,
+            )
         known_listing_urls.update(ctx.known_listing_urls)
 
         for payload in payloads:
