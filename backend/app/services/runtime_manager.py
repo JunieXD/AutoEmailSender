@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.backend_error_logging import write_backend_worker_error_log
 from app.core.config import get_settings
 from app.models import AppSetting
 from app.services.batch_draft_generation_runtime import (
@@ -192,8 +193,9 @@ class RuntimeManager:
                 processed = await worker(self._session_factory)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("%s 执行失败", worker_name)
+                write_backend_worker_error_log(worker_name=worker_name, exc=exc)
 
             if processed > 0:
                 if processed_jitter_seconds is None:

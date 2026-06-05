@@ -254,6 +254,35 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(worker_calls, 2)
         self.assertEqual(sleep_calls, [10])
+    async def test_loop_writes_backend_error_log_when_worker_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            from app.core.config import get_settings
+
+            get_settings.cache_clear()
+            session_factory = Mock()
+            manager = RuntimeManager(session_factory)
+
+            async def failing_worker(session_factory_arg: object) -> int:
+                self.assertIs(session_factory_arg, session_factory)
+                manager._stopped.set()
+                raise RuntimeError("crawler worker boom")
+
+            async def fake_wait_for(awaitable: object, timeout: float) -> object:
+                _ = timeout
+                return await awaitable
+
+            with patch.dict("os.environ", {"AUTO_EMAIL_SENDER_DATA_DIR": temp_dir}):
+                get_settings.cache_clear()
+                with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+                    await manager._loop("crawler-worker-1", 10, failing_worker)
+
+                log_path = Path(temp_dir) / "logs" / "backend-errors.log"
+                self.assertTrue(log_path.is_file())
+                log_text = log_path.read_text(encoding="utf-8")
+                self.assertIn("worker_name=crawler-worker-1", log_text)
+                self.assertIn("RuntimeError: crawler worker boom", log_text)
+
+            get_settings.cache_clear()
     async def test_loop_waits_random_jitter_after_processing_crawler_work(self) -> None:
         session_factory = Mock()
         manager = RuntimeManager(session_factory)
