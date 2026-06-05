@@ -258,6 +258,9 @@ const canDeleteCrawlJob = (job: CrawlJobSummaryDTO) =>
 const canDeleteBatchTask = (task: BatchTaskCardDTO) =>
   task.status === "stopped" || task.status === "completed" || task.status === "expired";
 
+const canOpenBatchResend = (task: BatchTaskCardDTO, view: TaskListView) =>
+  view === "current" && ["expired", "stopped", "completed"].includes(task.status);
+
 const canDeleteMatchJob = (job: MatchAnalysisJobDTO) =>
   job.status === "completed" ||
   job.status === "partial_failed" ||
@@ -645,7 +648,8 @@ const getBatchReviewDraft = (thread: WorkspaceThreadDTO) => {
 };
 
 export const TasksPage = () => {
-  const { selectedIdentityId, selectedLlmProfileId } = useSelectionContext();
+  const navigate = useNavigate();
+  const { selectedIdentityId, selectedLlmProfileId, setSelectedIdentityId } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const hasTaskSelection = selectedIdentityId !== null;
@@ -2905,6 +2909,16 @@ const selectedCrawlJobCanReview =
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
+                {!batchDraftReviewOpen && canOpenBatchResend(selectedBatchTask, activeTaskListView) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenBatchResend(selectedBatchTask)}
+                    className="ui-btn-primary"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    重新发起未成功项
+                  </button>
+                ) : null}
                 {batchDraftReviewOpen ? (
                   <button
                     type="button"
