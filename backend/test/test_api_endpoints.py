@@ -6514,6 +6514,139 @@ class ApiEndpointTests(unittest.TestCase):
             repaired_created_at = repaired_created_at.replace(tzinfo=UTC)
         self.assertEqual(repaired_created_at, reply_received_at)
 
+    def test_batch_task_resend_context_selects_unsuccessful_items(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_ids = [
+            self._create_professor(email="expired-resend@example.edu"),
+            self._create_professor(email="stopped-resend@example.edu"),
+            self._create_professor(email="failed-resend@example.edu"),
+            self._create_professor(email="sent-resend@example.edu"),
+            self._create_professor(email="removed-resend@example.edu"),
+        ]
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=None,
+        )
+        rows = [
+            (professor_ids[0], "canceled", "schedule_expired"),
+            (professor_ids[1], "canceled", "batch_stopped"),
+            (professor_ids[2], "send_failed", None),
+            (professor_ids[3], "sent", None),
+            (professor_ids[4], "canceled", "user_removed"),
+        ]
+        task_ids: list[int] = []
+        for professor_id, task_status, cancellation_reason in rows:
+            task_ids.append(
+                self._insert_email_task_with_material(
+                    identity_id=identity_id,
+                    llm_id=llm_id,
+                    professor_id=professor_id,
+                    status=task_status,
+                    primary_material_id=None,
+                    batch_task_id=batch_task_id,
+                    source="batch",
+                    outreach_generation_mode="llm",
+                ),
+            )
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    """
+                    UPDATE email_tasks
+                    SET cancellation_reason = ?,
+                        outreach_template_subject = ?,
+                        outreach_template_body_text = ?,
+                        outreach_template_body_html = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        cancellation_reason,
+                        "原主题 {{name}}",
+                        "原正文 {{sender_name}}",
+                        "<p>原正文 {{sender_name}}</p>",
+                        task_ids[-1],
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["task"]["identity_id"], identity_id)
+        self.assertEqual(payload["defaults"]["identity_id"], identity_id)
+        self.assertEqual(payload["defaults"]["outreach_template_subject"], "原主题 {{name}}")
+        self.assertNotIn("llm_profile_id", payload["defaults"])
+        self.assertNotIn("scheduled_dates", payload["defaults"])
+        selectable_items = [item for item in payload["items"] if item["selectable"]]
+        self.assertEqual([item["professor_id"] for item in selectable_items], professor_ids[:3])
+        self.assertEqual([item["reason_label"] for item in selectable_items], ["发送窗口已过期", "任务中止后未发送", "发送失败"])
+        self.assertTrue(all(item["default_selected"] for item in selectable_items))
+        self.assertEqual(payload["summary"]["candidate_count"], 3)
+        self.assertEqual(payload["summary"]["default_selected_count"], 3)
+    def test_batch_task_resend_context_filters_deleted_material_defaults(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        primary_id = self._upload_material(identity_id, filename="resume.txt", content=b"resume", material_type="resume")
+        attachment_id = self._upload_material(identity_id, filename="paper.pdf", content=b"paper", material_type="publication")
+        professor_id = self._create_professor(email="material-resend@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=primary_id,
+            selected_material_ids=[attachment_id, 999999],
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="canceled",
+            primary_material_id=primary_id,
+            batch_task_id=batch_task_id,
+            source="batch",
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET cancellation_reason = ? WHERE batch_task_id = ?", ("schedule_expired", batch_task_id))
+            connection.execute("DELETE FROM identity_materials WHERE id = ?", (primary_id,))
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertIsNone(payload["defaults"]["primary_material_id"])
+        self.assertEqual(payload["defaults"]["selected_material_ids"], [attachment_id])
+        self.assertTrue(any("材料" in warning for warning in payload["warnings"]))
+
+    def test_batch_task_resend_context_rejects_missing_identity(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=None,
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE batch_tasks SET identity_id = ? WHERE id = ?", (999999, batch_task_id))
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "原任务身份已不存在，无法直接重新发起。")
     def test_batch_task_card_hides_delivery_mode_snapshot(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()

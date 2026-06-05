@@ -2,6 +2,7 @@ import { apiFetch } from '@/lib/api/client';
 import type {
   BatchTaskCardDTO,
   BatchTaskItemDTO,
+  BatchTaskResendContextDTO,
   CreateBatchTaskRequestDTO,
   EmailTaskApprovalPayloadDTO,
   TaskListView,
@@ -31,6 +32,9 @@ export const createBatchTask = (payload: CreateBatchTaskRequestDTO) =>
 
 export const listBatchTaskItems = (taskId: number) =>
   apiFetch<BatchTaskItemDTO[]>(`/api/batch-tasks/${taskId}/items`);
+
+export const getBatchTaskResendContext = (taskId: number) =>
+  apiFetch<BatchTaskResendContextDTO>(`/api/batch-tasks/${taskId}/resend-context`);
 
 export const getBatchTaskItemThread = (taskId: number, itemId: number) =>
   apiFetch<WorkspaceThreadDTO>(`/api/batch-tasks/${taskId}/items/${itemId}/thread`);

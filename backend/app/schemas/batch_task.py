@@ -76,3 +76,43 @@ class BatchTaskItemRead(ApiSchema):
 class BatchTaskActionResponse(ApiSchema):
     ok: bool
     task: BatchTaskCardRead
+
+class BatchTaskResendContextTaskRead(ApiSchema):
+    id: int
+    name: str
+    identity_id: int
+    schedule_type: str
+
+class BatchTaskResendDefaultsRead(ApiSchema):
+    identity_id: int
+    outreach_generation_mode: str | None
+    outreach_template_subject: str | None
+    outreach_template_body_text: str | None
+    outreach_template_body_html: str | None
+    primary_material_id: int | None
+    selected_material_ids: list[int]
+
+class BatchTaskResendItemRead(ApiSchema):
+    email_task_id: int
+    professor_id: int | None
+    professor_name: str
+    professor_email: str | None
+    status: str
+    cancellation_reason: str | None
+    reason_label: str
+    default_selected: bool
+    selectable: bool
+    unavailable_reason: str | None
+    updated_at: datetime
+
+class BatchTaskResendSummaryRead(ApiSchema):
+    candidate_count: int
+    default_selected_count: int
+    unavailable_count: int
+
+class BatchTaskResendContextRead(ApiSchema):
+    task: BatchTaskResendContextTaskRead
+    defaults: BatchTaskResendDefaultsRead
+    items: list[BatchTaskResendItemRead]
+    summary: BatchTaskResendSummaryRead
+    warnings: list[str]

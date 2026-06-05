@@ -9,6 +9,10 @@ import { TaskDateSelector } from '@/components/molecules/TaskDateSelector';
 import { useNotification } from '@/context/NotificationContext';
 import { safeRecordUserAction } from '@/lib/diagnosticUserActions';
 import { createBatchTask } from '@/lib/api/batchTasksApi';
+import {
+  clearBatchResendPrefillContext,
+  readBatchResendPrefillContext,
+} from '@/features/batch-tasks/client/batchTaskResendPrefill';
 import { listProfessors } from '@/lib/api/professorsApi';
 import { getPageItems, getTotalPages, PAGE_SIZE } from '@/lib/pagination';
 import { textToEmailHtml } from '@/lib/richEmail';
@@ -60,6 +64,7 @@ export const CreateTaskPage = () => {
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { selectedIdentityId, selectedLlmProfileId, selectedIdentity } = useSelectionContext();
   const [selectedProfessorIds] = useState<number[]>(readSelectedProfessorIds());
+  const [resendPrefillContext] = useState(() => readBatchResendPrefillContext());
   const [professors, setProfessors] = useState<ProfessorDashboardItemDTO[]>([]);
   const [targetMentorsPage, setTargetMentorsPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -82,10 +87,18 @@ export const CreateTaskPage = () => {
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
+  const isResendPrefillActive =
+    resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
   const professorsRequestKey =
     selectedIdentityId && selectedProfessorIds.length > 0
       ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
       : null;
+
+  useEffect(() => {
+    return () => {
+      clearBatchResendPrefillContext();
+    };
+  }, []);
 
   useEffect(() => {
     const loadProfessors = async () => {
@@ -169,7 +182,32 @@ export const CreateTaskPage = () => {
     setTemplateSubject(selectedIdentity.outreach_template_subject ?? '');
     setTemplateBodyText(nextTemplateBodyText);
     setTemplateBodyHtml(nextTemplateBodyHtml);
-  }, [selectedIdentity]);
+
+    if (isResendPrefillActive && resendPrefillContext) {
+      setTaskName('重新发起 - ' + resendPrefillContext.sourceTaskName);
+      const mode = resendPrefillContext.defaults.outreach_generation_mode ?? selectedIdentity.outreach_generation_mode ?? 'llm';
+      const subjectValue = resendPrefillContext.defaults.outreach_template_subject ?? '';
+      const bodyTextValue = resendPrefillContext.defaults.outreach_template_body_text ?? '';
+      const bodyHtmlValue = resendPrefillContext.defaults.outreach_template_body_html ?? (bodyTextValue ? textToEmailHtml(bodyTextValue) : '');
+      const materialIds = new Set(selectedIdentity.materials.map((material) => material.id));
+      setTaskMode(mode);
+      setSubject(subjectValue);
+      setBody(bodyTextValue);
+      setBodyHtml(bodyHtmlValue);
+      setTemplateSubject(subjectValue);
+      setTemplateBodyText(bodyTextValue);
+      setTemplateBodyHtml(bodyHtmlValue);
+      setPrimaryMaterialId(
+        resendPrefillContext.defaults.primary_material_id !== null &&
+          materialIds.has(resendPrefillContext.defaults.primary_material_id)
+          ? resendPrefillContext.defaults.primary_material_id
+          : null,
+      );
+      setSelectedMaterialIds(resendPrefillContext.defaults.selected_material_ids.filter((id) => materialIds.has(id)));
+    } else if (resendPrefillContext) {
+      clearBatchResendPrefillContext();
+    }
+  }, [isResendPrefillActive, resendPrefillContext, selectedIdentity]);
 
   const primaryMaterialOptions = useMemo(
     () => (selectedIdentity ? selectedIdentity.materials.filter(isPrimaryMaterialCandidate) : []),
@@ -297,6 +335,7 @@ export const CreateTaskPage = () => {
         data: diagnosticData,
       });
       window.sessionStorage.removeItem(SESSION_KEY);
+      clearBatchResendPrefillContext();
       navigate('/tasks');
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : '创建任务失败';
@@ -349,6 +388,14 @@ export const CreateTaskPage = () => {
           <p className="mt-2 text-sm text-stone-600">
             身份：{selectedIdentity.name} · 导师：{selectedProfessorIds.length} 位
           </p>
+          {isResendPrefillActive && resendPrefillContext ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位老师、原身份、模板和材料。模型使用当前选择，发送时间需要重新设置；提交前可自行修改。
+              {resendPrefillContext.warnings.map((warning) => (
+                <span key={warning} className="mt-1 block text-xs text-amber-800">{warning}</span>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         {loading ? (

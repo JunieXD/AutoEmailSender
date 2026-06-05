@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Activity,
   Bot,
@@ -31,6 +31,7 @@ import {
   deleteBatchTask,
   deleteBatchTaskItem,
   getBatchTaskItemThread,
+  getBatchTaskResendContext,
   listBatchTasks,
   listBatchTaskItems,
   pauseBatchTask,
@@ -40,6 +41,11 @@ import {
   resumeBatchTask,
   stopBatchTask,
 } from "@/lib/api/batchTasksApi";
+import {
+  writeBatchResendPrefillContext,
+  writeSelectedProfessorIdsForBatchTask,
+} from "@/features/batch-tasks/client/batchTaskResendPrefill";
+import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
 import {
   cancelMatchAnalysisJob,
   deleteMatchAnalysisJob,
@@ -88,6 +94,7 @@ import {
   PROFESSOR_STATUS_LABELS,
   type BatchTaskCardDTO,
   type BatchTaskItemDTO,
+  type BatchTaskResendContextDTO,
   type CrawlCandidateDTO,
   type CrawlCandidateReviewStatusDTO,
   type CrawlJobEventDTO,
@@ -250,6 +257,9 @@ const canDeleteCrawlJob = (job: CrawlJobSummaryDTO) =>
 
 const canDeleteBatchTask = (task: BatchTaskCardDTO) =>
   task.status === "stopped" || task.status === "completed" || task.status === "expired";
+
+const canOpenBatchResend = (task: BatchTaskCardDTO, view: TaskListView) =>
+  view === "current" && ["expired", "stopped", "completed"].includes(task.status);
 
 const canDeleteMatchJob = (job: MatchAnalysisJobDTO) =>
   job.status === "completed" ||
@@ -638,7 +648,8 @@ const getBatchReviewDraft = (thread: WorkspaceThreadDTO) => {
 };
 
 export const TasksPage = () => {
-  const { selectedIdentityId, selectedLlmProfileId } = useSelectionContext();
+  const navigate = useNavigate();
+  const { selectedIdentityId, selectedLlmProfileId, setSelectedIdentityId } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const hasTaskSelection = selectedIdentityId !== null;
@@ -658,6 +669,10 @@ export const TasksPage = () => {
     BatchTaskItemDTO[]
   >([]);
   const [batchTaskDetailsLoading, setBatchTaskDetailsLoading] = useState(false);
+  const [resendContext, setResendContext] = useState<BatchTaskResendContextDTO | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendDialogOpen, setResendDialogOpen] = useState(false);
+  const [selectedResendProfessorIds, setSelectedResendProfessorIds] = useState<number[]>([]);
   const [batchReviewItemId, setBatchReviewItemId] = useState<number | null>(null);
   const [batchReviewThread, setBatchReviewThread] =
     useState<WorkspaceThreadDTO | null>(null);
@@ -2204,6 +2219,72 @@ const selectedCrawlJobCanReview =
   const crawlJobDetailsLayer = useDismissableLayerClick(closeCrawlJobDetails);
   const candidateDetailLayer = useDismissableLayerClick(closeSelectedCandidateDetail);
 
+  const handleOpenBatchResend = async (task: BatchTaskCardDTO) => {
+    setResendDialogOpen(true);
+    setResendLoading(true);
+    setSelectedResendProfessorIds([]);
+    try {
+      const context = await getBatchTaskResendContext(task.id);
+      setResendContext(context);
+      setSelectedResendProfessorIds(
+        context.items
+          .filter((item) => item.selectable && item.default_selected && item.professor_id !== null)
+          .map((item) => item.professor_id as number),
+      );
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "请稍后重试";
+      notifyError("加载可重新发起项失败", message);
+      setResendDialogOpen(false);
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const handleToggleResendProfessor = (professorId: number) => {
+    setSelectedResendProfessorIds((previous) =>
+      previous.includes(professorId)
+        ? previous.filter((item) => item !== professorId)
+        : [...previous, professorId],
+    );
+  };
+
+  const handleSelectAllResendProfessors = () => {
+    if (!resendContext) {
+      return;
+    }
+    setSelectedResendProfessorIds(
+      resendContext.items
+        .filter((item) => item.selectable && item.professor_id !== null)
+        .map((item) => item.professor_id as number),
+    );
+  };
+
+  const handleSubmitBatchResend = async () => {
+    if (!resendContext || selectedResendProfessorIds.length === 0) {
+      return;
+    }
+    const confirmed = await confirm({
+      title: "确认重新发起这批老师？",
+      description: "将自动切换到原任务身份，并带入原任务使用的发信模式、模板和材料。模型使用当前已选择的模型，发送日期和时间窗口需要重新设置。进入创建页后仍可修改这些内容。",
+      confirmLabel: "去创建新任务",
+      cancelLabel: "继续选择",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+    setSelectedIdentityId(resendContext.task.identity_id);
+    writeSelectedProfessorIdsForBatchTask(selectedResendProfessorIds);
+    writeBatchResendPrefillContext({
+      sourceTaskId: resendContext.task.id,
+      sourceTaskName: resendContext.task.name,
+      identityId: resendContext.task.identity_id,
+      professorIds: selectedResendProfessorIds,
+      defaults: resendContext.defaults,
+      warnings: resendContext.warnings,
+    });
+    navigate("/create-task");
+  };
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({
       title: "删除任务",
@@ -2828,6 +2909,16 @@ const selectedCrawlJobCanReview =
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
+                {!batchDraftReviewOpen && canOpenBatchResend(selectedBatchTask, activeTaskListView) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenBatchResend(selectedBatchTask)}
+                    className="ui-btn-primary"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    重新发起未成功项
+                  </button>
+                ) : null}
                 {batchDraftReviewOpen ? (
                   <button
                     type="button"
@@ -3941,7 +4032,18 @@ const selectedCrawlJobCanReview =
           </section>
         </div>
       ) : null}
-      {selectedCandidateDetail ? (
+      {resendDialogOpen ? (
+        <BatchTaskResendDialog
+          context={resendContext}
+          loading={resendLoading}
+          selectedProfessorIds={selectedResendProfessorIds}
+          onSelectAll={handleSelectAllResendProfessors}
+          onClear={() => setSelectedResendProfessorIds([])}
+          onToggleProfessor={handleToggleResendProfessor}
+          onClose={() => setResendDialogOpen(false)}
+          onSubmit={() => void handleSubmitBatchResend()}
+        />
+      ) : null}      {selectedCandidateDetail ? (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/35 p-4"
           onClick={candidateDetailLayer.onBackdropClick}

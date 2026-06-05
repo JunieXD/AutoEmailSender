@@ -605,6 +605,59 @@ export interface BatchTaskItemDTO {
   next_action: BatchTaskItemNextAction | null;
 }
 
+export interface BatchTaskResendContextTaskDTO {
+  id: number;
+  name: string;
+  identity_id: number;
+  schedule_type: 'immediate' | 'scheduled';
+}
+
+export interface BatchTaskResendDefaultsDTO {
+  identity_id: number;
+  outreach_generation_mode: OutreachGenerationMode | null;
+  outreach_template_subject: string | null;
+  outreach_template_body_text: string | null;
+  outreach_template_body_html: string | null;
+  primary_material_id: number | null;
+  selected_material_ids: number[];
+}
+
+export interface BatchTaskResendItemDTO {
+  email_task_id: number;
+  professor_id: number | null;
+  professor_name: string;
+  professor_email: string | null;
+  status: WorkspaceTaskStatus;
+  cancellation_reason: string | null;
+  reason_label: string;
+  default_selected: boolean;
+  selectable: boolean;
+  unavailable_reason: string | null;
+  updated_at: string;
+}
+
+export interface BatchTaskResendSummaryDTO {
+  candidate_count: number;
+  default_selected_count: number;
+  unavailable_count: number;
+}
+
+export interface BatchTaskResendContextDTO {
+  task: BatchTaskResendContextTaskDTO;
+  defaults: BatchTaskResendDefaultsDTO;
+  items: BatchTaskResendItemDTO[];
+  summary: BatchTaskResendSummaryDTO;
+  warnings: string[];
+}
+
+export interface BatchTaskResendPrefillContextDTO {
+  sourceTaskId: number;
+  sourceTaskName: string;
+  identityId: number;
+  professorIds: number[];
+  defaults: BatchTaskResendDefaultsDTO;
+  warnings: string[];
+}
 export interface WorkspaceProfessorDTO {
   id: number;
   name: string;
