@@ -67,6 +67,47 @@ class MigrationRuntimeTests(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(len(metadata_files), 1)
 
+    def test_current_schema_does_not_raise_minimum_supported_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "auto_email_sender.db"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
+                connection.execute("INSERT INTO alembic_version (version_num) VALUES ('d6e4b8c2a1f0')")
+                connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                connection.executemany(
+                    "INSERT INTO app_metadata (key, value) VALUES (?, ?)",
+                    [
+                        ("minimum_supported_app_version", "2.3.0"),
+                        ("schema_updated_by_app_version", "2.3.0"),
+                        ("schema_revision", "d6e4b8c2a1f0"),
+                    ],
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with patch.dict(os.environ, {
+                "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
+                "AUTO_EMAIL_SENDER_APP_VERSION": "2.4.0",
+            }):
+                from app.core.config import get_settings
+                import app.core.migrations as migrations
+
+                get_settings.cache_clear()
+                with patch.object(migrations.command, "upgrade"):
+                    migrations.run_migrations_to_head()
+
+            connection = sqlite3.connect(db_path)
+            try:
+                metadata = read_app_metadata(connection)
+            finally:
+                connection.close()
+
+        self.assertEqual(metadata["minimum_supported_app_version"], "2.3.0")
+        self.assertEqual(metadata["schema_updated_by_app_version"], "2.3.0")
+
     def test_backup_failure_prevents_alembic_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

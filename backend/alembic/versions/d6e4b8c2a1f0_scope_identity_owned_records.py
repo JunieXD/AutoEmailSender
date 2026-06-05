@@ -22,6 +22,12 @@ WORKSPACE_TASK_WHERE = "source = 'manual' AND batch_task_id IS NULL AND parent_t
 
 
 def upgrade() -> None:
+    op.create_table(
+        "app_metadata",
+        sa.Column("key", sa.Text(), primary_key=True),
+        sa.Column("value", sa.Text(), nullable=False),
+    )
+
     connection = op.get_bind()
     duplicate_rows = connection.execute(
         sa.text(
@@ -80,6 +86,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_table("app_metadata")
+
     op.drop_index("uq_email_tasks_workspace_task", table_name="email_tasks")
     op.create_index(
         "uq_email_tasks_workspace_task",

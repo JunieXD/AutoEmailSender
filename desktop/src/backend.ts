@@ -6,6 +6,7 @@ import {
 import { existsSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { app } from "electron";
 import { promisify } from "node:util";
 import type {
   BackendController,
@@ -53,6 +54,7 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
   return {
     ...input.baseEnv,
     AUTO_EMAIL_SENDER_DATA_DIR: input.userDataPath,
+    AUTO_EMAIL_SENDER_APP_VERSION: input.appVersion,
     ENABLE_BACKGROUND_WORKERS: "true",
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
   };
@@ -92,6 +94,7 @@ export async function startBackend(options: {
       resourcesPath: options.resourcesPath,
       repoRoot: options.repoRoot,
       userDataPath: options.userDataPath,
+      appVersion: app.getVersion(),
     }),
     repoRoot: options.repoRoot,
   });

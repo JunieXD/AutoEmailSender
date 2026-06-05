@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -8,8 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 CURRENT_SCHEMA_VERSION = 1
-MINIMUM_SUPPORTED_APP_VERSION = "2.3.0"
-CURRENT_APP_VERSION = "2.3.0"
+APP_VERSION_ENV_VAR = "AUTO_EMAIL_SENDER_APP_VERSION"
 DATABASE_REQUIRES_NEWER_APP = "DATABASE_REQUIRES_NEWER_APP"
 
 @dataclass(slots=True)
@@ -99,6 +100,21 @@ def check_database_compatibility(
             backup_directory=backup_directory or Path("backups") / "schema",
         )
 
+def get_current_app_version() -> str:
+    env_version = os.environ.get(APP_VERSION_ENV_VAR, "").strip()
+    if env_version:
+        return env_version.lstrip("vV")
+    package_json = Path(__file__).resolve().parents[3] / "desktop" / "package.json"
+    try:
+        raw = json.loads(package_json.read_text(encoding="utf-8"))
+        version = str(raw.get("version", "")).strip()
+    except (OSError, json.JSONDecodeError):
+        version = ""
+    return version.lstrip("vV") or "0.0.0"
+
+def get_minimum_supported_app_version(schema_revision: str) -> str:
+    return get_current_app_version()
+
 def update_app_metadata(
     connection: sqlite3.Connection,
     *,
@@ -110,7 +126,7 @@ def update_app_metadata(
         "schema_version": str(CURRENT_SCHEMA_VERSION),
         "schema_revision": schema_revision,
         "schema_updated_by_app_version": app_version,
-        "minimum_supported_app_version": MINIMUM_SUPPORTED_APP_VERSION,
+        "minimum_supported_app_version": get_minimum_supported_app_version(schema_revision),
         "schema_updated_at": datetime.now(UTC).isoformat(),
     }
     connection.executemany(

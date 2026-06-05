@@ -46,6 +46,37 @@ class SchemaBackupTests(unittest.TestCase):
             self.assertEqual(metadata["target_schema_revision"], "d6e4b8c2a1f0")
             self.assertIn("created_at", metadata)
 
+
+    def test_creates_consistent_backup_while_source_connection_is_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "auto_email_sender.db"
+            backup_dir = root / "backups" / "schema"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+                connection.execute("INSERT INTO sample (id, name) VALUES (1, 'committed')")
+                connection.commit()
+                connection.execute("INSERT INTO sample (id, name) VALUES (2, 'uncommitted')")
+
+                result = create_schema_backup(
+                    database_path=db_path,
+                    backup_dir=backup_dir,
+                    app_version="2.3.0",
+                    source_schema_revision="04d66ff4c25b",
+                    target_schema_revision="d6e4b8c2a1f0",
+                )
+            finally:
+                connection.close()
+
+            copied = sqlite3.connect(result.database_backup_path)
+            try:
+                rows = copied.execute("SELECT id, name FROM sample ORDER BY id").fetchall()
+            finally:
+                copied.close()
+
+            self.assertEqual(rows, [(1, "committed")])
+
     def test_prunes_schema_backups_to_recent_five_pairs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             backup_dir = Path(temp_dir) / "backups" / "schema"

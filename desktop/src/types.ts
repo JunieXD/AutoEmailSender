@@ -10,6 +10,7 @@ export type BackendEnvInput = {
   resourcesPath: string;
   repoRoot: string;
   userDataPath: string;
+  appVersion: string;
 };
 
 export type BackendController = {

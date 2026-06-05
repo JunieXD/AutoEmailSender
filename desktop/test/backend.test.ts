@@ -118,6 +118,7 @@ describe("desktop backend helpers", () => {
       repoRoot: "C:\\Repo",
       resourcesPath: "C:\\App\\resources",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      appVersion: "2.4.5",
     });
 
     expect(env.PATH).toBe("C:\\Windows");
@@ -125,6 +126,7 @@ describe("desktop backend helpers", () => {
       "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
     );
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
+    expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe("C:\\App\\resources\\ms-playwright");
   });
 
@@ -135,6 +137,7 @@ describe("desktop backend helpers", () => {
       resourcesPath: "C:\\App\\resources",
       repoRoot: "C:\\Repo",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      appVersion: "2.4.5",
     });
 
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe("C:\\Repo\\backend\\ms-playwright");

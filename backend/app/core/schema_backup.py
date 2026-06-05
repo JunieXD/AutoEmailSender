@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import shutil
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,7 +27,15 @@ def create_schema_backup(
     backup_path = _unique_backup_path(backup_dir, app_version, timestamp)
     metadata_path = backup_path.with_suffix(".json")
 
-    shutil.copy2(database_path, backup_path)
+    source = sqlite3.connect(database_path)
+    try:
+        destination = sqlite3.connect(backup_path)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+    finally:
+        source.close()
     metadata = {
         "created_at": created_at.isoformat(),
         "app_version": app_version,

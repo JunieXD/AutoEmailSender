@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -7,16 +8,35 @@ from pathlib import Path
 
 from app.core.schema_metadata import (
     CURRENT_SCHEMA_VERSION,
-    MINIMUM_SUPPORTED_APP_VERSION,
     DatabaseRequiresNewerAppError,
     check_database_compatibility,
     compare_versions,
+    get_current_app_version,
     get_sqlite_database_path,
     read_app_metadata,
     update_app_metadata,
 )
 
 class SchemaMetadataTests(unittest.TestCase):
+    def test_current_app_version_comes_from_environment(self) -> None:
+        previous = os.environ.get("AUTO_EMAIL_SENDER_APP_VERSION")
+        os.environ["AUTO_EMAIL_SENDER_APP_VERSION"] = "9.8.7"
+        try:
+            self.assertEqual(get_current_app_version(), "9.8.7")
+        finally:
+            if previous is None:
+                os.environ.pop("AUTO_EMAIL_SENDER_APP_VERSION", None)
+            else:
+                os.environ["AUTO_EMAIL_SENDER_APP_VERSION"] = previous
+
+    def test_current_app_version_falls_back_to_desktop_package_json(self) -> None:
+        previous = os.environ.pop("AUTO_EMAIL_SENDER_APP_VERSION", None)
+        try:
+            self.assertEqual(get_current_app_version(), "2.3.0")
+        finally:
+            if previous is not None:
+                os.environ["AUTO_EMAIL_SENDER_APP_VERSION"] = previous
+
     def test_resolves_sqlite_database_path_from_async_url(self) -> None:
         path = get_sqlite_database_path("sqlite+aiosqlite:///C:/data/auto_email_sender.db")
 
@@ -51,7 +71,7 @@ class SchemaMetadataTests(unittest.TestCase):
         self.assertEqual(metadata["schema_version"], str(CURRENT_SCHEMA_VERSION))
         self.assertEqual(metadata["schema_revision"], "d6e4b8c2a1f0")
         self.assertEqual(metadata["schema_updated_by_app_version"], "2.3.0")
-        self.assertEqual(metadata["minimum_supported_app_version"], MINIMUM_SUPPORTED_APP_VERSION)
+        self.assertEqual(metadata["minimum_supported_app_version"], "2.3.0")
         self.assertIn("schema_updated_at", metadata)
 
     def test_allows_missing_metadata_for_legacy_database(self) -> None:
