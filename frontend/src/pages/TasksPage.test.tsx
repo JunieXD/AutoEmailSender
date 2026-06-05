@@ -25,6 +25,7 @@ import {
 const apiMocks = vi.hoisted(() => ({
   listBatchTasks: vi.fn(),
   listBatchTaskItems: vi.fn(),
+  getBatchTaskResendContext: vi.fn(),
   pauseBatchTask: vi.fn(),
   resumeBatchTask: vi.fn(),
   stopBatchTask: vi.fn(),
@@ -68,11 +69,21 @@ const notificationMocks = vi.hoisted(() => ({
 }));
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const navigateMock = vi.hoisted(() => vi.fn());
 const selectionMock = vi.hoisted(() => ({
   selectedIdentityId: 1 as number | null,
   selectedLlmProfileId: 2 as number | null,
+  setSelectedIdentityId: vi.fn(),
+  setSelectedLlmProfileId: vi.fn(),
 }));
 
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionMock,
 }));
@@ -91,6 +102,7 @@ vi.mock("@/lib/useConfirmDialog", () => ({
 vi.mock("@/lib/api/batchTasksApi", () => ({
   listBatchTasks: apiMocks.listBatchTasks,
   listBatchTaskItems: apiMocks.listBatchTaskItems,
+  getBatchTaskResendContext: apiMocks.getBatchTaskResendContext,
   pauseBatchTask: apiMocks.pauseBatchTask,
   resumeBatchTask: apiMocks.resumeBatchTask,
   stopBatchTask: apiMocks.stopBatchTask,
