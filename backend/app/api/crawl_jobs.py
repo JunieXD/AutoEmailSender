@@ -277,15 +277,6 @@ async def approve_crawl_candidates(
     if not candidates:
         raise HTTPException(status_code=400, detail="未找到可审核的候选导师")
 
-    invalid_email_candidate_ids = [
-        candidate.id
-        for candidate in candidates
-        if (email := normalize_professor_email(candidate.email)) is None
-        or not is_valid_professor_email(email)
-    ]
-    if invalid_email_candidate_ids:
-        raise HTTPException(status_code=400, detail="候选导师缺少有效邮箱，无法导入")
-
     inserted_count = 0
     updated_count = 0
     skipped_count = 0
@@ -293,6 +284,9 @@ async def approve_crawl_candidates(
 
     for candidate in candidates:
         email = normalize_professor_email(candidate.email)
+        if email is None or not is_valid_professor_email(email):
+            skipped_count += 1
+            continue
 
         professor = await session.scalar(select(Professor).where(Professor.email == email))
         if professor is None:
