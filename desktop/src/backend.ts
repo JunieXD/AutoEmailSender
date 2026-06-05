@@ -13,6 +13,7 @@ import type {
   BackendExit,
   BackendExitHandler,
   BackendPathInput,
+  BackendDatabaseError,
   BackendStartupPhase,
   BackendStartupStatus,
   BackendStatus,
@@ -293,6 +294,7 @@ export async function waitForStartupStatus(
         message: "系统准备失败",
         elapsedSeconds: status.elapsed_seconds,
         detail: status.error ?? status.message,
+        databaseError: mapDatabaseError(status.error_detail),
       };
       options.onStatus(errorStatus);
       throw new Error(errorStatus.message);
@@ -328,6 +330,21 @@ export async function waitForStartupStatus(
   throw new Error(timeoutStatus.message);
 }
 
+function mapDatabaseError(
+  detail: BackendStartupStatus["error_detail"],
+): BackendDatabaseError | undefined {
+  if (!detail || detail.code !== "DATABASE_REQUIRES_NEWER_APP") {
+    return undefined;
+  }
+  return {
+    code: detail.code,
+    message: detail.message,
+    currentAppVersion: detail.current_app_version,
+    minimumSupportedAppVersion: detail.minimum_supported_app_version,
+    backupDirectory: detail.backup_directory,
+    suggestedActions: detail.suggested_actions,
+  };
+}
 function isStartupPhase(
   phase: BackendStartupStatus["phase"],
 ): phase is Exclude<BackendStartupPhase, "ready" | "error"> {

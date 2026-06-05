@@ -1,4 +1,4 @@
-﻿export type BackendPathInput = {
+export type BackendPathInput = {
   isPackaged: boolean;
   resourcesPath: string;
   repoRoot: string;
@@ -34,12 +34,31 @@ export type BackendStartupPhase =
   | "ready"
   | "error";
 
+export type DatabaseRequiresNewerAppDetail = {
+  code: "DATABASE_REQUIRES_NEWER_APP";
+  message: string;
+  current_app_version: string;
+  minimum_supported_app_version: string;
+  backup_directory: string;
+  suggested_actions: string[];
+};
+
+export type BackendDatabaseError = {
+  code: "DATABASE_REQUIRES_NEWER_APP";
+  message: string;
+  currentAppVersion: string;
+  minimumSupportedAppVersion: string;
+  backupDirectory: string;
+  suggestedActions: string[];
+};
+
 export type BackendStartupStatus = {
   state: "starting" | "ready" | "error";
   phase: BackendStartupPhase;
   message: string;
   elapsed_seconds: number;
   error: string | null;
+  error_detail?: DatabaseRequiresNewerAppDetail | null;
 };
 
 export type BackendStatus =
@@ -65,6 +84,7 @@ export type BackendStatus =
       phase: "error";
       elapsedSeconds: number;
       detail?: string;
+      databaseError?: BackendDatabaseError;
     };
 
 export type UpdateDownloadMode = "differential" | "full";

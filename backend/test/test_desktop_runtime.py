@@ -199,6 +199,36 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(data["error"], "migration failed")
         self.assertEqual(ready_response.status_code, 500)
 
+    def test_startup_status_reports_database_requires_newer_app_detail(self) -> None:
+        os.environ["ENABLE_BACKGROUND_WORKERS"] = "1"
+
+        from app.core.config import get_settings
+        from app.core.schema_metadata import DatabaseRequiresNewerAppError
+        import main as main_module
+
+        get_settings.cache_clear()
+        backup_dir = Path(self.temp_dir.name) / "AutoEmailSender" / "backups" / "schema"
+
+        async def failing_schema() -> None:
+            raise DatabaseRequiresNewerAppError(
+                current_app_version="2.3.0",
+                minimum_supported_app_version="2.4.0",
+                backup_directory=backup_dir,
+            )
+
+        with patch.object(main_module, "ensure_database_schema", failing_schema):
+            with TestClient(main_module.create_app()) as client:
+                response = client.get("/startup-status")
+                ready_response = client.get("/ready")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        data = response.json()
+        self.assertEqual(data["state"], "error")
+        self.assertEqual(data["error_detail"]["code"], "DATABASE_REQUIRES_NEWER_APP")
+        self.assertEqual(data["error_detail"]["minimum_supported_app_version"], "2.4.0")
+        self.assertEqual(data["error_detail"]["backup_directory"], str(backup_dir))
+        self.assertEqual(ready_response.status_code, 500)
+        self.assertEqual(ready_response.json()["detail"]["code"], "DATABASE_REQUIRES_NEWER_APP")
     def test_desktop_data_dir_controls_default_storage_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir) / "AutoEmailSender"
