@@ -53,6 +53,7 @@ import {
   getProfessorExportDownloadUrl,
   getProfessorTemplateDownloadUrl,
   importProfessorsFromFile,
+  getProfessorTagUsage,
   listProfessorTags,
   listProfessorsForManagement,
   restoreProfessor,
@@ -886,10 +887,42 @@ export const ProfessorsPage = () => {
   };
 
   const handleDeleteProfessorTag = async (tag: ProfessorTagDTO) => {
+    let usageProfessors: Array<{
+      id: number;
+      name: string;
+      email: string | null;
+      university: string | null;
+      school: string | null;
+    }> = [];
+    try {
+      const usage = await getProfessorTagUsage(tag.id);
+      usageProfessors = usage.professors;
+    } catch (usageError) {
+      notifyError(
+        "查询标签使用情况失败",
+        getActionErrorMessage(usageError, "查询标签使用情况失败"),
+      );
+      return;
+    }
+
+    const usageDescription =
+      usageProfessors.length === 0
+        ? "是否要删除这个标签？"
+        : [
+            "是否要删除这个标签？下列导师该标签将删除",
+            ...usageProfessors.map((professor) => {
+              const context = [professor.university, professor.school]
+                .filter(Boolean)
+                .join(" / ");
+              return context
+                ? `${professor.name}（${context}）`
+                : professor.name;
+            }),
+          ].join("\n");
+
     const confirmed = await confirm({
       title: `删除标签“${tag.name}”？`,
-      description:
-        "删除候选后，这个标签会同步从所有导师身上移除，已有记录不会保留该标签。",
+      description: usageDescription,
       confirmLabel: "确认删除",
       cancelLabel: "先不删除",
       tone: "danger",
@@ -907,6 +940,12 @@ export const ProfessorsPage = () => {
         ...previous,
         tag_ids: previous.tag_ids.filter((tagId) => tagId !== tag.id),
       }));
+      setProfessors((previous) =>
+        previous.map((professor) => ({
+          ...professor,
+          tags: professor.tags.filter((item) => item.id !== tag.id),
+        })),
+      );
       notifySuccess("删除标签成功", result.message);
       await loadProfessors();
     } catch (deleteError) {

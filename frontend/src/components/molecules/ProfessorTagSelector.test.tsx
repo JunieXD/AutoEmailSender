@@ -51,4 +51,40 @@ describe("ProfessorTagSelector", () => {
       background_color: "#dcfce7",
     });
   });
+
+  it("shows delete buttons only in delete mode", () => {
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[1]}
+        onChange={vi.fn()}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "删除标签 高意愿" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除标签" }));
+
+    expect(screen.getByRole("button", { name: "删除标签 高意愿" })).toBeInTheDocument();
+  });
+
+  it("moves selected tags in professor-specific order", () => {
+    const onChange = vi.fn();
+
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[1, 2]}
+        onChange={onChange}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "前移标签 羊导" }));
+
+    expect(onChange).toHaveBeenCalledWith([2, 1]);
+  });
 });

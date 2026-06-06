@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, GripVertical, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import type { ProfessorTagDTO, ProfessorTagPayloadDTO } from "@/types";
 
@@ -29,7 +29,13 @@ export const ProfessorTagSelector = ({
   const [backgroundColor, setBackgroundColor] = useState(
     DEFAULT_BACKGROUND_COLOR,
   );
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [draggingTagId, setDraggingTagId] = useState<number | null>(null);
   const selectedSet = new Set(selectedTagIds);
+  const tagById = new Map(tags.map((tag) => [tag.id, tag]));
+  const selectedTags = selectedTagIds
+    .map((tagId) => tagById.get(tagId))
+    .filter((tag): tag is ProfessorTagDTO => Boolean(tag));
 
   const toggleTag = (tagId: number) => {
     if (disabled) {
@@ -58,32 +64,132 @@ export const ProfessorTagSelector = ({
     setCreating(false);
   };
 
+  const moveSelectedTag = (tagId: number, direction: -1 | 1) => {
+    if (disabled) {
+      return;
+    }
+    const currentIndex = selectedTagIds.indexOf(tagId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= selectedTagIds.length) {
+      return;
+    }
+    const nextTagIds = [...selectedTagIds];
+    const [movedTagId] = nextTagIds.splice(currentIndex, 1);
+    nextTagIds.splice(nextIndex, 0, movedTagId);
+    onChange(nextTagIds);
+  };
+
+  const moveDraggedTagBefore = (targetTagId: number) => {
+    if (disabled || draggingTagId === null || draggingTagId === targetTagId) {
+      return;
+    }
+    const nextTagIds = selectedTagIds.filter((tagId) => tagId !== draggingTagId);
+    const targetIndex = nextTagIds.indexOf(targetTagId);
+    if (targetIndex < 0) {
+      return;
+    }
+    nextTagIds.splice(targetIndex, 0, draggingTagId);
+    onChange(nextTagIds);
+  };
+
   return (
-    <div className="rounded-2xl border border-stone-200 bg-stone-50/60 p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="rounded-[28px] border border-stone-200 bg-stone-50/60 p-5">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-sm font-medium text-stone-800">导师标签</div>
+          <div className="text-base font-semibold text-stone-900">导师标签</div>
           <div className="mt-1 text-xs text-stone-500">
             {selectedTagIds.length === 0
               ? "暂无标签"
               : `已选择 ${selectedTagIds.length} 个标签`}
           </div>
         </div>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setCreating((previous) => !previous)}
-          className="ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          + 自定义标签
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setCreating((previous) => !previous)}
+            className="ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            + 自定义标签
+          </button>
+          <button
+            type="button"
+            aria-pressed={deleteMode}
+            disabled={disabled}
+            onClick={() => setDeleteMode((previous) => !previous)}
+            className={clsx(
+              "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+              deleteMode
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-stone-200 bg-white text-stone-600 hover:border-red-200 hover:text-red-600",
+            )}
+          >
+            <Trash2 className="h-4 w-4" />
+            删除标签
+          </button>
+        </div>
       </div>
+
+      {selectedTags.length > 1 ? (
+        <div className="mb-4 rounded-2xl border border-stone-200 bg-white p-3">
+          <div className="mb-2 text-xs font-medium text-stone-500">
+            已选标签顺序
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {selectedTags.map((tag, index) => (
+              <div
+                key={tag.id}
+                draggable={!disabled}
+                onDragStart={() => setDraggingTagId(tag.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  moveDraggedTagBefore(tag.id);
+                  setDraggingTagId(null);
+                }}
+                onDragEnd={() => setDraggingTagId(null)}
+                className="inline-flex items-center overflow-hidden rounded-full border border-stone-200 bg-white shadow-sm"
+              >
+                <span className="inline-flex h-8 w-7 items-center justify-center text-stone-400">
+                  <GripVertical className="h-3.5 w-3.5" />
+                </span>
+                <span
+                  className="inline-flex h-8 items-center px-2.5 text-xs font-medium"
+                  style={{
+                    backgroundColor: tag.background_color,
+                    color: tag.text_color,
+                  }}
+                >
+                  {tag.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`前移标签 ${tag.name}`}
+                  disabled={disabled || index === 0}
+                  onClick={() => moveSelectedTag(tag.id, -1)}
+                  className="inline-flex h-8 w-8 items-center justify-center text-stone-500 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`后移标签 ${tag.name}`}
+                  disabled={disabled || index === selectedTags.length - 1}
+                  onClick={() => moveSelectedTag(tag.id, 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center text-stone-500 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {tags.map((tag) => {
           const selected = selectedSet.has(tag.id);
           return (
-            <span key={tag.id} className="inline-flex items-center gap-1.5">
+            <span key={tag.id} className="inline-flex items-center overflow-hidden rounded-full">
               <button
                 type="button"
                 aria-label={`选择标签 ${tag.name}`}
@@ -91,7 +197,7 @@ export const ProfessorTagSelector = ({
                 disabled={disabled}
                 onClick={() => toggleTag(tag.id)}
                 className={clsx(
-                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                  "inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                   selected
                     ? "border-primary/40 shadow-sm shadow-primary/10"
                     : "border-stone-200 hover:border-stone-300",
@@ -104,15 +210,17 @@ export const ProfessorTagSelector = ({
                 {selected ? <Check className="h-3.5 w-3.5" /> : null}
                 {tag.name}
               </button>
-              <button
-                type="button"
-                aria-label={`删除标签 ${tag.name}`}
-                disabled={disabled}
-                onClick={() => onDeleteTag(tag)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {deleteMode ? (
+                <button
+                  type="button"
+                  aria-label={`删除标签 ${tag.name}`}
+                  disabled={disabled}
+                  onClick={() => onDeleteTag(tag)}
+                  className="inline-flex h-8 w-8 -translate-x-1 animate-[tag-trash-in_160ms_ease-out] items-center justify-center rounded-full border border-red-100 bg-white text-red-500 opacity-100 transition duration-200 ease-out hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </span>
           );
         })}

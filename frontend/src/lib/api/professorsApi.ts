@@ -9,6 +9,7 @@ import type {
   ProfessorManagementItemDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
+  ProfessorTagUsageDTO,
   ProfessorUpsertPayloadDTO,
 } from '@/types';
 
@@ -46,6 +47,9 @@ export const deleteProfessorTag = (tagId: number) =>
   apiFetch<ProfessorActionResultDTO>(`/api/professors/tags/${tagId}`, {
     method: 'DELETE',
   });
+
+export const getProfessorTagUsage = (tagId: number) =>
+  apiFetch<ProfessorTagUsageDTO>(`/api/professors/tags/${tagId}/usage`);
 
 export const createProfessor = (payload: ProfessorUpsertPayloadDTO) =>
   apiFetch<ProfessorManagementItemDTO>('/api/professors', {

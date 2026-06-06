@@ -260,6 +260,19 @@ export interface ProfessorTagPayloadDTO {
   background_color: string;
 }
 
+export interface ProfessorTagUsageProfessorDTO {
+  id: number;
+  name: string;
+  email: string | null;
+  university: string | null;
+  school: string | null;
+}
+
+export interface ProfessorTagUsageDTO {
+  tag: ProfessorTagDTO;
+  professors: ProfessorTagUsageProfessorDTO[];
+}
+
 export interface ProfessorImportResultDTO {
   inserted_count: number;
   total_count: number;
