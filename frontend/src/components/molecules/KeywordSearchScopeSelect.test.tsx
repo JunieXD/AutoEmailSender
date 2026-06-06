@@ -76,7 +76,7 @@ describe("KeywordSearchScopeSelect", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /搜索范围：选择字段：已选一项/ }),
     );
-    expect(screen.getByText("至少保留最后一项")).toBeInTheDocument();
+    expect(screen.getByText("至少保留一项")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "姓名" }));
 
     expect(onChange).not.toHaveBeenCalled();

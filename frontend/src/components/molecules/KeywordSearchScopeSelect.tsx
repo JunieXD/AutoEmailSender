@@ -99,12 +99,12 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
 
       {open ? (
         <div className="absolute right-0 top-[calc(100%+0.45rem)] z-40 w-48 overflow-hidden rounded-2xl border border-stone-200/90 bg-white p-1 shadow-[0_22px_40px_-26px_rgba(41,37,36,0.34)]">
-          <div className="border-b border-stone-100 px-2 py-1.5">
+          <div className="border-b border-stone-100 py-1.5">
             <button
               type="button"
               onClick={() => onChange(options.map((option) => option.value))}
               disabled={selectedValues.length === options.length}
-              className="flex w-full items-center justify-center rounded-xl px-3 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-default disabled:opacity-50"
+              className="flex w-full items-center justify-start rounded-xl px-3 py-1.5 text-left text-xs font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-default disabled:opacity-50"
             >
               全部选择
             </button>
@@ -154,7 +154,7 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
             })}
           </div>
           <div className="border-t border-stone-100 px-3 py-2 text-xs text-stone-500">
-            至少保留最后一项
+            至少保留一项
           </div>
         </div>
       ) : null}
