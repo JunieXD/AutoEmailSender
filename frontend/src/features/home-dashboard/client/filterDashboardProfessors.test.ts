@@ -5,6 +5,7 @@ import {
   createDefaultDashboardFilters,
   getActiveDashboardFilterCount,
   filterDashboardProfessors,
+  NO_TAG_FILTER_VALUE,
   pruneDashboardFilters,
   type DashboardFilterState,
 } from "./filterDashboardProfessors";
@@ -26,6 +27,7 @@ const buildProfessor = (
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  tags: [],
   ...overrides,
 });
 
@@ -82,6 +84,48 @@ describe("filterDashboardProfessors", () => {
       "Alice",
       "Bob",
       "Carol",
+    ]);
+  });
+
+  it("matches keyword against professor tag names", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+    ];
+
+    expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
+  });
+
+  it("filters by selected tag ids and no-tag virtual option", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({ id: 5, name: "No Tag", tags: [] }),
+    ];
+
+    expect(namesFor(taggedProfessors, { tagIds: ["1"] })).toEqual(["Tagged"]);
+    expect(namesFor(taggedProfessors, { tagIds: [NO_TAG_FILTER_VALUE] })).toEqual([
+      "No Tag",
     ]);
   });
 
@@ -164,14 +208,16 @@ describe("filterDashboardProfessors", () => {
       ...createDefaultDashboardFilters(),
       universities: ["MIT", "Unknown"],
       schools: ["AI Institute", "School of Medicine"],
-      departments: ["EECS", "Unknown"],
-      titles: ["教授", "不存在"],
-    });
+        departments: ["EECS", "Unknown"],
+        titles: ["教授", "不存在"],
+        tagIds: ["404"],
+      });
 
     expect(pruned.universities).toEqual(["MIT"]);
     expect(pruned.schools).toEqual(["AI Institute"]);
     expect(pruned.departments).toEqual([]);
     expect(pruned.titles).toEqual(["教授"]);
+    expect(pruned.tagIds).toEqual([]);
 
     const schoolPruned = pruneDashboardFilters(professors, {
       ...createDefaultDashboardFilters(),

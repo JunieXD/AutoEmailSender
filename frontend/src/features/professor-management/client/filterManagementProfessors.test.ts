@@ -5,6 +5,7 @@ import {
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
+  NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
 } from "./filterManagementProfessors";
@@ -28,6 +29,7 @@ const buildProfessor = (
   archived_at: null,
   created_at: "2026-05-01T00:00:00",
   updated_at: "2026-05-01T00:00:00",
+  tags: [],
   ...overrides,
 });
 
@@ -81,6 +83,48 @@ describe("filterManagementProfessors", () => {
       "Bob",
     ]);
     expect(namesFor(professors, { keyword: "博导" })).toEqual(["Alice"]);
+  });
+
+  it("matches keyword against professor tag names", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+    ];
+
+    expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
+  });
+
+  it("filters by selected tag ids and no-tag virtual option", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({ id: 5, name: "No Tag", tags: [] }),
+    ];
+
+    expect(namesFor(taggedProfessors, { tagIds: ["1"] })).toEqual(["Tagged"]);
+    expect(namesFor(taggedProfessors, { tagIds: [NO_TAG_FILTER_VALUE] })).toEqual([
+      "No Tag",
+    ]);
   });
 
   it("uses OR within one multi-select group and AND across groups", () => {
@@ -184,6 +228,7 @@ describe("filterManagementProfessors", () => {
       schools: ["AI Institute", "School of Medicine"],
       departments: ["EECS", "Unknown"],
       titles: ["教授", "不存在"],
+      tagIds: ["404"],
     });
 
     expect(pruned.universities).toEqual(["MIT"]);
@@ -200,6 +245,7 @@ describe("filterManagementProfessors", () => {
 
     expect(schoolPruned.departments).toEqual(["Robotics"]);
     expect(pruned.titles).toEqual(["教授"]);
+    expect(pruned.tagIds).toEqual([]);
   });
 
   it("does not mutate the input array", () => {

@@ -7,6 +7,8 @@ import type {
   ProfessorImportFileResultDTO,
   ProfessorImportResultDTO,
   ProfessorManagementItemDTO,
+  ProfessorTagDTO,
+  ProfessorTagPayloadDTO,
   ProfessorUpsertPayloadDTO,
 } from '@/types';
 
@@ -30,6 +32,20 @@ export const listProfessorsForManagement = (archived: 'active' | 'archived' | 'a
 
 export const getProfessor = (professorId: number) =>
   apiFetch<ProfessorDTO>(`/api/professors/${professorId}`);
+
+export const listProfessorTags = () =>
+  apiFetch<ProfessorTagDTO[]>('/api/professors/tags');
+
+export const createProfessorTag = (payload: ProfessorTagPayloadDTO) =>
+  apiFetch<ProfessorTagDTO>('/api/professors/tags', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteProfessorTag = (tagId: number) =>
+  apiFetch<ProfessorActionResultDTO>(`/api/professors/tags/${tagId}`, {
+    method: 'DELETE',
+  });
 
 export const createProfessor = (payload: ProfessorUpsertPayloadDTO) =>
   apiFetch<ProfessorManagementItemDTO>('/api/professors', {
