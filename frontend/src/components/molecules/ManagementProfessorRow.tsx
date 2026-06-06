@@ -16,6 +16,7 @@ type ManagementProfessorRowProps = {
   onEdit: () => void;
   onArchive: () => void;
   onRestore: () => void;
+  onPrimaryTagSelect?: (tagId: number) => void;
 };
 
 type FieldCellProps = {
@@ -42,6 +43,7 @@ export const ManagementProfessorRow = ({
   onEdit,
   onArchive,
   onRestore,
+  onPrimaryTagSelect,
 }: ManagementProfessorRowProps) => {
   const schoolAndCollege = [professor.university, professor.school]
     .filter(Boolean)
@@ -70,8 +72,9 @@ export const ManagementProfessorRow = ({
           </div>
           <ProfessorTagChips
             tags={professor.tags}
-            maxVisible={2}
+            maxVisible={1}
             className="mt-2 justify-start lg:justify-center"
+            onTagClick={onPrimaryTagSelect}
           />
           {professor.archived_at ? (
             <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">

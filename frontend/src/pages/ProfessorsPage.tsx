@@ -286,6 +286,23 @@ const toProfessorPayload = (
   tag_ids: form.tag_ids,
 });
 
+const toProfessorUpdatePayload = (
+  professor: ProfessorManagementItemDTO,
+  tagIds: number[],
+): ProfessorUpsertPayloadDTO => ({
+  name: professor.name,
+  email: professor.email ?? "",
+  title: professor.title,
+  university: professor.university,
+  school: professor.school,
+  department: professor.department,
+  research_direction: professor.research_direction,
+  recent_papers: professor.recent_papers,
+  profile_url: professor.profile_url,
+  source_url: professor.source_url,
+  tag_ids: tagIds,
+});
+
 const fieldLabelClassName =
   "mb-2 inline-flex items-center gap-1 text-sm font-medium text-stone-800";
 const inputClassName =
@@ -810,6 +827,40 @@ export const ProfessorsPage = () => {
       );
     } finally {
       setSavingProfessor(false);
+    }
+  };
+
+  const handlePrimaryTagSelect = async (
+    professor: ProfessorManagementItemDTO,
+    tagId: number,
+  ) => {
+    if (professor.tags[0]?.id === tagId) {
+      return;
+    }
+
+    const nextTagIds = [
+      tagId,
+      ...professor.tags
+        .map((tag) => tag.id)
+        .filter((currentTagId) => currentTagId !== tagId),
+    ];
+
+    try {
+      const updatedProfessor = await updateProfessor(
+        professor.id,
+        toProfessorUpdatePayload(professor, nextTagIds),
+      );
+      setProfessors((previous) =>
+        previous.map((item) =>
+          item.id === updatedProfessor.id ? updatedProfessor : item,
+        ),
+      );
+      notifySuccess("标签已置顶", `已将“${updatedProfessor.name}”的标签排序更新。`);
+    } catch (saveError) {
+      notifyError(
+        "保存标签排序失败",
+        getActionErrorMessage(saveError, "保存标签排序失败"),
+      );
     }
   };
 
@@ -1598,6 +1649,9 @@ export const ProfessorsPage = () => {
                   onEdit={() => openEditModal(professor)}
                   onArchive={() => void handleArchiveProfessor(professor)}
                   onRestore={() => void handleRestoreProfessor(professor)}
+                  onPrimaryTagSelect={(tagId) =>
+                    void handlePrimaryTagSelect(professor, tagId)
+                  }
                 />
               );
             })}
