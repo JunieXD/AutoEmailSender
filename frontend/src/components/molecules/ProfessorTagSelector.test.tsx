@@ -1,0 +1,54 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { ProfessorTagSelector } from "./ProfessorTagSelector";
+
+const tags = [
+  { id: 1, name: "高意愿", text_color: "#166534", background_color: "#dcfce7" },
+  { id: 2, name: "羊导", text_color: "#7f1d1d", background_color: "#fee2e2" },
+];
+
+describe("ProfessorTagSelector", () => {
+  it("toggles multiple tags", () => {
+    const onChange = vi.fn();
+
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[1]}
+        onChange={onChange}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 羊导" }));
+
+    expect(onChange).toHaveBeenCalledWith([1, 2]);
+  });
+
+  it("submits custom tag with colors", () => {
+    const onCreateTag = vi.fn();
+
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[]}
+        onChange={vi.fn()}
+        onCreateTag={onCreateTag}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "+ 自定义标签" }));
+    fireEvent.change(screen.getByLabelText("标签名"), {
+      target: { value: "已联系" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建标签" }));
+
+    expect(onCreateTag).toHaveBeenCalledWith({
+      name: "已联系",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    });
+  });
+});

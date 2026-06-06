@@ -31,6 +31,7 @@ import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
@@ -47,9 +48,12 @@ import {
   archiveProfessor,
   bulkArchiveProfessors,
   createProfessor,
+  createProfessorTag,
+  deleteProfessorTag,
   getProfessorExportDownloadUrl,
   getProfessorTemplateDownloadUrl,
   importProfessorsFromFile,
+  listProfessorTags,
   listProfessorsForManagement,
   restoreProfessor,
   updateProfessor,
@@ -58,6 +62,8 @@ import type {
   CrawlJobEntryTypeDTO,
   ProfessorImportFileResultDTO,
   ProfessorManagementItemDTO,
+  ProfessorTagDTO,
+  ProfessorTagPayloadDTO,
   ProfessorUpsertPayloadDTO,
 } from "@/types";
 import {
@@ -86,6 +92,7 @@ type ProfessorFormState = {
   recent_papers_text: string;
   profile_url: string;
   source_url: string;
+  tag_ids: number[];
 };
 type CrawlerJobFormState = {
   university: string;
@@ -154,6 +161,7 @@ const readStoredProfessorManagementState = () => {
     nextFilters.schools = readStringArray(filters?.schools);
     nextFilters.departments = readStringArray(filters?.departments);
     nextFilters.titles = readStringArray(filters?.titles);
+    nextFilters.tagIds = readStringArray(filters?.tagIds);
 
     const nextSortKey =
       parsedValue.sortKey === "latest" ||
@@ -219,6 +227,7 @@ const emptyProfessorForm = (): ProfessorFormState => ({
   recent_papers_text: "",
   profile_url: "",
   source_url: "",
+  tag_ids: [],
 });
 
 const emptyCrawlerJobForm = (): CrawlerJobFormState => ({
@@ -254,6 +263,7 @@ const toProfessorForm = (
   recent_papers_text: professor.recent_papers.join("\n"),
   profile_url: professor.profile_url ?? "",
   source_url: professor.source_url ?? "",
+  tag_ids: professor.tags.map((tag) => tag.id),
 });
 
 const toProfessorPayload = (
@@ -272,6 +282,7 @@ const toProfessorPayload = (
     .filter(Boolean),
   profile_url: form.profile_url.trim() || null,
   source_url: form.source_url.trim() || null,
+  tag_ids: form.tag_ids,
 });
 
 const fieldLabelClassName =
@@ -507,6 +518,7 @@ export const ProfessorsPage = () => {
   const [professors, setProfessors] = useState<ProfessorManagementItemDTO[]>(
     [],
   );
+  const [professorTags, setProfessorTags] = useState<ProfessorTagDTO[]>([]);
   const [filters, setFilters] = useState<ProfessorManagementFilterState>(
     storedState.filters,
   );
@@ -596,9 +608,25 @@ export const ProfessorsPage = () => {
     [archiveFilter, notifyError],
   );
 
+  const loadProfessorTags = useCallback(async () => {
+    try {
+      const data = await listProfessorTags();
+      setProfessorTags(data);
+    } catch (loadError) {
+      notifyError(
+        "加载标签失败",
+        getActionErrorMessage(loadError, "加载标签失败"),
+      );
+    }
+  }, [notifyError]);
+
   useEffect(() => {
     void loadProfessors();
   }, [loadProfessors]);
+
+  useEffect(() => {
+    void loadProfessorTags();
+  }, [loadProfessorTags]);
 
   useEffect(() => {
     if (professors.length === 0) {
@@ -764,6 +792,59 @@ export const ProfessorsPage = () => {
       );
     } finally {
       setSavingProfessor(false);
+    }
+  };
+
+  const handleCreateProfessorTag = async (
+    payload: ProfessorTagPayloadDTO,
+  ) => {
+    try {
+      const createdTag = await createProfessorTag(payload);
+      setProfessorTags((previous) => [...previous, createdTag]);
+      setFormState((previous) => ({
+        ...previous,
+        tag_ids: previous.tag_ids.includes(createdTag.id)
+          ? previous.tag_ids
+          : [...previous.tag_ids, createdTag.id],
+      }));
+      notifySuccess("创建标签成功", `已新增标签“${createdTag.name}”。`);
+    } catch (createError) {
+      notifyError(
+        "创建标签失败",
+        getActionErrorMessage(createError, "创建标签失败"),
+      );
+    }
+  };
+
+  const handleDeleteProfessorTag = async (tag: ProfessorTagDTO) => {
+    const confirmed = await confirm({
+      title: `删除标签“${tag.name}”？`,
+      description:
+        "删除候选后，这个标签会同步从所有导师身上移除，已有记录不会保留该标签。",
+      confirmLabel: "确认删除",
+      cancelLabel: "先不删除",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const result = await deleteProfessorTag(tag.id);
+      setProfessorTags((previous) =>
+        previous.filter((item) => item.id !== tag.id),
+      );
+      setFormState((previous) => ({
+        ...previous,
+        tag_ids: previous.tag_ids.filter((tagId) => tagId !== tag.id),
+      }));
+      notifySuccess("删除标签成功", result.message);
+      await loadProfessors();
+    } catch (deleteError) {
+      notifyError(
+        "删除标签失败",
+        getActionErrorMessage(deleteError, "删除标签失败"),
+      );
     }
   };
 
@@ -1665,6 +1746,21 @@ export const ProfessorsPage = () => {
               placeholder="示例：Department of AI"
             />
           </label>
+          <div className="md:col-span-2">
+            <ProfessorTagSelector
+              tags={professorTags}
+              selectedTagIds={formState.tag_ids}
+              disabled={savingProfessor}
+              onChange={(tagIds) =>
+                setFormState((previous) => ({
+                  ...previous,
+                  tag_ids: tagIds,
+                }))
+              }
+              onCreateTag={(payload) => void handleCreateProfessorTag(payload)}
+              onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
+            />
+          </div>
           <label className="block md:col-span-2">
             {renderFieldLabel("研究方向")}
             <textarea
