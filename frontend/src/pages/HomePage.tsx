@@ -19,15 +19,15 @@ import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
-  DEFAULT_DASHBOARD_KEYWORD_FIELDS,
+  DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS,
   buildDashboardFilterOptions,
   createDefaultDashboardFilters,
   filterDashboardProfessors,
   getActiveDashboardFilterCount,
-  normalizeDashboardKeywordFields,
+  normalizeDashboardKeywordSearchScopes,
   pruneDashboardFilters,
   type DashboardFilterState,
-  type DashboardKeywordField,
+  type DashboardKeywordSearchScope,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
@@ -63,18 +63,6 @@ import type {
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
-
-const dashboardKeywordFieldOptions: Array<{
-  value: DashboardKeywordField;
-  label: string;
-}> = [
-  { value: "name", label: "姓名" },
-  { value: "university", label: "学校" },
-  { value: "school", label: "学院" },
-  { value: "department", label: "系所" },
-  { value: "title", label: "职称" },
-  { value: "research_direction", label: "研究方向" },
-];
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -128,8 +116,8 @@ const readStoredDashboardFilters = (
         typeof parsedValue.keyword === "string"
           ? parsedValue.keyword
           : defaults.keyword,
-      keywordFields: normalizeDashboardKeywordFields(
-        parsedValue.keywordFields,
+      keywordSearchScopes: normalizeDashboardKeywordSearchScopes(
+        parsedValue.keywordSearchScopes,
       ),
       universities: readStringArray(parsedValue.universities),
       schools: readStringArray(parsedValue.schools),
@@ -387,22 +375,12 @@ export const HomePage = () => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
   };
 
-  const toggleDashboardKeywordField = (field: DashboardKeywordField) => {
-    setFilters((previous) => {
-      const currentFields = normalizeDashboardKeywordFields(
-        previous.keywordFields,
-      );
-      const nextFields = currentFields.includes(field)
-        ? currentFields.filter((item) => item !== field)
-        : [...currentFields, field];
-
-      return {
-        ...previous,
-        keywordFields:
-          nextFields.length > 0
-            ? nextFields
-            : [...DEFAULT_DASHBOARD_KEYWORD_FIELDS],
-      };
+  const setDashboardKeywordSearchScopes = (
+    keywordSearchScopes: DashboardKeywordSearchScope[],
+  ) => {
+    updateFilters({
+      keywordSearchScopes:
+        normalizeDashboardKeywordSearchScopes(keywordSearchScopes),
     });
   };
 
@@ -826,11 +804,11 @@ export const HomePage = () => {
                 />
                 <KeywordSearchScopeSelect
                   label="搜索范围"
-                  options={dashboardKeywordFieldOptions}
-                  selectedValues={normalizeDashboardKeywordFields(
-                    filters.keywordFields,
+                  options={DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS}
+                  selectedValues={normalizeDashboardKeywordSearchScopes(
+                    filters.keywordSearchScopes,
                   )}
-                  onToggle={toggleDashboardKeywordField}
+                  onChange={setDashboardKeywordSearchScopes}
                 />
               </div>
             </label>

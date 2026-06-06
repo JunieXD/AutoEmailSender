@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorDashboardItemDTO } from "@/types";
 import {
-  DEFAULT_DASHBOARD_KEYWORD_FIELDS,
+  DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
   buildDashboardFilterOptions,
   createDefaultDashboardFilters,
   getActiveDashboardFilterCount,
   filterDashboardProfessors,
-  normalizeDashboardKeywordFields,
+  normalizeDashboardKeywordSearchScopes,
   pruneDashboardFilters,
   type DashboardFilterState,
 } from "./filterDashboardProfessors";
@@ -98,23 +98,35 @@ describe("filterDashboardProfessors", () => {
     expect(
       namesFor(scopedProfessors, {
         keyword: "副",
-        keywordFields: ["name"],
+        keywordSearchScopes: ["name"],
       }),
     ).toEqual(["副主任"]);
     expect(
       namesFor(scopedProfessors, {
         keyword: "副",
-        keywordFields: ["title"],
+        keywordSearchScopes: ["title"],
       }),
     ).toEqual(["Normal"]);
   });
 
-  it("normalizes invalid dashboard keyword fields to the default scope", () => {
-    const fields = normalizeDashboardKeywordFields(["name", "unknown"]);
+  it("ignores dashboard search scopes when keyword is empty", () => {
+    expect(
+      namesFor(professors, {
+        keyword: "",
+        keywordSearchScopes: ["name"],
+      }),
+    ).toEqual(["Alice", "Bob", "Carol"]);
+  });
 
-    expect(fields).toEqual(DEFAULT_DASHBOARD_KEYWORD_FIELDS);
-    expect(normalizeDashboardKeywordFields(["unknown"])).toEqual(
-      DEFAULT_DASHBOARD_KEYWORD_FIELDS,
+  it("normalizes invalid dashboard search scopes to every field", () => {
+    const fields = normalizeDashboardKeywordSearchScopes([
+      "researchDirection",
+      "unknown",
+    ]);
+
+    expect(fields).toEqual(DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES);
+    expect(normalizeDashboardKeywordSearchScopes(["unknown"])).toEqual(
+      DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
     );
   });
 

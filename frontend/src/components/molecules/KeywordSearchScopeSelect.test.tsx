@@ -15,7 +15,7 @@ describe("KeywordSearchScopeSelect", () => {
         label="搜索范围"
         options={options}
         selectedValues={["name", "title", "school"]}
-        onToggle={vi.fn()}
+        onChange={vi.fn()}
       />,
     );
 
@@ -31,7 +31,7 @@ describe("KeywordSearchScopeSelect", () => {
         label="搜索范围"
         options={options}
         selectedValues={["name", "title"]}
-        onToggle={onToggle}
+        onChange={(nextValues) => onToggle(nextValues)}
       />,
     );
 
@@ -40,25 +40,26 @@ describe("KeywordSearchScopeSelect", () => {
     );
     fireEvent.click(screen.getByRole("option", { name: "职称" }));
 
-    expect(onToggle).toHaveBeenCalledWith("title");
+    expect(onToggle).toHaveBeenCalledWith(["name"]);
   });
 
-  it("keeps at least one selected field", () => {
-    const onToggle = vi.fn();
+  it("shows the retention hint and keeps at least one selected field", () => {
+    const onChange = vi.fn();
     render(
       <KeywordSearchScopeSelect
         label="搜索范围"
         options={options}
         selectedValues={["name"]}
-        onToggle={onToggle}
+        onChange={onChange}
       />,
     );
 
     fireEvent.click(
       screen.getByRole("button", { name: /搜索范围：已选 1 项/ }),
     );
+    expect(screen.getByText("至少保留最后一项")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "姓名" }));
 
-    expect(onToggle).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

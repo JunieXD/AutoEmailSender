@@ -1,32 +1,51 @@
 import type { ProfessorManagementItemDTO } from "@/types";
 import { extractProfessorTitleTags } from "@/lib/professorTitle";
 
-export type ManagementKeywordField =
-  | "name"
-  | "email"
-  | "university"
-  | "school"
-  | "department"
-  | "title"
-  | "research_direction";
+export const MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS = [
+  { value: "name", label: "姓名" },
+  { value: "email", label: "邮箱" },
+  { value: "university", label: "学校" },
+  { value: "school", label: "学院" },
+  { value: "department", label: "系所" },
+  { value: "title", label: "职称" },
+  { value: "researchDirection", label: "研究方向" },
+] as const;
 
-export const DEFAULT_MANAGEMENT_KEYWORD_FIELDS: ManagementKeywordField[] = [
-  "name",
-  "email",
-  "university",
-  "school",
-  "department",
-  "title",
-  "research_direction",
-];
+export type ProfessorManagementKeywordSearchScope =
+  (typeof MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS)[number]["value"];
 
-const managementKeywordFieldSet = new Set<string>(
-  DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+export const DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES =
+  MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS.map((option) => option.value);
+
+const managementKeywordSearchScopeSet = new Set<string>(
+  DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
 );
+
+const managementKeywordFieldByScope: Record<
+  ProfessorManagementKeywordSearchScope,
+  keyof Pick<
+    ProfessorManagementItemDTO,
+    | "name"
+    | "email"
+    | "university"
+    | "school"
+    | "department"
+    | "title"
+    | "research_direction"
+  >
+> = {
+  name: "name",
+  email: "email",
+  university: "university",
+  school: "school",
+  department: "department",
+  title: "title",
+  researchDirection: "research_direction",
+};
 
 export type ProfessorManagementFilterState = {
   keyword: string;
-  keywordFields: ManagementKeywordField[];
+  keywordSearchScopes: ProfessorManagementKeywordSearchScope[];
   universities: string[];
   schools: string[];
   departments: string[];
@@ -46,20 +65,20 @@ const normalize = (value: string | null | undefined): string =>
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
 
-export const normalizeManagementKeywordFields = (
+export const normalizeManagementKeywordSearchScopes = (
   values: unknown,
-): ManagementKeywordField[] => {
+): ProfessorManagementKeywordSearchScope[] => {
   if (!Array.isArray(values)) {
-    return [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS];
+    return [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES];
   }
 
   const nextValues = values.filter(
-    (value): value is ManagementKeywordField =>
-      typeof value === "string" && managementKeywordFieldSet.has(value),
+    (value): value is ProfessorManagementKeywordSearchScope =>
+      typeof value === "string" && managementKeywordSearchScopeSet.has(value),
   );
 
   if (nextValues.length === 0 || nextValues.length !== values.length) {
-    return [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS];
+    return [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES];
   }
 
   return nextValues;
@@ -92,7 +111,7 @@ const filterTitleMatches = (
 
 export const createDefaultManagementFilters = (): ProfessorManagementFilterState => ({
   keyword: "",
-  keywordFields: [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS],
+  keywordSearchScopes: [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES],
   universities: [],
   schools: [],
   departments: [],
@@ -101,8 +120,8 @@ export const createDefaultManagementFilters = (): ProfessorManagementFilterState
 
 const getManagementKeywordValue = (
   professor: ProfessorManagementItemDTO,
-  field: ManagementKeywordField,
-): string | null | undefined => professor[field];
+  scope: ProfessorManagementKeywordSearchScope,
+): string | null | undefined => professor[managementKeywordFieldByScope[scope]];
 
 export const buildManagementFilterOptions = (
   professors: ProfessorManagementItemDTO[],
@@ -161,13 +180,15 @@ export const filterManagementProfessors = (
   filters: ProfessorManagementFilterState,
 ): ProfessorManagementItemDTO[] => {
   const keyword = normalize(filters.keyword);
-  const keywordFields = normalizeManagementKeywordFields(filters.keywordFields);
+  const keywordSearchScopes = normalizeManagementKeywordSearchScopes(
+    filters.keywordSearchScopes,
+  );
 
   return professors.filter((professor) => {
     const keywordMatched =
       !keyword ||
-      keywordFields.some((field) =>
-        normalize(getManagementKeywordValue(professor, field)).includes(keyword),
+      keywordSearchScopes.some((scope) =>
+        normalize(getManagementKeywordValue(professor, scope)).includes(keyword),
       );
 
     return (

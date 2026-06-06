@@ -1,29 +1,47 @@
 import type { ProfessorDashboardItemDTO, ProfessorDashboardStatus } from "@/types";
 
-export type DashboardKeywordField =
-  | "name"
-  | "university"
-  | "school"
-  | "department"
-  | "title"
-  | "research_direction";
+export const DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS = [
+  { value: "name", label: "姓名" },
+  { value: "university", label: "学校" },
+  { value: "school", label: "学院" },
+  { value: "department", label: "系所" },
+  { value: "title", label: "职称" },
+  { value: "researchDirection", label: "研究方向" },
+] as const;
 
-export const DEFAULT_DASHBOARD_KEYWORD_FIELDS: DashboardKeywordField[] = [
-  "name",
-  "university",
-  "school",
-  "department",
-  "title",
-  "research_direction",
-];
+export type DashboardKeywordSearchScope =
+  (typeof DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS)[number]["value"];
 
-const dashboardKeywordFieldSet = new Set<string>(
-  DEFAULT_DASHBOARD_KEYWORD_FIELDS,
+export const DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES =
+  DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS.map((option) => option.value);
+
+const dashboardKeywordSearchScopeSet = new Set<string>(
+  DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
 );
+
+const dashboardKeywordFieldByScope: Record<
+  DashboardKeywordSearchScope,
+  keyof Pick<
+    ProfessorDashboardItemDTO,
+    | "name"
+    | "university"
+    | "school"
+    | "department"
+    | "title"
+    | "research_direction"
+  >
+> = {
+  name: "name",
+  university: "university",
+  school: "school",
+  department: "department",
+  title: "title",
+  researchDirection: "research_direction",
+};
 
 export type DashboardFilterState = {
   keyword: string;
-  keywordFields: DashboardKeywordField[];
+  keywordSearchScopes: DashboardKeywordSearchScope[];
   universities: string[];
   schools: string[];
   departments: string[];
@@ -41,7 +59,7 @@ export type DashboardFilterOptions = {
 
 export const createDefaultDashboardFilters = (): DashboardFilterState => ({
   keyword: "",
-  keywordFields: [...DEFAULT_DASHBOARD_KEYWORD_FIELDS],
+  keywordSearchScopes: [...DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES],
   universities: [],
   schools: [],
   departments: [],
@@ -56,20 +74,20 @@ const normalize = (value: string | null | undefined): string =>
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
 
-export const normalizeDashboardKeywordFields = (
+export const normalizeDashboardKeywordSearchScopes = (
   values: unknown,
-): DashboardKeywordField[] => {
+): DashboardKeywordSearchScope[] => {
   if (!Array.isArray(values)) {
-    return [...DEFAULT_DASHBOARD_KEYWORD_FIELDS];
+    return [...DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES];
   }
 
   const nextValues = values.filter(
-    (value): value is DashboardKeywordField =>
-      typeof value === "string" && dashboardKeywordFieldSet.has(value),
+    (value): value is DashboardKeywordSearchScope =>
+      typeof value === "string" && dashboardKeywordSearchScopeSet.has(value),
   );
 
   if (nextValues.length === 0 || nextValues.length !== values.length) {
-    return [...DEFAULT_DASHBOARD_KEYWORD_FIELDS];
+    return [...DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES];
   }
 
   return nextValues;
@@ -188,8 +206,8 @@ const parseMinimumMatchScore = (value: string): number | null => {
 
 const getDashboardKeywordValue = (
   professor: ProfessorDashboardItemDTO,
-  field: DashboardKeywordField,
-): string | null | undefined => professor[field];
+  scope: DashboardKeywordSearchScope,
+): string | null | undefined => professor[dashboardKeywordFieldByScope[scope]];
 
 export const getActiveDashboardFilterCount = (
   filters: DashboardFilterState,
@@ -206,14 +224,16 @@ export const filterDashboardProfessors = (
   filters: DashboardFilterState,
 ): ProfessorDashboardItemDTO[] => {
   const keyword = normalize(filters.keyword);
-  const keywordFields = normalizeDashboardKeywordFields(filters.keywordFields);
+  const keywordSearchScopes = normalizeDashboardKeywordSearchScopes(
+    filters.keywordSearchScopes,
+  );
   const minMatchScore = parseMinimumMatchScore(filters.minMatchScore);
 
   return professors.filter((professor) => {
     const keywordMatched =
       !keyword ||
-      keywordFields.some((field) =>
-        normalize(getDashboardKeywordValue(professor, field)).includes(keyword),
+      keywordSearchScopes.some((scope) =>
+        normalize(getDashboardKeywordValue(professor, scope)).includes(keyword),
       );
 
     const matchScoreMatched =

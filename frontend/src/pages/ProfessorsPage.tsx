@@ -62,14 +62,14 @@ import type {
   ProfessorUpsertPayloadDTO,
 } from "@/types";
 import {
-  DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+  MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS,
   buildManagementFilterOptions,
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
-  normalizeManagementKeywordFields,
+  normalizeManagementKeywordSearchScopes,
   pruneManagementFilters,
-  type ManagementKeywordField,
+  type ProfessorManagementKeywordSearchScope,
   type ProfessorManagementFilterState,
 } from "@/features/professor-management/client/filterManagementProfessors";
 import {
@@ -103,19 +103,6 @@ const PROFESSORS_FILTERS_STORAGE_KEY = "professors_page_filters";
 const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
-
-const managementKeywordFieldOptions: Array<{
-  value: ManagementKeywordField;
-  label: string;
-}> = [
-  { value: "name", label: "姓名" },
-  { value: "email", label: "邮箱" },
-  { value: "university", label: "学校" },
-  { value: "school", label: "学院" },
-  { value: "department", label: "系所" },
-  { value: "title", label: "职称" },
-  { value: "research_direction", label: "研究方向" },
-];
 
 const archiveFilterLabels: Record<ArchiveFilter, string> = {
   active: "正常",
@@ -167,8 +154,8 @@ const readStoredProfessorManagementState = () => {
     const nextFilters = createDefaultManagementFilters();
     nextFilters.keyword =
       typeof filters?.keyword === "string" ? filters.keyword : "";
-    nextFilters.keywordFields = normalizeManagementKeywordFields(
-      filters?.keywordFields,
+    nextFilters.keywordSearchScopes = normalizeManagementKeywordSearchScopes(
+      filters?.keywordSearchScopes,
     );
     nextFilters.universities = readStringArray(filters?.universities);
     nextFilters.schools = readStringArray(filters?.schools);
@@ -661,24 +648,15 @@ export const ProfessorsPage = () => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
   };
 
-  const toggleManagementKeywordField = (field: ManagementKeywordField) => {
+  const setManagementKeywordSearchScopes = (
+    keywordSearchScopes: ProfessorManagementKeywordSearchScope[],
+  ) => {
     setCurrentPage(1);
-    setFilters((previous) => {
-      const currentFields = normalizeManagementKeywordFields(
-        previous.keywordFields,
-      );
-      const nextFields = currentFields.includes(field)
-        ? currentFields.filter((item) => item !== field)
-        : [...currentFields, field];
-
-      return {
-        ...previous,
-        keywordFields:
-          nextFields.length > 0
-            ? nextFields
-            : [...DEFAULT_MANAGEMENT_KEYWORD_FIELDS],
-      };
-    });
+    setFilters((previous) => ({
+      ...previous,
+      keywordSearchScopes:
+        normalizeManagementKeywordSearchScopes(keywordSearchScopes),
+    }));
   };
 
   const toggleFilterValue = (
@@ -1211,11 +1189,11 @@ export const ProfessorsPage = () => {
                   />
                   <KeywordSearchScopeSelect
                     label="搜索范围"
-                    options={managementKeywordFieldOptions}
-                    selectedValues={normalizeManagementKeywordFields(
-                      filters.keywordFields,
+                    options={MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS}
+                    selectedValues={normalizeManagementKeywordSearchScopes(
+                      filters.keywordSearchScopes,
                     )}
-                    onToggle={toggleManagementKeywordField}
+                    onChange={setManagementKeywordSearchScopes}
                   />
                 </div>
               </label>

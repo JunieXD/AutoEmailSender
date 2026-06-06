@@ -9,13 +9,14 @@ export type KeywordSearchScopeOption<TValue extends string = string> = {
 
 type KeywordSearchScopeSelectProps<TValue extends string = string> = {
   label: string;
-  options: KeywordSearchScopeOption<TValue>[];
+  options: ReadonlyArray<KeywordSearchScopeOption<TValue>>;
   selectedValues: TValue[];
-  onToggle: (value: TValue) => void;
+  disabled?: boolean;
+  onChange: (nextValues: TValue[]) => void;
 };
 
 const getSummary = <TValue extends string>(
-  options: KeywordSearchScopeOption<TValue>[],
+  options: ReadonlyArray<KeywordSearchScopeOption<TValue>>,
   selectedValues: TValue[],
 ) =>
   selectedValues.length === options.length
@@ -26,7 +27,8 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
   label,
   options,
   selectedValues,
-  onToggle,
+  disabled = false,
+  onChange,
 }: KeywordSearchScopeSelectProps<TValue>) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -66,6 +68,7 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
       <button
         ref={triggerRef}
         type="button"
+        disabled={disabled}
         aria-label={`${label}：${summary}`}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -73,6 +76,7 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
         onClick={() => setOpen((previous) => !previous)}
         className={clsx(
           "inline-flex h-8 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs font-medium text-stone-700 transition hover:border-primary/40 hover:text-primary",
+          disabled && "cursor-not-allowed opacity-60",
           open &&
             "border-primary/45 bg-white text-primary ring-2 ring-primary/10",
         )}
@@ -107,8 +111,16 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
                   role="option"
                   aria-selected={selected}
                   onClick={() => {
-                    if (!locked) {
-                      onToggle(option.value);
+                    if (locked) {
+                      return;
+                    }
+
+                    if (selected) {
+                      onChange(
+                        selectedValues.filter((value) => value !== option.value),
+                      );
+                    } else {
+                      onChange([...selectedValues, option.value]);
                     }
                   }}
                   className={clsx(
@@ -124,6 +136,9 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
                 </button>
               );
             })}
+          </div>
+          <div className="border-t border-stone-100 px-3 py-2 text-xs text-stone-500">
+            至少保留最后一项
           </div>
         </div>
       ) : null}

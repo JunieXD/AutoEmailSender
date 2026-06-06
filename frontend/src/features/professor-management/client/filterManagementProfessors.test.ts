@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorManagementItemDTO } from "@/types";
 import {
-  DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+  DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
   buildManagementFilterOptions,
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
-  normalizeManagementKeywordFields,
+  normalizeManagementKeywordSearchScopes,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
 } from "./filterManagementProfessors";
@@ -104,13 +104,13 @@ describe("filterManagementProfessors", () => {
     expect(
       namesFor(scopedProfessors, {
         keyword: "副",
-        keywordFields: ["name"],
+        keywordSearchScopes: ["name"],
       }),
     ).toEqual(["副主任"]);
     expect(
       namesFor(scopedProfessors, {
         keyword: "副",
-        keywordFields: ["title"],
+        keywordSearchScopes: ["title"],
       }),
     ).toEqual(["Normal"]);
   });
@@ -119,23 +119,23 @@ describe("filterManagementProfessors", () => {
     expect(
       namesFor(professors, {
         keyword: "bob@example.edu",
-        keywordFields: ["email"],
+        keywordSearchScopes: ["email"],
       }),
     ).toEqual(["Bob"]);
     expect(
       namesFor(professors, {
         keyword: "bob@example.edu",
-        keywordFields: ["name"],
+        keywordSearchScopes: ["name"],
       }),
     ).toEqual([]);
   });
 
-  it("normalizes invalid management keyword fields to the default scope", () => {
-    expect(normalizeManagementKeywordFields(["name", "unknown"])).toEqual(
-      DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+  it("normalizes invalid management search scopes to every field", () => {
+    expect(normalizeManagementKeywordSearchScopes(["email", "unknown"])).toEqual(
+      DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
     );
-    expect(normalizeManagementKeywordFields(["unknown"])).toEqual(
-      DEFAULT_MANAGEMENT_KEYWORD_FIELDS,
+    expect(normalizeManagementKeywordSearchScopes(["unknown"])).toEqual(
+      DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
     );
   });
 
