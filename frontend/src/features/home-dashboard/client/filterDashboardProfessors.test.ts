@@ -6,6 +6,7 @@ import {
   createDefaultDashboardFilters,
   getActiveDashboardFilterCount,
   filterDashboardProfessors,
+  getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
   pruneDashboardFilters,
   type DashboardFilterState,
@@ -129,6 +130,16 @@ describe("filterDashboardProfessors", () => {
     expect(fields).toEqual(DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES);
     expect(normalizeDashboardKeywordSearchScopes(["unknown"])).toEqual(
       DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
+    );
+  });
+
+  it("builds dashboard keyword placeholder from selected search scopes", () => {
+    expect(getDashboardKeywordSearchPlaceholder(["name"])).toBe("姓名");
+    expect(getDashboardKeywordSearchPlaceholder(["name", "title"])).toBe(
+      "姓名、职称",
+    );
+    expect(getDashboardKeywordSearchPlaceholder(["unknown"])).toBe(
+      "姓名、学校、学院、系所、职称、研究方向",
     );
   });
 

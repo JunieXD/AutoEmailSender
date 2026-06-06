@@ -84,6 +84,16 @@ export const normalizeManagementKeywordSearchScopes = (
   return nextValues;
 };
 
+export const getManagementKeywordSearchPlaceholder = (values: unknown): string => {
+  const selectedScopes = normalizeManagementKeywordSearchScopes(values);
+  const selectedSet = new Set(selectedScopes);
+  return MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS.filter((option) =>
+    selectedSet.has(option.value),
+  )
+    .map((option) => option.label)
+    .join("、");
+};
+
 const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
   const trimmed = value?.trim();
   if (trimmed) {

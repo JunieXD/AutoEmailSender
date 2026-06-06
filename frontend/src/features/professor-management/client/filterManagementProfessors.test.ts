@@ -5,6 +5,7 @@ import {
   buildManagementFilterOptions,
   createDefaultManagementFilters,
   filterManagementProfessors,
+  getManagementKeywordSearchPlaceholder,
   getActiveManagementAdvancedFilterCount,
   normalizeManagementKeywordSearchScopes,
   pruneManagementFilters,
@@ -136,6 +137,16 @@ describe("filterManagementProfessors", () => {
     );
     expect(normalizeManagementKeywordSearchScopes(["unknown"])).toEqual(
       DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
+    );
+  });
+
+  it("builds management keyword placeholder from selected search scopes", () => {
+    expect(getManagementKeywordSearchPlaceholder(["email"])).toBe("邮箱");
+    expect(getManagementKeywordSearchPlaceholder(["name", "email"])).toBe(
+      "姓名、邮箱",
+    );
+    expect(getManagementKeywordSearchPlaceholder(["unknown"])).toBe(
+      "姓名、邮箱、学校、学院、系所、职称、研究方向",
     );
   });
 

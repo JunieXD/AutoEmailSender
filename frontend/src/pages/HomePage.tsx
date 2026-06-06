@@ -31,6 +31,7 @@ import {
   createDefaultDashboardFilters,
   filterDashboardProfessors,
   getActiveDashboardFilterCount,
+  getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
   pruneDashboardFilters,
   type DashboardFilterState,
@@ -872,7 +873,9 @@ export const HomePage = () => {
                   onChange={(event) =>
                     updateFilters({ keyword: event.target.value })
                   }
-                  placeholder="导师、学校、学院、系所、职称、研究方向"
+                  placeholder={getDashboardKeywordSearchPlaceholder(
+                    filters.keywordSearchScopes,
+                  )}
                   className="w-full min-w-0 bg-transparent leading-5 outline-none"
                 />
                 <KeywordSearchScopeSelect

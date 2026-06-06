@@ -93,6 +93,16 @@ export const normalizeDashboardKeywordSearchScopes = (
   return nextValues;
 };
 
+export const getDashboardKeywordSearchPlaceholder = (values: unknown): string => {
+  const selectedScopes = normalizeDashboardKeywordSearchScopes(values);
+  const selectedSet = new Set(selectedScopes);
+  return DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS.filter((option) =>
+    selectedSet.has(option.value),
+  )
+    .map((option) => option.label)
+    .join("、");
+};
+
 const DASHBOARD_TITLE_SPLIT_PATTERN = /[、，,/／|｜；;]+/;
 
 const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {

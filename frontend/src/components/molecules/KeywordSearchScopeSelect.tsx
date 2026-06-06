@@ -18,10 +18,16 @@ type KeywordSearchScopeSelectProps<TValue extends string = string> = {
 const getSummary = <TValue extends string>(
   options: ReadonlyArray<KeywordSearchScopeOption<TValue>>,
   selectedValues: TValue[],
-) =>
-  selectedValues.length === options.length
-    ? "全部字段"
-    : `已选 ${selectedValues.length} 项`;
+) => {
+  const detail =
+    selectedValues.length === options.length
+      ? "全部字段"
+      : selectedValues.length === 1
+        ? "已选一项"
+        : `已选 ${selectedValues.length} 项`;
+
+  return `选择字段：${detail}`;
+};
 
 export const KeywordSearchScopeSelect = <TValue extends string = string>({
   label,
@@ -93,6 +99,16 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
 
       {open ? (
         <div className="absolute right-0 top-[calc(100%+0.45rem)] z-40 w-48 overflow-hidden rounded-2xl border border-stone-200/90 bg-white p-1 shadow-[0_22px_40px_-26px_rgba(41,37,36,0.34)]">
+          <div className="border-b border-stone-100 px-2 py-1.5">
+            <button
+              type="button"
+              onClick={() => onChange(options.map((option) => option.value))}
+              disabled={selectedValues.length === options.length}
+              className="flex w-full items-center justify-center rounded-xl px-3 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-default disabled:opacity-50"
+            >
+              全部选择
+            </button>
+          </div>
           <div
             id={listboxId}
             role="listbox"

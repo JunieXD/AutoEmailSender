@@ -67,6 +67,7 @@ import {
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
+  getManagementKeywordSearchPlaceholder,
   normalizeManagementKeywordSearchScopes,
   pruneManagementFilters,
   type ProfessorManagementKeywordSearchScope,
@@ -1184,7 +1185,9 @@ export const ProfessorsPage = () => {
                     onChange={(event) =>
                       updateFilters({ keyword: event.target.value })
                     }
-                    placeholder="姓名、邮箱、学校、学院、系所、职称、研究方向"
+                    placeholder={getManagementKeywordSearchPlaceholder(
+                      filters.keywordSearchScopes,
+                    )}
                     className="w-full min-w-0 bg-transparent leading-5 outline-none placeholder:text-stone-400"
                   />
                   <KeywordSearchScopeSelect
