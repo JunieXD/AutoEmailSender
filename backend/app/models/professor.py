@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import JSON, DateTime, String, Text, text
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -59,4 +59,58 @@ class Professor(Base):
     email_logs: Mapped[list["EmailLog"]] = relationship(
         back_populates="professor",
         cascade="all, delete-orphan",
+    )
+    tags: Mapped[list["ProfessorTag"]] = relationship(
+        secondary="professor_tag_links",
+        order_by="ProfessorTagLink.sort_order, ProfessorTag.name",
+        lazy="selectin",
+    )
+
+
+class ProfessorTagLink(Base):
+    __tablename__ = "professor_tag_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "professor_id",
+            "tag_id",
+            name="uq_professor_tag_links_professor_tag",
+        ),
+    )
+
+    professor_id: Mapped[int] = mapped_column(
+        ForeignKey("professors.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("professor_tags.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    sort_order: Mapped[int] = mapped_column(
+        nullable=False,
+        server_default=text("0"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class ProfessorTag(Base):
+    __tablename__ = "professor_tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    text_color: Mapped[str] = mapped_column(String(16), nullable=False)
+    background_color: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=utc_now,
     )

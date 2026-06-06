@@ -7,6 +7,7 @@ export const DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS = [
   { value: "department", label: "系所" },
   { value: "title", label: "职称" },
   { value: "researchDirection", label: "研究方向" },
+  { value: "tag", label: "标签" },
 ] as const;
 
 export type DashboardKeywordSearchScope =
@@ -21,15 +22,16 @@ const dashboardKeywordSearchScopeSet = new Set<string>(
 
 const dashboardKeywordFieldByScope: Record<
   DashboardKeywordSearchScope,
-  keyof Pick<
-    ProfessorDashboardItemDTO,
-    | "name"
-    | "university"
-    | "school"
-    | "department"
-    | "title"
-    | "research_direction"
-  >
+  | keyof Pick<
+      ProfessorDashboardItemDTO,
+      | "name"
+      | "university"
+      | "school"
+      | "department"
+      | "title"
+      | "research_direction"
+    >
+  | "tag"
 > = {
   name: "name",
   university: "university",
@@ -37,7 +39,10 @@ const dashboardKeywordFieldByScope: Record<
   department: "department",
   title: "title",
   researchDirection: "research_direction",
+  tag: "tag",
 };
+
+export const NO_TAG_FILTER_VALUE = "__no_tag__";
 
 export type DashboardFilterState = {
   keyword: string;
@@ -47,6 +52,7 @@ export type DashboardFilterState = {
   departments: string[];
   titles: string[];
   statuses: ProfessorDashboardStatus[];
+  tagIds: string[];
   minMatchScore: string;
 };
 
@@ -55,6 +61,7 @@ export type DashboardFilterOptions = {
   schools: string[];
   departments: string[];
   titles: string[];
+  tags: { id: number; name: string }[];
 };
 
 export const createDefaultDashboardFilters = (): DashboardFilterState => ({
@@ -65,6 +72,7 @@ export const createDefaultDashboardFilters = (): DashboardFilterState => ({
   departments: [],
   titles: [],
   statuses: [],
+  tagIds: [],
   minMatchScore: "",
 });
 
@@ -112,6 +120,9 @@ const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
   }
 };
 
+const getProfessorTags = (professor: ProfessorDashboardItemDTO) =>
+  professor.tags ?? [];
+
 const extractDashboardTitleTags = (title: string | null | undefined): string[] => {
   if (!title?.trim()) {
     return [];
@@ -143,6 +154,7 @@ export const buildDashboardFilterOptions = (
   const schools = new Set<string>();
   const departments = new Set<string>();
   const titles = new Set<string>();
+  const tags = new Map<number, string>();
   const selectedUniversities = filters.universities;
   const selectedSchools = filters.schools ?? [];
 
@@ -165,6 +177,9 @@ export const buildDashboardFilterOptions = (
     extractDashboardTitleTags(professor.title).forEach((title) => {
       addNonEmpty(titles, title);
     });
+    getProfessorTags(professor).forEach((tag) => {
+      tags.set(tag.id, tag.name);
+    });
   });
 
   return {
@@ -172,6 +187,9 @@ export const buildDashboardFilterOptions = (
     schools: sortByChinese(schools),
     departments: sortByChinese(departments),
     titles: sortByChinese(titles),
+    tags: Array.from(tags, ([id, name]) => ({ id, name })).sort((left, right) =>
+      left.name.localeCompare(right.name, "zh-CN"),
+    ),
   };
 };
 
@@ -197,6 +215,21 @@ const matchesAnyStatus = (
   selectedValues: ProfessorDashboardStatus[],
 ): boolean => selectedValues.length === 0 || selectedValues.includes(value);
 
+const matchesAnyTag = (
+  professor: ProfessorDashboardItemDTO,
+  selectedValues: string[],
+): boolean => {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+  const selectedSet = new Set(selectedValues);
+  const tags = getProfessorTags(professor);
+  if (tags.length === 0) {
+    return selectedSet.has(NO_TAG_FILTER_VALUE);
+  }
+  return tags.some((tag) => selectedSet.has(String(tag.id)));
+};
+
 const arraysEqual = (left: string[], right: string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
@@ -217,7 +250,15 @@ const parseMinimumMatchScore = (value: string): number | null => {
 const getDashboardKeywordValue = (
   professor: ProfessorDashboardItemDTO,
   scope: DashboardKeywordSearchScope,
-): string | null | undefined => professor[dashboardKeywordFieldByScope[scope]];
+): string | null | undefined => {
+  const field = dashboardKeywordFieldByScope[scope];
+  if (field === "tag") {
+    return getProfessorTags(professor)
+      .map((tag) => tag.name)
+      .join(" ");
+  }
+  return professor[field];
+};
 
 export const getActiveDashboardFilterCount = (
   filters: DashboardFilterState,
@@ -227,6 +268,7 @@ export const getActiveDashboardFilterCount = (
   filters.departments.length +
   filters.titles.length +
   filters.statuses.length +
+  filters.tagIds.length +
   (filters.minMatchScore.trim() ? 1 : 0);
 
 export const filterDashboardProfessors = (
@@ -257,6 +299,7 @@ export const filterDashboardProfessors = (
       matchesAny(professor.department, filters.departments) &&
       matchesAnyTitle(professor.title, filters.titles) &&
       matchesAnyStatus(professor.status, filters.statuses) &&
+      matchesAnyTag(professor, filters.tagIds) &&
       matchScoreMatched
     );
   });
@@ -283,12 +326,18 @@ export const pruneDashboardFilters = (
     departmentOptions.includes(value),
   );
   const titles = filters.titles.filter((value) => allOptions.titles.includes(value));
+  const validTagIds = new Set([
+    ...allOptions.tags.map((tag) => String(tag.id)),
+    NO_TAG_FILTER_VALUE,
+  ]);
+  const tagIds = (filters.tagIds ?? []).filter((value) => validTagIds.has(value));
 
   if (
     arraysEqual(universities, filters.universities) &&
     arraysEqual(schools, filters.schools) &&
     arraysEqual(departments, filters.departments) &&
-    arraysEqual(titles, filters.titles)
+    arraysEqual(titles, filters.titles) &&
+    arraysEqual(tagIds, filters.tagIds)
   ) {
     return filters;
   }
@@ -299,5 +348,6 @@ export const pruneDashboardFilters = (
     schools,
     departments,
     titles,
+    tagIds,
   };
 };

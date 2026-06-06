@@ -158,6 +158,7 @@ function spawnBackend(input: {
     ["run", "python", "desktop_entry.py", "--host", "127.0.0.1", "--port", String(input.port)],
     {
       cwd: path.join(input.repoRoot, "backend"),
+      detached: process.platform !== "win32",
       env: input.env,
       windowsHide: true,
     },
@@ -439,7 +440,8 @@ export async function stopBackend(
     child.kill();
   } else {
     try {
-      await terminateProcessTree(child.pid, port);
+      const terminationPid = process.platform === "win32" ? child.pid : -child.pid;
+      await terminateProcessTree(terminationPid, port);
     } catch {
       child.kill();
     }

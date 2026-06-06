@@ -23,6 +23,7 @@ const buildProfessor = (
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  tags: [],
   ...overrides,
 });
 

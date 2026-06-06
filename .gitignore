@@ -8,6 +8,7 @@ node_modules/
 .playwright-mcp
 data/*.db
 data/*.db-*
+data/
 data/uploads/
 frontend/dist/
 website/.vitepress/dist/
@@ -25,3 +26,6 @@ skills-lock.json
 .env
 logs
 CLAUDE.md
+.codegraph/
+.gemini/
+.mcp.json

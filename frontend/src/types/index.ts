@@ -216,6 +216,7 @@ export interface ProfessorDashboardItemDTO {
   status: ProfessorDashboardStatus;
   last_sent_at: string | null;
   last_replied_at: string | null;
+  tags: ProfessorTagDTO[];
 }
 
 export type ProfessorDashboardStatus =
@@ -243,6 +244,33 @@ export interface ProfessorDTO {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  tags: ProfessorTagDTO[];
+}
+
+export interface ProfessorTagDTO {
+  id: number;
+  name: string;
+  text_color: string;
+  background_color: string;
+}
+
+export interface ProfessorTagPayloadDTO {
+  name: string;
+  text_color: string;
+  background_color: string;
+}
+
+export interface ProfessorTagUsageProfessorDTO {
+  id: number;
+  name: string;
+  email: string | null;
+  university: string | null;
+  school: string | null;
+}
+
+export interface ProfessorTagUsageDTO {
+  tag: ProfessorTagDTO;
+  professors: ProfessorTagUsageProfessorDTO[];
 }
 
 export interface ProfessorImportResultDTO {
@@ -268,6 +296,7 @@ export interface ProfessorManagementItemDTO {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  tags: ProfessorTagDTO[];
 }
 
 export interface ProfessorUpsertPayloadDTO {
@@ -281,6 +310,7 @@ export interface ProfessorUpsertPayloadDTO {
   recent_papers: string[];
   profile_url: string | null;
   source_url: string | null;
+  tag_ids: number[];
 }
 
 export interface ProfessorImportFileResultDTO {

@@ -8,6 +8,7 @@ import {
   filterDashboardProfessors,
   getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
+  NO_TAG_FILTER_VALUE,
   pruneDashboardFilters,
   type DashboardFilterState,
 } from "./filterDashboardProfessors";
@@ -29,6 +30,7 @@ const buildProfessor = (
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  tags: [],
   ...overrides,
 });
 
@@ -139,8 +141,86 @@ describe("filterDashboardProfessors", () => {
       "姓名、职称",
     );
     expect(getDashboardKeywordSearchPlaceholder(["unknown"])).toBe(
-      "姓名、学校、学院、系所、职称、研究方向",
+      "姓名、学校、学院、系所、职称、研究方向、标签",
     );
+  });
+
+  it("matches keyword against professor tag names", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+    ];
+
+    expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
+  });
+
+  it("limits dashboard keyword matching to selected tag scope", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "高意愿导师",
+        tags: [
+          {
+            id: 1,
+            name: "重点跟进",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({
+        id: 5,
+        name: "普通导师",
+        title: "重点跟进",
+        tags: [],
+      }),
+    ];
+
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["tag"],
+      }),
+    ).toEqual(["高意愿导师"]);
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["title"],
+      }),
+    ).toEqual(["普通导师"]);
+  });
+
+  it("filters by selected tag ids and no-tag virtual option", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({ id: 5, name: "No Tag", tags: [] }),
+    ];
+
+    expect(namesFor(taggedProfessors, { tagIds: ["1"] })).toEqual(["Tagged"]);
+    expect(namesFor(taggedProfessors, { tagIds: [NO_TAG_FILTER_VALUE] })).toEqual([
+      "No Tag",
+    ]);
   });
 
   it("uses OR within one multi-select group", () => {
@@ -222,14 +302,16 @@ describe("filterDashboardProfessors", () => {
       ...createDefaultDashboardFilters(),
       universities: ["MIT", "Unknown"],
       schools: ["AI Institute", "School of Medicine"],
-      departments: ["EECS", "Unknown"],
-      titles: ["教授", "不存在"],
-    });
+        departments: ["EECS", "Unknown"],
+        titles: ["教授", "不存在"],
+        tagIds: ["404"],
+      });
 
     expect(pruned.universities).toEqual(["MIT"]);
     expect(pruned.schools).toEqual(["AI Institute"]);
     expect(pruned.departments).toEqual([]);
     expect(pruned.titles).toEqual(["教授"]);
+    expect(pruned.tagIds).toEqual([]);
 
     const schoolPruned = pruneDashboardFilters(professors, {
       ...createDefaultDashboardFilters(),

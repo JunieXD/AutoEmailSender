@@ -20,6 +20,7 @@ import {
   DashboardProfessorRow,
   type DashboardProfessorRowTimeHighlight,
 } from "@/components/molecules/DashboardProfessorRow";
+import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
@@ -34,6 +35,7 @@ import {
   getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
   pruneDashboardFilters,
+  NO_TAG_FILTER_VALUE,
   type DashboardFilterState,
   type DashboardKeywordSearchScope,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
@@ -57,7 +59,12 @@ import { ApiError } from "@/lib/api/client";
 import { calculateMatch } from "@/lib/api/emailTasksApi";
 import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
-import { listProfessors } from "@/lib/api/professorsApi";
+import {
+  createProfessorTag,
+  listProfessorTags,
+  listProfessors,
+  updateProfessorTags as updateProfessorTagsRequest,
+} from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
 import { parseApiDateTime } from "@/lib/dateTime";
 import {
@@ -69,6 +76,8 @@ import {
 import type {
   ProfessorDashboardItemDTO,
   ProfessorDashboardStatus,
+  ProfessorTagDTO,
+  ProfessorTagPayloadDTO,
 } from "@/types";
 
 const SESSION_KEY = "selected_professor_ids";
@@ -146,6 +155,7 @@ const readStoredDashboardFilters = (
       departments: readStringArray(parsedValue.departments),
       titles: readStringArray(parsedValue.titles),
       statuses: readStatusArray(parsedValue.statuses),
+      tagIds: readStringArray(parsedValue.tagIds),
       minMatchScore:
         typeof parsedValue.minMatchScore === "string"
           ? parsedValue.minMatchScore
@@ -323,9 +333,18 @@ export const HomePage = () => {
   const [scoringProfessorIds, setScoringProfessorIds] = useState<Set<number>>(
     new Set(),
   );
+  const [professorTags, setProfessorTags] = useState<ProfessorTagDTO[]>([]);
+  const [tagEditorProfessor, setTagEditorProfessor] =
+    useState<ProfessorDashboardItemDTO | null>(null);
+  const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
+  const [savingProfessorTags, setSavingProfessorTags] = useState(false);
+  const [creatingProfessorTag, setCreatingProfessorTag] = useState(false);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
+  const tagOrderSaveRef = useRef<
+    Map<number, { saving: boolean; pendingTagIds: number[] | null }>
+  >(new Map());
   const filtersSessionKeyRef = useRef(dashboardFiltersSessionKey);
   const skipNextFiltersPersistRef = useRef(false);
   const professorsRequestKey =
@@ -429,6 +448,28 @@ export const HomePage = () => {
   }, [loadProfessors]);
 
   useEffect(() => {
+    let active = true;
+    const loadProfessorTags = async () => {
+      try {
+        const tags = await listProfessorTags();
+        if (active) {
+          setProfessorTags(tags);
+        }
+      } catch (loadError) {
+        const message =
+          loadError instanceof Error ? loadError.message : "加载标签候选失败";
+        notifyError("加载标签候选失败", message);
+      }
+    };
+
+    void loadProfessorTags();
+
+    return () => {
+      active = false;
+    };
+  }, [notifyError]);
+
+  useEffect(() => {
     if (professors.length === 0) {
       return;
     }
@@ -436,11 +477,128 @@ export const HomePage = () => {
     setFilters((previous) => pruneDashboardFilters(professors, previous));
   }, [professors]);
 
+  const saveProfessorTags = async (
+    professor: ProfessorDashboardItemDTO,
+    tagIds: number[],
+  ) => {
+    setSavingProfessorTags(true);
+    try {
+      const updatedProfessor = await updateProfessorTagsRequest(professor.id, tagIds);
+      setProfessors((previous) =>
+        previous.map((item) =>
+          item.id === updatedProfessor.id
+            ? {
+                ...item,
+                tags: updatedProfessor.tags,
+              }
+            : item,
+        ),
+      );
+      notifySuccess("标签已更新", `已更新“${updatedProfessor.name}”的导师标签。`);
+      return true;
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "保存导师标签失败";
+      notifyError("保存导师标签失败", message);
+      return false;
+    } finally {
+      setSavingProfessorTags(false);
+    }
+  };
+
+  const handleCreateAssignmentTag = async (
+    payload: ProfessorTagPayloadDTO,
+  ) => {
+    setCreatingProfessorTag(true);
+    try {
+      const createdTag = await createProfessorTag(payload);
+      setProfessorTags((previous) => [...previous, createdTag]);
+      notifySuccess("创建标签成功", `已新增标签“${createdTag.name}”。`);
+      return createdTag;
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "创建标签失败";
+      notifyError("创建标签失败", message);
+      return null;
+    } finally {
+      setCreatingProfessorTag(false);
+    }
+  };
+
+  const openTagEditor = (professor: ProfessorDashboardItemDTO) => {
+    setTagEditorProfessor(professor);
+    setTagEditorSelectedIds(professor.tags.map((tag) => tag.id));
+  };
+
+  const closeTagEditor = () => {
+    if (savingProfessorTags || creatingProfessorTag) {
+      return;
+    }
+    setTagEditorProfessor(null);
+    setTagEditorSelectedIds([]);
+  };
+
+  const saveTagEditor = async () => {
+    if (!tagEditorProfessor) {
+      return;
+    }
+    const saved = await saveProfessorTags(
+      tagEditorProfessor,
+      tagEditorSelectedIds,
+    );
+    if (saved) {
+      closeTagEditor();
+    }
+  };
+
+  const handleDashboardTagOrderChange = async (
+    professor: ProfessorDashboardItemDTO,
+    tagIds: number[],
+  ) => {
+    const existingState = tagOrderSaveRef.current.get(professor.id);
+    if (existingState?.saving) {
+      existingState.pendingTagIds = tagIds;
+      return;
+    }
+
+    const saveState = { saving: true, pendingTagIds: null as number[] | null };
+    tagOrderSaveRef.current.set(professor.id, saveState);
+
+    try {
+      let nextTagIds: number[] | null = tagIds;
+      while (nextTagIds) {
+        const currentTagIds = nextTagIds;
+        nextTagIds = null;
+        await saveProfessorTags(professor, currentTagIds);
+        nextTagIds = saveState.pendingTagIds;
+        saveState.pendingTagIds = null;
+      }
+    } finally {
+      tagOrderSaveRef.current.delete(professor.id);
+    }
+  };
+
   const filterOptions = buildDashboardFilterOptions(professors, filters);
   const activeAdvancedFilterCount = getActiveDashboardFilterCount(filters);
   const selectedStatusLabels = filters.statuses.map((item) =>
     getProfessorDashboardStatusLabel(item),
   );
+  const tagFilterEntries = [
+    ...filterOptions.tags.map((tag) => ({
+      value: String(tag.id),
+      label: tag.name,
+    })),
+    { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+  ];
+  const tagLabelByValue = new Map(
+    tagFilterEntries.map((entry) => [entry.value, entry.label]),
+  );
+  const tagValueByLabel = new Map(
+    tagFilterEntries.map((entry) => [entry.label, entry.value]),
+  );
+  const selectedTagLabels = filters.tagIds
+    .map((value) => tagLabelByValue.get(value))
+    .filter((value): value is string => Boolean(value));
 
   const updateFilters = (nextFilters: Partial<DashboardFilterState>) => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
@@ -456,7 +614,7 @@ export const HomePage = () => {
   };
 
   const toggleStringFilterValue = (
-    key: "universities" | "schools" | "departments" | "titles",
+    key: "universities" | "schools" | "departments" | "titles" | "tagIds",
     value: string,
   ) => {
     setFilters((previous) => {
@@ -515,6 +673,7 @@ export const HomePage = () => {
       departments: [],
       titles: [],
       statuses: [],
+      tagIds: [],
       minMatchScore: "",
     }));
   };
@@ -1080,6 +1239,19 @@ export const HomePage = () => {
                   }}
                   onClear={() => updateFilters({ statuses: [] })}
                 />
+                <MultiSelectFilter
+                  label="标签"
+                  allLabel="全部标签"
+                  selectedValues={selectedTagLabels}
+                  options={tagFilterEntries.map((entry) => entry.label)}
+                  onToggle={(label) => {
+                    const value = tagValueByLabel.get(label);
+                    if (value) {
+                      toggleStringFilterValue("tagIds", value);
+                    }
+                  }}
+                  onClear={() => updateFilters({ tagIds: [] })}
+                />
                 <label className="block">
                   <div className="mb-2 text-sm font-medium text-stone-800">
                     最低匹配度
@@ -1174,6 +1346,10 @@ export const HomePage = () => {
                   onToggleSelection={() => toggleSelection(professor.id)}
                   onCalculateMatch={() => void handleGenerateOne(professor.id)}
                   onOpenWorkspace={() => navigate(`/workspace/${professor.id}`)}
+                  onAddTag={() => openTagEditor(professor)}
+                  onTagOrderChange={(tagIds) =>
+                    void handleDashboardTagOrderChange(professor, tagIds)
+                  }
                 />
               ))}
             </div>
@@ -1254,6 +1430,19 @@ export const HomePage = () => {
           </div>
         ) : null}
       </main>
+      <ProfessorTagAssignmentDialog
+        open={Boolean(tagEditorProfessor)}
+        scopeKey={tagEditorProfessor?.id ?? null}
+        professorName={tagEditorProfessor?.name ?? ""}
+        tags={professorTags}
+        selectedTagIds={tagEditorSelectedIds}
+        saving={savingProfessorTags}
+        creating={creatingProfessorTag}
+        onChange={setTagEditorSelectedIds}
+        onCreateTag={handleCreateAssignmentTag}
+        onSave={() => void saveTagEditor()}
+        onClose={closeTagEditor}
+      />
       {confirmDialog}
     </>
   );

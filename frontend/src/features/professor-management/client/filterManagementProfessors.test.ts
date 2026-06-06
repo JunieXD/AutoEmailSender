@@ -8,6 +8,7 @@ import {
   getManagementKeywordSearchPlaceholder,
   getActiveManagementAdvancedFilterCount,
   normalizeManagementKeywordSearchScopes,
+  NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
 } from "./filterManagementProfessors";
@@ -31,6 +32,7 @@ const buildProfessor = (
   archived_at: null,
   created_at: "2026-05-01T00:00:00",
   updated_at: "2026-05-01T00:00:00",
+  tags: [],
   ...overrides,
 });
 
@@ -146,8 +148,87 @@ describe("filterManagementProfessors", () => {
       "姓名、邮箱",
     );
     expect(getManagementKeywordSearchPlaceholder(["unknown"])).toBe(
-      "姓名、邮箱、学校、学院、系所、职称、研究方向",
+      "姓名、邮箱、学校、学院、系所、职称、研究方向、标签",
     );
+  });
+
+  it("matches keyword against professor tag names", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+    ];
+
+    expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
+  });
+
+  it("limits management keyword matching to selected tag scope", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "高意愿导师",
+        title: "教授",
+        tags: [
+          {
+            id: 1,
+            name: "重点跟进",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({
+        id: 5,
+        name: "普通导师",
+        title: "重点跟进",
+        tags: [],
+      }),
+    ];
+
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["tag"],
+      }),
+    ).toEqual(["高意愿导师"]);
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["title"],
+      }),
+    ).toEqual(["普通导师"]);
+  });
+
+  it("filters by selected tag ids and no-tag virtual option", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Tagged",
+        tags: [
+          {
+            id: 1,
+            name: "高意愿",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({ id: 5, name: "No Tag", tags: [] }),
+    ];
+
+    expect(namesFor(taggedProfessors, { tagIds: ["1"] })).toEqual(["Tagged"]);
+    expect(namesFor(taggedProfessors, { tagIds: [NO_TAG_FILTER_VALUE] })).toEqual([
+      "No Tag",
+    ]);
   });
 
   it("uses OR within one multi-select group and AND across groups", () => {
@@ -252,6 +333,7 @@ describe("filterManagementProfessors", () => {
       schools: ["AI Institute", "School of Medicine"],
       departments: ["EECS", "Unknown"],
       titles: ["教授", "不存在"],
+      tagIds: ["404"],
     });
 
     expect(pruned.universities).toEqual(["MIT"]);
@@ -265,10 +347,12 @@ describe("filterManagementProfessors", () => {
       schools: ["AI Institute"],
       departments: ["EECS", "Robotics"],
       titles: [],
+      tagIds: [],
     });
 
     expect(schoolPruned.departments).toEqual(["Robotics"]);
     expect(pruned.titles).toEqual(["教授"]);
+    expect(pruned.tagIds).toEqual([]);
   });
 
   it("does not mutate the input array", () => {

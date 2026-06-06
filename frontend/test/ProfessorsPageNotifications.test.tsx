@@ -6,6 +6,7 @@ import { ProfessorsPage } from "@/pages/ProfessorsPage";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const listProfessorsForManagement = vi.hoisted(() => vi.fn());
+const listProfessorTags = vi.hoisted(() => vi.fn());
 const importProfessorsFromFile = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/SelectionContext", () => ({
@@ -13,6 +14,7 @@ vi.mock("@/context/SelectionContext", () => ({
 }));
 
 vi.mock("@/lib/api/professorsApi", () => ({
+  listProfessorTags,
   listProfessorsForManagement,
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
@@ -61,6 +63,8 @@ describe("ProfessorsPage notifications", () => {
     });
     listProfessorsForManagement.mockReset();
     listProfessorsForManagement.mockResolvedValue([]);
+    listProfessorTags.mockReset();
+    listProfessorTags.mockResolvedValue([]);
     importProfessorsFromFile.mockReset();
   });
 

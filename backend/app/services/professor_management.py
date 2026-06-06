@@ -29,6 +29,7 @@ PROFESSOR_TEMPLATE_COLUMNS = [
     "profile_url",
     "source_url",
 ]
+PROFESSOR_EXPORT_COLUMNS = [*PROFESSOR_TEMPLATE_COLUMNS, "tags"]
 
 PROFESSOR_TEMPLATE_HELP_LINES = [
     "# 导师导入模板",
@@ -260,7 +261,7 @@ def build_professor_export(professors: Sequence[Any], format_name: str) -> tuple
     if normalized == "csv":
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        writer.writerow(PROFESSOR_EXPORT_COLUMNS)
         writer.writerows(rows)
         content = buffer.getvalue().encode("utf-8-sig")
         return content, "text/csv; charset=utf-8", "professors_export.csv"
@@ -270,8 +271,8 @@ def build_professor_export(professors: Sequence[Any], format_name: str) -> tuple
         sheet = workbook.active
         sheet.title = "Professors"
         header_fill = PatternFill("solid", fgColor="E7E5E4")
-        sheet.append(PROFESSOR_TEMPLATE_COLUMNS)
-        for index, column in enumerate(PROFESSOR_TEMPLATE_COLUMNS, start=1):
+        sheet.append(PROFESSOR_EXPORT_COLUMNS)
+        for index, column in enumerate(PROFESSOR_EXPORT_COLUMNS, start=1):
             cell = sheet.cell(row=1, column=index)
             cell.value = column
             cell.font = Font(bold=True)
@@ -293,6 +294,7 @@ def build_professor_export(professors: Sequence[Any], format_name: str) -> tuple
 
 def _professor_to_export_row(professor: Any) -> list[str]:
     recent_papers = getattr(professor, "recent_papers", None) or []
+    tags = getattr(professor, "tags", None) or []
     return [
         _export_cell(getattr(professor, "name", None)),
         _export_cell(getattr(professor, "email", None)),
@@ -304,6 +306,11 @@ def _professor_to_export_row(professor: Any) -> list[str]:
         "|".join(_export_cell(item) for item in recent_papers if _export_cell(item)),
         _export_cell(getattr(professor, "profile_url", None)),
         _export_cell(getattr(professor, "source_url", None)),
+        "；".join(
+            exported
+            for tag in tags
+            if (exported := _export_cell(getattr(tag, "name", None)))
+        ),
     ]
 
 

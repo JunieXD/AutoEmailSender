@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { Loader2, Sparkles } from "lucide-react";
-import { ProfessorIdentityBlock } from "@/components/molecules/ProfessorIdentityBlock";
+import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { ProfessorDashboardItemDTO } from "@/types";
 
@@ -18,6 +18,8 @@ type DashboardProfessorRowProps = {
   onToggleSelection: () => void;
   onCalculateMatch: () => void;
   onOpenWorkspace: () => void;
+  onAddTag?: () => void;
+  onTagOrderChange?: (tagIds: number[]) => void;
 };
 
 const formatMatchLabel = (score: number | null) =>
@@ -25,6 +27,9 @@ const formatMatchLabel = (score: number | null) =>
 
 const formatSentLabel = (sentCount: number) =>
   sentCount === 0 ? "未发送" : `已发送 ${sentCount} 次`;
+
+const joinNonEmpty = (values: Array<string | null>) =>
+  values.filter(Boolean).join(" / ");
 
 const getRowBackgroundClass = (
   selected: boolean,
@@ -54,6 +59,8 @@ export const DashboardProfessorRow = ({
   onToggleSelection,
   onCalculateMatch,
   onOpenWorkspace,
+  onAddTag,
+  onTagOrderChange,
 }: DashboardProfessorRowProps) => (
   <article
     data-testid={`dashboard-professor-row-${professor.id}`}
@@ -68,14 +75,41 @@ export const DashboardProfessorRow = ({
         selected={selected}
         onToggle={onToggleSelection}
       />
-      <ProfessorIdentityBlock
-        compact
-        name={professor.name}
-        title={professor.title}
-        university={professor.university}
-        school={professor.school}
-        researchDirection={professor.research_direction}
-      />
+      <div className="min-w-0">
+        <div
+          data-testid="dashboard-professor-name-line"
+          className="flex min-w-0 flex-wrap items-center gap-2"
+        >
+          <div className="min-w-0 truncate text-base font-semibold text-stone-900">
+            {professor.name}
+          </div>
+          <ProfessorTagChips
+            tags={professor.tags}
+            maxVisible={2}
+            onAddTag={onAddTag}
+            draggableTags
+            onTagClick={(tagId) => {
+              if (!onTagOrderChange) {
+                return;
+              }
+              onTagOrderChange([
+                tagId,
+                ...professor.tags
+                  .map((tag) => tag.id)
+                  .filter((currentTagId) => currentTagId !== tagId),
+              ]);
+            }}
+            onTagOrderChange={onTagOrderChange}
+          />
+        </div>
+        <div className="mt-1 text-sm text-stone-500">
+          {joinNonEmpty([professor.title, professor.university, professor.school]) ||
+            "未填写学校 / 学院"}
+        </div>
+        <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">
+          {professor.research_direction || "未填写研究方向"}
+        </p>
+      </div>
     </div>
 
     <div className="flex flex-wrap gap-2 lg:justify-start">

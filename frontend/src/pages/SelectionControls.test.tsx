@@ -8,8 +8,10 @@ import {
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createProfessorTag,
   listProfessors,
   listProfessorsForManagement,
+  updateProfessorTags,
 } from "@/lib/api/professorsApi";
 import type {
   IdentityDTO,
@@ -102,6 +104,14 @@ const selectionContextValue = {
   refreshSelections: vi.fn(),
 };
 
+const deferred = <T,>() => {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+};
+
 const createDashboardProfessor = (
   id: number,
   name = `导师 ${id}`,
@@ -120,6 +130,7 @@ const createDashboardProfessor = (
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  tags: [],
 });
 
 const dashboardProfessors: ProfessorDashboardItemDTO[] = Array.from(
@@ -160,12 +171,34 @@ vi.mock("@/lib/api/professorsApi", () => ({
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   createProfessor: vi.fn(),
+  createProfessorTag: vi.fn(async () => ({
+    id: 2,
+    name: "已联系",
+    text_color: "#1d4ed8",
+    background_color: "#dbeafe",
+  })),
   getProfessorTemplateDownloadUrl: vi.fn(),
   importProfessorsFromFile: vi.fn(),
+  listProfessorTags: vi.fn(async () => [
+    {
+      id: 1,
+      name: "高意愿",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    },
+  ]),
   listProfessors: vi.fn(async () => dashboardProfessors),
   listProfessorsForManagement: vi.fn(async () => managementProfessors),
   restoreProfessor: vi.fn(),
-  updateProfessor: vi.fn(),
+  updateProfessorTags: vi.fn(async (_professorId: number, tagIds: number[]) => ({
+    ...managementProfessors[0],
+    tags: tagIds.map((tagId) => ({
+      id: tagId,
+      name: "高意愿",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    })),
+  })),
 }));
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
@@ -184,8 +217,25 @@ describe("selection controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+    vi.mocked(createProfessorTag).mockResolvedValue({
+      id: 2,
+      name: "已联系",
+      text_color: "#1d4ed8",
+      background_color: "#dbeafe",
+    });
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
+    vi.mocked(updateProfessorTags).mockResolvedValue({
+      ...managementProfessors[0],
+      tags: [
+        {
+          id: 1,
+          name: "高意愿",
+          text_color: "#166534",
+          background_color: "#dcfce7",
+        },
+      ],
+    });
     Object.assign(selectionContextValue, {
       identities: [selectedIdentity],
       llmProfiles: [selectedLlmProfile],
@@ -678,5 +728,285 @@ describe("selection controls", () => {
     expect(await screen.findByText("缺资料导师")).toBeInTheDocument();
     expect(screen.getByRole("textbox")).toHaveValue("missing-profile@example.edu");
     expect(screen.getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
+  });
+
+  it("adds a professor tag from the home page", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "给导师添加标签" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "添加导师标签" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledWith(
+        11,
+        [1],
+      );
+    });
+  });
+
+  it("creates and assigns a professor tag from the home page dialog", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "给导师添加标签" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "添加导师标签" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "新增标签" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "新增标签名" }), {
+      target: { value: "已联系" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建标签" }));
+
+    await waitFor(() => {
+      expect(createProfessorTag).toHaveBeenCalledWith({
+        name: "已联系",
+        text_color: "#166534",
+        background_color: "#dcfce7",
+      });
+    });
+    expect(
+      await within(dialog).findByRole("button", { name: "选择标签 已联系" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledWith(
+        11,
+        [2],
+      );
+    });
+  });
+
+  it("creates and assigns a professor tag from the management row dialog", async () => {
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "给导师添加标签" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "添加导师标签" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "新增标签" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "新增标签名" }), {
+      target: { value: "已联系" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建标签" }));
+
+    await waitFor(() => {
+      expect(createProfessorTag).toHaveBeenCalledWith({
+        name: "已联系",
+        text_color: "#166534",
+        background_color: "#dcfce7",
+      });
+    });
+    expect(
+      await within(dialog).findByRole("button", { name: "选择标签 已联系" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledWith(
+        11,
+        [2],
+      );
+    });
+  });
+
+  it("queues homepage tag order changes while a previous tag save is in flight", async () => {
+    const professorWithTags = {
+      ...createDashboardProfessor(401, "排序导师"),
+      tags: [
+        {
+          id: 1,
+          name: "高意愿",
+          text_color: "#166534",
+          background_color: "#dcfce7",
+        },
+        {
+          id: 2,
+          name: "羊导",
+          text_color: "#7c2d12",
+          background_color: "#ffedd5",
+        },
+        {
+          id: 3,
+          name: "高强度",
+          text_color: "#991b1b",
+          background_color: "#fee2e2",
+        },
+        {
+          id: 4,
+          name: "已退休",
+          text_color: "#44403c",
+          background_color: "#f5f5f4",
+        },
+      ],
+    };
+    const firstSave = deferred<ProfessorManagementItemDTO>();
+    vi.mocked(listProfessors).mockResolvedValue([professorWithTags]);
+    vi.mocked(updateProfessorTags)
+      .mockImplementationOnce(
+        () => firstSave.promise,
+      )
+      .mockResolvedValue({
+        ...managementProfessors[0],
+        id: professorWithTags.id,
+        name: professorWithTags.name,
+        tags: [
+          professorWithTags.tags[3],
+          professorWithTags.tags[1],
+          professorWithTags.tags[0],
+          professorWithTags.tags[2],
+        ],
+      });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("排序导师")).toBeInTheDocument();
+
+    const overflowButton = await screen.findByRole("button", {
+      name: "查看全部标签，剩余 2 个",
+    });
+    fireEvent.click(overflowButton);
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 高强度" }));
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 已退休" }));
+
+    expect(updateProfessorTags).toHaveBeenCalledTimes(1);
+
+    firstSave.resolve({
+      ...managementProfessors[0],
+      id: professorWithTags.id,
+      name: professorWithTags.name,
+      tags: [
+        professorWithTags.tags[2],
+        professorWithTags.tags[0],
+        professorWithTags.tags[1],
+        professorWithTags.tags[3],
+      ],
+    });
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledTimes(2);
+    });
+    expect(updateProfessorTags).toHaveBeenLastCalledWith(
+      professorWithTags.id,
+      [4, 1, 2, 3],
+    );
+  });
+
+  it("queues management primary tag changes while a previous tag save is in flight", async () => {
+    const professorWithTags: ProfessorManagementItemDTO = {
+      ...managementProfessors[0],
+      id: 501,
+      name: "管理排序导师",
+      tags: [
+        {
+          id: 1,
+          name: "高意愿",
+          text_color: "#166534",
+          background_color: "#dcfce7",
+        },
+        {
+          id: 2,
+          name: "羊导",
+          text_color: "#7c2d12",
+          background_color: "#ffedd5",
+        },
+        {
+          id: 3,
+          name: "高强度",
+          text_color: "#991b1b",
+          background_color: "#fee2e2",
+        },
+        {
+          id: 4,
+          name: "已退休",
+          text_color: "#44403c",
+          background_color: "#f5f5f4",
+        },
+      ],
+    };
+    const firstSave = deferred<ProfessorManagementItemDTO>();
+    vi.mocked(listProfessorsForManagement).mockResolvedValue([professorWithTags]);
+    vi.mocked(updateProfessorTags)
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockResolvedValue({
+        ...professorWithTags,
+        tags: [
+          professorWithTags.tags[3],
+          professorWithTags.tags[0],
+          professorWithTags.tags[1],
+          professorWithTags.tags[2],
+        ],
+      });
+
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("管理排序导师")).toBeInTheDocument();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "查看全部标签，剩余 3 个" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 高强度" }));
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledTimes(1);
+    });
+    expect(updateProfessorTags).toHaveBeenNthCalledWith(
+      1,
+      professorWithTags.id,
+      [3, 1, 2, 4],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 已退休" }));
+
+    expect(updateProfessorTags).toHaveBeenCalledTimes(1);
+
+    firstSave.resolve({
+      ...professorWithTags,
+      tags: [
+        professorWithTags.tags[2],
+        professorWithTags.tags[0],
+        professorWithTags.tags[1],
+        professorWithTags.tags[3],
+      ],
+    });
+
+    await waitFor(() => {
+      expect(updateProfessorTags).toHaveBeenCalledTimes(2);
+    });
+    expect(updateProfessorTags).toHaveBeenLastCalledWith(
+      professorWithTags.id,
+      [4, 1, 2, 3],
+    );
   });
 });

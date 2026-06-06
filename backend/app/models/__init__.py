@@ -44,7 +44,7 @@ from app.models.match_analysis_job import (
 )
 from app.models.match_analysis_run import MatchAnalysisRun
 from app.models.operation_log import OperationLog
-from app.models.professor import Professor
+from app.models.professor import Professor, ProfessorTag, ProfessorTagLink
 from app.models.test_compose_message import TestComposeMessage
 from app.models.test_compose_session import TestComposeSession
 from app.models.thinking_adaptation_cache import ThinkingAdaptationCache
@@ -93,6 +93,8 @@ __all__ = [
     "MatchAnalysisRun",
     "OperationLog",
     "Professor",
+    "ProfessorTag",
+    "ProfessorTagLink",
     "TestComposeMessage",
     "TestComposeSession",
     "ThinkingAdaptationCache",

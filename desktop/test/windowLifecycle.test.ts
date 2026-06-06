@@ -7,11 +7,33 @@ import {
 
 describe("desktop window lifecycle", () => {
   it("hides the window instead of quitting on normal close", () => {
-    expect(shouldHideWindowOnClose({ isQuitting: false })).toBe(true);
+    expect(
+      shouldHideWindowOnClose({
+        isPackaged: true,
+        isQuitting: false,
+        platform: "win32",
+      }),
+    ).toBe(true);
   });
 
   it("allows the app to quit after an explicit exit action", () => {
-    expect(shouldHideWindowOnClose({ isQuitting: true })).toBe(false);
+    expect(
+      shouldHideWindowOnClose({
+        isPackaged: true,
+        isQuitting: true,
+        platform: "win32",
+      }),
+    ).toBe(false);
+  });
+
+  it("allows Linux dev windows to close instead of hiding to an inaccessible tray", () => {
+    expect(
+      shouldHideWindowOnClose({
+        isPackaged: false,
+        isQuitting: false,
+        platform: "linux",
+      }),
+    ).toBe(false);
   });
 
   it("restores, shows, and focuses an existing window", () => {
