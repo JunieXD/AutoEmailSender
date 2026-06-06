@@ -241,6 +241,7 @@ describe("filterManagementProfessors", () => {
       schools: ["AI Institute"],
       departments: ["EECS", "Robotics"],
       titles: [],
+      tagIds: [],
     });
 
     expect(schoolPruned.departments).toEqual(["Robotics"]);
