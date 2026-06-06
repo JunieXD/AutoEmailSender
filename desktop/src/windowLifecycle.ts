@@ -1,5 +1,7 @@
 type WindowCloseState = {
+  isPackaged: boolean;
   isQuitting: boolean;
+  platform: NodeJS.Platform;
 };
 
 type WindowCreationState = {
@@ -13,8 +15,15 @@ type RestorableWindow = {
   focus: () => void;
 };
 
-export function shouldHideWindowOnClose({ isQuitting }: WindowCloseState): boolean {
-  return !isQuitting;
+export function shouldHideWindowOnClose({
+  isPackaged,
+  isQuitting,
+  platform,
+}: WindowCloseState): boolean {
+  if (isQuitting) {
+    return false;
+  }
+  return isPackaged || platform !== "linux";
 }
 
 export function restoreExistingWindow(window: RestorableWindow): void {

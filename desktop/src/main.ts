@@ -169,7 +169,11 @@ async function createWindow(): Promise<void> {
     mainWindow?.webContents.send("backend:status", currentBackendStatus);
   });
   mainWindow.on("close", (event) => {
-    if (!shouldHideWindowOnClose({ isQuitting })) {
+    if (!shouldHideWindowOnClose({
+      isPackaged: app.isPackaged,
+      isQuitting,
+      platform: process.platform,
+    })) {
       return;
     }
 

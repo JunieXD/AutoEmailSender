@@ -89,7 +89,7 @@ describe("desktop backend helpers", () => {
         resourcesPath: "C:\\App\\resources",
         repoRoot: "C:\\Repo",
       }),
-    ).toBe("C:\\App\\resources\\backend\\backend.exe");
+    ).toBe(path.join("C:\\App\\resources", "backend", "backend.exe"));
   });
 
   it("resolves dev backend entry path", () => {
@@ -99,7 +99,7 @@ describe("desktop backend helpers", () => {
         resourcesPath: "C:\\App\\resources",
         repoRoot: "C:\\Repo",
       }),
-    ).toBe("C:\\Repo\\backend\\desktop_entry.py");
+    ).toBe(path.join("C:\\Repo", "backend", "desktop_entry.py"));
   });
 
   it("resolves packaged frontend index path", () => {
@@ -109,7 +109,7 @@ describe("desktop backend helpers", () => {
         resourcesPath: "C:\\App\\resources",
         repoRoot: "C:\\Repo",
       }),
-    ).toBe("C:\\App\\resources\\frontend\\index.html");
+    ).toBe(path.join("C:\\App\\resources", "frontend", "index.html"));
   });
 
   it("builds backend environment with desktop data dir", () => {
@@ -128,7 +128,7 @@ describe("desktop backend helpers", () => {
     );
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
     expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
-    expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe("C:\\App\\resources\\ms-playwright");
+    expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\App\\resources", "ms-playwright"));
   });
 
   it("uses repo browser cache for dev backend environment", () => {
@@ -141,7 +141,7 @@ describe("desktop backend helpers", () => {
       appVersion: "2.4.5",
     });
 
-    expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe("C:\\Repo\\backend\\ms-playwright");
+    expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\Repo", "backend", "ms-playwright"));
   });
 
   it("allows backend controllers to expose readiness separately from process launch", async () => {
@@ -201,7 +201,7 @@ describe("desktop backend helpers", () => {
     expect(exits).toEqual([]);
   });
 
-  it("terminates the backend process tree during stop", async () => {
+  it("targets the backend process group during Unix stop", async () => {
     const child = Object.assign(new EventEmitter(), {
       pid: 1234,
       exitCode: null as number | null,
@@ -221,7 +221,7 @@ describe("desktop backend helpers", () => {
       },
     );
 
-    expect(terminatedPids).toEqual([1234]);
+    expect(terminatedPids).toEqual([-1234]);
   });
 
   it("uses a 60 second default health check timeout", async () => {
