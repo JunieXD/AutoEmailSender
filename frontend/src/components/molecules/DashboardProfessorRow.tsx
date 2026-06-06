@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Loader2, Sparkles } from "lucide-react";
 import { ProfessorIdentityBlock } from "@/components/molecules/ProfessorIdentityBlock";
+import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { ProfessorDashboardItemDTO } from "@/types";
 
@@ -75,6 +76,11 @@ export const DashboardProfessorRow = ({
         university={professor.university}
         school={professor.school}
         researchDirection={professor.research_direction}
+      />
+      <ProfessorTagChips
+        tags={professor.tags}
+        maxVisible={3}
+        className="mt-2"
       />
     </div>
 

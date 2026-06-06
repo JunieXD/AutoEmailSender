@@ -71,6 +71,7 @@ import {
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
+  NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
 } from "@/features/professor-management/client/filterManagementProfessors";
@@ -655,6 +656,22 @@ export const ProfessorsPage = () => {
   );
   const activeAdvancedFilterCount =
     getActiveManagementAdvancedFilterCount(filters);
+  const tagFilterEntries = [
+    ...filterOptions.tags.map((tag) => ({
+      value: String(tag.id),
+      label: tag.name,
+    })),
+    { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+  ];
+  const tagLabelByValue = new Map(
+    tagFilterEntries.map((entry) => [entry.value, entry.label]),
+  );
+  const tagValueByLabel = new Map(
+    tagFilterEntries.map((entry) => [entry.label, entry.value]),
+  );
+  const selectedTagLabels = filters.tagIds
+    .map((value) => tagLabelByValue.get(value))
+    .filter((value): value is string => Boolean(value));
   const filteredProfessors = useMemo(
     () => filterManagementProfessors(professors, filters),
     [filters, professors],
@@ -670,7 +687,7 @@ export const ProfessorsPage = () => {
   };
 
   const toggleFilterValue = (
-    key: "universities" | "schools" | "departments" | "titles",
+    key: "universities" | "schools" | "departments" | "titles" | "tagIds",
     value: string,
   ) => {
     setCurrentPage(1);
@@ -700,6 +717,7 @@ export const ProfessorsPage = () => {
       schools: [],
       departments: [],
       titles: [],
+      tagIds: [],
     }));
   };
 
@@ -1247,7 +1265,7 @@ export const ProfessorsPage = () => {
                     onChange={(event) =>
                       updateFilters({ keyword: event.target.value })
                     }
-                    placeholder="姓名、邮箱、学校、学院、系所、职称、研究方向"
+                    placeholder="姓名、邮箱、学校、学院、系所、职称、研究方向、标签"
                     className="w-full min-w-0 bg-transparent leading-5 outline-none placeholder:text-stone-400"
                   />
                 </div>
@@ -1352,6 +1370,19 @@ export const ProfessorsPage = () => {
                     options={filterOptions.titles}
                     onToggle={(value) => toggleFilterValue("titles", value)}
                     onClear={() => updateFilters({ titles: [] })}
+                  />
+                  <MultiSelectFilter
+                    label="标签"
+                    allLabel="全部标签"
+                    selectedValues={selectedTagLabels}
+                    options={tagFilterEntries.map((entry) => entry.label)}
+                    onToggle={(label) => {
+                      const value = tagValueByLabel.get(label);
+                      if (value) {
+                        toggleFilterValue("tagIds", value);
+                      }
+                    }}
+                    onClear={() => updateFilters({ tagIds: [] })}
                   />
                 </div>
               </div>

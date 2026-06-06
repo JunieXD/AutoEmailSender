@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { Archive, PencilLine, RotateCcw } from "lucide-react";
+import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { normalizeProfessorTitleDisplay } from "@/lib/professorTitle";
@@ -67,6 +68,11 @@ export const ManagementProfessorRow = ({
           <div className="truncate text-base font-semibold text-stone-900 lg:text-center">
             {professor.name}
           </div>
+          <ProfessorTagChips
+            tags={professor.tags}
+            maxVisible={2}
+            className="mt-2 justify-start lg:justify-center"
+          />
           {professor.archived_at ? (
             <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
               已删除

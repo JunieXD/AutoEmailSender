@@ -30,6 +30,7 @@ import {
   filterDashboardProfessors,
   getActiveDashboardFilterCount,
   pruneDashboardFilters,
+  NO_TAG_FILTER_VALUE,
   type DashboardFilterState,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
@@ -138,6 +139,7 @@ const readStoredDashboardFilters = (
       departments: readStringArray(parsedValue.departments),
       titles: readStringArray(parsedValue.titles),
       statuses: readStatusArray(parsedValue.statuses),
+      tagIds: readStringArray(parsedValue.tagIds),
       minMatchScore:
         typeof parsedValue.minMatchScore === "string"
           ? parsedValue.minMatchScore
@@ -433,13 +435,29 @@ export const HomePage = () => {
   const selectedStatusLabels = filters.statuses.map((item) =>
     getProfessorDashboardStatusLabel(item),
   );
+  const tagFilterEntries = [
+    ...filterOptions.tags.map((tag) => ({
+      value: String(tag.id),
+      label: tag.name,
+    })),
+    { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+  ];
+  const tagLabelByValue = new Map(
+    tagFilterEntries.map((entry) => [entry.value, entry.label]),
+  );
+  const tagValueByLabel = new Map(
+    tagFilterEntries.map((entry) => [entry.label, entry.value]),
+  );
+  const selectedTagLabels = filters.tagIds
+    .map((value) => tagLabelByValue.get(value))
+    .filter((value): value is string => Boolean(value));
 
   const updateFilters = (nextFilters: Partial<DashboardFilterState>) => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
   };
 
   const toggleStringFilterValue = (
-    key: "universities" | "schools" | "departments" | "titles",
+    key: "universities" | "schools" | "departments" | "titles" | "tagIds",
     value: string,
   ) => {
     setFilters((previous) => {
@@ -498,6 +516,7 @@ export const HomePage = () => {
       departments: [],
       titles: [],
       statuses: [],
+      tagIds: [],
       minMatchScore: "",
     }));
   };
@@ -856,7 +875,7 @@ export const HomePage = () => {
                   onChange={(event) =>
                     updateFilters({ keyword: event.target.value })
                   }
-                  placeholder="导师、学校、学院、系所、职称、研究方向"
+                  placeholder="导师、学校、学院、系所、职称、研究方向、标签"
                   className="w-full bg-transparent leading-5 outline-none"
                 />
               </div>
@@ -1052,6 +1071,19 @@ export const HomePage = () => {
                     }
                   }}
                   onClear={() => updateFilters({ statuses: [] })}
+                />
+                <MultiSelectFilter
+                  label="标签"
+                  allLabel="全部标签"
+                  selectedValues={selectedTagLabels}
+                  options={tagFilterEntries.map((entry) => entry.label)}
+                  onToggle={(label) => {
+                    const value = tagValueByLabel.get(label);
+                    if (value) {
+                      toggleStringFilterValue("tagIds", value);
+                    }
+                  }}
+                  onClear={() => updateFilters({ tagIds: [] })}
                 />
                 <label className="block">
                   <div className="mb-2 text-sm font-medium text-stone-800">
