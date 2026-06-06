@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ProfessorTagChips } from "./ProfessorTagChips";
 
@@ -28,5 +28,20 @@ describe("ProfessorTagChips", () => {
     expect(screen.getByText("高强度")).toBeInTheDocument();
     expect(screen.queryByText("羊导")).not.toBeInTheDocument();
     expect(screen.getByText("+1")).toBeInTheDocument();
+  });
+
+  it("shows hidden tags in a popover", () => {
+    render(
+      <ProfessorTagChips
+        maxVisible={1}
+        tags={[tag(1, "高意愿"), tag(2, "羊导"), tag(3, "高强度")]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看全部标签，剩余 2 个" }));
+    const dialog = screen.getByRole("dialog", { name: "全部标签" });
+
+    expect(within(dialog).getByText("羊导")).toBeInTheDocument();
+    expect(within(dialog).getByText("高强度")).toBeInTheDocument();
   });
 });

@@ -29,7 +29,7 @@ const professor: ProfessorDashboardItemDTO = {
 };
 
 describe("DashboardProfessorRow", () => {
-  it("shows professor tags near the identity block", () => {
+  it("shows professor tags in the same line as the name", () => {
     render(
       <DashboardProfessorRow
         professor={professor}
@@ -46,6 +46,8 @@ describe("DashboardProfessorRow", () => {
       />,
     );
 
-    expect(screen.getByText("高意愿")).toBeInTheDocument();
+    const nameLine = screen.getByTestId("dashboard-professor-name-line");
+    expect(nameLine).toHaveTextContent("张明远");
+    expect(nameLine).toHaveTextContent("高意愿");
   });
 });
