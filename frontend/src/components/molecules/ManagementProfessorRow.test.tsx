@@ -80,7 +80,7 @@ describe("ManagementProfessorRow", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "查看全部标签，剩余 2 个" }));
-    const dialog = screen.getByRole("dialog", { name: "全部标签" });
+    const dialog = screen.getByRole("dialog", { name: "折叠标签" });
     fireEvent.click(within(dialog).getByRole("button", { name: "选择标签 羊导" }));
 
     expect(handlePrimaryTagSelect).toHaveBeenCalledWith(2);

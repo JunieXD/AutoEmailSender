@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Loader2,
   MailPlus,
+  Plus,
   RefreshCcw,
   Search,
   Sparkles,
@@ -53,7 +54,12 @@ import { ApiError } from "@/lib/api/client";
 import { calculateMatch } from "@/lib/api/emailTasksApi";
 import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
-import { listProfessors } from "@/lib/api/professorsApi";
+import {
+  getProfessor,
+  listProfessorTags,
+  listProfessors,
+  updateProfessor,
+} from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
 import { parseApiDateTime } from "@/lib/dateTime";
 import {
@@ -65,6 +71,9 @@ import {
 import type {
   ProfessorDashboardItemDTO,
   ProfessorDashboardStatus,
+  ProfessorDTO,
+  ProfessorTagDTO,
+  ProfessorUpsertPayloadDTO,
 } from "@/types";
 
 const SESSION_KEY = "selected_professor_ids";
@@ -93,6 +102,23 @@ const getDashboardFiltersSessionKey = (
   selectedIdentityId !== null
     ? `${FILTERS_SESSION_KEY_PREFIX}:${selectedIdentityId}`
     : null;
+
+const toProfessorTagUpdatePayload = (
+  professor: ProfessorDTO,
+  tagIds: number[],
+): ProfessorUpsertPayloadDTO => ({
+  name: professor.name,
+  email: professor.email ?? "",
+  title: professor.title,
+  university: professor.university,
+  school: professor.school,
+  department: professor.department,
+  research_direction: professor.research_direction,
+  recent_papers: professor.recent_papers ?? [],
+  profile_url: null,
+  source_url: null,
+  tag_ids: tagIds,
+});
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -317,6 +343,11 @@ export const HomePage = () => {
   const [scoringProfessorIds, setScoringProfessorIds] = useState<Set<number>>(
     new Set(),
   );
+  const [professorTags, setProfessorTags] = useState<ProfessorTagDTO[]>([]);
+  const [tagEditorProfessor, setTagEditorProfessor] =
+    useState<ProfessorDashboardItemDTO | null>(null);
+  const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
+  const [savingProfessorTags, setSavingProfessorTags] = useState(false);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
@@ -423,12 +454,100 @@ export const HomePage = () => {
   }, [loadProfessors]);
 
   useEffect(() => {
+    let active = true;
+    const loadProfessorTags = async () => {
+      try {
+        const tags = await listProfessorTags();
+        if (active) {
+          setProfessorTags(tags);
+        }
+      } catch (loadError) {
+        const message =
+          loadError instanceof Error ? loadError.message : "加载标签候选失败";
+        notifyError("加载标签候选失败", message);
+      }
+    };
+
+    void loadProfessorTags();
+
+    return () => {
+      active = false;
+    };
+  }, [notifyError]);
+
+  useEffect(() => {
     if (professors.length === 0) {
       return;
     }
 
     setFilters((previous) => pruneDashboardFilters(professors, previous));
   }, [professors]);
+
+  const updateProfessorTags = async (
+    professor: ProfessorDashboardItemDTO,
+    tagIds: number[],
+  ) => {
+    setSavingProfessorTags(true);
+    try {
+      const currentProfessor = await getProfessor(professor.id);
+      const updatedProfessor = await updateProfessor(
+        professor.id,
+        toProfessorTagUpdatePayload(currentProfessor, tagIds),
+      );
+      setProfessors((previous) =>
+        previous.map((item) =>
+          item.id === updatedProfessor.id
+            ? {
+                ...item,
+                tags: updatedProfessor.tags,
+              }
+            : item,
+        ),
+      );
+      notifySuccess("标签已更新", `已更新“${updatedProfessor.name}”的导师标签。`);
+      return true;
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "保存导师标签失败";
+      notifyError("保存导师标签失败", message);
+      return false;
+    } finally {
+      setSavingProfessorTags(false);
+    }
+  };
+
+  const openTagEditor = (professor: ProfessorDashboardItemDTO) => {
+    setTagEditorProfessor(professor);
+    setTagEditorSelectedIds(professor.tags.map((tag) => tag.id));
+  };
+
+  const closeTagEditor = () => {
+    if (savingProfessorTags) {
+      return;
+    }
+    setTagEditorProfessor(null);
+    setTagEditorSelectedIds([]);
+  };
+
+  const saveTagEditor = async () => {
+    if (!tagEditorProfessor) {
+      return;
+    }
+    const saved = await updateProfessorTags(
+      tagEditorProfessor,
+      tagEditorSelectedIds,
+    );
+    if (saved) {
+      closeTagEditor();
+    }
+  };
+
+  const handleDashboardTagOrderChange = async (
+    professor: ProfessorDashboardItemDTO,
+    tagIds: number[],
+  ) => {
+    await updateProfessorTags(professor, tagIds);
+  };
 
   const filterOptions = buildDashboardFilterOptions(professors, filters);
   const activeAdvancedFilterCount = getActiveDashboardFilterCount(filters);
@@ -1179,6 +1298,10 @@ export const HomePage = () => {
                   onToggleSelection={() => toggleSelection(professor.id)}
                   onCalculateMatch={() => void handleGenerateOne(professor.id)}
                   onOpenWorkspace={() => navigate(`/workspace/${professor.id}`)}
+                  onAddTag={() => openTagEditor(professor)}
+                  onTagOrderChange={(tagIds) =>
+                    void handleDashboardTagOrderChange(professor, tagIds)
+                  }
                 />
               ))}
             </div>
@@ -1259,6 +1382,105 @@ export const HomePage = () => {
           </div>
         ) : null}
       </main>
+      {tagEditorProfessor ? (
+        <div
+          role="dialog"
+          aria-label="首页添加导师标签"
+          aria-modal="true"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+          onClick={closeTagEditor}
+        >
+          <div
+            className="w-full max-w-lg rounded-[28px] border border-stone-200 bg-white p-5 shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-stone-900">
+                  添加导师标签
+                </h2>
+                <p className="mt-1 text-sm text-stone-500">
+                  {tagEditorProfessor.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeTagEditor}
+                disabled={savingProfessorTags}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="关闭标签选择"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              {professorTags.map((tag) => {
+                const selected = tagEditorSelectedIds.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    aria-label={`选择标签 ${tag.name}`}
+                    aria-pressed={selected}
+                    disabled={savingProfessorTags}
+                    onClick={() =>
+                      setTagEditorSelectedIds((previous) =>
+                        previous.includes(tag.id)
+                          ? previous.filter((tagId) => tagId !== tag.id)
+                          : [...previous, tag.id],
+                      )
+                    }
+                    className={clsx(
+                      "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                      selected
+                        ? "border-primary/40 shadow-sm shadow-primary/10"
+                        : "border-stone-200 hover:border-stone-300",
+                    )}
+                    style={{
+                      backgroundColor: tag.background_color,
+                      color: tag.text_color,
+                    }}
+                  >
+                    {selected ? <Check className="h-3.5 w-3.5" /> : null}
+                    {tag.name}
+                  </button>
+                );
+              })}
+            </div>
+
+            {professorTags.length === 0 ? (
+              <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-500">
+                暂无可选标签，可到导师管理页创建自定义标签。
+              </div>
+            ) : null}
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeTagEditor}
+                disabled={savingProfessorTags}
+                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveTagEditor()}
+                disabled={savingProfessorTags}
+                className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingProfessorTags ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                保存标签
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {confirmDialog}
     </>
   );

@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   listProfessors,
   listProfessorsForManagement,
+  updateProfessor,
+  getProfessor,
 } from "@/lib/api/professorsApi";
 import type {
   IdentityDTO,
@@ -161,12 +163,33 @@ vi.mock("@/lib/api/professorsApi", () => ({
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   createProfessor: vi.fn(),
+  getProfessor: vi.fn(async () => ({
+    ...managementProfessors[0],
+    recent_papers: managementProfessors[0].recent_papers,
+    tags: [],
+  })),
   getProfessorTemplateDownloadUrl: vi.fn(),
   importProfessorsFromFile: vi.fn(),
+  listProfessorTags: vi.fn(async () => [
+    {
+      id: 1,
+      name: "高意愿",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    },
+  ]),
   listProfessors: vi.fn(async () => dashboardProfessors),
   listProfessorsForManagement: vi.fn(async () => managementProfessors),
   restoreProfessor: vi.fn(),
-  updateProfessor: vi.fn(),
+  updateProfessor: vi.fn(async (_professorId: number, payload: { tag_ids: number[] }) => ({
+    ...managementProfessors[0],
+    tags: payload.tag_ids.map((tagId) => ({
+      id: tagId,
+      name: "高意愿",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    })),
+  })),
 }));
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
@@ -187,6 +210,22 @@ describe("selection controls", () => {
     window.sessionStorage.clear();
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
+    vi.mocked(getProfessor).mockResolvedValue({
+      ...managementProfessors[0],
+      recent_papers: managementProfessors[0].recent_papers,
+      tags: [],
+    });
+    vi.mocked(updateProfessor).mockResolvedValue({
+      ...managementProfessors[0],
+      tags: [
+        {
+          id: 1,
+          name: "高意愿",
+          text_color: "#166534",
+          background_color: "#dcfce7",
+        },
+      ],
+    });
     Object.assign(selectionContextValue, {
       identities: [selectedIdentity],
       llmProfiles: [selectedLlmProfile],
@@ -679,5 +718,28 @@ describe("selection controls", () => {
     expect(await screen.findByText("缺资料导师")).toBeInTheDocument();
     expect(screen.getByRole("textbox")).toHaveValue("missing-profile@example.edu");
     expect(screen.getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
+  });
+
+  it("adds a professor tag from the home page", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "给导师添加标签" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "首页添加导师标签" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
+
+    await waitFor(() => {
+      expect(getProfessor).toHaveBeenCalledWith(11);
+      expect(updateProfessor).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({ tag_ids: [1] }),
+      );
+    });
   });
 });

@@ -18,6 +18,8 @@ type DashboardProfessorRowProps = {
   onToggleSelection: () => void;
   onCalculateMatch: () => void;
   onOpenWorkspace: () => void;
+  onAddTag?: () => void;
+  onTagOrderChange?: (tagIds: number[]) => void;
 };
 
 const formatMatchLabel = (score: number | null) =>
@@ -57,6 +59,8 @@ export const DashboardProfessorRow = ({
   onToggleSelection,
   onCalculateMatch,
   onOpenWorkspace,
+  onAddTag,
+  onTagOrderChange,
 }: DashboardProfessorRowProps) => (
   <article
     data-testid={`dashboard-professor-row-${professor.id}`}
@@ -79,7 +83,24 @@ export const DashboardProfessorRow = ({
           <div className="min-w-0 truncate text-base font-semibold text-stone-900">
             {professor.name}
           </div>
-          <ProfessorTagChips tags={professor.tags} maxVisible={2} />
+          <ProfessorTagChips
+            tags={professor.tags}
+            maxVisible={2}
+            onAddTag={onAddTag}
+            draggableTags
+            onTagClick={(tagId) => {
+              if (!onTagOrderChange) {
+                return;
+              }
+              onTagOrderChange([
+                tagId,
+                ...professor.tags
+                  .map((tag) => tag.id)
+                  .filter((currentTagId) => currentTagId !== tagId),
+              ]);
+            }}
+            onTagOrderChange={onTagOrderChange}
+          />
         </div>
         <div className="mt-1 text-sm text-stone-500">
           {joinNonEmpty([professor.title, professor.university, professor.school]) ||

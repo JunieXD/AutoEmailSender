@@ -121,6 +121,14 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual(usage["tag"]["id"], tag["id"])
         self.assertEqual([item["name"] for item in usage["professors"]], ["使用标签导师"])
 
+    def test_tag_usage_route_is_not_shadowed_by_professor_detail_route(self) -> None:
+        tag = self.client.get("/api/professors/tags").json()[0]
+
+        usage_response = self.client.get(f"/api/professors/tags/{tag['id']}/usage")
+
+        self.assertEqual(usage_response.status_code, 200, msg=usage_response.text)
+        self.assertIn("professors", usage_response.json())
+
     def test_delete_tag_removes_professor_links(self) -> None:
         tag = self.client.get("/api/professors/tags").json()[0]
         created = self.client.post(
