@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorDashboardItemDTO } from "@/types";
 import {
+  DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
   buildDashboardFilterOptions,
   createDefaultDashboardFilters,
   getActiveDashboardFilterCount,
   filterDashboardProfessors,
+  getDashboardKeywordSearchPlaceholder,
+  normalizeDashboardKeywordSearchScopes,
   NO_TAG_FILTER_VALUE,
   pruneDashboardFilters,
   type DashboardFilterState,
@@ -87,6 +90,61 @@ describe("filterDashboardProfessors", () => {
     ]);
   });
 
+  it("limits keyword matching to selected dashboard fields", () => {
+    const scopedProfessors = [
+      buildProfessor({ id: 4, name: "副主任", title: "教授" }),
+      buildProfessor({ id: 5, name: "Normal", title: "副教授" }),
+    ];
+
+    expect(namesFor(scopedProfessors, { keyword: "副" })).toEqual([
+      "副主任",
+      "Normal",
+    ]);
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordSearchScopes: ["name"],
+      }),
+    ).toEqual(["副主任"]);
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordSearchScopes: ["title"],
+      }),
+    ).toEqual(["Normal"]);
+  });
+
+  it("ignores dashboard search scopes when keyword is empty", () => {
+    expect(
+      namesFor(professors, {
+        keyword: "",
+        keywordSearchScopes: ["name"],
+      }),
+    ).toEqual(["Alice", "Bob", "Carol"]);
+  });
+
+  it("drops invalid dashboard search scopes and keeps valid selections", () => {
+    const fields = normalizeDashboardKeywordSearchScopes([
+      "researchDirection",
+      "unknown",
+    ]);
+
+    expect(fields).toEqual(["researchDirection"]);
+    expect(normalizeDashboardKeywordSearchScopes(["unknown"])).toEqual(
+      DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
+    );
+  });
+
+  it("builds dashboard keyword placeholder from selected search scopes", () => {
+    expect(getDashboardKeywordSearchPlaceholder(["name"])).toBe("姓名");
+    expect(getDashboardKeywordSearchPlaceholder(["name", "title"])).toBe(
+      "姓名、职称",
+    );
+    expect(getDashboardKeywordSearchPlaceholder(["unknown"])).toBe(
+      "姓名、学校、学院、系所、职称、研究方向、标签",
+    );
+  });
+
   it("matches keyword against professor tag names", () => {
     const taggedProfessors = [
       buildProfessor({
@@ -104,6 +162,42 @@ describe("filterDashboardProfessors", () => {
     ];
 
     expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
+  });
+
+  it("limits dashboard keyword matching to selected tag scope", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "高意愿导师",
+        tags: [
+          {
+            id: 1,
+            name: "重点跟进",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({
+        id: 5,
+        name: "普通导师",
+        title: "重点跟进",
+        tags: [],
+      }),
+    ];
+
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["tag"],
+      }),
+    ).toEqual(["高意愿导师"]);
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["title"],
+      }),
+    ).toEqual(["普通导师"]);
   });
 
   it("filters by selected tag ids and no-tag virtual option", () => {

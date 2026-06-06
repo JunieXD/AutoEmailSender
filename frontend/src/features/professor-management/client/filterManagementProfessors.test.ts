@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorManagementItemDTO } from "@/types";
 import {
+  DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
   buildManagementFilterOptions,
   createDefaultManagementFilters,
   filterManagementProfessors,
+  getManagementKeywordSearchPlaceholder,
   getActiveManagementAdvancedFilterCount,
+  normalizeManagementKeywordSearchScopes,
   NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
@@ -85,6 +88,70 @@ describe("filterManagementProfessors", () => {
     expect(namesFor(professors, { keyword: "博导" })).toEqual(["Alice"]);
   });
 
+  it("limits keyword matching to selected management fields", () => {
+    const scopedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "副主任",
+        email: "director@example.edu",
+        title: "教授",
+      }),
+      buildProfessor({
+        id: 5,
+        name: "Normal",
+        email: "normal@example.edu",
+        title: "副教授",
+      }),
+    ];
+
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordSearchScopes: ["name"],
+      }),
+    ).toEqual(["副主任"]);
+    expect(
+      namesFor(scopedProfessors, {
+        keyword: "副",
+        keywordSearchScopes: ["title"],
+      }),
+    ).toEqual(["Normal"]);
+  });
+
+  it("supports email-only keyword matching on management page", () => {
+    expect(
+      namesFor(professors, {
+        keyword: "bob@example.edu",
+        keywordSearchScopes: ["email"],
+      }),
+    ).toEqual(["Bob"]);
+    expect(
+      namesFor(professors, {
+        keyword: "bob@example.edu",
+        keywordSearchScopes: ["name"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("drops invalid management search scopes and keeps valid selections", () => {
+    expect(normalizeManagementKeywordSearchScopes(["email", "unknown"])).toEqual([
+      "email",
+    ]);
+    expect(normalizeManagementKeywordSearchScopes(["unknown"])).toEqual(
+      DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
+    );
+  });
+
+  it("builds management keyword placeholder from selected search scopes", () => {
+    expect(getManagementKeywordSearchPlaceholder(["email"])).toBe("邮箱");
+    expect(getManagementKeywordSearchPlaceholder(["name", "email"])).toBe(
+      "姓名、邮箱",
+    );
+    expect(getManagementKeywordSearchPlaceholder(["unknown"])).toBe(
+      "姓名、邮箱、学校、学院、系所、职称、研究方向、标签",
+    );
+  });
+
   it("matches keyword against professor tag names", () => {
     const taggedProfessors = [
       buildProfessor({
@@ -102,6 +169,43 @@ describe("filterManagementProfessors", () => {
     ];
 
     expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
+  });
+
+  it("limits management keyword matching to selected tag scope", () => {
+    const taggedProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "高意愿导师",
+        title: "教授",
+        tags: [
+          {
+            id: 1,
+            name: "重点跟进",
+            text_color: "#166534",
+            background_color: "#dcfce7",
+          },
+        ],
+      }),
+      buildProfessor({
+        id: 5,
+        name: "普通导师",
+        title: "重点跟进",
+        tags: [],
+      }),
+    ];
+
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["tag"],
+      }),
+    ).toEqual(["高意愿导师"]);
+    expect(
+      namesFor(taggedProfessors, {
+        keyword: "重点跟进",
+        keywordSearchScopes: ["title"],
+      }),
+    ).toEqual(["普通导师"]);
   });
 
   it("filters by selected tag ids and no-tag virtual option", () => {
@@ -223,6 +327,7 @@ describe("filterManagementProfessors", () => {
 
   it("prunes filters when universities or options disappear", () => {
     const pruned = pruneManagementFilters(professors, {
+      ...createDefaultManagementFilters(),
       keyword: "",
       universities: ["MIT", "Unknown"],
       schools: ["AI Institute", "School of Medicine"],
@@ -236,6 +341,7 @@ describe("filterManagementProfessors", () => {
     expect(pruned.departments).toEqual([]);
 
     const schoolPruned = pruneManagementFilters(professors, {
+      ...createDefaultManagementFilters(),
       keyword: "",
       universities: ["MIT"],
       schools: ["AI Institute"],

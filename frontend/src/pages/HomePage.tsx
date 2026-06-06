@@ -15,6 +15,7 @@ import {
   SquareCheck,
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import {
   DashboardProfessorRow,
   type DashboardProfessorRowTimeHighlight,
@@ -26,13 +27,17 @@ import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
+  DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS,
   buildDashboardFilterOptions,
   createDefaultDashboardFilters,
   filterDashboardProfessors,
   getActiveDashboardFilterCount,
+  getDashboardKeywordSearchPlaceholder,
+  normalizeDashboardKeywordSearchScopes,
   pruneDashboardFilters,
   NO_TAG_FILTER_VALUE,
   type DashboardFilterState,
+  type DashboardKeywordSearchScope,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
@@ -142,6 +147,9 @@ const readStoredDashboardFilters = (
         typeof parsedValue.keyword === "string"
           ? parsedValue.keyword
           : defaults.keyword,
+      keywordSearchScopes: normalizeDashboardKeywordSearchScopes(
+        parsedValue.keywordSearchScopes,
+      ),
       universities: readStringArray(parsedValue.universities),
       schools: readStringArray(parsedValue.schools),
       departments: readStringArray(parsedValue.departments),
@@ -596,6 +604,15 @@ export const HomePage = () => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
   };
 
+  const setDashboardKeywordSearchScopes = (
+    keywordSearchScopes: DashboardKeywordSearchScope[],
+  ) => {
+    updateFilters({
+      keywordSearchScopes:
+        normalizeDashboardKeywordSearchScopes(keywordSearchScopes),
+    });
+  };
+
   const toggleStringFilterValue = (
     key: "universities" | "schools" | "departments" | "titles" | "tagIds",
     value: string,
@@ -1015,8 +1032,18 @@ export const HomePage = () => {
                   onChange={(event) =>
                     updateFilters({ keyword: event.target.value })
                   }
-                  placeholder="导师、学校、学院、系所、职称、研究方向、标签"
-                  className="w-full bg-transparent leading-5 outline-none"
+                  placeholder={getDashboardKeywordSearchPlaceholder(
+                    filters.keywordSearchScopes,
+                  )}
+                  className="w-full min-w-0 bg-transparent leading-5 outline-none"
+                />
+                <KeywordSearchScopeSelect
+                  label="搜索范围"
+                  options={DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS}
+                  selectedValues={normalizeDashboardKeywordSearchScopes(
+                    filters.keywordSearchScopes,
+                  )}
+                  onChange={setDashboardKeywordSearchScopes}
                 />
               </div>
             </label>

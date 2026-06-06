@@ -73,7 +73,7 @@ export const ManagementProfessorRow = ({
             data-testid="management-professor-name-line"
             className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 lg:justify-center"
           >
-            <div className="min-w-0 truncate text-base font-semibold text-stone-900">
+            <div className="min-w-0 truncate text-base font-semibold text-stone-900 lg:text-center">
               {professor.name}
             </div>
             <ProfessorTagChips

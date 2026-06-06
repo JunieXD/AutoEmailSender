@@ -362,7 +362,7 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    const searchInput = screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向");
+    const searchInput = screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、标签");
     const toolbar = screen.getByTestId("professor-filter-toolbar");
 
     expect(toolbar).toHaveClass("grid", "gap-3", "lg:items-stretch");
@@ -442,7 +442,6 @@ describe("ProfessorsPage layout", () => {
     click.mockRestore();
   });
 });
-
 
 
 

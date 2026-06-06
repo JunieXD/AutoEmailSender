@@ -7,6 +7,7 @@ import type { IdentityDTO, LLMProfileDTO, ProfessorDashboardItemDTO } from "@/ty
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedListProfessors = vi.hoisted(() => vi.fn());
+const mockedListProfessorTags = vi.hoisted(() => vi.fn());
 const mockedCalculateMatch = vi.hoisted(() => vi.fn());
 const mockedCreateMatchAnalysisJob = vi.hoisted(() => vi.fn());
 const mockedEnsureWorkspaceTask = vi.hoisted(() => vi.fn());
@@ -21,6 +22,7 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/lib/api/professorsApi", () => ({
   listProfessors: mockedListProfessors,
+  listProfessorTags: mockedListProfessorTags,
 }));
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
@@ -130,6 +132,7 @@ const renderPage = () =>
 describe("HomePage match analysis", () => {
   beforeEach(() => {
     mockedListProfessors.mockReset();
+    mockedListProfessorTags.mockReset();
     mockedCalculateMatch.mockReset();
     mockedCreateMatchAnalysisJob.mockReset();
     mockedEnsureWorkspaceTask.mockReset();
@@ -147,6 +150,7 @@ describe("HomePage match analysis", () => {
       createProfessor(101, "王教授"),
       createProfessor(102, "李教授"),
     ]);
+    mockedListProfessorTags.mockResolvedValue([]);
     mockedEnsureWorkspaceTask.mockImplementation(async (professorId: number) => ({
       current_task: { id: professorId + 1000 },
     }));

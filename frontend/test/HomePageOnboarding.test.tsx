@@ -466,7 +466,7 @@ describe("HomePage onboarding", () => {
     expect(screen.getByText("李教授")).toBeInTheDocument();
 
     fireEvent.change(
-      screen.getByPlaceholderText("导师、学校、学院、系所、职称、研究方向"),
+      screen.getByPlaceholderText("姓名、学校、学院、系所、职称、研究方向、标签"),
       { target: { value: "王教授" } },
     );
 
@@ -480,7 +480,7 @@ describe("HomePage onboarding", () => {
 
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("导师、学校、学院、系所、职称、研究方向"),
+      screen.getByPlaceholderText("姓名、学校、学院、系所、职称、研究方向、标签"),
     ).toHaveValue("王教授");
     expect(screen.getByText("王教授")).toBeInTheDocument();
     expect(screen.queryByText("李教授")).not.toBeInTheDocument();

@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import type { ProfessorTagDTO } from "@/types";
 
 type ProfessorTagChipsProps = {
-  tags: ProfessorTagDTO[];
+  tags?: ProfessorTagDTO[];
   maxVisible?: number;
   className?: string;
   onTagClick?: (tagId: number) => void;
@@ -21,6 +21,7 @@ export const ProfessorTagChips = ({
   draggableTags = false,
   onTagOrderChange,
 }: ProfessorTagChipsProps) => {
+  const safeTags = tags ?? [];
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [popoverPinned, setPopoverPinned] = useState(false);
   const [draggingTagId, setDraggingTagId] = useState<number | null>(null);
@@ -44,7 +45,7 @@ export const ProfessorTagChips = ({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [popoverPinned]);
 
-  if (tags.length === 0) {
+  if (safeTags.length === 0) {
     return (
       <div
         data-testid="professor-tag-chips"
@@ -67,15 +68,17 @@ export const ProfessorTagChips = ({
     );
   }
 
-  const visibleTags = tags.slice(0, maxVisible);
-  const hiddenTags = tags.slice(visibleTags.length);
+  const visibleTags = safeTags.slice(0, maxVisible);
+  const hiddenTags = safeTags.slice(visibleTags.length);
   const hiddenCount = hiddenTags.length;
 
   const moveDraggedTagBefore = (targetTagId: number) => {
     if (!onTagOrderChange || draggingTagId === null || draggingTagId === targetTagId) {
       return;
     }
-    const nextTagIds = tags.map((tag) => tag.id).filter((tagId) => tagId !== draggingTagId);
+    const nextTagIds = safeTags
+      .map((tag) => tag.id)
+      .filter((tagId) => tagId !== draggingTagId);
     const targetIndex = nextTagIds.indexOf(targetTagId);
     if (targetIndex < 0) {
       return;

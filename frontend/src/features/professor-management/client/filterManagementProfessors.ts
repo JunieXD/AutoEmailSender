@@ -1,10 +1,56 @@
 import type { ProfessorManagementItemDTO } from "@/types";
 import { extractProfessorTitleTags } from "@/lib/professorTitle";
 
+export const MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS = [
+  { value: "name", label: "姓名" },
+  { value: "email", label: "邮箱" },
+  { value: "university", label: "学校" },
+  { value: "school", label: "学院" },
+  { value: "department", label: "系所" },
+  { value: "title", label: "职称" },
+  { value: "researchDirection", label: "研究方向" },
+  { value: "tag", label: "标签" },
+] as const;
+
+export type ProfessorManagementKeywordSearchScope =
+  (typeof MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS)[number]["value"];
+
+export const DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES =
+  MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS.map((option) => option.value);
+
+const managementKeywordSearchScopeSet = new Set<string>(
+  DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
+);
+
+const managementKeywordFieldByScope: Record<
+  ProfessorManagementKeywordSearchScope,
+  | keyof Pick<
+      ProfessorManagementItemDTO,
+      | "name"
+      | "email"
+      | "university"
+      | "school"
+      | "department"
+      | "title"
+      | "research_direction"
+    >
+  | "tag"
+> = {
+  name: "name",
+  email: "email",
+  university: "university",
+  school: "school",
+  department: "department",
+  title: "title",
+  researchDirection: "research_direction",
+  tag: "tag",
+};
+
 export const NO_TAG_FILTER_VALUE = "__no_tag__";
 
 export type ProfessorManagementFilterState = {
   keyword: string;
+  keywordSearchScopes: ProfessorManagementKeywordSearchScope[];
   universities: string[];
   schools: string[];
   departments: string[];
@@ -26,12 +72,44 @@ const normalize = (value: string | null | undefined): string =>
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
 
+export const normalizeManagementKeywordSearchScopes = (
+  values: unknown,
+): ProfessorManagementKeywordSearchScope[] => {
+  if (!Array.isArray(values)) {
+    return [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES];
+  }
+
+  const nextValues = values.filter(
+    (value): value is ProfessorManagementKeywordSearchScope =>
+      typeof value === "string" && managementKeywordSearchScopeSet.has(value),
+  );
+
+  if (nextValues.length === 0) {
+    return [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES];
+  }
+
+  return nextValues;
+};
+
+export const getManagementKeywordSearchPlaceholder = (values: unknown): string => {
+  const selectedScopes = normalizeManagementKeywordSearchScopes(values);
+  const selectedSet = new Set(selectedScopes);
+  return MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS.filter((option) =>
+    selectedSet.has(option.value),
+  )
+    .map((option) => option.label)
+    .join("、");
+};
+
 const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
   const trimmed = value?.trim();
   if (trimmed) {
     set.add(trimmed);
   }
 };
+
+const getProfessorTags = (professor: ProfessorManagementItemDTO) =>
+  professor.tags ?? [];
 
 const matchesAny = (
   value: string | null | undefined,
@@ -59,20 +137,35 @@ const filterTagMatches = (
     return true;
   }
   const selectedSet = new Set(selectedValues);
-  if (professor.tags.length === 0) {
+  const tags = getProfessorTags(professor);
+  if (tags.length === 0) {
     return selectedSet.has(NO_TAG_FILTER_VALUE);
   }
-  return professor.tags.some((tag) => selectedSet.has(String(tag.id)));
+  return tags.some((tag) => selectedSet.has(String(tag.id)));
 };
 
 export const createDefaultManagementFilters = (): ProfessorManagementFilterState => ({
   keyword: "",
+  keywordSearchScopes: [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES],
   universities: [],
   schools: [],
   departments: [],
   titles: [],
   tagIds: [],
 });
+
+const getManagementKeywordValue = (
+  professor: ProfessorManagementItemDTO,
+  scope: ProfessorManagementKeywordSearchScope,
+): string | null | undefined => {
+  const field = managementKeywordFieldByScope[scope];
+  if (field === "tag") {
+    return getProfessorTags(professor)
+      .map((tag) => tag.name)
+      .join(" ");
+  }
+  return professor[field];
+};
 
 export const buildManagementFilterOptions = (
   professors: ProfessorManagementItemDTO[],
@@ -109,7 +202,7 @@ export const buildManagementFilterOptions = (
     extractProfessorTitleTags(professor.title).forEach((title) => {
       addNonEmpty(titles, title);
     });
-    professor.tags.forEach((tag) => {
+    getProfessorTags(professor).forEach((tag) => {
       tags.set(tag.id, tag.name);
     });
   });
@@ -139,22 +232,16 @@ export const filterManagementProfessors = (
   filters: ProfessorManagementFilterState,
 ): ProfessorManagementItemDTO[] => {
   const keyword = normalize(filters.keyword);
+  const keywordSearchScopes = normalizeManagementKeywordSearchScopes(
+    filters.keywordSearchScopes,
+  );
 
   return professors.filter((professor) => {
     const keywordMatched =
       !keyword ||
-      [
-        professor.name,
-        professor.email,
-        professor.university,
-        professor.school,
-        professor.department,
-        professor.title,
-        professor.research_direction,
-        ...professor.tags.map((tag) => tag.name),
-      ]
-        .filter(Boolean)
-        .some((value) => normalize(value).includes(keyword));
+      keywordSearchScopes.some((scope) =>
+        normalize(getManagementKeywordValue(professor, scope)).includes(keyword),
+      );
 
     return (
       keywordMatched &&

@@ -28,6 +28,7 @@ import {
   Users,
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
@@ -70,12 +71,16 @@ import type {
   ProfessorUpsertPayloadDTO,
 } from "@/types";
 import {
+  MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS,
   buildManagementFilterOptions,
   createDefaultManagementFilters,
   filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
+  getManagementKeywordSearchPlaceholder,
+  normalizeManagementKeywordSearchScopes,
   NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
+  type ProfessorManagementKeywordSearchScope,
   type ProfessorManagementFilterState,
 } from "@/features/professor-management/client/filterManagementProfessors";
 import {
@@ -161,6 +166,9 @@ const readStoredProfessorManagementState = () => {
     const nextFilters = createDefaultManagementFilters();
     nextFilters.keyword =
       typeof filters?.keyword === "string" ? filters.keyword : "";
+    nextFilters.keywordSearchScopes = normalizeManagementKeywordSearchScopes(
+      filters?.keywordSearchScopes,
+    );
     nextFilters.universities = readStringArray(filters?.universities);
     nextFilters.schools = readStringArray(filters?.schools);
     nextFilters.departments = readStringArray(filters?.departments);
@@ -695,6 +703,17 @@ export const ProfessorsPage = () => {
   const updateFilters = (nextFilters: Partial<ProfessorManagementFilterState>) => {
     setCurrentPage(1);
     setFilters((previous) => ({ ...previous, ...nextFilters }));
+  };
+
+  const setManagementKeywordSearchScopes = (
+    keywordSearchScopes: ProfessorManagementKeywordSearchScope[],
+  ) => {
+    setCurrentPage(1);
+    setFilters((previous) => ({
+      ...previous,
+      keywordSearchScopes:
+        normalizeManagementKeywordSearchScopes(keywordSearchScopes),
+    }));
   };
 
   const toggleFilterValue = (
@@ -1436,8 +1455,18 @@ export const ProfessorsPage = () => {
                     onChange={(event) =>
                       updateFilters({ keyword: event.target.value })
                     }
-                    placeholder="姓名、邮箱、学校、学院、系所、职称、研究方向、标签"
+                    placeholder={getManagementKeywordSearchPlaceholder(
+                      filters.keywordSearchScopes,
+                    )}
                     className="w-full min-w-0 bg-transparent leading-5 outline-none placeholder:text-stone-400"
+                  />
+                  <KeywordSearchScopeSelect
+                    label="搜索范围"
+                    options={MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS}
+                    selectedValues={normalizeManagementKeywordSearchScopes(
+                      filters.keywordSearchScopes,
+                    )}
+                    onChange={setManagementKeywordSearchScopes}
                   />
                 </div>
               </label>
