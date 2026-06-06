@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.models import Professor
 from app.schemas.professor import ProfessorUpsertPayload
 from app.services.professor_management import (
+    PROFESSOR_EXPORT_COLUMNS,
     PROFESSOR_TEMPLATE_COLUMNS,
     build_professor_export,
     build_professor_template,
@@ -253,7 +254,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(filename, "professors_export.xlsx")
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
         rows = list(workbook.active.iter_rows(values_only=True))
-        self.assertEqual(list(rows[0]), PROFESSOR_TEMPLATE_COLUMNS)
+        self.assertEqual(list(rows[0]), PROFESSOR_EXPORT_COLUMNS)
         self.assertEqual(rows[1][0], "王芳")
         self.assertEqual(rows[1][7], "Paper C")
         self.assertIsNone(rows[1][8])
@@ -308,6 +309,37 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(rows[1][4], "'@人工智能学院")
         self.assertEqual(rows[1][5], "'=计算机科学系")
         self.assertEqual(rows[1][7], "'=Paper A|'+Paper B|Normal Paper")
+
+    def test_build_professor_export_includes_tags_column_for_view_only(self) -> None:
+        tag = type(
+            "Tag",
+            (),
+            {
+                "name": "高意愿",
+            },
+        )()
+        professor = Professor(
+            name="李伟",
+            email="li@example.edu",
+            title="教授",
+            university="示例大学",
+            school="人工智能学院",
+            department="计算机科学系",
+            research_direction="大语言模型",
+            recent_papers=["Paper A"],
+            profile_url=None,
+            source_url=None,
+        )
+        professor.tags = [tag]
+
+        content, _, filename = build_professor_export([professor], "csv")
+
+        decoded = content.decode("utf-8-sig")
+        self.assertIn("tags", decoded.splitlines()[0])
+        self.assertIn("高意愿", decoded)
+        parsed = parse_professor_import_file(filename, content)
+        self.assertEqual(parsed.failed_count, 0)
+        self.assertEqual(parsed.data["li@example.edu"]["name"], "李伟")
 
 
 if __name__ == "__main__":

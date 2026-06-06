@@ -19,6 +19,19 @@ ProfessorDashboardStatus = Literal[
 ]
 
 
+class ProfessorTagRead(ApiSchema):
+    id: int
+    name: str
+    text_color: str
+    background_color: str
+
+
+class ProfessorTagPayload(BaseModel):
+    name: str
+    text_color: str
+    background_color: str
+
+
 class ProfessorRead(ApiSchema):
 
     id: int
@@ -37,6 +50,7 @@ class ProfessorRead(ApiSchema):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    tags: list[ProfessorTagRead] = Field(default_factory=list)
 
 
 class ProfessorDashboardItemRead(ApiSchema):
@@ -54,6 +68,7 @@ class ProfessorDashboardItemRead(ApiSchema):
     status: ProfessorDashboardStatus
     last_sent_at: datetime | None = None
     last_replied_at: datetime | None = None
+    tags: list[ProfessorTagRead] = Field(default_factory=list)
 
 
 class ProfessorImportResult(ApiSchema):
@@ -80,6 +95,7 @@ class ProfessorManagementItemRead(ApiSchema):
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    tags: list[ProfessorTagRead] = Field(default_factory=list)
 
 
 class ProfessorUpsertPayload(BaseModel):
@@ -93,6 +109,7 @@ class ProfessorUpsertPayload(BaseModel):
     recent_papers: list[str] = Field(default_factory=list)
     profile_url: str | None = None
     source_url: str | None = None
+    tag_ids: list[int] = Field(default_factory=list)
 
     @field_validator(
         "name",
