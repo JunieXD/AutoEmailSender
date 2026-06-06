@@ -31,6 +31,8 @@ from app.schemas.professor import (
     ProfessorRead,
     ProfessorTagPayload,
     ProfessorTagRead,
+    ProfessorTagUsageProfessorRead,
+    ProfessorTagUsageRead,
     ProfessorUpsertPayload,
 )
 from app.services.operation_logs import record_operation_log
@@ -327,6 +329,43 @@ async def list_professor_tags(
     return [_serialize_tag(tag) for tag in tags]
 
 
+@router.get("/tags/{tag_id}/usage", response_model=ProfessorTagUsageRead)
+async def get_professor_tag_usage(
+    tag_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorTagUsageRead:
+    tag = await session.get(ProfessorTag, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="未找到标签")
+
+    professors = list(
+        (
+            await session.execute(
+                select(Professor)
+                .join(
+                    ProfessorTagLink,
+                    ProfessorTagLink.professor_id == Professor.id,
+                )
+                .where(ProfessorTagLink.tag_id == tag_id)
+                .order_by(Professor.name.asc(), Professor.id.asc()),
+            )
+        ).scalars(),
+    )
+    return ProfessorTagUsageRead(
+        tag=_serialize_tag(tag),
+        professors=[
+            ProfessorTagUsageProfessorRead(
+                id=professor.id,
+                name=professor.name,
+                email=professor.email,
+                university=professor.university,
+                school=professor.school,
+            )
+            for professor in professors
+        ],
+    )
+
+
 @router.post(
     "/tags",
     response_model=ProfessorTagRead,
@@ -387,15 +426,15 @@ async def create_professor(
     if existing is not None:
         raise HTTPException(status_code=409, detail="该邮箱的导师已存在")
 
-    tags = await _load_tags_by_ids(session, payload.tag_ids)
     professor = Professor(**professor_data)
-    professor.tags = tags
     session.add(professor)
     await session.flush()
+    await _sync_professor_tags(session, professor, payload.tag_ids)
     await _record_professor_log(session, professor, "professor.created")
     await session.commit()
-    await session.refresh(professor, attribute_names=["tags"])
-    return _serialize_management_professor(professor)
+    return _serialize_management_professor(
+        await _get_professor_with_tags_or_404(session, professor.id),
+    )
 
 
 @router.get("/{professor_id}", response_model=ProfessorRead)
@@ -406,7 +445,8 @@ async def get_professor(
     professor = await session.scalar(
         select(Professor)
         .options(selectinload(Professor.tags))
-        .where(Professor.id == professor_id),
+        .where(Professor.id == professor_id)
+        .execution_options(populate_existing=True),
     )
     if not professor:
         raise HTTPException(status_code=404, detail="未找到导师")
@@ -467,13 +507,14 @@ async def update_professor(
     professor.recent_papers = professor_data["recent_papers"]
     professor.profile_url = professor_data["profile_url"]
     professor.source_url = professor_data["source_url"]
-    professor.tags = await _load_tags_by_ids(session, payload.tag_ids)
+    await _sync_professor_tags(session, professor, payload.tag_ids)
     professor.updated_at = utc_now()
 
     await _record_professor_log(session, professor, "professor.updated")
     await session.commit()
-    await session.refresh(professor, attribute_names=["tags"])
-    return _serialize_management_professor(professor)
+    return _serialize_management_professor(
+        await _get_professor_with_tags_or_404(session, professor.id),
+    )
 
 
 @router.post("/{professor_id}/archive", response_model=ProfessorActionResult)
@@ -713,6 +754,42 @@ def _serialize_tag(tag: ProfessorTag) -> ProfessorTagRead:
 
 def _serialize_professor_tags(professor: Professor) -> list[ProfessorTagRead]:
     return [_serialize_tag(tag) for tag in professor.tags]
+
+
+async def _get_professor_with_tags_or_404(
+    session: AsyncSession,
+    professor_id: int,
+) -> Professor:
+    professor = await session.scalar(
+        select(Professor)
+        .options(selectinload(Professor.tags))
+        .where(Professor.id == professor_id),
+    )
+    if professor is None:
+        raise HTTPException(status_code=404, detail="未找到导师")
+    return professor
+
+
+async def _sync_professor_tags(
+    session: AsyncSession,
+    professor: Professor,
+    tag_ids: list[int],
+) -> None:
+    tags = await _load_tags_by_ids(session, tag_ids)
+    await session.execute(
+        delete(ProfessorTagLink).where(
+            ProfessorTagLink.professor_id == professor.id,
+        ),
+    )
+    for sort_order, tag in enumerate(tags):
+        session.add(
+            ProfessorTagLink(
+                professor_id=professor.id,
+                tag_id=tag.id,
+                sort_order=sort_order,
+            ),
+        )
+    session.expire(professor, ["tags"])
 
 
 async def _load_tags_by_ids(

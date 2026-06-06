@@ -72,6 +72,55 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual([tag["id"] for tag in response.json()["tags"]], selected_ids)
         self.assertEqual([tag["id"] for tag in dashboard[0]["tags"]], selected_ids)
 
+    def test_professor_tags_keep_payload_order(self) -> None:
+        tags = self.client.get("/api/professors/tags").json()
+        selected_ids = [tags[2]["id"], tags[0]["id"], tags[1]["id"]]
+
+        created_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "排序导师",
+                "email": "ordered@example.edu",
+                "tag_ids": selected_ids,
+            },
+        )
+        created = created_response.json()
+        reordered_ids = [selected_ids[1], selected_ids[2], selected_ids[0]]
+        updated_response = self.client.patch(
+            f"/api/professors/{created['id']}",
+            json={
+                "name": "排序导师",
+                "email": "ordered@example.edu",
+                "tag_ids": reordered_ids,
+            },
+        )
+        updated = updated_response.json()
+
+        self.assertEqual(created_response.status_code, 201, msg=created_response.text)
+        self.assertEqual(updated_response.status_code, 200, msg=updated_response.text)
+        self.assertEqual([tag["id"] for tag in created["tags"]], selected_ids)
+        self.assertEqual([tag["id"] for tag in updated["tags"]], reordered_ids)
+
+    def test_tag_usage_lists_professors_using_tag(self) -> None:
+        tag = self.client.get("/api/professors/tags").json()[0]
+        create_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "使用标签导师",
+                "email": "usage@example.edu",
+                "university": "示例大学",
+                "school": "计算机学院",
+                "tag_ids": [tag["id"]],
+            },
+        )
+        usage_response = self.client.get(f"/api/professors/tags/{tag['id']}/usage")
+
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        self.assertEqual(usage_response.status_code, 200, msg=usage_response.text)
+        usage = usage_response.json()
+        self.assertEqual(usage["tag"]["id"], tag["id"])
+        self.assertEqual([item["name"] for item in usage["professors"]], ["使用标签导师"])
+
     def test_delete_tag_removes_professor_links(self) -> None:
         tag = self.client.get("/api/professors/tags").json()[0]
         created = self.client.post(

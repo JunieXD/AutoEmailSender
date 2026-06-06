@@ -32,6 +32,19 @@ class ProfessorTagPayload(BaseModel):
     background_color: str
 
 
+class ProfessorTagUsageProfessorRead(ApiSchema):
+    id: int
+    name: str
+    email: str | None
+    university: str | None
+    school: str | None
+
+
+class ProfessorTagUsageRead(ApiSchema):
+    tag: ProfessorTagRead
+    professors: list[ProfessorTagUsageProfessorRead] = Field(default_factory=list)
+
+
 class ProfessorRead(ApiSchema):
 
     id: int

@@ -62,7 +62,7 @@ class Professor(Base):
     )
     tags: Mapped[list["ProfessorTag"]] = relationship(
         secondary="professor_tag_links",
-        order_by="ProfessorTag.name",
+        order_by="ProfessorTagLink.sort_order, ProfessorTag.name",
         lazy="selectin",
     )
 
@@ -84,6 +84,10 @@ class ProfessorTagLink(Base):
     tag_id: Mapped[int] = mapped_column(
         ForeignKey("professor_tags.id", ondelete="CASCADE"),
         primary_key=True,
+    )
+    sort_order: Mapped[int] = mapped_column(
+        nullable=False,
+        server_default=text("0"),
     )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
