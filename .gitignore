@@ -8,6 +8,7 @@ node_modules/
 .playwright-mcp
 data/*.db
 data/*.db-*
+data/
 data/uploads/
 frontend/dist/
 website/.vitepress/dist/

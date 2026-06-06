@@ -128,6 +128,7 @@ function ensureTray(): void {
 
   tray = new Tray(getWindowIconPath({
     isPackaged: app.isPackaged,
+    platform: process.platform,
     resourcesPath: process.resourcesPath,
     repoRoot,
   }));
@@ -153,6 +154,7 @@ async function createWindow(): Promise<void> {
     autoHideMenuBar: true,
     icon: getWindowIconPath({
       isPackaged: app.isPackaged,
+      platform: process.platform,
       resourcesPath: process.resourcesPath,
       repoRoot,
     }),
@@ -335,4 +337,3 @@ process.once("SIGINT", () => {
 process.once("SIGTERM", () => {
   stopBackendAndExit(143);
 });
-
