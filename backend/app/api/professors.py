@@ -6,11 +6,21 @@ from datetime import UTC, datetime
 from app.core.time import utc_now
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
-from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus, Professor
+from app.models import (
+    EmailDirection,
+    EmailLog,
+    EmailTask,
+    EmailTaskCancellationReason,
+    EmailTaskStatus,
+    Professor,
+    ProfessorTag,
+    ProfessorTagLink,
+)
 from app.schemas.professor import (
     ProfessorActionResult,
     ProfessorBulkArchivePayload,
@@ -19,6 +29,8 @@ from app.schemas.professor import (
     ProfessorImportResult,
     ProfessorManagementItemRead,
     ProfessorRead,
+    ProfessorTagPayload,
+    ProfessorTagRead,
     ProfessorUpsertPayload,
 )
 from app.services.operation_logs import record_operation_log
@@ -56,6 +68,7 @@ async def list_professors(
 ) -> list[ProfessorDashboardItemRead]:
     statement = (
         select(Professor)
+        .options(selectinload(Professor.tags))
         .where(Professor.archived_at.is_(None))
         .order_by(Professor.created_at.desc())
     )
@@ -161,6 +174,7 @@ async def list_professors(
             ),
             last_sent_at=last_sent_at_by_professor.get(professor.id),
             last_replied_at=last_replied_at_by_professor.get(professor.id),
+            tags=_serialize_professor_tags(professor),
         )
         for professor in professors
     ]
@@ -171,7 +185,11 @@ async def list_professors_for_management(
     archived: str = Query(default="active"),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[ProfessorManagementItemRead]:
-    statement = select(Professor).order_by(Professor.updated_at.desc(), Professor.created_at.desc())
+    statement = (
+        select(Professor)
+        .options(selectinload(Professor.tags))
+        .order_by(Professor.updated_at.desc(), Professor.created_at.desc())
+    )
     statement = _apply_archived_filter(statement, archived)
     professors = list((await session.execute(statement)).scalars())
     return [_serialize_management_professor(professor) for professor in professors]
@@ -295,6 +313,66 @@ async def import_professors_from_file(
     )
 
 
+@router.get("/tags", response_model=list[ProfessorTagRead])
+async def list_professor_tags(
+    session: AsyncSession = Depends(get_async_session),
+) -> list[ProfessorTagRead]:
+    tags = list(
+        (
+            await session.execute(
+                select(ProfessorTag).order_by(ProfessorTag.id.asc()),
+            )
+        ).scalars(),
+    )
+    return [_serialize_tag(tag) for tag in tags]
+
+
+@router.post(
+    "/tags",
+    response_model=ProfessorTagRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_professor_tag(
+    payload: ProfessorTagPayload,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorTagRead:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="标签名不能为空")
+    existing = await session.scalar(select(ProfessorTag).where(ProfessorTag.name == name))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="标签已存在")
+
+    tag = ProfessorTag(
+        name=name,
+        text_color=payload.text_color,
+        background_color=payload.background_color,
+    )
+    session.add(tag)
+    await session.commit()
+    await session.refresh(tag)
+    return _serialize_tag(tag)
+
+
+@router.delete("/tags/{tag_id}", response_model=ProfessorActionResult)
+async def delete_professor_tag(
+    tag_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorActionResult:
+    tag = await session.get(ProfessorTag, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="未找到标签")
+
+    await session.execute(delete(ProfessorTagLink).where(ProfessorTagLink.tag_id == tag_id))
+    await session.delete(tag)
+    await session.commit()
+    return ProfessorActionResult(
+        ok=True,
+        affected_count=1,
+        message="标签已删除",
+    )
+
+
 @router.post("", response_model=ProfessorManagementItemRead, status_code=status.HTTP_201_CREATED)
 async def create_professor(
     payload: ProfessorUpsertPayload,
@@ -309,12 +387,14 @@ async def create_professor(
     if existing is not None:
         raise HTTPException(status_code=409, detail="该邮箱的导师已存在")
 
+    tags = await _load_tags_by_ids(session, payload.tag_ids)
     professor = Professor(**professor_data)
+    professor.tags = tags
     session.add(professor)
     await session.flush()
     await _record_professor_log(session, professor, "professor.created")
     await session.commit()
-    await session.refresh(professor)
+    await session.refresh(professor, attribute_names=["tags"])
     return _serialize_management_professor(professor)
 
 
@@ -322,11 +402,33 @@ async def create_professor(
 async def get_professor(
     professor_id: int,
     session: AsyncSession = Depends(get_async_session),
-) -> Professor:
-    professor = await session.get(Professor, professor_id)
+) -> ProfessorRead:
+    professor = await session.scalar(
+        select(Professor)
+        .options(selectinload(Professor.tags))
+        .where(Professor.id == professor_id),
+    )
     if not professor:
         raise HTTPException(status_code=404, detail="未找到导师")
-    return professor
+    return ProfessorRead(
+        id=professor.id,
+        name=professor.name,
+        email=professor.email,
+        title=professor.title,
+        university=professor.university,
+        school=professor.school,
+        department=professor.department,
+        research_direction=professor.research_direction,
+        recent_papers=professor.recent_papers,
+        profile_url=professor.profile_url,
+        source_url=professor.source_url,
+        crawl_status=professor.crawl_status,
+        skip_reason=professor.skip_reason,
+        archived_at=professor.archived_at,
+        created_at=professor.created_at,
+        updated_at=professor.updated_at,
+        tags=_serialize_professor_tags(professor),
+    )
 
 
 @router.patch("/{professor_id}", response_model=ProfessorManagementItemRead)
@@ -335,7 +437,11 @@ async def update_professor(
     payload: ProfessorUpsertPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorManagementItemRead:
-    professor = await session.get(Professor, professor_id)
+    professor = await session.scalar(
+        select(Professor)
+        .options(selectinload(Professor.tags))
+        .where(Professor.id == professor_id),
+    )
     if not professor:
         raise HTTPException(status_code=404, detail="未找到导师")
 
@@ -361,11 +467,12 @@ async def update_professor(
     professor.recent_papers = professor_data["recent_papers"]
     professor.profile_url = professor_data["profile_url"]
     professor.source_url = professor_data["source_url"]
+    professor.tags = await _load_tags_by_ids(session, payload.tag_ids)
     professor.updated_at = utc_now()
 
     await _record_professor_log(session, professor, "professor.updated")
     await session.commit()
-    await session.refresh(professor)
+    await session.refresh(professor, attribute_names=["tags"])
     return _serialize_management_professor(professor)
 
 
@@ -591,7 +698,47 @@ def _serialize_management_professor(professor: Professor) -> ProfessorManagement
         archived_at=professor.archived_at,
         created_at=professor.created_at,
         updated_at=professor.updated_at,
+        tags=_serialize_professor_tags(professor),
     )
+
+
+def _serialize_tag(tag: ProfessorTag) -> ProfessorTagRead:
+    return ProfessorTagRead(
+        id=tag.id,
+        name=tag.name,
+        text_color=tag.text_color,
+        background_color=tag.background_color,
+    )
+
+
+def _serialize_professor_tags(professor: Professor) -> list[ProfessorTagRead]:
+    return [_serialize_tag(tag) for tag in professor.tags]
+
+
+async def _load_tags_by_ids(
+    session: AsyncSession,
+    tag_ids: list[int],
+) -> list[ProfessorTag]:
+    if not tag_ids:
+        return []
+
+    if len(set(tag_ids)) != len(tag_ids):
+        raise HTTPException(status_code=400, detail="标签不能重复")
+
+    tags = list(
+        (
+            await session.execute(
+                select(ProfessorTag)
+                .where(ProfessorTag.id.in_(tag_ids))
+                .order_by(ProfessorTag.name.asc()),
+            )
+        ).scalars(),
+    )
+    tags_by_id = {tag.id: tag for tag in tags}
+    missing = [tag_id for tag_id in tag_ids if tag_id not in tags_by_id]
+    if missing:
+        raise HTTPException(status_code=400, detail="标签不存在")
+    return [tags_by_id[tag_id] for tag_id in tag_ids]
 
 
 def _map_dashboard_status(tasks: list[EmailTask], sent_count: int = 0) -> str:
