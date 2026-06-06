@@ -86,7 +86,7 @@ export const normalizeDashboardKeywordSearchScopes = (
       typeof value === "string" && dashboardKeywordSearchScopeSet.has(value),
   );
 
-  if (nextValues.length === 0 || nextValues.length !== values.length) {
+  if (nextValues.length === 0) {
     return [...DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES];
   }
 

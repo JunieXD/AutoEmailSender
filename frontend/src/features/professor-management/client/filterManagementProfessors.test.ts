@@ -131,10 +131,10 @@ describe("filterManagementProfessors", () => {
     ).toEqual([]);
   });
 
-  it("normalizes invalid management search scopes to every field", () => {
-    expect(normalizeManagementKeywordSearchScopes(["email", "unknown"])).toEqual(
-      DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
-    );
+  it("drops invalid management search scopes and keeps valid selections", () => {
+    expect(normalizeManagementKeywordSearchScopes(["email", "unknown"])).toEqual([
+      "email",
+    ]);
     expect(normalizeManagementKeywordSearchScopes(["unknown"])).toEqual(
       DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES,
     );

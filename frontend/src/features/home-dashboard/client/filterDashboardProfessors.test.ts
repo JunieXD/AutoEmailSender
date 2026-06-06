@@ -121,13 +121,13 @@ describe("filterDashboardProfessors", () => {
     ).toEqual(["Alice", "Bob", "Carol"]);
   });
 
-  it("normalizes invalid dashboard search scopes to every field", () => {
+  it("drops invalid dashboard search scopes and keeps valid selections", () => {
     const fields = normalizeDashboardKeywordSearchScopes([
       "researchDirection",
       "unknown",
     ]);
 
-    expect(fields).toEqual(DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES);
+    expect(fields).toEqual(["researchDirection"]);
     expect(normalizeDashboardKeywordSearchScopes(["unknown"])).toEqual(
       DEFAULT_DASHBOARD_KEYWORD_SEARCH_SCOPES,
     );

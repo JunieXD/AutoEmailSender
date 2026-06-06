@@ -77,7 +77,7 @@ export const normalizeManagementKeywordSearchScopes = (
       typeof value === "string" && managementKeywordSearchScopeSet.has(value),
   );
 
-  if (nextValues.length === 0 || nextValues.length !== values.length) {
+  if (nextValues.length === 0) {
     return [...DEFAULT_MANAGEMENT_KEYWORD_SEARCH_SCOPES];
   }
 
