@@ -1,12 +1,15 @@
 import type { ProfessorManagementItemDTO } from "@/types";
 import { extractProfessorTitleTags } from "@/lib/professorTitle";
 
+export const NO_TAG_FILTER_VALUE = "__no_tag__";
+
 export type ProfessorManagementFilterState = {
   keyword: string;
   universities: string[];
   schools: string[];
   departments: string[];
   titles: string[];
+  tagIds: string[];
 };
 
 export type ProfessorManagementFilterOptions = {
@@ -14,6 +17,7 @@ export type ProfessorManagementFilterOptions = {
   schools: string[];
   departments: string[];
   titles: string[];
+  tags: { id: number; name: string }[];
 };
 
 const normalize = (value: string | null | undefined): string =>
@@ -47,12 +51,27 @@ const filterTitleMatches = (
   return selectedValues.some((value) => tags.includes(value));
 };
 
+const filterTagMatches = (
+  professor: ProfessorManagementItemDTO,
+  selectedValues: string[],
+): boolean => {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+  const selectedSet = new Set(selectedValues);
+  if (professor.tags.length === 0) {
+    return selectedSet.has(NO_TAG_FILTER_VALUE);
+  }
+  return professor.tags.some((tag) => selectedSet.has(String(tag.id)));
+};
+
 export const createDefaultManagementFilters = (): ProfessorManagementFilterState => ({
   keyword: "",
   universities: [],
   schools: [],
   departments: [],
   titles: [],
+  tagIds: [],
 });
 
 export const buildManagementFilterOptions = (
@@ -67,6 +86,7 @@ export const buildManagementFilterOptions = (
   const schools = new Set<string>();
   const departments = new Set<string>();
   const titles = new Set<string>();
+  const tags = new Map<number, string>();
   const selectedUniversities = filters.universities;
   const selectedSchools = filters.schools ?? [];
 
@@ -89,6 +109,9 @@ export const buildManagementFilterOptions = (
     extractProfessorTitleTags(professor.title).forEach((title) => {
       addNonEmpty(titles, title);
     });
+    professor.tags.forEach((tag) => {
+      tags.set(tag.id, tag.name);
+    });
   });
 
   return {
@@ -96,6 +119,9 @@ export const buildManagementFilterOptions = (
     schools: sortByChinese(schools),
     departments: sortByChinese(departments),
     titles: sortByChinese(titles),
+    tags: Array.from(tags, ([id, name]) => ({ id, name })).sort((left, right) =>
+      left.name.localeCompare(right.name, "zh-CN"),
+    ),
   };
 };
 
@@ -105,7 +131,8 @@ export const getActiveManagementAdvancedFilterCount = (
   filters.universities.length +
   filters.schools.length +
   filters.departments.length +
-  filters.titles.length;
+  filters.titles.length +
+  filters.tagIds.length;
 
 export const filterManagementProfessors = (
   professors: ProfessorManagementItemDTO[],
@@ -124,6 +151,7 @@ export const filterManagementProfessors = (
         professor.department,
         professor.title,
         professor.research_direction,
+        ...professor.tags.map((tag) => tag.name),
       ]
         .filter(Boolean)
         .some((value) => normalize(value).includes(keyword));
@@ -133,7 +161,8 @@ export const filterManagementProfessors = (
       matchesAny(professor.university, filters.universities) &&
       matchesAny(professor.school, filters.schools) &&
       matchesAny(professor.department, filters.departments) &&
-      filterTitleMatches(professor.title, filters.titles)
+      filterTitleMatches(professor.title, filters.titles) &&
+      filterTagMatches(professor, filters.tagIds)
     );
   });
 };
@@ -155,6 +184,10 @@ export const pruneManagementFilters = (
     universities,
     schools,
   }).departments;
+  const validTagIds = new Set([
+    ...allOptions.tags.map((tag) => String(tag.id)),
+    NO_TAG_FILTER_VALUE,
+  ]);
 
   return {
     ...filters,
@@ -164,5 +197,6 @@ export const pruneManagementFilters = (
       departmentOptions.includes(value),
     ),
     titles: filters.titles.filter((value) => allOptions.titles.includes(value)),
+    tagIds: (filters.tagIds ?? []).filter((value) => validTagIds.has(value)),
   };
 };

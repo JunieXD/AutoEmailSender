@@ -7,6 +7,9 @@ import type {
   ProfessorImportFileResultDTO,
   ProfessorImportResultDTO,
   ProfessorManagementItemDTO,
+  ProfessorTagDTO,
+  ProfessorTagPayloadDTO,
+  ProfessorTagUsageDTO,
   ProfessorUpsertPayloadDTO,
 } from '@/types';
 
@@ -31,6 +34,23 @@ export const listProfessorsForManagement = (archived: 'active' | 'archived' | 'a
 export const getProfessor = (professorId: number) =>
   apiFetch<ProfessorDTO>(`/api/professors/${professorId}`);
 
+export const listProfessorTags = () =>
+  apiFetch<ProfessorTagDTO[]>('/api/professors/tags');
+
+export const createProfessorTag = (payload: ProfessorTagPayloadDTO) =>
+  apiFetch<ProfessorTagDTO>('/api/professors/tags', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteProfessorTag = (tagId: number) =>
+  apiFetch<ProfessorActionResultDTO>(`/api/professors/tags/${tagId}`, {
+    method: 'DELETE',
+  });
+
+export const getProfessorTagUsage = (tagId: number) =>
+  apiFetch<ProfessorTagUsageDTO>(`/api/professors/tags/${tagId}/usage`);
+
 export const createProfessor = (payload: ProfessorUpsertPayloadDTO) =>
   apiFetch<ProfessorManagementItemDTO>('/api/professors', {
     method: 'POST',
@@ -41,6 +61,12 @@ export const updateProfessor = (professorId: number, payload: ProfessorUpsertPay
   apiFetch<ProfessorManagementItemDTO>(`/api/professors/${professorId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+
+export const updateProfessorTags = (professorId: number, tagIds: number[]) =>
+  apiFetch<ProfessorManagementItemDTO>(`/api/professors/${professorId}/tags`, {
+    method: 'PATCH',
+    body: JSON.stringify({ tag_ids: tagIds }),
   });
 
 export const archiveProfessor = (professorId: number) =>

@@ -1,5 +1,7 @@
 import type { ProfessorDashboardItemDTO, ProfessorDashboardStatus } from "@/types";
 
+export const NO_TAG_FILTER_VALUE = "__no_tag__";
+
 export type DashboardFilterState = {
   keyword: string;
   universities: string[];
@@ -7,6 +9,7 @@ export type DashboardFilterState = {
   departments: string[];
   titles: string[];
   statuses: ProfessorDashboardStatus[];
+  tagIds: string[];
   minMatchScore: string;
 };
 
@@ -15,6 +18,7 @@ export type DashboardFilterOptions = {
   schools: string[];
   departments: string[];
   titles: string[];
+  tags: { id: number; name: string }[];
 };
 
 export const createDefaultDashboardFilters = (): DashboardFilterState => ({
@@ -24,6 +28,7 @@ export const createDefaultDashboardFilters = (): DashboardFilterState => ({
   departments: [],
   titles: [],
   statuses: [],
+  tagIds: [],
   minMatchScore: "",
 });
 
@@ -73,6 +78,7 @@ export const buildDashboardFilterOptions = (
   const schools = new Set<string>();
   const departments = new Set<string>();
   const titles = new Set<string>();
+  const tags = new Map<number, string>();
   const selectedUniversities = filters.universities;
   const selectedSchools = filters.schools ?? [];
 
@@ -95,6 +101,9 @@ export const buildDashboardFilterOptions = (
     extractDashboardTitleTags(professor.title).forEach((title) => {
       addNonEmpty(titles, title);
     });
+    professor.tags.forEach((tag) => {
+      tags.set(tag.id, tag.name);
+    });
   });
 
   return {
@@ -102,6 +111,9 @@ export const buildDashboardFilterOptions = (
     schools: sortByChinese(schools),
     departments: sortByChinese(departments),
     titles: sortByChinese(titles),
+    tags: Array.from(tags, ([id, name]) => ({ id, name })).sort((left, right) =>
+      left.name.localeCompare(right.name, "zh-CN"),
+    ),
   };
 };
 
@@ -126,6 +138,20 @@ const matchesAnyStatus = (
   value: ProfessorDashboardStatus,
   selectedValues: ProfessorDashboardStatus[],
 ): boolean => selectedValues.length === 0 || selectedValues.includes(value);
+
+const matchesAnyTag = (
+  professor: ProfessorDashboardItemDTO,
+  selectedValues: string[],
+): boolean => {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+  const selectedSet = new Set(selectedValues);
+  if (professor.tags.length === 0) {
+    return selectedSet.has(NO_TAG_FILTER_VALUE);
+  }
+  return professor.tags.some((tag) => selectedSet.has(String(tag.id)));
+};
 
 const arraysEqual = (left: string[], right: string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
@@ -152,6 +178,7 @@ export const getActiveDashboardFilterCount = (
   filters.departments.length +
   filters.titles.length +
   filters.statuses.length +
+  filters.tagIds.length +
   (filters.minMatchScore.trim() ? 1 : 0);
 
 export const filterDashboardProfessors = (
@@ -171,6 +198,7 @@ export const filterDashboardProfessors = (
         professor.department,
         professor.title,
         professor.research_direction,
+        ...professor.tags.map((tag) => tag.name),
       ].some((value) => normalize(value).includes(keyword));
 
     const matchScoreMatched =
@@ -184,6 +212,7 @@ export const filterDashboardProfessors = (
       matchesAny(professor.department, filters.departments) &&
       matchesAnyTitle(professor.title, filters.titles) &&
       matchesAnyStatus(professor.status, filters.statuses) &&
+      matchesAnyTag(professor, filters.tagIds) &&
       matchScoreMatched
     );
   });
@@ -210,12 +239,18 @@ export const pruneDashboardFilters = (
     departmentOptions.includes(value),
   );
   const titles = filters.titles.filter((value) => allOptions.titles.includes(value));
+  const validTagIds = new Set([
+    ...allOptions.tags.map((tag) => String(tag.id)),
+    NO_TAG_FILTER_VALUE,
+  ]);
+  const tagIds = (filters.tagIds ?? []).filter((value) => validTagIds.has(value));
 
   if (
     arraysEqual(universities, filters.universities) &&
     arraysEqual(schools, filters.schools) &&
     arraysEqual(departments, filters.departments) &&
-    arraysEqual(titles, filters.titles)
+    arraysEqual(titles, filters.titles) &&
+    arraysEqual(tagIds, filters.tagIds)
   ) {
     return filters;
   }
@@ -226,5 +261,6 @@ export const pruneDashboardFilters = (
     schools,
     departments,
     titles,
+    tagIds,
   };
 };
