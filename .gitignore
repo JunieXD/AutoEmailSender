@@ -25,3 +25,6 @@ skills-lock.json
 .env
 logs
 CLAUDE.md
+.codegraph/
+.gemini/
+.mcp.json
