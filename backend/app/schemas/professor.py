@@ -32,6 +32,10 @@ class ProfessorTagPayload(BaseModel):
     background_color: str
 
 
+class ProfessorTagUpdatePayload(BaseModel):
+    tag_ids: list[int] = Field(default_factory=list)
+
+
 class ProfessorTagUsageProfessorRead(ApiSchema):
     id: int
     name: str

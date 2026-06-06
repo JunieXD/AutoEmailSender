@@ -11,8 +11,7 @@ import {
   createProfessorTag,
   listProfessors,
   listProfessorsForManagement,
-  updateProfessor,
-  getProfessor,
+  updateProfessorTags,
 } from "@/lib/api/professorsApi";
 import type {
   IdentityDTO,
@@ -178,11 +177,6 @@ vi.mock("@/lib/api/professorsApi", () => ({
     text_color: "#1d4ed8",
     background_color: "#dbeafe",
   })),
-  getProfessor: vi.fn(async () => ({
-    ...managementProfessors[0],
-    recent_papers: managementProfessors[0].recent_papers,
-    tags: [],
-  })),
   getProfessorTemplateDownloadUrl: vi.fn(),
   importProfessorsFromFile: vi.fn(),
   listProfessorTags: vi.fn(async () => [
@@ -196,9 +190,9 @@ vi.mock("@/lib/api/professorsApi", () => ({
   listProfessors: vi.fn(async () => dashboardProfessors),
   listProfessorsForManagement: vi.fn(async () => managementProfessors),
   restoreProfessor: vi.fn(),
-  updateProfessor: vi.fn(async (_professorId: number, payload: { tag_ids: number[] }) => ({
+  updateProfessorTags: vi.fn(async (_professorId: number, tagIds: number[]) => ({
     ...managementProfessors[0],
-    tags: payload.tag_ids.map((tagId) => ({
+    tags: tagIds.map((tagId) => ({
       id: tagId,
       name: "高意愿",
       text_color: "#166534",
@@ -231,12 +225,7 @@ describe("selection controls", () => {
     });
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
-    vi.mocked(getProfessor).mockResolvedValue({
-      ...managementProfessors[0],
-      recent_papers: managementProfessors[0].recent_papers,
-      tags: [],
-    });
-    vi.mocked(updateProfessor).mockResolvedValue({
+    vi.mocked(updateProfessorTags).mockResolvedValue({
       ...managementProfessors[0],
       tags: [
         {
@@ -756,10 +745,9 @@ describe("selection controls", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
 
     await waitFor(() => {
-      expect(getProfessor).toHaveBeenCalledWith(11);
-      expect(updateProfessor).toHaveBeenCalledWith(
+      expect(updateProfessorTags).toHaveBeenCalledWith(
         11,
-        expect.objectContaining({ tag_ids: [1] }),
+        [1],
       );
     });
   });
@@ -795,9 +783,9 @@ describe("selection controls", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
 
     await waitFor(() => {
-      expect(updateProfessor).toHaveBeenCalledWith(
+      expect(updateProfessorTags).toHaveBeenCalledWith(
         11,
-        expect.objectContaining({ tag_ids: [2] }),
+        [2],
       );
     });
   });
@@ -833,9 +821,9 @@ describe("selection controls", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "保存标签" }));
 
     await waitFor(() => {
-      expect(updateProfessor).toHaveBeenCalledWith(
+      expect(updateProfessorTags).toHaveBeenCalledWith(
         11,
-        expect.objectContaining({ tag_ids: [2] }),
+        [2],
       );
     });
   });
@@ -872,13 +860,7 @@ describe("selection controls", () => {
     };
     const firstSave = deferred<ProfessorManagementItemDTO>();
     vi.mocked(listProfessors).mockResolvedValue([professorWithTags]);
-    vi.mocked(getProfessor).mockResolvedValue({
-      ...managementProfessors[0],
-      id: professorWithTags.id,
-      name: professorWithTags.name,
-      tags: professorWithTags.tags,
-    });
-    vi.mocked(updateProfessor)
+    vi.mocked(updateProfessorTags)
       .mockImplementationOnce(
         () => firstSave.promise,
       )
@@ -909,12 +891,12 @@ describe("selection controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "选择标签 高强度" }));
 
     await waitFor(() => {
-      expect(updateProfessor).toHaveBeenCalledTimes(1);
+      expect(updateProfessorTags).toHaveBeenCalledTimes(1);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "选择标签 已退休" }));
 
-    expect(updateProfessor).toHaveBeenCalledTimes(1);
+    expect(updateProfessorTags).toHaveBeenCalledTimes(1);
 
     firstSave.resolve({
       ...managementProfessors[0],
@@ -929,11 +911,11 @@ describe("selection controls", () => {
     });
 
     await waitFor(() => {
-      expect(updateProfessor).toHaveBeenCalledTimes(2);
+      expect(updateProfessorTags).toHaveBeenCalledTimes(2);
     });
-    expect(updateProfessor).toHaveBeenLastCalledWith(
+    expect(updateProfessorTags).toHaveBeenLastCalledWith(
       professorWithTags.id,
-      expect.objectContaining({ tag_ids: [4, 1, 2, 3] }),
+      [4, 1, 2, 3],
     );
   });
 
@@ -971,7 +953,7 @@ describe("selection controls", () => {
     };
     const firstSave = deferred<ProfessorManagementItemDTO>();
     vi.mocked(listProfessorsForManagement).mockResolvedValue([professorWithTags]);
-    vi.mocked(updateProfessor)
+    vi.mocked(updateProfessorTags)
       .mockImplementationOnce(() => firstSave.promise)
       .mockResolvedValue({
         ...professorWithTags,
@@ -997,17 +979,17 @@ describe("selection controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "选择标签 高强度" }));
 
     await waitFor(() => {
-      expect(updateProfessor).toHaveBeenCalledTimes(1);
+      expect(updateProfessorTags).toHaveBeenCalledTimes(1);
     });
-    expect(updateProfessor).toHaveBeenNthCalledWith(
+    expect(updateProfessorTags).toHaveBeenNthCalledWith(
       1,
       professorWithTags.id,
-      expect.objectContaining({ tag_ids: [3, 1, 2, 4] }),
+      [3, 1, 2, 4],
     );
 
     fireEvent.click(screen.getByRole("button", { name: "选择标签 已退休" }));
 
-    expect(updateProfessor).toHaveBeenCalledTimes(1);
+    expect(updateProfessorTags).toHaveBeenCalledTimes(1);
 
     firstSave.resolve({
       ...professorWithTags,
@@ -1020,11 +1002,11 @@ describe("selection controls", () => {
     });
 
     await waitFor(() => {
-      expect(updateProfessor).toHaveBeenCalledTimes(2);
+      expect(updateProfessorTags).toHaveBeenCalledTimes(2);
     });
-    expect(updateProfessor).toHaveBeenLastCalledWith(
+    expect(updateProfessorTags).toHaveBeenLastCalledWith(
       professorWithTags.id,
-      expect.objectContaining({ tag_ids: [4, 1, 2, 3] }),
+      [4, 1, 2, 3],
     );
   });
 });

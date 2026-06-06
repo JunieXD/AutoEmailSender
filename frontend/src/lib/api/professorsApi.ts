@@ -63,6 +63,12 @@ export const updateProfessor = (professorId: number, payload: ProfessorUpsertPay
     body: JSON.stringify(payload),
   });
 
+export const updateProfessorTags = (professorId: number, tagIds: number[]) =>
+  apiFetch<ProfessorManagementItemDTO>(`/api/professors/${professorId}/tags`, {
+    method: 'PATCH',
+    body: JSON.stringify({ tag_ids: tagIds }),
+  });
+
 export const archiveProfessor = (professorId: number) =>
   apiFetch<ProfessorActionResultDTO>(`/api/professors/${professorId}/archive`, {
     method: 'POST',

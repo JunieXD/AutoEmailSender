@@ -7,6 +7,7 @@ from app.core.time import utc_now
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,6 +32,7 @@ from app.schemas.professor import (
     ProfessorRead,
     ProfessorTagPayload,
     ProfessorTagRead,
+    ProfessorTagUpdatePayload,
     ProfessorTagUsageProfessorRead,
     ProfessorTagUsageRead,
     ProfessorUpsertPayload,
@@ -388,7 +390,11 @@ async def create_professor_tag(
         background_color=payload.background_color,
     )
     session.add(tag)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="标签已存在") from exc
     await session.refresh(tag)
     return _serialize_tag(tag)
 
@@ -409,6 +415,29 @@ async def delete_professor_tag(
         ok=True,
         affected_count=1,
         message="标签已删除",
+    )
+
+
+@router.patch("/{professor_id}/tags", response_model=ProfessorManagementItemRead)
+async def update_professor_tags(
+    professor_id: int,
+    payload: ProfessorTagUpdatePayload,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorManagementItemRead:
+    professor = await session.scalar(
+        select(Professor)
+        .options(selectinload(Professor.tags))
+        .where(Professor.id == professor_id),
+    )
+    if not professor:
+        raise HTTPException(status_code=404, detail="未找到导师")
+
+    await _sync_professor_tags(session, professor, payload.tag_ids)
+    professor.updated_at = utc_now()
+    await _record_professor_log(session, professor, "professor.tags_updated")
+    await session.commit()
+    return _serialize_management_professor(
+        await _get_professor_with_tags_or_404(session, professor.id),
     )
 
 
@@ -854,5 +883,4 @@ def _map_dashboard_status(tasks: list[EmailTask], sent_count: int = 0) -> str:
         return "preparing"
 
     return "not_contacted"
-
 

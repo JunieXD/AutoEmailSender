@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -29,7 +31,7 @@ class ProfessorTagsApiTests(unittest.TestCase):
         get_session_factory.cache_clear()
         get_settings.cache_clear()
 
-        self.client = TestClient(create_app())
+        self.client = TestClient(create_app(), raise_server_exceptions=False)
 
     def tearDown(self) -> None:
         self.client.close()
@@ -100,6 +102,51 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual(updated_response.status_code, 200, msg=updated_response.text)
         self.assertEqual([tag["id"] for tag in created["tags"]], selected_ids)
         self.assertEqual([tag["id"] for tag in updated["tags"]], reordered_ids)
+
+    def test_update_professor_tags_allows_professor_without_email(self) -> None:
+        tag = self.client.get("/api/professors/tags").json()[0]
+        created = self.client.post(
+            "/api/professors",
+            json={
+                "name": "无邮箱导师",
+                "email": "missing-email@example.edu",
+            },
+        ).json()
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE professors SET email = NULL WHERE id = ?",
+                (created["id"],),
+            )
+
+        response = self.client.patch(
+            f"/api/professors/{created['id']}/tags",
+            json={"tag_ids": [tag["id"]]},
+        )
+        refreshed = self.client.get(f"/api/professors/{created['id']}").json()
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["tags"][0]["id"], tag["id"])
+        self.assertEqual(refreshed["tags"][0]["id"], tag["id"])
+
+    def test_create_duplicate_tag_constraint_returns_conflict(self) -> None:
+        async def miss_preflight_duplicate_check(*args: object, **kwargs: object) -> None:
+            return None
+
+        with patch(
+            "sqlalchemy.ext.asyncio.AsyncSession.scalar",
+            new=miss_preflight_duplicate_check,
+        ):
+            response = self.client.post(
+                "/api/professors/tags",
+                json={
+                    "name": "高意愿",
+                    "text_color": "#166534",
+                    "background_color": "#dcfce7",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409, msg=response.text)
+        self.assertEqual(response.json()["detail"], "标签已存在")
 
     def test_tag_usage_lists_professors_using_tag(self) -> None:
         tag = self.client.get("/api/professors/tags").json()[0]

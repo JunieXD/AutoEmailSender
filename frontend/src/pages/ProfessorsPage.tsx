@@ -59,6 +59,7 @@ import {
   listProfessorsForManagement,
   restoreProfessor,
   updateProfessor,
+  updateProfessorTags,
 } from "@/lib/api/professorsApi";
 import type {
   CrawlJobEntryTypeDTO,
@@ -286,23 +287,6 @@ const toProfessorPayload = (
   profile_url: form.profile_url.trim() || null,
   source_url: form.source_url.trim() || null,
   tag_ids: form.tag_ids,
-});
-
-const toProfessorUpdatePayload = (
-  professor: ProfessorManagementItemDTO,
-  tagIds: number[],
-): ProfessorUpsertPayloadDTO => ({
-  name: professor.name,
-  email: professor.email ?? "",
-  title: professor.title,
-  university: professor.university,
-  school: professor.school,
-  department: professor.department,
-  research_direction: professor.research_direction,
-  recent_papers: professor.recent_papers,
-  profile_url: professor.profile_url,
-  source_url: professor.source_url,
-  tag_ids: tagIds,
 });
 
 const fieldLabelClassName =
@@ -845,10 +829,7 @@ export const ProfessorsPage = () => {
     tagIds: number[],
   ) => {
     try {
-      const updatedProfessor = await updateProfessor(
-        professor.id,
-        toProfessorUpdatePayload(professor, tagIds),
-      );
+      const updatedProfessor = await updateProfessorTags(professor.id, tagIds);
       setProfessors((previous) =>
         previous.map((item) =>
           item.id === updatedProfessor.id ? updatedProfessor : item,
@@ -920,9 +901,9 @@ export const ProfessorsPage = () => {
     }
     setSavingProfessorTags(true);
     try {
-      const updatedProfessor = await updateProfessor(
+      const updatedProfessor = await updateProfessorTags(
         tagEditorProfessor.id,
-        toProfessorUpdatePayload(tagEditorProfessor, tagEditorSelectedIds),
+        tagEditorSelectedIds,
       );
       setProfessors((previous) =>
         previous.map((item) =>

@@ -56,10 +56,9 @@ import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import {
   createProfessorTag,
-  getProfessor,
   listProfessorTags,
   listProfessors,
-  updateProfessor,
+  updateProfessorTags as updateProfessorTagsRequest,
 } from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
 import { parseApiDateTime } from "@/lib/dateTime";
@@ -72,10 +71,8 @@ import {
 import type {
   ProfessorDashboardItemDTO,
   ProfessorDashboardStatus,
-  ProfessorDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
-  ProfessorUpsertPayloadDTO,
 } from "@/types";
 
 const SESSION_KEY = "selected_professor_ids";
@@ -104,23 +101,6 @@ const getDashboardFiltersSessionKey = (
   selectedIdentityId !== null
     ? `${FILTERS_SESSION_KEY_PREFIX}:${selectedIdentityId}`
     : null;
-
-const toProfessorTagUpdatePayload = (
-  professor: ProfessorDTO,
-  tagIds: number[],
-): ProfessorUpsertPayloadDTO => ({
-  name: professor.name,
-  email: professor.email ?? "",
-  title: professor.title,
-  university: professor.university,
-  school: professor.school,
-  department: professor.department,
-  research_direction: professor.research_direction,
-  recent_papers: professor.recent_papers ?? [],
-  profile_url: professor.profile_url,
-  source_url: professor.source_url,
-  tag_ids: tagIds,
-});
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -489,17 +469,13 @@ export const HomePage = () => {
     setFilters((previous) => pruneDashboardFilters(professors, previous));
   }, [professors]);
 
-  const updateProfessorTags = async (
+  const saveProfessorTags = async (
     professor: ProfessorDashboardItemDTO,
     tagIds: number[],
   ) => {
     setSavingProfessorTags(true);
     try {
-      const currentProfessor = await getProfessor(professor.id);
-      const updatedProfessor = await updateProfessor(
-        professor.id,
-        toProfessorTagUpdatePayload(currentProfessor, tagIds),
-      );
+      const updatedProfessor = await updateProfessorTagsRequest(professor.id, tagIds);
       setProfessors((previous) =>
         previous.map((item) =>
           item.id === updatedProfessor.id
@@ -558,7 +534,7 @@ export const HomePage = () => {
     if (!tagEditorProfessor) {
       return;
     }
-    const saved = await updateProfessorTags(
+    const saved = await saveProfessorTags(
       tagEditorProfessor,
       tagEditorSelectedIds,
     );
@@ -585,7 +561,7 @@ export const HomePage = () => {
       while (nextTagIds) {
         const currentTagIds = nextTagIds;
         nextTagIds = null;
-        await updateProfessorTags(professor, currentTagIds);
+        await saveProfessorTags(professor, currentTagIds);
         nextTagIds = saveState.pendingTagIds;
         saveState.pendingTagIds = null;
       }
