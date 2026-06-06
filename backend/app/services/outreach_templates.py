@@ -139,11 +139,11 @@ def build_send_date_context(
     current = now or datetime.now(timezone)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone)
-    local_now = current.astimezone(timezone)
+    local_current = current.astimezone(timezone)
     return {
-        "year": str(local_now.year),
-        "month": str(local_now.month),
-        "day": str(local_now.day),
+        "year": str(local_current.year),
+        "month": str(local_current.month),
+        "day": str(local_current.day),
     }
 
 
@@ -744,5 +744,4 @@ def _append_inline_style(tag, style_fragment: str) -> None:
     if existing_style and not existing_style.endswith(";"):
         existing_style = f"{existing_style};"
     tag["style"] = f"{existing_style}{style_fragment}"
-
 

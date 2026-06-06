@@ -15,8 +15,9 @@ class CrawlerV2WorkKind(str, Enum):
 class CrawlerV2WorkerConfig:
     page_concurrency: int = 2
     page_domain_concurrency: int = 2
-    chunk_concurrency: int = 1
+    chunk_concurrency: int = 3
     enrichment_concurrency: int = 3
+    enrichment_host_concurrency: int = 1
     lease_seconds: int = 300
 
 

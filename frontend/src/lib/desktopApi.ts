@@ -13,6 +13,14 @@ export async function openDesktopMaterial(materialId: number): Promise<DesktopMa
   }
   return api.openMaterial({ materialId });
 }
+export async function quitDesktopApp(): Promise<void> {
+  const api = getDesktopApi();
+  if (!api.quitApp) {
+    throw new Error("当前桌面应用版本不支持从窗口退出");
+  }
+  await api.quitApp();
+}
+
 export async function getDesktopAppVersion(): Promise<string> {
   const api = getDesktopApi();
   return api.getVersion();

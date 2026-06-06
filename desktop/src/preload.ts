@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
   backendBaseUrl,
   getBackendBaseUrl: () => backendBaseUrl,
   getVersion: () => ipcRenderer.invoke("app:get-version") as Promise<string>,
+  quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   selectProfessorImportFile: () =>
     ipcRenderer.invoke("professors:select-import-file") as Promise<{
       name: string;

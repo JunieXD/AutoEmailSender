@@ -12,7 +12,6 @@ import type {
 
 export const listProfessors = (params?: {
   identityId?: number | null;
-  llmProfileId?: number | null;
   ids?: number[];
 }) =>
   apiFetch<ProfessorDashboardItemDTO[]>(
@@ -20,7 +19,6 @@ export const listProfessors = (params?: {
     undefined,
     {
       identity_id: params?.identityId ?? undefined,
-      llm_profile_id: params?.llmProfileId ?? undefined,
       ids: params?.ids?.length ? params.ids.join(',') : undefined,
     },
   );

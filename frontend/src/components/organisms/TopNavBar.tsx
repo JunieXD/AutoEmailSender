@@ -4,6 +4,7 @@ import { BrainCircuit, Mail, UserCircle2 } from "lucide-react";
 import { DesktopUpdateButton } from "@/components/molecules/DesktopUpdateButton";
 import { TopBarSelectMenu } from "@/components/atoms/TopBarSelectMenu";
 import { useSelectionContext } from "@/context/SelectionContext";
+import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
 
 export const TopNavBar = () => {
   const {
@@ -15,6 +16,7 @@ export const TopNavBar = () => {
     setSelectedLlmProfileId,
     loading,
   } = useSelectionContext();
+  const { requestWorkspaceDraftGuard } = useWorkspaceDraftGuard();
 
   const navItems = [
     { label: "首页", href: "/" },
@@ -71,7 +73,14 @@ export const TopNavBar = () => {
                 }
                 onChange={(nextValue) => {
                   const value = nextValue ? Number(nextValue) : null;
-                  setSelectedIdentityId(value);
+                  if (value === selectedIdentityId) {
+                    return;
+                  }
+                  void (async () => {
+                    if (await requestWorkspaceDraftGuard()) {
+                      setSelectedIdentityId(value);
+                    }
+                  })();
                 }}
               />
 
@@ -87,7 +96,14 @@ export const TopNavBar = () => {
                 }
                 onChange={(nextValue) => {
                   const value = nextValue ? Number(nextValue) : null;
-                  setSelectedLlmProfileId(value);
+                  if (value === selectedLlmProfileId) {
+                    return;
+                  }
+                  void (async () => {
+                    if (await requestWorkspaceDraftGuard()) {
+                      setSelectedLlmProfileId(value);
+                    }
+                  })();
                 }}
               />
             </div>

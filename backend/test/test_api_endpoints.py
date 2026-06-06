@@ -20,7 +20,7 @@ from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "c4b8e2a9d6f3"
+HEAD_REVISION = "d6e4b8c2a1f0"
 
 
 class ApiEndpointTests(unittest.TestCase):
@@ -571,6 +571,220 @@ class ApiEndpointTests(unittest.TestCase):
                 {"matched", "scheduled", "sent", "skipped", "send_failed", "needs_attention"},
             )
 
+    def test_professor_dashboard_ignores_failed_send_logs_for_contact_state(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="failed-log-dashboard@example.edu")
+        task_id = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'send_failed',
+                    last_error = '网络不可达'
+                WHERE id = ?
+                """,
+                (task_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO email_logs (
+                    email_task_id, identity_id, llm_profile_id, professor_id,
+                    direction, subject, content, failure_summary, created_at
+                )
+                VALUES (?, ?, ?, ?, 'sent', 'subject', 'content', '网络不可达', ?)
+                """,
+                (task_id, identity_id, llm_id, professor_id, "2026-06-01T10:30:00+00:00"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = next(item for item in response.json() if item["id"] == professor_id)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["sent_count"], 0)
+        self.assertIsNone(payload["last_sent_at"])
+
+    def test_professor_dashboard_returns_last_sent_and_replied_times(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        replied_professor_id = self._create_professor(email="time-replied@example.edu")
+        sent_only_professor_id = self._create_professor(email="time-sent-only@example.edu")
+        untouched_professor_id = self._create_professor(email="time-empty@example.edu")
+
+        replied_task_id = self.client.post(
+            f"/api/workspaces/{replied_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+        sent_only_task_id = self.client.post(
+            f"/api/workspaces/{sent_only_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'reply_detected',
+                    sent_at = ?,
+                    updated_at = ?,
+                    is_replied = 1
+                WHERE id = ?
+                """,
+                (
+                    "2026-06-01T08:00:00+00:00",
+                    "2026-06-01T13:00:00+00:00",
+                    replied_task_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'sent',
+                    sent_at = ?
+                WHERE id = ?
+                """,
+                ("2026-06-01T07:00:00+00:00", sent_only_task_id),
+            )
+            connection.executemany(
+                """
+                INSERT INTO email_logs (
+                    email_task_id, identity_id, llm_profile_id, professor_id,
+                    direction, subject, content, rfc_message_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'subject', 'content', ?, ?)
+                """,
+                [
+                    (
+                        replied_task_id,
+                        identity_id,
+                        llm_id,
+                        replied_professor_id,
+                        "sent",
+                        "<sent-old@example.edu>",
+                        "2026-06-01T09:00:00+00:00",
+                    ),
+                    (
+                        replied_task_id,
+                        identity_id,
+                        llm_id,
+                        replied_professor_id,
+                        "sent",
+                        "<sent-new@example.edu>",
+                        "2026-06-01T10:30:00+00:00",
+                    ),
+                    (
+                        replied_task_id,
+                        identity_id,
+                        llm_id,
+                        replied_professor_id,
+                        "received",
+                        "<reply@example.edu>",
+                        "2026-06-01T12:00:00+00:00",
+                    ),
+                ],
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload_by_id = {item["id"]: item for item in response.json()}
+        self.assertEqual(
+            payload_by_id[replied_professor_id]["last_sent_at"],
+            "2026-06-01T10:30:00Z",
+        )
+        self.assertEqual(
+            payload_by_id[replied_professor_id]["last_replied_at"],
+            "2026-06-01T12:00:00Z",
+        )
+        self.assertEqual(
+            payload_by_id[sent_only_professor_id]["last_sent_at"],
+            "2026-06-01T07:00:00Z",
+        )
+        self.assertIsNone(payload_by_id[sent_only_professor_id]["last_replied_at"])
+        self.assertIsNone(payload_by_id[untouched_professor_id]["last_sent_at"])
+        self.assertIsNone(payload_by_id[untouched_professor_id]["last_replied_at"])
+
+    def test_professor_dashboard_fallback_times_use_latest_task_timestamp(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="time-fallback-latest@example.edu")
+
+        newer_task_id = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        ).json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            older_task_id = connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    source, parent_task_id, identity_id, llm_profile_id,
+                    professor_id, status, sent_at, is_replied, created_at, updated_at
+                )
+                VALUES ('manual', ?, ?, ?, ?, 'reply_detected', ?, 1, ?, ?)
+                RETURNING id
+                """,
+                (
+                    newer_task_id,
+                    identity_id,
+                    llm_id,
+                    professor_id,
+                    "2026-06-02T11:00:00+00:00",
+                    "2026-06-01T08:00:00+00:00",
+                    "2026-06-02T12:30:00+00:00",
+                ),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'reply_detected',
+                    sent_at = ?,
+                    updated_at = ?,
+                    is_replied = 1,
+                    created_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "2026-06-01T09:00:00+00:00",
+                    "2026-06-01T10:00:00+00:00",
+                    "2026-06-02T08:00:00+00:00",
+                    newer_task_id,
+                ),
+            )
+            self.assertIsNotNone(older_task_id)
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        professor = next(item for item in response.json() if item["id"] == professor_id)
+        self.assertEqual(professor["last_sent_at"], "2026-06-02T11:00:00Z")
+        self.assertEqual(professor["last_replied_at"], "2026-06-02T12:30:00Z")
     def test_professor_dashboard_prioritizes_existing_contact_over_follow_up_draft(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -1079,8 +1293,8 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(switched_model_response.status_code, 200, msg=switched_model_response.text)
         switched_messages = switched_model_response.json()["messages"]
-        self.assertEqual([message["direction"] for message in switched_messages], ["sent", "received"])
-        self.assertEqual([message["subject"] for message in switched_messages], ["首封联系", "Re: 首封联系"])
+        self.assertEqual([message["direction"] for message in switched_messages], ["sent", "received", "draft"])
+        self.assertEqual([message["subject"] for message in switched_messages], ["首封联系", "Re: 首封联系", "模型 A 草稿"])
 
         switched_ensure_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
@@ -1088,7 +1302,8 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(switched_ensure_response.status_code, 200, msg=switched_ensure_response.text)
         switched_task = switched_ensure_response.json()["current_task"]
-        self.assertEqual(switched_task["status"], "matched")
+        self.assertEqual(switched_task["id"], task_id)
+        self.assertEqual(switched_task["status"], "reply_detected")
         self.assertEqual(switched_task["match_score"], 88)
         self.assertEqual(switched_task["match_reason"], "身份材料与导师方向高度匹配")
         self.assertEqual(switched_task["fit_points"], ["研究方向一致"])
@@ -1106,6 +1321,22 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(dashboard_professor["match_score"], 88)
         self.assertEqual(dashboard_professor["sent_count"], 1)
         self.assertEqual(dashboard_professor["status"], "replied")
+
+        dashboard_without_model_response = self.client.get(
+            "/api/professors",
+            params={"identity_id": identity_id},
+        )
+        self.assertEqual(
+            dashboard_without_model_response.status_code,
+            200,
+            msg=dashboard_without_model_response.text,
+        )
+        dashboard_without_model_professor = next(
+            item for item in dashboard_without_model_response.json() if item["id"] == professor_id
+        )
+        self.assertEqual(dashboard_without_model_professor["match_score"], 88)
+        self.assertEqual(dashboard_without_model_professor["sent_count"], 1)
+        self.assertEqual(dashboard_without_model_professor["status"], "replied")
 
         other_identity_response = self.client.get(
             f"/api/workspaces/{professor_id}",
@@ -1360,6 +1591,136 @@ class ApiEndpointTests(unittest.TestCase):
                 self.assertEqual(workspace_after_ensure.status_code, 200, msg=workspace_after_ensure.text)
                 self.assertEqual(workspace_after_ensure.json()["current_task"]["id"], current_task["id"])
 
+    def test_workspace_thread_keeps_current_task_visible_after_model_switch(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm(name="旧模型", model_name="gpt-old-visible")
+        second_llm_id = self._create_llm(name="新模型", model_name="gpt-new-visible")
+        professor_id = self._create_professor(email="visible-after-model-switch@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=first_llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="旧模型创建的任务",
+            generated_content_text="这条任务切换模型后仍应显示",
+            generated_content_html="<p>这条任务切换模型后仍应显示</p>",
+        )
+
+        response = self.client.get(
+            f"/api/workspaces/{professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["llm_profile"]["id"], second_llm_id)
+        self.assertEqual(payload["current_task"]["id"], task_id)
+        self.assertEqual(payload["current_task"]["generated_subject"], "旧模型创建的任务")
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), first_llm_id)
+
+    def test_template_generation_does_not_rebind_task_to_selected_model(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm(name="原任务模型", model_name="gpt-original-template")
+        second_llm_id = self._create_llm(name="当前选择模型", model_name="gpt-selected-template")
+        professor_id = self._create_professor(email="template-model-switch@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=first_llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=None,
+            outreach_generation_mode="template",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft",
+            json={"llm_profile_id": second_llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["llm_profile"]["id"], first_llm_id)
+        self.assertEqual(payload["current_task"]["id"], task_id)
+        self.assertEqual(payload["current_task"]["status"], "review_required")
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), first_llm_id)
+
+    def test_workspace_llm_actions_use_selected_model_after_model_switch(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm()
+        second_llm_id = self._create_llm(name="切换后的执行模型", model_name="gpt-runtime-selected")
+        material_id = self._upload_material(
+            identity_id,
+            filename="runtime-model-resume.txt",
+            content=b"My research background is in AI agents and workflow automation.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="runtime-model-switch@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=first_llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=material_id,
+            match_score=82,
+            match_reason="方向匹配",
+        )
+
+        captured_profiles: list[tuple[str, int, str]] = []
+
+        async def fake_generate_draft_content(**kwargs):
+            llm_profile = kwargs["llm_profile"]
+            captured_profiles.append(("draft", llm_profile.id, llm_profile.model_name))
+            return self._build_draft_generation_result(
+                subject="切换模型生成主题",
+                body_text="切换模型生成正文",
+                body_html="<p>切换模型生成正文</p>",
+                prompt_tokens=11,
+                completion_tokens=7,
+            )
+
+        async def fake_generate_match_evaluation(**kwargs):
+            llm_profile = kwargs["llm_profile"]
+            captured_profiles.append(("match", llm_profile.id, llm_profile.model_name))
+            return self._build_match_evaluation_result(match_score=91)
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fake_generate_draft_content),
+        ):
+            draft_response = self.client.post(
+                f"/api/email-tasks/{task_id}/generate-draft",
+                json={"llm_profile_id": second_llm_id},
+            )
+
+        self.assertEqual(draft_response.status_code, 200, msg=draft_response.text)
+        draft_payload = draft_response.json()
+        self.assertEqual(captured_profiles, [("draft", second_llm_id, "gpt-runtime-selected")])
+        self.assertEqual(draft_payload["llm_profile"]["id"], second_llm_id)
+        self.assertEqual(draft_payload["current_task"]["generated_subject"], "切换模型生成主题")
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            AsyncMock(side_effect=fake_generate_match_evaluation),
+        ):
+            match_response = self.client.post(
+                f"/api/email-tasks/{task_id}/calculate-match",
+                json={"llm_profile_id": second_llm_id},
+            )
+
+        self.assertEqual(match_response.status_code, 200, msg=match_response.text)
+        match_payload = match_response.json()
+        self.assertEqual(
+            captured_profiles,
+            [
+                ("draft", second_llm_id, "gpt-runtime-selected"),
+                ("match", second_llm_id, "gpt-runtime-selected"),
+            ],
+        )
+        self.assertEqual(match_payload["thread"]["llm_profile"]["id"], second_llm_id)
+        self.assertEqual(match_payload["thread"]["current_task"]["match_score"], 91)
+        self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -1736,6 +2097,232 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.json()["current_task"]["status"], "approved")
         self.assertEqual(response.json()["current_task"]["approved_subject"], "审核后的主题")
         mocked_send.assert_not_awaited()
+
+    def test_save_workspace_draft_persists_edited_content_without_approving(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "保存草稿导师",
+                "email": "save-draft@example.edu",
+                "title": "Professor",
+                "university": "Example University",
+                "school": "School of Computing",
+                "department": "Computer Science",
+                "research_direction": "Agents",
+                "recent_papers": [],
+                "profile_url": None,
+                "source_url": None,
+            },
+        )
+        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        professor_id = professor_response.json()["id"]
+        material_id = self._upload_material(
+            identity_id,
+            filename="save-draft-resume.txt",
+            content=b"resume",
+            material_type="resume",
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            selected_material_ids=[material_id],
+            generated_subject="AI 原始主题",
+            generated_content_text="AI 原始正文",
+            generated_content_html="<p>AI 原始正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft",
+            json={
+                "subject": "用户编辑主题",
+                "body_text": "用户编辑正文",
+                "body_html": "<p>用户编辑正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["current_task"]
+        self.assertEqual(current_task["status"], "review_required")
+        self.assertEqual(current_task["approved_subject"], "用户编辑主题")
+        self.assertEqual(current_task["approved_body_text"], "用户编辑正文")
+        self.assertEqual(current_task["approved_body_html"], "<p>用户编辑正文</p>")
+        self.assertEqual(current_task["selected_material_ids"], [])
+        stored_task = self._get_email_task_delete_state(task_id)
+        self.assertEqual(stored_task["status"], "review_required")
+        self.assertEqual(stored_task["approved_subject"], "用户编辑主题")
+        self.assertIsNotNone(stored_task["approved_at"])
+
+    def test_save_workspace_draft_preserves_empty_subject(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="empty-subject-save-draft@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="AI 原始主题",
+            generated_content_text="AI 原始正文",
+            generated_content_html="<p>AI 原始正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft",
+            json={
+                "subject": "",
+                "body_text": "保留正文",
+                "body_html": "<p>保留正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["current_task"]
+        self.assertEqual(current_task["approved_subject"], "")
+        self.assertEqual(current_task["approved_body_text"], "保留正文")
+        stored_task = self._get_email_task_delete_state(task_id)
+        self.assertEqual(stored_task["approved_subject"], "")
+
+    def test_save_workspace_draft_preserves_empty_body(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="empty-body-save-draft@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="AI 原始主题",
+            generated_content_text="AI 原始正文",
+            generated_content_html="<p>AI 原始正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft",
+            json={
+                "subject": "只保留主题",
+                "body_text": "",
+                "body_html": "",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["current_task"]
+        self.assertEqual(current_task["approved_subject"], "只保留主题")
+        self.assertEqual(current_task["approved_body_text"], "")
+        self.assertEqual(current_task["approved_body_html"], "")
+        stored_task = self._get_email_task_delete_state(task_id)
+        self.assertEqual(stored_task["approved_body_text"], "")
+        self.assertEqual(stored_task["approved_body_html"], "")
+
+    def test_save_workspace_draft_preserves_empty_tiptap_body(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="empty-tiptap-body-save-draft@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="AI 原始主题",
+            generated_content_text="AI 原始正文",
+            generated_content_html="<p>AI 原始正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft",
+            json={
+                "subject": "只保留主题",
+                "body_text": "",
+                "body_html": "<p></p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["current_task"]
+        self.assertEqual(current_task["approved_subject"], "只保留主题")
+        self.assertEqual(current_task["approved_body_text"], "")
+        self.assertEqual(current_task["approved_body_html"], "")
+        stored_task = self._get_email_task_delete_state(task_id)
+        self.assertEqual(stored_task["approved_body_text"], "")
+        self.assertEqual(stored_task["approved_body_html"], "")
+
+    def test_save_workspace_draft_rejects_sent_task_without_mutating_snapshot(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="sent-save-draft@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="sent",
+            primary_material_id=None,
+            approved_subject="真实发送主题",
+            approved_body_text="真实发送正文",
+            approved_body_html="<p>真实发送正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft",
+            json={
+                "subject": "错误覆盖主题",
+                "body_text": "错误覆盖正文",
+                "body_html": "<p>错误覆盖正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, msg=response.text)
+        self.assertIn("当前状态不能保存草稿", response.json()["detail"])
+        stored_task = self._get_email_task_delete_state(task_id)
+        self.assertEqual(stored_task["status"], "sent")
+        self.assertEqual(stored_task["approved_subject"], "真实发送主题")
+        self.assertEqual(stored_task["approved_body_text"], "真实发送正文")
+        self.assertEqual(stored_task["approved_body_html"], "<p>真实发送正文</p>")
+
+    def test_save_workspace_draft_rejects_canceled_task_without_mutating_snapshot(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="canceled-save-draft@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="canceled",
+            primary_material_id=None,
+            approved_subject="取消前主题",
+            approved_body_text="取消前正文",
+            approved_body_html="<p>取消前正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft",
+            json={
+                "subject": "错误覆盖取消主题",
+                "body_text": "错误覆盖取消正文",
+                "body_html": "<p>错误覆盖取消正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, msg=response.text)
+        self.assertIn("当前状态不能保存草稿", response.json()["detail"])
+        stored_task = self._get_email_task_delete_state(task_id)
+        self.assertEqual(stored_task["status"], "canceled")
+        self.assertEqual(stored_task["approved_subject"], "取消前主题")
+        self.assertEqual(stored_task["approved_body_text"], "取消前正文")
+        self.assertEqual(stored_task["approved_body_html"], "<p>取消前正文</p>")
 
     def test_identity_llm_mode_allows_empty_template_defaults(self) -> None:
         response = self.client.post(
@@ -2382,11 +2969,8 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(task_response.status_code, 201)
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
-        task_id = workspace.json()["current_task"]["id"]
+        batch_task_id = task_response.json()["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
 
         with patch(
             "app.services.task_runtime.llm_runtime.generate_draft_content",
@@ -2561,6 +3145,57 @@ class ApiEndpointTests(unittest.TestCase):
 
         repeated_restore = self.client.post(f"/api/batch-tasks/{task_id}/restore")
         self.assertEqual(repeated_restore.status_code, 200, msg=repeated_restore.text)
+
+    def test_batch_tasks_list_is_identity_scoped_not_llm_scoped(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm()
+        second_llm_response = self.client.post(
+            "/api/llm-profiles",
+            json={
+                "name": "批量任务备用模型",
+                "provider": "openai",
+                "api_base_url": "https://api-backup.example.com/v1",
+                "api_key": "sk-test-backup",
+                "model_name": "gpt-backup",
+                "matcher_prompt_template": "matcher",
+                "writer_prompt_template": "writer",
+                "temperature": 0.2,
+                "max_tokens": 2048,
+                "is_default": False,
+            },
+        )
+        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        second_llm_id = second_llm_response.json()["id"]
+        self.client.post("/api/professors/import-sample")
+        professor_id = self.client.get("/api/professors").json()[0]["id"]
+
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": first_llm_id,
+                "name": "模型 A 创建的批量任务",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{导师姓名}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{导师姓名}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+
+        listed = self.client.get(
+            "/api/batch-tasks",
+            params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
+        )
+
+        self.assertEqual(listed.status_code, 200, msg=listed.text)
+        self.assertEqual([item["id"] for item in listed.json()], [created.json()["id"]])
 
     def test_remove_batch_task_item_soft_deletes_single_draft_and_updates_target_count(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -3314,6 +3949,52 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(len(listed.json()), 1)
 
+    def test_match_analysis_jobs_list_is_identity_scoped_not_llm_scoped(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm()
+        second_llm_response = self.client.post(
+            "/api/llm-profiles",
+            json={
+                "name": "匹配分析备用模型",
+                "provider": "openai",
+                "api_base_url": "https://api-backup.example.com/v1",
+                "api_key": "sk-test-backup",
+                "model_name": "gpt-backup",
+                "matcher_prompt_template": "matcher",
+                "writer_prompt_template": "writer",
+                "temperature": 0.2,
+                "max_tokens": 2048,
+                "is_default": False,
+            },
+        )
+        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        second_llm_id = second_llm_response.json()["id"]
+        self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"AI systems",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="match-switch-model@example.edu")
+
+        created = self.client.post(
+            "/api/match-analysis-jobs",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": first_llm_id,
+                "professor_ids": [professor_id],
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+
+        listed = self.client.get(
+            "/api/match-analysis-jobs",
+            params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
+        )
+
+        self.assertEqual(listed.status_code, 200, msg=listed.text)
+        self.assertEqual([item["id"] for item in listed.json()], [created.json()["id"]])
+
     def test_match_analysis_job_delete_restore_and_trash_view(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -3694,12 +4375,15 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(selected_professor["status"], "preparing")
         self.assertIsNone(selected_professor["match_score"])
 
-        workspace_before = self.client.get(
-            f"/api/workspaces/{selected_professor_ids[0]}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        batch_task_id = task_response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
+        task_id = next(
+            item["id"]
+            for item in batch_items
+            if item["professor_id"] == selected_professor_ids[0]
         )
+        workspace_before = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
         self.assertEqual(workspace_before.status_code, 200)
-        task_id = workspace_before.json()["current_task"]["id"]
         self.assertEqual(
             workspace_before.json()["current_task"]["primary_material_id"],
             resume_material_id,
@@ -3743,18 +4427,19 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(match_workspace.status_code, 200)
-        self.assertEqual(match_workspace.json()["thread"]["current_task"]["status"], "matched")
-        self.assertEqual(match_workspace.json()["thread"]["current_task"]["match_score"], 93)
+        matched_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(matched_thread["current_task"]["match_score"], 93)
         self.assertEqual(generated_workspace.status_code, 200)
-        self.assertEqual(generated_workspace.json()["current_task"]["status"], "review_required")
-        self.assertEqual(generated_workspace.json()["current_task"]["generated_subject"], "更新后的套磁申请")
-        self.assertEqual(generated_workspace.json()["current_task"]["last_draft_prompt_tokens"], 612)
-        self.assertEqual(generated_workspace.json()["current_task"]["last_draft_completion_tokens"], 248)
-        self.assertEqual(generated_workspace.json()["current_task"]["last_draft_total_tokens"], 860)
-        self.assertGreater(generated_workspace.json()["current_task"]["estimated_prompt_tokens"], 0)
-        self.assertEqual(generated_workspace.json()["messages"][-1]["prompt_tokens"], 612)
-        self.assertEqual(generated_workspace.json()["messages"][-1]["completion_tokens"], 248)
-        self.assertEqual(generated_workspace.json()["messages"][-1]["total_tokens"], 860)
+        generated_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(generated_thread["current_task"]["status"], "review_required")
+        self.assertEqual(generated_thread["current_task"]["generated_subject"], "更新后的套磁申请")
+        self.assertEqual(generated_thread["current_task"]["last_draft_prompt_tokens"], 612)
+        self.assertEqual(generated_thread["current_task"]["last_draft_completion_tokens"], 248)
+        self.assertEqual(generated_thread["current_task"]["last_draft_total_tokens"], 860)
+        self.assertGreater(generated_thread["current_task"]["estimated_prompt_tokens"], 0)
+        self.assertEqual(generated_thread["messages"][-1]["prompt_tokens"], 612)
+        self.assertEqual(generated_thread["messages"][-1]["completion_tokens"], 248)
+        self.assertEqual(generated_thread["messages"][-1]["total_tokens"], 860)
         operation_logs = self.client.get(
             "/api/diagnostics/operation-logs",
             params={"event_name": "email_task.draft_generated"},
@@ -3765,8 +4450,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(draft_generated_metadata["completion_tokens"], 248)
         self.assertEqual(draft_generated_metadata["total_tokens"], 860)
         self.assertEqual(switched_workspace.status_code, 200)
-        self.assertEqual(switched_workspace.json()["current_task"]["primary_material_id"], publication_material_id)
-        self.assertEqual(switched_workspace.json()["current_task"]["status"], "review_required")
+        switched_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(switched_thread["current_task"]["primary_material_id"], publication_material_id)
+        self.assertEqual(switched_thread["current_task"]["status"], "review_required")
 
         with patch(
             "app.services.task_runtime.mail_runtime.send_email",
@@ -3786,7 +4472,7 @@ class ApiEndpointTests(unittest.TestCase):
                     "selected_material_ids": [],
                 },
             )
-        payload = workspace_after.json()
+        payload = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(workspace_after.status_code, 200)
         self.assertEqual(payload["current_task"]["status"], "sent")
         self.assertNotIn("delivery_mode", payload["current_task"])
@@ -5542,12 +6228,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
-        task_id = workspace.json()["current_task"]["id"]
-        self.assertIsNone(workspace.json()["current_task"]["primary_material_id"])
+        batch_task_id = response.json()["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        task_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
+        self.assertIsNone(task_thread.json()["current_task"]["primary_material_id"])
 
         regenerate_response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
         self.assertEqual(regenerate_response.status_code, 400)
@@ -5572,7 +6256,8 @@ class ApiEndpointTests(unittest.TestCase):
                 },
             )
         self.assertEqual(send_response.status_code, 200)
-        self.assertEqual(send_response.json()["current_task"]["status"], "sent")
+        sent_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        self.assertEqual(sent_thread["current_task"]["status"], "sent")
 
     def test_template_polish_mode_requires_complete_template_when_creating_batch_task(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -5690,7 +6375,7 @@ class ApiEndpointTests(unittest.TestCase):
         llm_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
         professor_id = self.client.get("/api/professors").json()[0]["id"]
-        self.client.post(
+        response = self.client.post(
             "/api/batch-tasks",
             json={
                 "identity_id": identity_id,
@@ -5708,11 +6393,9 @@ class ApiEndpointTests(unittest.TestCase):
             },
         )
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        ).json()
-        task_id = workspace["current_task"]["id"]
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        batch_task_id = response.json()["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
 
         schedule_time = datetime.now(UTC) + timedelta(hours=1)
         with patch(
@@ -5739,10 +6422,7 @@ class ApiEndpointTests(unittest.TestCase):
             self._run_async(self._force_task_due(task_id))
             self._run_async(self._dispatch_due_tasks())
 
-        sent_workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        ).json()
+        sent_workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(sent_workspace["current_task"]["status"], "sent")
         self.assertEqual(sent_workspace["current_task"]["last_rfc_message_id"], "<msg-1@example.com>")
 
@@ -5770,10 +6450,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
             self.assertEqual(refresh_response.status_code, 200, msg=refresh_response.text)
 
-        replied_workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        ).json()
+        replied_workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(replied_workspace["current_task"]["status"], "reply_detected")
         self.assertTrue(replied_workspace["current_task"]["is_replied"])
         received_message = next(
@@ -5837,6 +6514,139 @@ class ApiEndpointTests(unittest.TestCase):
             repaired_created_at = repaired_created_at.replace(tzinfo=UTC)
         self.assertEqual(repaired_created_at, reply_received_at)
 
+    def test_batch_task_resend_context_selects_unsuccessful_items(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_ids = [
+            self._create_professor(email="expired-resend@example.edu"),
+            self._create_professor(email="stopped-resend@example.edu"),
+            self._create_professor(email="failed-resend@example.edu"),
+            self._create_professor(email="sent-resend@example.edu"),
+            self._create_professor(email="removed-resend@example.edu"),
+        ]
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=None,
+        )
+        rows = [
+            (professor_ids[0], "canceled", "schedule_expired"),
+            (professor_ids[1], "canceled", "batch_stopped"),
+            (professor_ids[2], "send_failed", None),
+            (professor_ids[3], "sent", None),
+            (professor_ids[4], "canceled", "user_removed"),
+        ]
+        task_ids: list[int] = []
+        for professor_id, task_status, cancellation_reason in rows:
+            task_ids.append(
+                self._insert_email_task_with_material(
+                    identity_id=identity_id,
+                    llm_id=llm_id,
+                    professor_id=professor_id,
+                    status=task_status,
+                    primary_material_id=None,
+                    batch_task_id=batch_task_id,
+                    source="batch",
+                    outreach_generation_mode="llm",
+                ),
+            )
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    """
+                    UPDATE email_tasks
+                    SET cancellation_reason = ?,
+                        outreach_template_subject = ?,
+                        outreach_template_body_text = ?,
+                        outreach_template_body_html = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        cancellation_reason,
+                        "原主题 {{name}}",
+                        "原正文 {{sender_name}}",
+                        "<p>原正文 {{sender_name}}</p>",
+                        task_ids[-1],
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["task"]["identity_id"], identity_id)
+        self.assertEqual(payload["defaults"]["identity_id"], identity_id)
+        self.assertEqual(payload["defaults"]["outreach_template_subject"], "原主题 {{name}}")
+        self.assertNotIn("llm_profile_id", payload["defaults"])
+        self.assertNotIn("scheduled_dates", payload["defaults"])
+        selectable_items = [item for item in payload["items"] if item["selectable"]]
+        self.assertEqual([item["professor_id"] for item in selectable_items], professor_ids[:3])
+        self.assertEqual([item["reason_label"] for item in selectable_items], ["发送窗口已过期", "任务中止后未发送", "发送失败"])
+        self.assertTrue(all(item["default_selected"] for item in selectable_items))
+        self.assertEqual(payload["summary"]["candidate_count"], 3)
+        self.assertEqual(payload["summary"]["default_selected_count"], 3)
+    def test_batch_task_resend_context_filters_deleted_material_defaults(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        primary_id = self._upload_material(identity_id, filename="resume.txt", content=b"resume", material_type="resume")
+        attachment_id = self._upload_material(identity_id, filename="paper.pdf", content=b"paper", material_type="publication")
+        professor_id = self._create_professor(email="material-resend@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=primary_id,
+            selected_material_ids=[attachment_id, 999999],
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="canceled",
+            primary_material_id=primary_id,
+            batch_task_id=batch_task_id,
+            source="batch",
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE email_tasks SET cancellation_reason = ? WHERE batch_task_id = ?", ("schedule_expired", batch_task_id))
+            connection.execute("DELETE FROM identity_materials WHERE id = ?", (primary_id,))
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertIsNone(payload["defaults"]["primary_material_id"])
+        self.assertEqual(payload["defaults"]["selected_material_ids"], [attachment_id])
+        self.assertTrue(any("材料" in warning for warning in payload["warnings"]))
+
+    def test_batch_task_resend_context_rejects_missing_identity(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=None,
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("UPDATE batch_tasks SET identity_id = ? WHERE id = ?", (999999, batch_task_id))
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "原任务身份已不存在，无法直接重新发起。")
     def test_batch_task_card_hides_delivery_mode_snapshot(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -6135,7 +6945,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         response = self.client.post(
-            f"/api/email-tasks/{first_task_id}/approve",
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/approve",
             json={
                 "subject": "较早任务已审核",
                 "body_text": "较早任务审核正文",
@@ -6842,6 +7652,71 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(status_response.status_code, 200, msg=status_response.text)
         self.assertTrue(status_response.json()["completed"])
 
+    def test_test_compose_draft_and_history_are_identity_scoped_not_llm_scoped(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        first_llm_id = self._create_llm()
+        second_llm_response = self.client.post(
+            "/api/llm-profiles",
+            json={
+                "name": "测试写信备用模型",
+                "provider": "openai",
+                "api_base_url": "https://api-backup.example.com/v1",
+                "api_key": "sk-test-backup",
+                "model_name": "gpt-backup",
+                "matcher_prompt_template": "matcher",
+                "writer_prompt_template": "writer",
+                "temperature": 0.2,
+                "max_tokens": 2048,
+                "is_default": False,
+            },
+        )
+        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        second_llm_id = second_llm_response.json()["id"]
+
+        save_response = self.client.post(
+            f"/api/test-compose/{identity_id}/{first_llm_id}/draft",
+            json={
+                "subject": "模型 A 保存的测试主题",
+                "body_text": "模型 A 保存的测试正文",
+                "body_html": "<p>模型 A 保存的测试正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200, msg=save_response.text)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            session_id = connection.execute(
+                """
+                SELECT id
+                FROM test_compose_sessions
+                WHERE identity_id = ? AND llm_profile_id = ?
+                """,
+                (identity_id, first_llm_id),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO test_compose_messages (
+                    session_id, identity_id, llm_profile_id, recipient_email,
+                    subject, content, content_html, status, rfc_message_id
+                )
+                VALUES (?, ?, ?, 'sender@example.com', '测试主题', '测试正文',
+                        '<p>测试正文</p>', 'sent', '<identity-compose-switch@example.com>')
+                """,
+                (session_id, identity_id, first_llm_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        switched_thread = self.client.get(f"/api/test-compose/{identity_id}/{second_llm_id}")
+
+        self.assertEqual(switched_thread.status_code, 200, msg=switched_thread.text)
+        payload = switched_thread.json()
+        self.assertEqual(payload["draft"]["subject"], "模型 A 保存的测试主题")
+        self.assertEqual(payload["draft"]["body_text"], "模型 A 保存的测试正文")
+        self.assertEqual(payload["history"][0]["rfc_message_id"], "<identity-compose-switch@example.com>")
+
     def test_test_compose_template_generation_preserves_placeholders_in_draft(self) -> None:
         response = self.client.post(
             "/api/identities",
@@ -6982,10 +7857,10 @@ class ApiEndpointTests(unittest.TestCase):
             ),
         )
 
-        workspace = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
+        batch_task_id = response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
+        task_id = next(item["id"] for item in batch_items if item["professor_id"] == professor_id)
+        workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
         self.assertEqual(workspace.status_code, 200, msg=workspace.text)
         payload = workspace.json()
         self.assertEqual(payload["current_task"]["outreach_generation_mode"], "template")
@@ -7060,10 +7935,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         self.assertEqual(create_response.json()["email_subject"], batch_subject)
 
-        workspace_before_generate = self.client.get(
-            f"/api/workspaces/{professor_id}",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id},
-        )
+        batch_task_id = create_response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
+        task_id = next(item["id"] for item in batch_items if item["professor_id"] == professor_id)
+        workspace_before_generate = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
         self.assertEqual(workspace_before_generate.status_code, 200, msg=workspace_before_generate.text)
         task_before_generate = workspace_before_generate.json()["current_task"]
         self.assertEqual(task_before_generate["outreach_template_subject"], batch_subject)
@@ -7090,7 +7965,8 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
-        generated_task = generate_response.json()["current_task"]
+        generated_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_before_generate['id']}/thread").json()
+        generated_task = generated_thread["current_task"]
         self.assertEqual(generated_task["generated_subject"], f"润色后: {batch_subject}")
         self.assertEqual(generated_task["generated_content_text"], f"润色后正文: {batch_body_text}")
         mocked_generate.assert_awaited_once()
@@ -7303,15 +8179,20 @@ class ApiEndpointTests(unittest.TestCase):
             "is_default": True,
         }
 
-    def _create_llm(self) -> int:
+    def _create_llm(
+        self,
+        *,
+        name: str = "默认模型",
+        model_name: str = "gpt-4o-mini",
+    ) -> int:
         response = self.client.post(
             "/api/llm-profiles",
             json={
-                "name": "默认模型",
+                "name": name,
                 "provider": "openai",
                 "api_base_url": "https://api.example.com/v1",
                 "api_key": "sk-test-key",
-                "model_name": "gpt-4o-mini",
+                "model_name": model_name,
                 "matcher_prompt_template": "matcher",
                 "writer_prompt_template": "writer",
                 "temperature": 0.2,
@@ -7687,6 +8568,15 @@ class ApiEndpointTests(unittest.TestCase):
         selected_material_ids = json.loads(row[1]) if row[1] is not None else None
         return row[0], selected_material_ids
 
+    def _get_email_task_llm_profile_id(self, task_id: int) -> int:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            return connection.execute(
+                "SELECT llm_profile_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
     def _get_email_task_delete_state(self, task_id: int) -> dict[str, object | None]:
         connection = sqlite3.connect(self.db_path)
         try:
@@ -7912,5 +8802,3 @@ class ApiEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

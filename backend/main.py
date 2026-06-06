@@ -17,6 +17,7 @@ from app.api.routers import API_ROUTERS
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.migrations import ensure_database_schema
+from app.core.schema_metadata import DatabaseRequiresNewerAppError
 from app.core.request_context import RequestContextMiddleware
 from app.core.startup_logging import write_startup_phase_log
 from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
@@ -41,6 +42,7 @@ class StartupStatus:
     started_at: datetime
     updated_at: datetime
     error: str | None = None
+    error_detail: dict[str, object] | None = None
 
     def to_response(self) -> dict[str, object]:
         payload = asdict(self)
@@ -80,6 +82,7 @@ def set_startup_status(
     state: str,
     phase: str,
     error: str | None = None,
+    error_detail: dict[str, object] | None = None,
 ) -> None:
     current = getattr(app.state, "startup_status", None)
     now = datetime.now(UTC)
@@ -91,6 +94,7 @@ def set_startup_status(
         started_at=started_at,
         updated_at=now,
         error=error,
+        error_detail=error_detail,
     )
 
 
@@ -137,11 +141,24 @@ async def initialize_runtime(app: FastAPI) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        error_detail = build_startup_error_detail(exc)
         app.state.runtime_error = str(exc)
-        set_startup_status(app, state="error", phase="error", error=str(exc))
+        app.state.runtime_error_detail = error_detail
+        set_startup_status(
+            app,
+            state="error",
+            phase="error",
+            error=str(exc),
+            error_detail=error_detail,
+        )
         write_startup_diagnostic_log("桌面后端启动初始化失败", exc=exc)
         raise
 
+
+def build_startup_error_detail(exc: Exception) -> dict[str, object] | None:
+    if isinstance(exc, DatabaseRequiresNewerAppError):
+        return exc.to_payload()
+    return None
 
 async def cleanup_runtime_state() -> None:
     async with get_session_factory()() as session:
@@ -261,7 +278,8 @@ def create_app() -> FastAPI:
     async def ready() -> dict[str, str]:
         runtime_error = getattr(app.state, "runtime_error", None)
         if runtime_error:
-            raise HTTPException(status_code=500, detail=runtime_error)
+            detail = getattr(app.state, "runtime_error_detail", None) or runtime_error
+            raise HTTPException(status_code=500, detail=detail)
         if not getattr(app.state, "runtime_ready", False):
             raise HTTPException(status_code=503, detail="后端初始化中")
         return {"status": "ready"}

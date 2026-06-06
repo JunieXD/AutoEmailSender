@@ -14,8 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
     CrawlCandidate,
-    CrawlCandidateEnrichmentTask,
-    CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
     CrawlWorkerKind,
     CrawlPageChunk,
@@ -27,14 +25,16 @@ from pydantic import BaseModel, Field
 
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
+from app.services.crawler_debug import append_crawler_v2_debug_event
+from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runtime import build_faculty_crawler_model
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import parse_structured_result
 
-MAX_CHUNK_ATTEMPTS = 2
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
@@ -52,8 +52,9 @@ async def invoke_v2_chunk_agent(
     school: str,
     source_url: str,
     chunk_content: str,
-) -> tuple[dict[str, Any], dict[str, int | None] | None]:
-    model = build_faculty_crawler_model(llm_profile)
+    thinking_extra_body: dict[str, object] | None = None,
+) -> tuple[dict[str, Any], dict[str, int | None] | None, str]:
+    model = build_faculty_crawler_model(llm_profile, extra_body=thinking_extra_body)
     prompt = build_v2_chunk_prompt(
         university=university,
         school=school,
@@ -64,22 +65,33 @@ async def invoke_v2_chunk_agent(
     content = _extract_message_text(response)
     payload = parse_structured_result(content, V2ChunkAgentPayload)
     usage = extract_token_usage_from_llm_response(response)
-    return payload.model_dump(), usage
+    return payload.model_dump(), usage, content
 
 
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
     return (
         "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
         "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。不要输出解释文字。\n"
-        "chunk_status 只能是 completed、no_candidates 或 split_required。\n"
+        "chunk_status 只能是 completed、no_candidates 或 too_many_candidates。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
-        "candidates 最多 10 个候选；如果当前 chunk 明确超过 10 个候选，chunk_status 必须是 split_required，candidates 必须为空。\n"
-        "缺少 email 且缺少 profile_url 的候选不可提交；无法确认有效候选时使用 no_candidates。\n"
+        "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且链接文本像人名、URL 像个人主页时，这就是明确的姓名 + profile_url 候选证据。\n"
+        "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
+        "candidates 最多 10 个候选；只有当前 chunk 正文内明确可见超过 10 个导师候选时，chunk_status 才能是 too_many_candidates，且 candidates 必须为空。\n"
+        "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，必须返回 too_many_candidates，不要输出前 10 个，也不要返回 no_candidates。\n"
+        "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能使用 too_many_candidates。\n"
+        "缺少 email 且缺少 profile_url 的候选不可提交；但有姓名 + profile_url 的候选即使缺少 email 也可提交。\n"
+        "no_candidates 只允许在当前 chunk 内没有任何姓名+邮箱、姓名+profile_url、教师卡片或教师表格行时使用。\n"
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
         "导师个人主页链接属于候选 profile_url，不能放入 discovered_urls。\n"
         "discovered_urls 只放候选列表页、分页页、教师目录页等继续抓取入口。\n"
         "每个候选字段使用英文键：name、email、title、university、school、department、research_direction、recent_papers、profile_url、source_url、confidence、field_confidence、evidence。\n"
         "confidence 和 field_confidence 必须是 0 到 1 的数字；evidence 只写简短摘要，不复制大段原文。\n"
+        "输出示例（正常保存）：\n"
+        '{"chunk_status": "completed", "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": {"name": 0.95, "email": 0.9, "profile_url": 0.95}, "evidence": {"summary": "当前 chunk 中姓名链接和邮箱明确出现"}}], "discovered_urls": []}\n'
+        "输出示例（当前 chunk 明确超过 10 个候选）：\n"
+        '{"chunk_status": "too_many_candidates", "candidates": [], "discovered_urls": []}\n'
+        "输出示例（无候选）：\n"
+        '{"chunk_status": "no_candidates", "candidates": [], "discovered_urls": []}\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"来源 URL：{source_url}\n"
@@ -119,6 +131,11 @@ def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
     missing = required.difference(payload)
     if missing:
         raise ValueError(f"Chunk Worker 返回缺少字段：{', '.join(sorted(missing))}")
+    chunk_status = str(payload.get("chunk_status") or "")
+    if chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
+        raise ValueError("Chunk Worker 返回了已废弃的 split_required；只有当前 chunk 明确超过 10 个候选时才能返回 too_many_candidates")
+    if chunk_status not in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, "too_many_candidates"}:
+        raise ValueError(f"Chunk Worker 返回了不支持的 chunk_status：{chunk_status}")
     return payload
 
 async def run_crawler_v2_chunk_worker_once(
@@ -138,13 +155,15 @@ async def run_crawler_v2_chunk_worker_once(
             return 0
         llm_profile = await _resolve_llm_profile(session, job)
         if llm_profile is None:
-            chunk.status = CrawlPageChunkStatus.FAILED_RETRYABLE.value
-            chunk.last_error = "缺少可用的 LLM Profile"
-            chunk.worker_id = None
-            chunk.claimed_at = None
-            chunk.lease_expires_at = None
+            mark_crawler_v2_failed(
+                chunk,
+                message="缺少可用的 LLM Profile",
+                retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+                terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
+            )
             await session.commit()
             return 1
+        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
     try:
         chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
@@ -152,9 +171,14 @@ async def run_crawler_v2_chunk_worker_once(
             school=job.school,
             source_url=chunk.source_url,
             chunk_content=chunk.content,
+            thinking_extra_body=thinking_extra_body,
         )
+        raw_model_text = None
         if isinstance(chunk_agent_result, tuple):
-            payload, usage = chunk_agent_result
+            if len(chunk_agent_result) >= 3:
+                payload, usage, raw_model_text = chunk_agent_result[:3]
+            else:
+                payload, usage = chunk_agent_result
         else:
             payload = chunk_agent_result
             usage = None
@@ -172,9 +196,23 @@ async def run_crawler_v2_chunk_worker_once(
                 cached_tokens=usage.get("cached_tokens") or 0,
                 raw_usage=dict(usage),
             )
+        append_crawler_v2_debug_event(
+            job.id,
+            worker_kind="chunk",
+            event_name="llm_response",
+            work_item_id=chunk_id,
+            payload={
+                "chunk_id": chunk.chunk_id,
+                "source_url": chunk.source_url,
+                "chunk_content": chunk.content,
+                "raw_payload": payload,
+                "raw_model_text": raw_model_text,
+                "token_usage": dict(usage) if usage is not None else None,
+            },
+        )
         payload = _validate_chunk_agent_payload(payload)
         candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
-        await complete_current_chunk(
+        save_result = await complete_current_chunk(
             session_factory,
             chunk_id=chunk_id,
             worker_id=worker_id,
@@ -182,20 +220,29 @@ async def run_crawler_v2_chunk_worker_once(
             discovered_urls=[str(url) for url in payload.get("discovered_urls", [])],
             chunk_status=str(payload.get("chunk_status") or "completed"),
         )
+        append_crawler_v2_debug_event(
+            job.id,
+            worker_kind="chunk",
+            event_name="chunk_completed",
+            work_item_id=chunk_id,
+            payload={
+                "chunk_id": chunk.chunk_id,
+                "source_url": chunk.source_url,
+                "parsed_payload": payload,
+                "save_result": save_result,
+            },
+        )
         return 1
     except Exception as exc:
         async with session_factory() as session:
             chunk = await session.get(CrawlPageChunk, chunk_id)
             if chunk is not None and chunk.status == CrawlPageChunkStatus.PROCESSING.value and chunk.worker_id == worker_id and not _lease_expired(chunk.lease_expires_at) and await ensure_job_active(session, chunk.job_id):
-                chunk.last_error = str(exc)
-                chunk.status = (
-                    CrawlPageChunkStatus.FAILED_TERMINAL.value
-                    if int(chunk.attempt_count or 0) >= MAX_CHUNK_ATTEMPTS
-                    else CrawlPageChunkStatus.FAILED_RETRYABLE.value
+                mark_crawler_v2_failed(
+                    chunk,
+                    message=str(exc),
+                    retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+                    terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
                 )
-                chunk.worker_id = None
-                chunk.claimed_at = None
-                chunk.lease_expires_at = None
             await session.commit()
         return 1
 
@@ -227,17 +274,6 @@ async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob):
         .where(LLMProfile.is_default.is_(True))
         .order_by(LLMProfile.id.asc())
         .limit(1)
-    )
-
-
-def candidate_needs_enrichment(candidate: CrawlCandidate) -> bool:
-    return bool(
-        (candidate.profile_url or "").strip()
-        and (
-            not (candidate.email or "").strip()
-            or not (candidate.department or "").strip()
-            or not (candidate.research_direction or "").strip()
-        )
     )
 
 
@@ -302,8 +338,8 @@ async def complete_current_chunk(
         if job is None:
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
 
-        if chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value or len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT:
-            reason = "candidate_count_exceeded" if len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT else "llm_split_required"
+        if chunk_status == "too_many_candidates" or len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT:
+            reason = "candidate_count_exceeded" if len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT else "too_many_candidates"
             split_result = await split_page_chunk_for_retry(
                 session_factory,
                 job_id=chunk.job_id,
@@ -318,12 +354,19 @@ async def complete_current_chunk(
                 "rejected_count": 0,
                 "child_count": split_result["child_count"],
             }
+        discovered_listing_urls = {
+            normalized
+            for url in discovered_urls
+            if (normalized := normalize_url(url, base_url=chunk.source_url))
+            if is_same_domain(normalized, job.start_url)
+        }
         ctx = CrawlToolContext(
             job_id=chunk.job_id,
             start_url=job.start_url,
             university=job.university,
             school=job.school,
             session_factory=session_factory,
+            known_listing_urls=discovered_listing_urls,
         )
         enriched_candidates = _fill_candidate_profile_urls_from_chunk(
             candidates,
@@ -331,33 +374,13 @@ async def complete_current_chunk(
             source_url=chunk.source_url,
         )
         save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
-        saved_candidates = save_result["saved"]
         enrichment_count = 0
-        for candidate in saved_candidates:
-            if not candidate_needs_enrichment(candidate):
-                continue
-            exists = await session.scalar(
-                select(CrawlCandidateEnrichmentTask.id).where(
-                    CrawlCandidateEnrichmentTask.job_id == chunk.job_id,
-                    CrawlCandidateEnrichmentTask.candidate_id == candidate.id,
-                )
-            )
-            if exists is not None:
-                continue
-            session.add(
-                CrawlCandidateEnrichmentTask(
-                    job_id=chunk.job_id,
-                    candidate_id=candidate.id,
-                    status=CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-                )
-            )
-            enrichment_count += 1
-
         candidate_profile_urls = {
             normalized
             for candidate in enriched_candidates
             if candidate.profile_url
             if (normalized := normalize_url(candidate.profile_url, base_url=chunk.source_url))
+            if normalized not in discovered_listing_urls
         }
         url_count = 0
         seen_urls: set[str] = set()
@@ -406,6 +429,7 @@ async def complete_current_chunk(
             "skipped_duplicate_count": save_result["skipped_duplicate_count"],
         }
 
+
 def _lease_expired(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:
         return False
@@ -413,7 +437,7 @@ def _lease_expired(lease_expires_at: datetime | None) -> bool:
 
 
 def _normalize_chunk_status(chunk_status: str) -> str:
-    if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, CrawlPageChunkStatus.SPLIT_REQUIRED.value}:
+    if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value}:
         return chunk_status
     return CrawlPageChunkStatus.COMPLETED.value
 

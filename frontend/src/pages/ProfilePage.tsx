@@ -27,6 +27,7 @@ import {
 import { useDesktopBackend } from "@/context/DesktopBackendContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
+import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
@@ -1585,6 +1586,7 @@ export const ProfilePage = () => {
     refreshSelections,
     loading,
   } = useSelectionContext();
+  const { requestWorkspaceDraftGuard } = useWorkspaceDraftGuard();
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
   const {
     isReady: desktopBackendReady,
@@ -2438,11 +2440,16 @@ export const ProfilePage = () => {
             <button
               type="button"
               onClick={() => {
-                setSelectedIdentityId(editingIdentity.id);
-                notifySuccess(
-                  "已设为当前身份",
-                  `当前身份已切换为“${getIdentityProfileName(editingIdentity)}”。`,
-                );
+                void (async () => {
+                  if (!(await requestWorkspaceDraftGuard())) {
+                    return;
+                  }
+                  setSelectedIdentityId(editingIdentity.id);
+                  notifySuccess(
+                    "已设为当前身份",
+                    `当前身份已切换为“${getIdentityProfileName(editingIdentity)}”。`,
+                  );
+                })();
               }}
               className="ui-btn-secondary"
             >
@@ -3035,11 +3042,16 @@ export const ProfilePage = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setSelectedLlmProfileId(editingLLM.id);
-                        notifySuccess(
-                          "已设为当前模型",
-                          `当前模型已切换为“${editingLLM.name}”。`,
-                        );
+                        void (async () => {
+                          if (!(await requestWorkspaceDraftGuard())) {
+                            return;
+                          }
+                          setSelectedLlmProfileId(editingLLM.id);
+                          notifySuccess(
+                            "已设为当前模型",
+                            `当前模型已切换为“${editingLLM.name}”。`,
+                          );
+                        })();
                       }}
                       className="ui-btn-secondary"
                     >

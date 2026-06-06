@@ -63,9 +63,10 @@ class DiagnosticsApiTests(unittest.TestCase):
 
     def setUp(self) -> None:
         asyncio.run(self._clear_operation_logs())
-        startup_log = Path(self.temp_dir.name) / "logs" / "startup.log"
-        if startup_log.exists():
-            startup_log.unlink()
+        for log_name in ["startup.log", "backend-errors.log"]:
+            log_file = Path(self.temp_dir.name) / "logs" / log_name
+            if log_file.exists():
+                log_file.unlink()
 
     async def _clear_operation_logs(self) -> None:
         from sqlalchemy import delete
@@ -279,6 +280,25 @@ class DiagnosticsApiTests(unittest.TestCase):
         self.assertEqual(startup_logs[0]["name"], "startup.log")
         self.assertEqual(startup_logs[0]["relative_path"], "logs/startup.log")
         self.assertIn("database is locked", startup_logs[0]["content"])
+
+    def test_export_operation_logs_includes_backend_error_log_file(self) -> None:
+        error_log = Path(self.temp_dir.name) / "logs" / "backend-errors.log"
+        error_log.parent.mkdir(parents=True, exist_ok=True)
+        error_log.write_text(
+            "[2026-06-04T10:00:00+00:00] request_id=req-1 GET /boom\\n"
+            "RuntimeError: boom\\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        response = self.client.get("/api/diagnostics/export")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        startup_logs = response.json()["startup_logs"]
+        error_files = [item for item in startup_logs if item["name"] == "backend-errors.log"]
+        self.assertEqual(len(error_files), 1)
+        self.assertEqual(error_files[0]["relative_path"], "logs/backend-errors.log")
+        self.assertIn("RuntimeError: boom", error_files[0]["content"])
 
     def test_operation_log_metadata_field_maps_from_event_metadata(self) -> None:
         log_id = self._seed_log(

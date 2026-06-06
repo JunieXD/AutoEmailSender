@@ -229,6 +229,32 @@ describe("WorkspaceComposerDock copy", () => {
     expect(screen.queryByRole("button", { name: "编辑草稿" })).not.toBeInTheDocument();
   });
 
+  it("shows datetime-local scheduled summaries without applying a timezone shift", () => {
+    render(
+      <WorkspaceComposerDock
+        {...baseProps}
+        draftReady={true}
+        subject="测试主题"
+        content="老师您好"
+        contentHtml="<p>老师您好</p>"
+        selectedMaterialIds={[]}
+        scheduledAt="2026-04-22T10:00"
+        acting={false}
+        canChangeMode={true}
+        canCalculateMatch={true}
+        canGenerateDraft={true}
+        canContinueManually={false}
+        canStartFollowUp={false}
+        canSubmitDraft={true}
+        composerExpanded={true}
+        nextStepTitle="检查后发送"
+        nextStepDescription="检查主题、正文和附件后发送。"
+      />,
+    );
+
+    expect(screen.getByText("04/22 10:00")).toBeInTheDocument();
+  });
+
   it("shows scheduled summaries in local time when the API omits a timezone suffix", () => {
     render(
       <WorkspaceComposerDock

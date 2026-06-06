@@ -31,6 +31,15 @@ type NativeSelectFieldProps = {
   name?: string;
   onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
   ariaLabel?: string;
+  selectedLabel?: string;
+  renderOption?: (
+    option: ParsedOption,
+    helpers: {
+      selected: boolean;
+      selectOption: () => void;
+      closeMenu: () => void;
+    },
+  ) => ReactNode;
 };
 
 type ParsedOption = {
@@ -92,6 +101,8 @@ export const NativeSelectField = ({
   name,
   onChange,
   ariaLabel,
+  selectedLabel,
+  renderOption,
 }: NativeSelectFieldProps) => {
   const [open, setOpen] = useState(false);
   const [floatingMenuStyle, setFloatingMenuStyle] = useState<CSSProperties>();
@@ -223,6 +234,29 @@ export const NativeSelectField = ({
       >
         {options.map((option) => {
           const selected = option.value === currentValue;
+          const selectOption = () => {
+            emitChange(option.value);
+            setOpen(false);
+            triggerRef.current?.blur();
+          };
+          const closeMenu = () => {
+            setOpen(false);
+            triggerRef.current?.blur();
+          };
+
+          if (renderOption) {
+            return (
+              <div
+                key={option.value}
+                role="option"
+                aria-selected={selected}
+                aria-disabled={option.disabled || undefined}
+              >
+                {renderOption(option, { selected, selectOption, closeMenu })}
+              </div>
+            );
+          }
+
           return (
             <button
               key={option.value}
@@ -230,11 +264,7 @@ export const NativeSelectField = ({
               role="option"
               aria-selected={selected}
               disabled={option.disabled}
-              onClick={() => {
-                emitChange(option.value);
-                setOpen(false);
-                triggerRef.current?.blur();
-              }}
+              onClick={selectOption}
               className={clsx(
                 "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 transition",
                 option.disabled
@@ -283,7 +313,7 @@ export const NativeSelectField = ({
             <span className="pointer-events-none shrink-0 text-primary">{icon}</span>
           ) : null}
           <span className="flex-1 truncate text-left text-sm text-stone-700">
-            {selectedOption?.label ?? "请选择"}
+            {selectedLabel ?? selectedOption?.label ?? "请选择"}
           </span>
           <ChevronDown
             className={clsx(

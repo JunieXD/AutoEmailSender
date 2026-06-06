@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 @router.get("/overview", response_model=DashboardOverviewRead)
 async def get_dashboard_overview(
     identity_id: int = Query(..., ge=1),
-    llm_profile_id: int = Query(..., ge=1),
+    llm_profile_id: int | None = Query(default=None, ge=1),
     university: str | None = Query(default=None),
     school: str | None = Query(default=None),
     email_university: str | None = Query(default=None),

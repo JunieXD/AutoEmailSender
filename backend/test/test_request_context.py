@@ -85,6 +85,26 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(response.headers["X-Request-ID"], request_id)
         self.assertIsNone(get_request_id())
 
+    def test_unhandled_exception_is_written_to_backend_error_log(self) -> None:
+        from app.core.config import get_settings
+
+        request_id = "service.error-log-1"
+        error_log = get_settings().data_dir / "logs" / "backend-errors.log"
+        if error_log.exists():
+            error_log.unlink()
+        client = TestClient(self.app, raise_server_exceptions=False)
+        try:
+            response = client.get("/test/request-id-error", headers={"X-Request-ID": request_id})
+        finally:
+            client.close()
+
+        self.assertEqual(response.status_code, 500)
+        content = error_log.read_text(encoding="utf-8")
+        self.assertIn("GET /test/request-id-error", content)
+        self.assertIn(request_id, content)
+        self.assertIn("RuntimeError: boom", content)
+        self.assertIn("Traceback", content)
+
     def test_unhandled_exception_still_propagates_and_resets_context(self) -> None:
         with self.assertRaises(RuntimeError):
             self.client.get("/test/request-id-error", headers={"X-Request-ID": "service.error-2"})

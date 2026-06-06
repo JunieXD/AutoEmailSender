@@ -8,6 +8,26 @@ export const DesktopStartupStatusBanner = () => {
     return null;
   }
 
+  if (status.state === "error" && status.databaseError?.code === "DATABASE_REQUIRES_NEWER_APP") {
+    return (
+      <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-950">
+        <div className="mx-auto flex max-w-7xl items-start gap-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
+          <div className="min-w-0">
+            <div className="font-medium">
+              当前数据需要 AutoEmailSender {status.databaseError.minimumSupportedAppVersion} 或更高版本
+            </div>
+            <div className="mt-1 text-red-900">
+              请升级到新版继续使用。若必须回退旧版，请从升级前备份恢复数据库。
+            </div>
+            <div className="mt-2 rounded border border-red-200 bg-white px-2 py-1 font-mono text-xs text-red-900 break-all">
+              {status.databaseError.backupDirectory}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (status.state === "error") {
     return (
       <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-900">

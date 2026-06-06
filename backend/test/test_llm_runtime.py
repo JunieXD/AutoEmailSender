@@ -1266,6 +1266,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不要修改或删除用户已写的日期", "\n".join(payload["instructions"]))
         self.assertIn("不要新增日期", "\n".join(payload["instructions"]))
 
+
+    def test_draft_rewrite_system_prompt_includes_replacements_output_example(self) -> None:
+        self.assertIn("输出示例", SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"replacements"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"segment_id"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"runs"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"marks"', SYSTEM_DRAFT_REWRITE_PROMPT)
+
     def test_build_draft_rewrite_prompt_injects_custom_instruction_with_guardrails(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.template_draft_rewrite import build_draft_rewrite_document
@@ -1755,6 +1763,93 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status_code, 200)
         self.assertIsNotNone(result.duration_ms)
 
+    async def test_fetch_llm_profile_models_reports_client_initialization_error(self) -> None:
+        profile = LLMProfile(
+            name="ark",
+            provider="openai",
+            api_base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key="test-key",
+            model_name="doubao-seed-2-0-mini-260215",
+        )
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
+        ):
+            result = await fetch_llm_profile_models(profile)
+
+        self.assertFalse(result.ok)
+        self.assertIn("模型请求初始化失败", result.message)
+        self.assertIn("SOCKS", result.message)
+        self.assertEqual(result.request_url, "https://ark.cn-beijing.volces.com/api/v3/models")
+        self.assertEqual(result.attempted_urls, ["https://ark.cn-beijing.volces.com/api/v3/models"])
+        self.assertEqual(result.endpoint_kind, "models")
+        self.assertFalse(result.consumes_tokens)
+
+    async def test_probe_llm_profile_reports_client_initialization_error(self) -> None:
+        profile = LLMProfile(
+            name="ark",
+            provider="openai",
+            api_base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key="test-key",
+            model_name="doubao-seed-2-0-mini-260215",
+        )
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
+        ):
+            result = await probe_llm_profile(profile)
+
+        self.assertFalse(result.ok)
+        self.assertIn("模型请求初始化失败", result.message)
+        self.assertIn("SOCKS", result.message)
+        self.assertEqual(
+            result.request_url,
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        )
+        self.assertEqual(
+            result.attempted_urls,
+            ["https://ark.cn-beijing.volces.com/api/v3/chat/completions"],
+        )
+        self.assertEqual(result.endpoint_kind, "chat_completions")
+        self.assertTrue(result.consumes_tokens)
+
+    async def test_request_chat_completion_wraps_client_initialization_error(self) -> None:
+        profile = LLMProfile(
+            name="ark",
+            provider="openai",
+            api_base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key="test-key",
+            model_name="doubao-seed-2-0-mini-260215",
+        )
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await request_chat_completion(
+                    profile,
+                    {
+                        "model": profile.model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "temperature": 0,
+                        "max_tokens": 32,
+                    },
+                )
+
+        self.assertIn("模型请求初始化失败", str(context.exception))
+        self.assertIn("SOCKS", str(context.exception))
+        self.assertEqual(
+            context.exception.request_url,
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        )
+        self.assertEqual(
+            context.exception.attempted_urls,
+            ["https://ark.cn-beijing.volces.com/api/v3/chat/completions"],
+        )
+        self.assertEqual(context.exception.endpoint_kind, "chat_completions")
     async def test_request_chat_completion_reports_attempted_urls_on_404(self) -> None:
         profile = LLMProfile(
             name="ark",

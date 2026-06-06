@@ -176,6 +176,22 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     - text
     - marks
 
+    输出示例：
+    {
+      "replacements": [
+        {
+          "segment_id": "seg_1",
+          "runs": [
+            {"text": "李老师，您好：", "marks": []},
+            {"text": "我关注到您在信息抽取方向的研究。", "marks": ["strong"]}
+          ]
+        }
+      ]
+    }
+
+    如没有任何块需要改写，输出：
+    {"replacements": []}
+
     额外要求：
     - 只能返回输入中存在的 segment_id。
     - 不要新增、删除、合并、拆分或重排块。
@@ -187,6 +203,10 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     - 导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。
     """
 ).strip()
+
+
+def format_llm_client_initialization_error(exc: ImportError | ValueError) -> str:
+    return f"模型请求初始化失败: {exc}"
 
 
 class LLMRuntimeError(RuntimeError):
@@ -688,6 +708,13 @@ async def _legacy_request_chat_completion(
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, headers=headers, json=request_body)
+        except (ImportError, ValueError) as exc:
+            raise LLMRuntimeError(
+                format_llm_client_initialization_error(exc),
+                request_url=url,
+                attempted_urls=attempted_urls.copy(),
+                endpoint_kind=endpoint_kind,
+            ) from exc
         except httpx.TimeoutException as exc:
             raise LLMRuntimeError(
                 f"模型请求超时（{timeout_seconds} 秒）",
@@ -832,6 +859,17 @@ async def fetch_llm_profile_models(profile: LLMProfile) -> LLMModelCatalogResult
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(url, headers=headers)
+    except (ImportError, ValueError) as exc:
+        return LLMModelCatalogResult(
+            ok=False,
+            message=format_llm_client_initialization_error(exc),
+            resolved_base_url=base_url,
+            request_url=url,
+            attempted_urls=[url],
+            endpoint_kind="models",
+            duration_ms=compute_duration_ms(start),
+            consumes_tokens=False,
+        )
     except httpx.TimeoutException:
         return LLMModelCatalogResult(
             ok=False,
@@ -948,6 +986,14 @@ async def request_chat_completion(
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, headers=headers, json=request_body)
+        except (ImportError, ValueError) as exc:
+            raise LLMRuntimeError(
+                format_llm_client_initialization_error(exc),
+                request_url=url,
+                attempted_urls=attempted_urls.copy(),
+                endpoint_kind=endpoint_kind,
+                duration_ms=compute_duration_ms(start),
+            ) from exc
         except httpx.TimeoutException as exc:
             raise LLMRuntimeError(
                 f"模型请求超时（{timeout_seconds} 秒）",

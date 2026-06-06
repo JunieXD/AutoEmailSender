@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -14,12 +15,22 @@ import {
   waitForStartupStatus,
 } from "../src/backend.js";
 
+type StartupErrorDetailFixture = {
+  code: "DATABASE_REQUIRES_NEWER_APP";
+  message: string;
+  current_app_version: string;
+  minimum_supported_app_version: string;
+  backup_directory: string;
+  suggested_actions: string[];
+};
+
 type StartupStatusFixture = {
   state: "starting" | "ready" | "error";
   phase: string;
   message: string;
   elapsed_seconds: number;
   error: string | null;
+  error_detail?: StartupErrorDetailFixture | null;
 };
 
 async function withStartupServer(
@@ -108,6 +119,7 @@ describe("desktop backend helpers", () => {
       repoRoot: "C:\\Repo",
       resourcesPath: "C:\\App\\resources",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      appVersion: "2.4.5",
     });
 
     expect(env.PATH).toBe("C:\\Windows");
@@ -115,6 +127,7 @@ describe("desktop backend helpers", () => {
       "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
     );
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
+    expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe("C:\\App\\resources\\ms-playwright");
   });
 
@@ -125,6 +138,7 @@ describe("desktop backend helpers", () => {
       resourcesPath: "C:\\App\\resources",
       repoRoot: "C:\\Repo",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      appVersion: "2.4.5",
     });
 
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe("C:\\Repo\\backend\\ms-playwright");
@@ -208,6 +222,14 @@ describe("desktop backend helpers", () => {
     );
 
     expect(terminatedPids).toEqual([1234]);
+  });
+
+  it("uses a 60 second default health check timeout", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(path.resolve("src", "backend.ts"), "utf8"),
+    );
+
+    expect(source).toContain("const timeoutMs = options.timeoutMs ?? 60_000;");
   });
 
   it("keeps waiting after slow health startup threshold", async () => {
@@ -376,6 +398,49 @@ describe("desktop backend helpers", () => {
     }
   });
 
+
+  it("maps database version startup errors to structured backend status", async () => {
+    const observed: unknown[] = [];
+
+    await withStartupServer(
+      [
+        {
+          state: "error",
+          phase: "error",
+          message: "系统准备失败",
+          elapsed_seconds: 5,
+          error: "当前数据由较新版本创建，当前版本无法直接打开。",
+          error_detail: {
+            code: "DATABASE_REQUIRES_NEWER_APP",
+            message: "当前数据由较新版本创建，当前版本无法直接打开。",
+            current_app_version: "2.3.0",
+            minimum_supported_app_version: "2.4.0",
+            backup_directory: "C:\\Users\\Alice\\AppData\\Roaming\\AutoEmailSender\\backups\\schema",
+            suggested_actions: ["安装 2.4.0 或更高版本继续使用", "如需回退，请从升级前备份恢复数据库"],
+          },
+        },
+      ],
+      async (baseUrl) => {
+        await expect(
+          waitForStartupStatus(baseUrl, {
+            onStatus: (status) => observed.push(status),
+            pollIntervalMs: 1,
+            hardTimeoutMs: 1_000,
+          }),
+        ).rejects.toThrow("系统准备失败");
+      },
+    );
+
+    expect(observed).toEqual([
+      expect.objectContaining({
+        state: "error",
+        databaseError: expect.objectContaining({
+          code: "DATABASE_REQUIRES_NEWER_APP",
+          minimumSupportedAppVersion: "2.4.0",
+        }),
+      }),
+    ]);
+  });
   it("fails startup polling when startup status reports error", async () => {
     await withStartupServer(
       [

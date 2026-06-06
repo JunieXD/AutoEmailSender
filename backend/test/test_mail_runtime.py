@@ -324,6 +324,160 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertNotIn("回复的原邮件", received.content_html or "")
         self.assertNotIn("尊敬的老师", received.content_html or "")
 
+    def test_parse_received_email_ignores_style_when_deriving_text_from_html(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-html-style@example.com>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            "\r\n"
+            "<html><head><style>#outlook a { padding:0; } body { margin:0; }</style></head>"
+            "<body><p>欢迎加入课题组</p></body></html>\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        self.assertEqual(received.content, "欢迎加入课题组")
+        self.assertNotIn("#outlook", received.content)
+        self.assertNotIn("padding", received.content)
+
+    def test_parse_received_email_keeps_body_text_after_head_meta_tags(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-html-meta@example.com>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            "\r\n"
+            "<html><head><meta charset=\"utf-8\"><link href=\"mail.css\">"
+            "<style>#outlook a { padding:0; }</style></head>"
+            "<body><p>欢迎加入课题组</p></body></html>\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        self.assertEqual(received.content, "欢迎加入课题组")
+
+    def test_parse_received_email_strips_chinese_reply_header_from_html(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-html-chinese-quote@example.com>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            "\r\n"
+            "<html><body>"
+            "<p>欢迎加入课题组</p>"
+            "<p>发自我的手机</p>"
+            "<div><span>发件人：</span><span>student@example.com</span></div>"
+            "<div><span>发件时间：</span><span>2026年6月1日</span></div>"
+            "<div><span>收件人：</span><span>teacher@example.com</span></div>"
+            "<div><span>主题：</span><span>推免研究生自荐信</span></div>"
+            "<p>尊敬的老师：这部分是原邮件正文</p>"
+            "</body></html>\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        self.assertEqual(received.content, "欢迎加入课题组\n发自我的手机")
+        self.assertIn("欢迎加入课题组", received.content_html or "")
+        self.assertNotIn("发件人", received.content)
+        self.assertNotIn("尊敬的老师", received.content)
+        self.assertNotIn("发件人", received.content_html or "")
+        self.assertNotIn("尊敬的老师", received.content_html or "")
+
+    def test_parse_received_email_keeps_standalone_sender_label_in_reply_body(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-html-standalone-sender-label@example.com>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            "\r\n"
+            "<html><body>"
+            "<p>请在表格里补充发件人：导师本人。</p>"
+            "<p>然后再发我。</p>"
+            "</body></html>\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        self.assertIn("发件人：导师本人", received.content)
+        self.assertIn("然后再发我", received.content)
+
+
+
+    def test_parse_received_email_keeps_body_sender_label_before_chinese_quote(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-html-body-sender-before-quote@example.com>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            "\r\n"
+            "<html><body>"
+            "<p>请在表格里补充发件人：导师本人。</p>"
+            "<p>然后再发我。</p>"
+            "<div><span>发件人：</span><span>student@example.com</span></div>"
+            "<div><span>发件时间：</span><span>2026年6月1日</span></div>"
+            "<p>尊敬的老师：这部分是原邮件正文</p>"
+            "</body></html>\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        self.assertEqual(received.content, "请在表格里补充发件人：导师本人。\n然后再发我。")
+        self.assertIn("发件人：导师本人", received.content_html or "")
+        self.assertIn("然后再发我", received.content_html or "")
+        self.assertNotIn("student@example.com", received.content)
+        self.assertNotIn("尊敬的老师", received.content_html or "")
+
+    def test_parse_received_email_strips_uppercase_chinese_quote_block_from_html(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-html-uppercase-chinese-quote@example.com>\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            "\r\n"
+            "<html><body>"
+            "<p>欢迎加入课题组</p>"
+            "<DIV><span>发件人：</span><span>student@example.com</span></DIV>"
+            "<DIV><span>发件时间：</span><span>2026年6月1日</span></DIV>"
+            "<p>尊敬的老师：这部分是原邮件正文</p>"
+            "</body></html>\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        self.assertEqual(received.content, "欢迎加入课题组")
+        self.assertIn("欢迎加入课题组", received.content_html or "")
+        self.assertNotIn("student@example.com", received.content)
+        self.assertNotIn("尊敬的老师", received.content_html or "")
+
+    def test_parse_received_email_keeps_text_sender_label_before_chinese_quote(self) -> None:
+        raw_message = (
+            "From: teacher@example.com\r\n"
+            "To: sender@example.com\r\n"
+            "Subject: Re: hello\r\n"
+            "Message-ID: <reply-text-body-sender-before-quote@example.com>\r\n"
+            "Content-Type: text/plain; charset=utf-8\r\n"
+            "\r\n"
+            "请在表格里补充发件人：导师本人。\r\n"
+            "然后再发我。\r\n"
+            "发件人：student@example.com\r\n"
+            "发件时间：2026年6月1日\r\n"
+            "尊敬的老师：这部分是原邮件正文\r\n"
+        ).encode("utf-8")
+
+        received = parse_received_email(raw_message)
+
+        normalized_content = "\n".join(received.content.splitlines())
+
+        self.assertEqual(normalized_content, "请在表格里补充发件人：导师本人。\n然后再发我。")
+        self.assertNotIn("student@example.com", received.content)
+        self.assertNotIn("尊敬的老师", received.content)
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ import type {
   BatchTaskItemDTO,
   CrawlJobEventDTO,
   CrawlJobSummaryDTO,
+  MatchAnalysisJobDTO,
   WorkspaceThreadDTO,
 } from "@/types";
 import {
@@ -24,6 +25,7 @@ import {
 const apiMocks = vi.hoisted(() => ({
   listBatchTasks: vi.fn(),
   listBatchTaskItems: vi.fn(),
+  getBatchTaskResendContext: vi.fn(),
   pauseBatchTask: vi.fn(),
   resumeBatchTask: vi.fn(),
   stopBatchTask: vi.fn(),
@@ -67,11 +69,21 @@ const notificationMocks = vi.hoisted(() => ({
 }));
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const navigateMock = vi.hoisted(() => vi.fn());
 const selectionMock = vi.hoisted(() => ({
   selectedIdentityId: 1 as number | null,
   selectedLlmProfileId: 2 as number | null,
+  setSelectedIdentityId: vi.fn(),
+  setSelectedLlmProfileId: vi.fn(),
 }));
 
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionMock,
 }));
@@ -90,6 +102,7 @@ vi.mock("@/lib/useConfirmDialog", () => ({
 vi.mock("@/lib/api/batchTasksApi", () => ({
   listBatchTasks: apiMocks.listBatchTasks,
   listBatchTaskItems: apiMocks.listBatchTaskItems,
+  getBatchTaskResendContext: apiMocks.getBatchTaskResendContext,
   pauseBatchTask: apiMocks.pauseBatchTask,
   resumeBatchTask: apiMocks.resumeBatchTask,
   stopBatchTask: apiMocks.stopBatchTask,
@@ -461,6 +474,31 @@ const buildBatchTask = (
   ...overrides,
 });
 
+const buildMatchAnalysisJob = (
+  overrides: Partial<MatchAnalysisJobDTO> = {},
+): MatchAnalysisJobDTO => ({
+  id: 31,
+  name: "批量匹配分析",
+  status: "completed",
+  target_count: 1,
+  succeeded_count: 1,
+  failed_count: 0,
+  skipped_count: 0,
+  total_prompt_tokens: 0,
+  total_completion_tokens: 0,
+  total_tokens: 0,
+  identity_id: 1,
+  llm_profile_id: 2,
+  cancel_requested_at: null,
+  started_at: "2026-05-08T00:00:00",
+  finished_at: "2026-05-08T00:01:00",
+  created_at: "2026-05-08T00:00:00",
+  updated_at: "2026-05-08T00:01:00",
+  deleted_at: null,
+  last_error: null,
+  ...overrides,
+});
+
 const buildBatchItem = (
   overrides: Partial<BatchTaskItemDTO> = {},
 ): BatchTaskItemDTO => ({
@@ -647,6 +685,116 @@ beforeEach(() => {
 });
 
 describe("TasksPage crawl job monitor", () => {
+  it("refreshes identity-scoped dashboard counts while the global crawl tab is active", async () => {
+    apiMocks.listCrawlJobs.mockResolvedValue([buildCrawlJob({ status: "running" })]);
+    apiMocks.listBatchTasks.mockImplementation(({ identityId, view }) => {
+      if (view !== "current") {
+        return Promise.resolve([]);
+      }
+      if (identityId === 1) {
+        return Promise.resolve([
+          buildBatchTask({
+            id: 1,
+            identity_id: 1,
+            status: "running",
+            review_required_count: 2,
+            approved_count: 0,
+          }),
+        ]);
+      }
+      if (identityId === 2) {
+        return Promise.resolve([
+          buildBatchTask({
+            id: 2,
+            identity_id: 2,
+            status: "paused",
+            review_required_count: 0,
+            approved_count: 0,
+          }),
+          buildBatchTask({
+            id: 3,
+            identity_id: 2,
+            status: "completed",
+            review_required_count: 0,
+            approved_count: 0,
+          }),
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    apiMocks.listMatchAnalysisJobs.mockImplementation(({ identityId, view }) => {
+      if (view !== "current") {
+        return Promise.resolve([]);
+      }
+      if (identityId === 1) {
+        return Promise.resolve([
+          buildMatchAnalysisJob({
+            id: 41,
+            identity_id: 1,
+            status: "queued",
+          }),
+        ]);
+      }
+      if (identityId === 2) {
+        return Promise.resolve([
+          buildMatchAnalysisJob({
+            id: 42,
+            identity_id: 2,
+            status: "failed",
+          }),
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listBatchTasks).toHaveBeenCalledWith({
+        identityId: 1,
+        llmProfileId: 2,
+        view: "current",
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    expect(await screen.findByText("江西财经大学 / 计算机与人工智能学院")).toBeInTheDocument();
+
+    selectionMock.selectedIdentityId = 2;
+    rerender(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listBatchTasks).toHaveBeenCalledWith({
+        identityId: 2,
+        llmProfileId: 2,
+        view: "current",
+      });
+    });
+    await waitFor(() => {
+      const summaryCard = (label: string) => {
+        const labelElement = screen
+          .getAllByText(label)
+          .find((element) =>
+            element.parentElement?.className.includes(
+              "rounded-2xl border border-stone-200 bg-white",
+            ),
+          );
+        expect(labelElement).toBeDefined();
+        return labelElement?.parentElement;
+      };
+      expect(summaryCard("批量邮件")).toHaveTextContent("批量邮件2");
+      expect(summaryCard("运行中")).toHaveTextContent("运行中1");
+      expect(summaryCard("待处理")).toHaveTextContent("待处理1");
+    });
+  });
+
   it("shows cached token usage in the realtime monitor", async () => {
     apiMocks.listCrawlJobs.mockResolvedValue([
       buildCrawlJob({

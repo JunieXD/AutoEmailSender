@@ -480,6 +480,37 @@ class CrawlJobsApiTests(unittest.TestCase):
             "enrichment_tasks": ["pending"],
         })
 
+    def test_resume_review_freezes_unfinished_discovery_work_before_enrichment(self) -> None:
+        profile_id = self._create_llm_profile("测试模型", "test-model")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._seed_pending_discovery_work_with_candidate(job_id)
+        self._set_job_status(job_id, "canceled")
+        candidate_id = self._latest_candidate_id(job_id)
+
+        review_response = self.client.post(f"/api/crawl-jobs/{job_id}/resume-review")
+        enrich_response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
+
+        self.assertEqual(review_response.status_code, 200, msg=review_response.text)
+        self.assertEqual(enrich_response.status_code, 200, msg=enrich_response.text)
+        self.assertEqual(self._list_v2_work_statuses(job_id), {
+            "page_tasks": ["failed_terminal"],
+            "chunks": ["failed_terminal"],
+            "enrichment_tasks": ["pending"],
+        })
+
     def test_pause_rejects_terminal_or_review_jobs(self) -> None:
         for job_status in ("needs_review", "partially_completed", "completed", "failed", "canceled"):
             with self.subTest(status=job_status):
@@ -671,6 +702,40 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["skipped_count"], 1)
         self.assertEqual(body["failed_count"], 0)
         self.assertIn("跳过 1 位缺少详情页 URL", body["message"])
+    def test_v2_enrich_selected_candidates_enqueues_database_tasks(self) -> None:
+        profile_id = self._create_llm_profile("测试模型", "test-model")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_status(job_id, "needs_review")
+        self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
+        candidate_id = self._latest_candidate_id(job_id)
+
+        with patch("app.api.crawl_jobs.enrich_selected_crawl_candidates") as legacy_enrich:
+            response = self.client.post(
+                f"/api/crawl-jobs/{job_id}/enrich",
+                json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+            )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        legacy_enrich.assert_not_called()
+        body = response.json()
+        self.assertEqual(body["selected_count"], 1)
+        self.assertEqual(body["enriched_count"], 0)
+        self.assertEqual(body["failed_count"], 0)
+        self.assertIn("已加入补全队列", body["message"])
+        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running")
+        statuses = self._list_v2_work_statuses(job_id)
+        self.assertEqual(statuses["enrichment_tasks"], ["pending"])
+
     def test_enrich_refreshes_job_llm_profile_before_running(self) -> None:
         old_profile_id = self._create_llm_profile("旧模型", "old-model")
         new_profile_id = self._create_llm_profile("新模型", "new-model")
@@ -860,7 +925,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertIn("任务进入待审核", messages)
         self.assertIn("Agent 调用 crawl_page", messages)
         self.assertIn("已抓取页面：Faculty", messages)
-        self.assertIn("发现候选导师：高分导师", messages)
+        self.assertIn("发现候选导师：高分导师、低分导师、无邮箱导师", messages)
 
     def test_approve_requires_candidate_ids(self) -> None:
         create_response = self.client.post(
@@ -1057,6 +1122,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         job_id = create_response.json()["id"]
         self._seed_page_and_candidates(job_id)
         self._seed_default_llm_profile()
+        self._set_job_runtime_version(job_id, "v1")
         self._set_job_status(job_id, "partially_completed")
         candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
         selected_id = candidates[0]["id"]
@@ -1157,6 +1223,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         job_id = create_response.json()["id"]
         self._seed_page_and_candidates(job_id)
         self._seed_default_llm_profile()
+        self._set_job_runtime_version(job_id, "v1")
         self._set_job_status(job_id, "needs_review")
         candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
         selected_id = candidates[0]["id"]
@@ -1281,6 +1348,64 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "未找到抓取任务")
+
+    def _seed_pending_discovery_work_with_candidate(self, job_id: int) -> None:
+        async def _seed() -> None:
+            from sqlalchemy import select
+
+            from app.core.database import get_session_factory
+            from app.models import (
+                CrawlCandidate,
+                CrawlPage,
+                CrawlPageChunk,
+                CrawlPageChunkStatus,
+                CrawlPageStatus,
+                CrawlPageTask,
+                CrawlPageTaskStatus,
+            )
+
+            async with get_session_factory()() as session:
+                page = CrawlPage(
+                    job_id=job_id,
+                    url="https://example.edu/faculty",
+                    parent_url=None,
+                    fetch_method="browser",
+                    page_type="faculty_list",
+                    status=CrawlPageStatus.SUCCEEDED.value,
+                    title="Faculty",
+                    text_excerpt="Faculty page",
+                    error_message=None,
+                )
+                session.add(page)
+                await session.flush()
+                page_task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+                self.assertIsNotNone(page_task)
+                page_task.status = CrawlPageTaskStatus.PENDING.value
+                session.add(
+                    CrawlCandidate(
+                        job_id=job_id,
+                        name="待补全导师",
+                        profile_url="https://example.edu/profile",
+                        confidence=0.8,
+                    ),
+                )
+                session.add(
+                    CrawlPageChunk(
+                        job_id=job_id,
+                        page_id=page.id,
+                        source_url="https://example.edu/faculty",
+                        page_fingerprint="page-pending",
+                        chunk_id="chunk-pending",
+                        chunk_index=0,
+                        chunk_hash="hash-pending",
+                        status=CrawlPageChunkStatus.PENDING.value,
+                        content="待处理 chunk",
+                        token_estimate=10,
+                    ),
+                )
+                await session.commit()
+
+        asyncio.run(_seed())
 
     def _seed_processing_v2_work(self, job_id: int) -> None:
         async def _seed() -> None:
@@ -1628,6 +1753,19 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201, msg=response.text)
         return int(response.json()["id"])
+    def _set_job_runtime_version(self, job_id: int, runtime_version: str) -> None:
+        async def _set_runtime_version() -> None:
+            from app.core.database import get_session_factory
+            from app.models import CrawlJob
+
+            async with get_session_factory()() as session:
+                job = await session.get(CrawlJob, job_id)
+                self.assertIsNotNone(job)
+                job.runtime_version = runtime_version
+                await session.commit()
+
+        asyncio.run(_set_runtime_version())
+
     def _set_job_status(self, job_id: int, status: str) -> None:
         async def _set_status() -> None:
             from app.core.database import get_session_factory

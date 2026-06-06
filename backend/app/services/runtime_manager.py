@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.backend_error_logging import write_backend_worker_error_log
 from app.core.config import get_settings
 from app.models import AppSetting
 from app.services.batch_draft_generation_runtime import (
@@ -60,8 +62,8 @@ class RuntimeManager:
     ) -> RuntimeWorkerStartupSettings:
         fallback = RuntimeWorkerStartupSettings(
             crawler_worker_count=_positive_int(
-                getattr(settings, "crawler_worker_count", 2),
-                2,
+                getattr(settings, "crawler_worker_count", 8),
+                8,
             ),
             match_analysis_job_worker_count=_positive_int(
                 getattr(settings, "match_analysis_job_worker_count", 1),
@@ -114,6 +116,7 @@ class RuntimeManager:
                     f"crawler-worker-{index}",
                     10,
                     run_crawler_v2_once,
+                    processed_jitter_seconds=(2, 10),
                 ),
             )
             for index in range(1, worker_settings.crawler_worker_count + 1)
@@ -181,19 +184,34 @@ class RuntimeManager:
         worker_name: str,
         interval_seconds: int,
         worker: Callable[[async_sessionmaker[AsyncSession]], Awaitable[int]],
+        *,
+        processed_jitter_seconds: tuple[float, float] | None = None,
     ) -> None:
         while not self._stopped.is_set():
+            processed = 0
             try:
-                await worker(self._session_factory)
+                processed = await worker(self._session_factory)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("%s 执行失败", worker_name)
+                write_backend_worker_error_log(worker_name=worker_name, exc=exc)
+
+            if processed > 0:
+                if processed_jitter_seconds is None:
+                    continue
+                min_seconds, max_seconds = processed_jitter_seconds
+                try:
+                    await asyncio.wait_for(self._stopped.wait(), timeout=random.uniform(min_seconds, max_seconds))
+                except TimeoutError:
+                    continue
+                continue
 
             try:
                 await asyncio.wait_for(self._stopped.wait(), timeout=interval_seconds)
             except TimeoutError:
                 continue
+
 
 
 async def _run_match_analysis_worker_once(

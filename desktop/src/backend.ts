@@ -6,6 +6,7 @@ import {
 import { existsSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { app } from "electron";
 import { promisify } from "node:util";
 import type {
   BackendController,
@@ -13,6 +14,7 @@ import type {
   BackendExit,
   BackendExitHandler,
   BackendPathInput,
+  BackendDatabaseError,
   BackendStartupPhase,
   BackendStartupStatus,
   BackendStatus,
@@ -52,6 +54,7 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
   return {
     ...input.baseEnv,
     AUTO_EMAIL_SENDER_DATA_DIR: input.userDataPath,
+    AUTO_EMAIL_SENDER_APP_VERSION: input.appVersion,
     ENABLE_BACKGROUND_WORKERS: "true",
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
   };
@@ -91,6 +94,7 @@ export async function startBackend(options: {
       resourcesPath: options.resourcesPath,
       repoRoot: options.repoRoot,
       userDataPath: options.userDataPath,
+      appVersion: app.getVersion(),
     }),
     repoRoot: options.repoRoot,
   });
@@ -193,7 +197,7 @@ export async function waitForHealth(
   } = {},
 ): Promise<void> {
   const pollIntervalMs = options.pollIntervalMs ?? 400;
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  const timeoutMs = options.timeoutMs ?? 60_000;
   const slowStartupMs = options.slowStartupMs ?? 30_000;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
@@ -293,6 +297,7 @@ export async function waitForStartupStatus(
         message: "系统准备失败",
         elapsedSeconds: status.elapsed_seconds,
         detail: status.error ?? status.message,
+        databaseError: mapDatabaseError(status.error_detail),
       };
       options.onStatus(errorStatus);
       throw new Error(errorStatus.message);
@@ -328,6 +333,21 @@ export async function waitForStartupStatus(
   throw new Error(timeoutStatus.message);
 }
 
+function mapDatabaseError(
+  detail: BackendStartupStatus["error_detail"],
+): BackendDatabaseError | undefined {
+  if (!detail || detail.code !== "DATABASE_REQUIRES_NEWER_APP") {
+    return undefined;
+  }
+  return {
+    code: detail.code,
+    message: detail.message,
+    currentAppVersion: detail.current_app_version,
+    minimumSupportedAppVersion: detail.minimum_supported_app_version,
+    backupDirectory: detail.backup_directory,
+    suggestedActions: detail.suggested_actions,
+  };
+}
 function isStartupPhase(
   phase: BackendStartupStatus["phase"],
 ): phase is Exclude<BackendStartupPhase, "ready" | "error"> {

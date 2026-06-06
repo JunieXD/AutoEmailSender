@@ -1,26 +1,43 @@
 import { MemoryRouter } from "react-router-dom";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TopNavBar } from "@/components/organisms/TopNavBar";
+
+const selectionMock = vi.hoisted(() => ({
+  identities: [] as Array<{ id: number; profile_name?: string | null; name: string; is_default?: boolean }>,
+  llmProfiles: [] as Array<{ id: number; name: string; is_default?: boolean }>,
+  selectedIdentityId: null as number | null,
+  selectedLlmProfileId: null as number | null,
+  setSelectedIdentityId: vi.fn(),
+  setSelectedLlmProfileId: vi.fn(),
+  loading: false,
+}));
+
+const draftGuardMock = vi.hoisted(() => ({
+  requestWorkspaceDraftGuard: vi.fn(async () => true),
+}));
 
 vi.mock("@/components/molecules/DesktopUpdateButton", () => ({
   DesktopUpdateButton: () => null,
 }));
 
 vi.mock("@/context/SelectionContext", () => ({
-  useSelectionContext: () => ({
-    identities: [],
-    llmProfiles: [],
-    selectedIdentityId: null,
-    selectedLlmProfileId: null,
-    setSelectedIdentityId: vi.fn(),
-    setSelectedLlmProfileId: vi.fn(),
-    loading: false,
-  }),
+  useSelectionContext: () => selectionMock,
+}));
+
+vi.mock("@/context/useWorkspaceDraftGuard", () => ({
+  useWorkspaceDraftGuard: () => draftGuardMock,
 }));
 
 describe("TopNavBar", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    selectionMock.identities = [];
+    selectionMock.llmProfiles = [];
+    selectionMock.selectedIdentityId = null;
+    selectionMock.selectedLlmProfileId = null;
+    selectionMock.loading = false;
+    draftGuardMock.requestWorkspaceDraftGuard.mockResolvedValue(true);
     window.history.pushState({}, "", "/");
   });
 
@@ -56,5 +73,51 @@ describe("TopNavBar", () => {
       "统计面板",
       "个人中心",
     ]);
+  });
+
+  it("asks the workspace draft guard before switching identity", async () => {
+    selectionMock.identities = [
+      { id: 1, name: "身份 A", profile_name: "身份 A" },
+      { id: 2, name: "身份 B", profile_name: "身份 B" },
+    ];
+    selectionMock.selectedIdentityId = 1;
+    draftGuardMock.requestWorkspaceDraftGuard.mockResolvedValue(false);
+
+    render(
+      <MemoryRouter>
+        <TopNavBar />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /身份/ }));
+    fireEvent.click(screen.getByRole("option", { name: "身份 B" }));
+
+    await waitFor(() => {
+      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalled();
+    });
+    expect(selectionMock.setSelectedIdentityId).not.toHaveBeenCalled();
+  });
+
+  it("asks the workspace draft guard before switching model", async () => {
+    selectionMock.llmProfiles = [
+      { id: 1, name: "模型 A" },
+      { id: 2, name: "模型 B" },
+    ];
+    selectionMock.selectedLlmProfileId = 1;
+    draftGuardMock.requestWorkspaceDraftGuard.mockResolvedValue(false);
+
+    render(
+      <MemoryRouter>
+        <TopNavBar />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /模型/ }));
+    fireEvent.click(screen.getByRole("option", { name: "模型 B" }));
+
+    await waitFor(() => {
+      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalled();
+    });
+    expect(selectionMock.setSelectedLlmProfileId).not.toHaveBeenCalled();
   });
 });

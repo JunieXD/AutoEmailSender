@@ -290,9 +290,19 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
         now = datetime(2026, 4, 29, 10, 30, 0, tzinfo=UTC)
         async with self.session_factory() as session:
             identity = (await session.scalars(select(IdentityProfile))).first()
-            professor = (await session.scalars(select(Professor))).first()
-            if identity is None or professor is None:
+            existing_professor = (await session.scalars(select(Professor))).first()
+            if identity is None or existing_professor is None:
                 raise AssertionError("seed_records must run before adding alternate model")
+
+            professor = Professor(
+                name="备用模型导师",
+                email="alt-model-professor@example.edu",
+                university="示例大学",
+                school="计算机学院",
+                research_direction="信息抽取",
+            )
+            session.add(professor)
+            await session.flush()
 
             llm_profile = LLMProfile(
                 name="OpenAI Backup",

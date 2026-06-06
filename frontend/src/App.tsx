@@ -1,11 +1,17 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, HashRouter, Route, Routes } from 'react-router-dom';
+import {
+  createBrowserRouter,
+  createHashRouter,
+  Outlet,
+  RouterProvider,
+} from 'react-router-dom';
 import { DesktopStartupStatusBanner } from '@/components/organisms/DesktopStartupStatusBanner';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';
+import { WorkspaceDraftGuardProvider } from '@/context/WorkspaceDraftGuardContext';
 
 const CreateTaskPage = lazy(() =>
   import('@/pages/CreateTaskPage').then((module) => ({ default: module.CreateTaskPage })),
@@ -37,40 +43,54 @@ const routeLoadingFallback = (
   </div>
 );
 
-function App() {
-  const Router = window.autoEmailSender ? HashRouter : BrowserRouter;
-
-  return (
-    <Router>
-      <RouteScrollRestoration />
-      <NotificationProvider>
-        <DesktopBackendProvider>
+const AppShell = () => (
+  <>
+    <RouteScrollRestoration />
+    <NotificationProvider>
+      <DesktopBackendProvider>
+        <WorkspaceDraftGuardProvider>
           <SelectionProvider>
             <div className="flex min-h-screen flex-col bg-background">
               <DesktopStartupStatusBanner />
               <TopNavBar />
               <div className="min-h-0 flex-1">
                 <Suspense fallback={routeLoadingFallback}>
-                  <Routes>
-                    <Route path="/" element={<HomePage />} />
-                    <Route path="/dashboard" element={<DashboardPage />} />
-                    <Route path="/professors" element={<ProfessorsPage />} />
-                    <Route path="/tasks" element={<TasksPage />} />
-                    <Route path="/create-task" element={<CreateTaskPage />} />
-                    <Route path="/test-compose" element={<TestComposePage />} />
-                    <Route path="/workspace/:id" element={<WorkspacePage />} />
-                    <Route path="/profile" element={<ProfilePage />} />
-                    <Route path="/404" element={<NotFoundPage />} />
-                    <Route path="*" element={<NotFoundPage />} />
-                  </Routes>
+                  <Outlet />
                 </Suspense>
               </div>
             </div>
           </SelectionProvider>
-        </DesktopBackendProvider>
-      </NotificationProvider>
-    </Router>
-  );
+        </WorkspaceDraftGuardProvider>
+      </DesktopBackendProvider>
+    </NotificationProvider>
+  </>
+);
+
+const routes = [
+  {
+    path: '/',
+    element: <AppShell />,
+    children: [
+      { index: true, element: <HomePage /> },
+      { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'professors', element: <ProfessorsPage /> },
+      { path: 'tasks', element: <TasksPage /> },
+      { path: 'create-task', element: <CreateTaskPage /> },
+      { path: 'test-compose', element: <TestComposePage /> },
+      { path: 'workspace/:id', element: <WorkspacePage /> },
+      { path: 'profile', element: <ProfilePage /> },
+      { path: '404', element: <NotFoundPage /> },
+      { path: '*', element: <NotFoundPage /> },
+    ],
+  },
+];
+
+function App() {
+  const router = window.autoEmailSender
+    ? createHashRouter(routes)
+    : createBrowserRouter(routes);
+
+  return <RouterProvider router={router} />;
 }
 
 export default App;
