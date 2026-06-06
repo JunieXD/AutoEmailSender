@@ -31,6 +31,7 @@ import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
@@ -538,6 +539,14 @@ export const ProfessorsPage = () => {
     [],
   );
   const [professorTags, setProfessorTags] = useState<ProfessorTagDTO[]>([]);
+  const [tagEditorProfessor, setTagEditorProfessor] =
+    useState<ProfessorManagementItemDTO | null>(null);
+  const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
+  const [savingProfessorTags, setSavingProfessorTags] = useState(false);
+  const [creatingAssignmentTag, setCreatingAssignmentTag] = useState(false);
+  const primaryTagSaveRef = useRef<
+    Map<number, { saving: boolean; pendingTagIds: number[] | null }>
+  >(new Map());
   const [filters, setFilters] = useState<ProfessorManagementFilterState>(
     storedState.filters,
   );
@@ -624,7 +633,7 @@ export const ProfessorsPage = () => {
         }
       }
     },
-    [archiveFilter, notifyError],
+    [archiveFilter, notifyError, setSelectedIds],
   );
 
   const loadProfessorTags = useCallback(async () => {
@@ -831,25 +840,14 @@ export const ProfessorsPage = () => {
     }
   };
 
-  const handlePrimaryTagSelect = async (
+  const savePrimaryTagOrder = async (
     professor: ProfessorManagementItemDTO,
-    tagId: number,
+    tagIds: number[],
   ) => {
-    if (professor.tags[0]?.id === tagId) {
-      return;
-    }
-
-    const nextTagIds = [
-      tagId,
-      ...professor.tags
-        .map((tag) => tag.id)
-        .filter((currentTagId) => currentTagId !== tagId),
-    ];
-
     try {
       const updatedProfessor = await updateProfessor(
         professor.id,
-        toProfessorUpdatePayload(professor, nextTagIds),
+        toProfessorUpdatePayload(professor, tagIds),
       );
       setProfessors((previous) =>
         previous.map((item) =>
@@ -865,24 +863,126 @@ export const ProfessorsPage = () => {
     }
   };
 
-  const handleCreateProfessorTag = async (
-    payload: ProfessorTagPayloadDTO,
+  const handlePrimaryTagSelect = async (
+    professor: ProfessorManagementItemDTO,
+    tagId: number,
   ) => {
+    if (professor.tags[0]?.id === tagId) {
+      return;
+    }
+
+    const nextTagIds = [
+      tagId,
+      ...professor.tags
+        .map((tag) => tag.id)
+        .filter((currentTagId) => currentTagId !== tagId),
+    ];
+
+    const existingState = primaryTagSaveRef.current.get(professor.id);
+    if (existingState?.saving) {
+      existingState.pendingTagIds = nextTagIds;
+      return;
+    }
+
+    const saveState = { saving: true, pendingTagIds: null as number[] | null };
+    primaryTagSaveRef.current.set(professor.id, saveState);
+
+    try {
+      let pendingTagIds: number[] | null = nextTagIds;
+      while (pendingTagIds) {
+        const currentTagIds = pendingTagIds;
+        pendingTagIds = null;
+        await savePrimaryTagOrder(professor, currentTagIds);
+        pendingTagIds = saveState.pendingTagIds;
+        saveState.pendingTagIds = null;
+      }
+    } finally {
+      primaryTagSaveRef.current.delete(professor.id);
+    }
+  };
+
+  const openTagEditor = (professor: ProfessorManagementItemDTO) => {
+    setTagEditorProfessor(professor);
+    setTagEditorSelectedIds(professor.tags.map((tag) => tag.id));
+  };
+
+  const closeTagEditor = () => {
+    if (savingProfessorTags || creatingAssignmentTag) {
+      return;
+    }
+    setTagEditorProfessor(null);
+    setTagEditorSelectedIds([]);
+  };
+
+  const saveTagEditor = async () => {
+    if (!tagEditorProfessor) {
+      return;
+    }
+    setSavingProfessorTags(true);
+    try {
+      const updatedProfessor = await updateProfessor(
+        tagEditorProfessor.id,
+        toProfessorUpdatePayload(tagEditorProfessor, tagEditorSelectedIds),
+      );
+      setProfessors((previous) =>
+        previous.map((item) =>
+          item.id === updatedProfessor.id ? updatedProfessor : item,
+        ),
+      );
+      notifySuccess("标签已更新", `已更新“${updatedProfessor.name}”的导师标签。`);
+      setTagEditorProfessor(null);
+      setTagEditorSelectedIds([]);
+    } catch (saveError) {
+      notifyError(
+        "保存导师标签失败",
+        getActionErrorMessage(saveError, "保存导师标签失败"),
+      );
+    } finally {
+      setSavingProfessorTags(false);
+    }
+  };
+
+  const createAndRegisterProfessorTag = async (
+    payload: ProfessorTagPayloadDTO,
+  ): Promise<ProfessorTagDTO | null> => {
     try {
       const createdTag = await createProfessorTag(payload);
       setProfessorTags((previous) => [...previous, createdTag]);
-      setFormState((previous) => ({
-        ...previous,
-        tag_ids: previous.tag_ids.includes(createdTag.id)
-          ? previous.tag_ids
-          : [...previous.tag_ids, createdTag.id],
-      }));
       notifySuccess("创建标签成功", `已新增标签“${createdTag.name}”。`);
+      return createdTag;
     } catch (createError) {
       notifyError(
         "创建标签失败",
         getActionErrorMessage(createError, "创建标签失败"),
       );
+      return null;
+    }
+  };
+
+  const handleCreateProfessorTag = async (
+    payload: ProfessorTagPayloadDTO,
+  ): Promise<ProfessorTagDTO | null> => {
+    const createdTag = await createAndRegisterProfessorTag(payload);
+    if (!createdTag) {
+      return null;
+    }
+    setFormState((previous) => ({
+      ...previous,
+      tag_ids: previous.tag_ids.includes(createdTag.id)
+        ? previous.tag_ids
+        : [...previous.tag_ids, createdTag.id],
+    }));
+    return createdTag;
+  };
+
+  const handleCreateAssignmentTag = async (
+    payload: ProfessorTagPayloadDTO,
+  ) => {
+    setCreatingAssignmentTag(true);
+    try {
+      return await createAndRegisterProfessorTag(payload);
+    } finally {
+      setCreatingAssignmentTag(false);
     }
   };
 
@@ -1691,6 +1791,7 @@ export const ProfessorsPage = () => {
                   onPrimaryTagSelect={(tagId) =>
                     void handlePrimaryTagSelect(professor, tagId)
                   }
+                  onAddTag={() => openTagEditor(professor)}
                 />
               );
             })}
@@ -2309,6 +2410,20 @@ export const ProfessorsPage = () => {
           </button>
         </div>
       </ModalShell>
+
+      <ProfessorTagAssignmentDialog
+        open={Boolean(tagEditorProfessor)}
+        scopeKey={tagEditorProfessor?.id ?? null}
+        professorName={tagEditorProfessor?.name ?? ""}
+        tags={professorTags}
+        selectedTagIds={tagEditorSelectedIds}
+        saving={savingProfessorTags}
+        creating={creatingAssignmentTag}
+        onChange={setTagEditorSelectedIds}
+        onCreateTag={handleCreateAssignmentTag}
+        onSave={() => void saveTagEditor()}
+        onClose={closeTagEditor}
+      />
 
       {confirmDialog}
     </main>

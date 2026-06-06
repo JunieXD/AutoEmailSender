@@ -17,6 +17,7 @@ type ManagementProfessorRowProps = {
   onArchive: () => void;
   onRestore: () => void;
   onPrimaryTagSelect?: (tagId: number) => void;
+  onAddTag?: () => void;
 };
 
 type FieldCellProps = {
@@ -44,6 +45,7 @@ export const ManagementProfessorRow = ({
   onArchive,
   onRestore,
   onPrimaryTagSelect,
+  onAddTag,
 }: ManagementProfessorRowProps) => {
   const schoolAndCollege = [professor.university, professor.school]
     .filter(Boolean)
@@ -67,15 +69,21 @@ export const ManagementProfessorRow = ({
         </div>
 
         <div className="min-w-0 lg:text-center">
-          <div className="truncate text-base font-semibold text-stone-900 lg:text-center">
-            {professor.name}
+          <div
+            data-testid="management-professor-name-line"
+            className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 lg:justify-center"
+          >
+            <div className="min-w-0 truncate text-base font-semibold text-stone-900">
+              {professor.name}
+            </div>
+            <ProfessorTagChips
+              tags={professor.tags}
+              maxVisible={1}
+              className="flex-nowrap justify-start lg:justify-center"
+              onTagClick={onPrimaryTagSelect}
+              onAddTag={onAddTag}
+            />
           </div>
-          <ProfessorTagChips
-            tags={professor.tags}
-            maxVisible={1}
-            className="mt-2 justify-start lg:justify-center"
-            onTagClick={onPrimaryTagSelect}
-          />
           {professor.archived_at ? (
             <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
               已删除

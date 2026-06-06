@@ -25,6 +25,7 @@ export const ProfessorTagChips = ({
   const [popoverPinned, setPopoverPinned] = useState(false);
   const [draggingTagId, setDraggingTagId] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const suppressClickTagIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!popoverPinned) {
@@ -83,6 +84,11 @@ export const ProfessorTagChips = ({
     onTagOrderChange(nextTagIds);
   };
 
+  const markDragDropComplete = () => {
+    suppressClickTagIdRef.current = draggingTagId;
+    setDraggingTagId(null);
+  };
+
   return (
     <div
       ref={rootRef}
@@ -102,7 +108,7 @@ export const ProfessorTagChips = ({
           onDragOver={(event) => event.preventDefault()}
           onDrop={() => {
             moveDraggedTagBefore(tag.id);
-            setDraggingTagId(null);
+            markDragDropComplete();
           }}
           onDragEnd={() => setDraggingTagId(null)}
           className="inline-flex max-w-full items-center truncate rounded-full px-2.5 py-1 text-xs font-medium"
@@ -134,6 +140,16 @@ export const ProfessorTagChips = ({
           +{hiddenCount}
         </button>
       ) : null}
+      {onAddTag ? (
+        <button
+          type="button"
+          aria-label="给导师添加标签"
+          onClick={onAddTag}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/40 hover:text-primary"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
       {popoverOpen ? (
         <div
           role="dialog"
@@ -147,7 +163,22 @@ export const ProfessorTagChips = ({
                   key={tag.id}
                   type="button"
                   aria-label={`选择标签 ${tag.name}`}
-                  onClick={() => onTagClick(tag.id)}
+                  draggable={draggableTags}
+                  onDragStart={() => setDraggingTagId(tag.id)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => {
+                    moveDraggedTagBefore(tag.id);
+                    markDragDropComplete();
+                  }}
+                  onDragEnd={() => setDraggingTagId(null)}
+                  onClick={() => {
+                    if (suppressClickTagIdRef.current === tag.id) {
+                      suppressClickTagIdRef.current = null;
+                      return;
+                    }
+                    suppressClickTagIdRef.current = null;
+                    onTagClick(tag.id);
+                  }}
                   className="inline-flex max-w-full items-center truncate rounded-full px-2.5 py-1 text-xs font-medium transition hover:brightness-95"
                   style={{
                     backgroundColor: tag.background_color,
@@ -159,6 +190,14 @@ export const ProfessorTagChips = ({
               ) : (
                 <span
                   key={tag.id}
+                  draggable={draggableTags}
+                  onDragStart={() => setDraggingTagId(tag.id)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => {
+                    moveDraggedTagBefore(tag.id);
+                    markDragDropComplete();
+                  }}
+                  onDragEnd={() => setDraggingTagId(null)}
                   className="inline-flex max-w-full items-center truncate rounded-full px-2.5 py-1 text-xs font-medium"
                   style={{
                     backgroundColor: tag.background_color,

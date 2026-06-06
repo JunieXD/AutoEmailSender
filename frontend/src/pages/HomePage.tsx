@@ -8,7 +8,6 @@ import {
   FolderOpen,
   Loader2,
   MailPlus,
-  Plus,
   RefreshCcw,
   Search,
   Sparkles,
@@ -20,6 +19,7 @@ import {
   DashboardProfessorRow,
   type DashboardProfessorRowTimeHighlight,
 } from "@/components/molecules/DashboardProfessorRow";
+import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
@@ -55,6 +55,7 @@ import { calculateMatch } from "@/lib/api/emailTasksApi";
 import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import {
+  createProfessorTag,
   getProfessor,
   listProfessorTags,
   listProfessors,
@@ -73,6 +74,7 @@ import type {
   ProfessorDashboardStatus,
   ProfessorDTO,
   ProfessorTagDTO,
+  ProfessorTagPayloadDTO,
   ProfessorUpsertPayloadDTO,
 } from "@/types";
 
@@ -115,8 +117,8 @@ const toProfessorTagUpdatePayload = (
   department: professor.department,
   research_direction: professor.research_direction,
   recent_papers: professor.recent_papers ?? [],
-  profile_url: null,
-  source_url: null,
+  profile_url: professor.profile_url,
+  source_url: professor.source_url,
   tag_ids: tagIds,
 });
 
@@ -348,9 +350,13 @@ export const HomePage = () => {
     useState<ProfessorDashboardItemDTO | null>(null);
   const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
   const [savingProfessorTags, setSavingProfessorTags] = useState(false);
+  const [creatingProfessorTag, setCreatingProfessorTag] = useState(false);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
+  const tagOrderSaveRef = useRef<
+    Map<number, { saving: boolean; pendingTagIds: number[] | null }>
+  >(new Map());
   const filtersSessionKeyRef = useRef(dashboardFiltersSessionKey);
   const skipNextFiltersPersistRef = useRef(false);
   const professorsRequestKey =
@@ -516,13 +522,32 @@ export const HomePage = () => {
     }
   };
 
+  const handleCreateAssignmentTag = async (
+    payload: ProfessorTagPayloadDTO,
+  ) => {
+    setCreatingProfessorTag(true);
+    try {
+      const createdTag = await createProfessorTag(payload);
+      setProfessorTags((previous) => [...previous, createdTag]);
+      notifySuccess("创建标签成功", `已新增标签“${createdTag.name}”。`);
+      return createdTag;
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "创建标签失败";
+      notifyError("创建标签失败", message);
+      return null;
+    } finally {
+      setCreatingProfessorTag(false);
+    }
+  };
+
   const openTagEditor = (professor: ProfessorDashboardItemDTO) => {
     setTagEditorProfessor(professor);
     setTagEditorSelectedIds(professor.tags.map((tag) => tag.id));
   };
 
   const closeTagEditor = () => {
-    if (savingProfessorTags) {
+    if (savingProfessorTags || creatingProfessorTag) {
       return;
     }
     setTagEditorProfessor(null);
@@ -546,7 +571,27 @@ export const HomePage = () => {
     professor: ProfessorDashboardItemDTO,
     tagIds: number[],
   ) => {
-    await updateProfessorTags(professor, tagIds);
+    const existingState = tagOrderSaveRef.current.get(professor.id);
+    if (existingState?.saving) {
+      existingState.pendingTagIds = tagIds;
+      return;
+    }
+
+    const saveState = { saving: true, pendingTagIds: null as number[] | null };
+    tagOrderSaveRef.current.set(professor.id, saveState);
+
+    try {
+      let nextTagIds: number[] | null = tagIds;
+      while (nextTagIds) {
+        const currentTagIds = nextTagIds;
+        nextTagIds = null;
+        await updateProfessorTags(professor, currentTagIds);
+        nextTagIds = saveState.pendingTagIds;
+        saveState.pendingTagIds = null;
+      }
+    } finally {
+      tagOrderSaveRef.current.delete(professor.id);
+    }
   };
 
   const filterOptions = buildDashboardFilterOptions(professors, filters);
@@ -1382,105 +1427,19 @@ export const HomePage = () => {
           </div>
         ) : null}
       </main>
-      {tagEditorProfessor ? (
-        <div
-          role="dialog"
-          aria-label="首页添加导师标签"
-          aria-modal="true"
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
-          onClick={closeTagEditor}
-        >
-          <div
-            className="w-full max-w-lg rounded-[28px] border border-stone-200 bg-white p-5 shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold text-stone-900">
-                  添加导师标签
-                </h2>
-                <p className="mt-1 text-sm text-stone-500">
-                  {tagEditorProfessor.name}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeTagEditor}
-                disabled={savingProfessorTags}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label="关闭标签选择"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              {professorTags.map((tag) => {
-                const selected = tagEditorSelectedIds.includes(tag.id);
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    aria-label={`选择标签 ${tag.name}`}
-                    aria-pressed={selected}
-                    disabled={savingProfessorTags}
-                    onClick={() =>
-                      setTagEditorSelectedIds((previous) =>
-                        previous.includes(tag.id)
-                          ? previous.filter((tagId) => tagId !== tag.id)
-                          : [...previous, tag.id],
-                      )
-                    }
-                    className={clsx(
-                      "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                      selected
-                        ? "border-primary/40 shadow-sm shadow-primary/10"
-                        : "border-stone-200 hover:border-stone-300",
-                    )}
-                    style={{
-                      backgroundColor: tag.background_color,
-                      color: tag.text_color,
-                    }}
-                  >
-                    {selected ? <Check className="h-3.5 w-3.5" /> : null}
-                    {tag.name}
-                  </button>
-                );
-              })}
-            </div>
-
-            {professorTags.length === 0 ? (
-              <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-500">
-                暂无可选标签，可到导师管理页创建自定义标签。
-              </div>
-            ) : null}
-
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeTagEditor}
-                disabled={savingProfessorTags}
-                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveTagEditor()}
-                disabled={savingProfessorTags}
-                className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingProfessorTags ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Plus className="h-4 w-4" />
-                )}
-                保存标签
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ProfessorTagAssignmentDialog
+        open={Boolean(tagEditorProfessor)}
+        scopeKey={tagEditorProfessor?.id ?? null}
+        professorName={tagEditorProfessor?.name ?? ""}
+        tags={professorTags}
+        selectedTagIds={tagEditorSelectedIds}
+        saving={savingProfessorTags}
+        creating={creatingProfessorTag}
+        onChange={setTagEditorSelectedIds}
+        onCreateTag={handleCreateAssignmentTag}
+        onSave={() => void saveTagEditor()}
+        onClose={closeTagEditor}
+      />
       {confirmDialog}
     </>
   );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, Check, GripVertical, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import type { ProfessorTagDTO, ProfessorTagPayloadDTO } from "@/types";
 
@@ -33,9 +33,12 @@ export const ProfessorTagSelector = ({
   const [draggingTagId, setDraggingTagId] = useState<number | null>(null);
   const selectedSet = new Set(selectedTagIds);
   const tagById = new Map(tags.map((tag) => [tag.id, tag]));
-  const selectedTags = selectedTagIds
-    .map((tagId) => tagById.get(tagId))
-    .filter((tag): tag is ProfessorTagDTO => Boolean(tag));
+  const orderedTags = [
+    ...selectedTagIds
+      .map((tagId) => tagById.get(tagId))
+      .filter((tag): tag is ProfessorTagDTO => Boolean(tag)),
+    ...tags.filter((tag) => !selectedSet.has(tag.id)),
+  ];
 
   const toggleTag = (tagId: number) => {
     if (disabled) {
@@ -62,21 +65,6 @@ export const ProfessorTagSelector = ({
     setTextColor(DEFAULT_TEXT_COLOR);
     setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
     setCreating(false);
-  };
-
-  const moveSelectedTag = (tagId: number, direction: -1 | 1) => {
-    if (disabled) {
-      return;
-    }
-    const currentIndex = selectedTagIds.indexOf(tagId);
-    const nextIndex = currentIndex + direction;
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= selectedTagIds.length) {
-      return;
-    }
-    const nextTagIds = [...selectedTagIds];
-    const [movedTagId] = nextTagIds.splice(currentIndex, 1);
-    nextTagIds.splice(nextIndex, 0, movedTagId);
-    onChange(nextTagIds);
   };
 
   const moveDraggedTagBefore = (targetTagId: number) => {
@@ -130,63 +118,8 @@ export const ProfessorTagSelector = ({
         </div>
       </div>
 
-      {selectedTags.length > 1 ? (
-        <div className="mb-4 rounded-2xl border border-stone-200 bg-white p-3">
-          <div className="mb-2 text-xs font-medium text-stone-500">
-            已选标签顺序
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {selectedTags.map((tag, index) => (
-              <div
-                key={tag.id}
-                draggable={!disabled}
-                onDragStart={() => setDraggingTagId(tag.id)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={() => {
-                  moveDraggedTagBefore(tag.id);
-                  setDraggingTagId(null);
-                }}
-                onDragEnd={() => setDraggingTagId(null)}
-                className="inline-flex items-center overflow-hidden rounded-full border border-stone-200 bg-white shadow-sm"
-              >
-                <span className="inline-flex h-8 w-7 items-center justify-center text-stone-400">
-                  <GripVertical className="h-3.5 w-3.5" />
-                </span>
-                <span
-                  className="inline-flex h-8 items-center px-2.5 text-xs font-medium"
-                  style={{
-                    backgroundColor: tag.background_color,
-                    color: tag.text_color,
-                  }}
-                >
-                  {tag.name}
-                </span>
-                <button
-                  type="button"
-                  aria-label={`前移标签 ${tag.name}`}
-                  disabled={disabled || index === 0}
-                  onClick={() => moveSelectedTag(tag.id, -1)}
-                  className="inline-flex h-8 w-8 items-center justify-center text-stone-500 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-35"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`后移标签 ${tag.name}`}
-                  disabled={disabled || index === selectedTags.length - 1}
-                  onClick={() => moveSelectedTag(tag.id, 1)}
-                  className="inline-flex h-8 w-8 items-center justify-center text-stone-500 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-35"
-                >
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
       <div className="flex flex-wrap gap-2">
-        {tags.map((tag) => {
+        {orderedTags.map((tag) => {
           const selected = selectedSet.has(tag.id);
           return (
             <span key={tag.id} className="inline-flex items-center overflow-hidden rounded-full">
@@ -195,6 +128,24 @@ export const ProfessorTagSelector = ({
                 aria-label={`选择标签 ${tag.name}`}
                 aria-pressed={selected}
                 disabled={disabled}
+                draggable={selected && !disabled}
+                onDragStart={() => {
+                  if (selected) {
+                    setDraggingTagId(tag.id);
+                  }
+                }}
+                onDragOver={(event) => {
+                  if (selected) {
+                    event.preventDefault();
+                  }
+                }}
+                onDrop={() => {
+                  if (selected) {
+                    moveDraggedTagBefore(tag.id);
+                    setDraggingTagId(null);
+                  }
+                }}
+                onDragEnd={() => setDraggingTagId(null)}
                 onClick={() => toggleTag(tag.id)}
                 className={clsx(
                   "inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",

@@ -85,4 +85,31 @@ describe("ManagementProfessorRow", () => {
 
     expect(handlePrimaryTagSelect).toHaveBeenCalledWith(2);
   });
+
+  it("shows tags and add button in the same name line", () => {
+    const handleAddTag = vi.fn();
+
+    render(
+      <ManagementProfessorRow
+        professor={professor}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onAddTag={handleAddTag}
+      />,
+    );
+
+    const nameLine = screen.getByTestId("management-professor-name-line");
+    expect(nameLine).toHaveTextContent("李伟");
+    expect(nameLine).toHaveTextContent("高意愿");
+    expect(nameLine).toHaveTextContent("+2");
+
+    fireEvent.click(within(nameLine).getByRole("button", { name: "给导师添加标签" }));
+
+    expect(handleAddTag).toHaveBeenCalled();
+  });
 });

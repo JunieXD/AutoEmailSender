@@ -70,7 +70,7 @@ describe("ProfessorTagSelector", () => {
     expect(screen.getByRole("button", { name: "删除标签 高意愿" })).toBeInTheDocument();
   });
 
-  it("moves selected tags in professor-specific order", () => {
+  it("moves selected tags in professor-specific order by dragging chips", () => {
     const onChange = vi.fn();
 
     render(
@@ -83,7 +83,61 @@ describe("ProfessorTagSelector", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "前移标签 羊导" }));
+    fireEvent.dragStart(screen.getByRole("button", { name: "选择标签 羊导" }));
+    fireEvent.dragOver(screen.getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.drop(screen.getByRole("button", { name: "选择标签 高意愿" }));
+
+    expect(onChange).toHaveBeenCalledWith([2, 1]);
+  });
+
+  it("renders selected tags in professor-specific order", () => {
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[2, 1]}
+        onChange={vi.fn()}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen
+        .getAllByRole("button", { name: /^选择标签/ })
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["选择标签 羊导", "选择标签 高意愿"]);
+  });
+
+  it("does not render a separate selected tag order module", () => {
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[1, 2]}
+        onChange={vi.fn()}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("已选标签顺序")).not.toBeInTheDocument();
+  });
+
+  it("reorders selected tags by dragging tag chips directly", () => {
+    const onChange = vi.fn();
+
+    render(
+      <ProfessorTagSelector
+        tags={tags}
+        selectedTagIds={[1, 2]}
+        onChange={onChange}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+      />,
+    );
+
+    fireEvent.dragStart(screen.getByRole("button", { name: "选择标签 羊导" }));
+    fireEvent.dragOver(screen.getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.drop(screen.getByRole("button", { name: "选择标签 高意愿" }));
 
     expect(onChange).toHaveBeenCalledWith([2, 1]);
   });
