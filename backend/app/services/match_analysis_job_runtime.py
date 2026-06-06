@@ -318,7 +318,6 @@ async def _ensure_match_email_task(
         .where(
             EmailTask.professor_id == professor.id,
             EmailTask.identity_id == identity.id,
-            EmailTask.llm_profile_id == llm_profile.id,
             EmailTask.status != EmailTaskStatus.CANCELED.value,
         )
         .order_by(EmailTask.created_at.desc(), EmailTask.id.desc())

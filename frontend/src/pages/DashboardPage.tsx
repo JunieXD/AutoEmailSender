@@ -727,9 +727,7 @@ export const DashboardPage = () => {
   const { notifyError } = useNotification();
   const {
     selectedIdentityId,
-    selectedLlmProfileId,
     selectedIdentity,
-    selectedLlmProfile,
     loading: selectionLoading,
   } = useSelectionContext();
   const [overview, setOverview] = useState<DashboardOverviewDTO | null>(null);
@@ -750,10 +748,9 @@ export const DashboardPage = () => {
   const tokenSectionRef = useRef<HTMLElement | null>(null);
   const emailDateRange = useMemo(() => getEmailDateRange(emailDatePreset), [emailDatePreset]);
   const dashboardRequestKey =
-    selectedIdentityId && selectedLlmProfileId
+    selectedIdentityId
       ? [
           selectedIdentityId,
-          selectedLlmProfileId,
           selectedUniversity ?? '',
           selectedSchool ?? '',
           emailUniversity ?? '',
@@ -764,7 +761,7 @@ export const DashboardPage = () => {
       : null;
 
   const loadOverview = useCallback(async () => {
-    if (!selectedIdentityId || !selectedLlmProfileId || !dashboardRequestKey) {
+    if (!selectedIdentityId || !dashboardRequestKey) {
       requestIdRef.current += 1;
       setOverview(null);
       setHasLoaded(false);
@@ -780,7 +777,6 @@ export const DashboardPage = () => {
     try {
       const data = await getDashboardOverview({
         identityId: selectedIdentityId,
-        llmProfileId: selectedLlmProfileId,
         university: selectedUniversity,
         school: selectedSchool,
         emailUniversity,
@@ -813,7 +809,6 @@ export const DashboardPage = () => {
     emailUniversity,
     notifyError,
     selectedIdentityId,
-    selectedLlmProfileId,
     selectedSchool,
     selectedUniversity,
   ]);
@@ -860,7 +855,7 @@ export const DashboardPage = () => {
     setEmailUniversity(null);
     setEmailSchool(null);
     setEmailDatePreset('all');
-  }, [selectedIdentityId, selectedLlmProfileId]);
+  }, [selectedIdentityId]);
 
   useEffect(() => {
     if (!overview || typeof window === 'undefined' || typeof window.IntersectionObserver === 'undefined') {
@@ -970,7 +965,7 @@ export const DashboardPage = () => {
       {
         title: '已发送邮件',
         value: formatNumber(summary.sent_count),
-        helper: '当前身份和模型下',
+        helper: '当前身份下',
         icon: <Send className="h-5 w-5" />,
         tone: 'teal' as const,
       },
@@ -1039,12 +1034,12 @@ export const DashboardPage = () => {
     return <DashboardLoadingSkeleton />;
   }
 
-  if (!selectedIdentityId || !selectedLlmProfileId || !selectedIdentity || !selectedLlmProfile) {
+  if (!selectedIdentityId || !selectedIdentity) {
     return (
       <main className="mx-auto max-w-5xl px-6 py-8">
         <section className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-8 text-center shadow-sm">
           <h1 className="text-2xl font-semibold text-stone-950">统计面板</h1>
-          <p className="mt-3 text-sm text-stone-500">请先选择身份和模型。</p>
+          <p className="mt-3 text-sm text-stone-500">请先选择身份。</p>
           <Link to="/profile" data-interactive="button" className="ui-btn-primary mt-5">
             去个人中心配置
           </Link>

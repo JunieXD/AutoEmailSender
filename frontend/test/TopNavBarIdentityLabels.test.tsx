@@ -8,6 +8,11 @@ const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
 }));
+vi.mock("@/context/useWorkspaceDraftGuard", () => ({
+  useWorkspaceDraftGuard: () => ({
+    requestWorkspaceDraftGuard: vi.fn(async () => true),
+  }),
+}));
 
 describe("TopNavBar identity labels", () => {
   it("uses the profile name in the identity selector", () => {

@@ -11,6 +11,7 @@ import {
   Paperclip,
   PenLine,
   RefreshCcw,
+  Save,
   Send,
   TimerReset,
 } from 'lucide-react';
@@ -45,11 +46,13 @@ type WorkspaceComposerDockProps = {
   canContinueManually: boolean;
   canStartFollowUp: boolean;
   canSubmitDraft: boolean;
+  draftSaving: boolean;
   composerExpanded: boolean;
   onToggleExpanded: () => void;
   onSubjectChange: (value: string) => void;
   onContentChange: (value: RichEmailValue) => void;
   onSelectedMaterialIdsChange: (ids: number[]) => void;
+  onSaveDraft: () => void;
   onSendNow: () => void;
   onScheduleSend: () => void;
   onCancelSchedule: () => void;
@@ -130,9 +133,29 @@ const SummaryLine = ({
   </div>
 );
 
+const DATETIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+
+const formatLocalScheduleSummary = (value: string) => {
+  const [datePart, timePart] = value.split('T');
+  if (!datePart || !timePart) {
+    return null;
+  }
+
+  const [, month, day] = datePart.split('-');
+  if (!month || !day) {
+    return null;
+  }
+
+  return `${month}/${day} ${timePart}`;
+};
+
 const formatScheduleSummary = (value: string) => {
   if (!value) {
     return '未设置';
+  }
+
+  if (DATETIME_LOCAL_PATTERN.test(value)) {
+    return formatLocalScheduleSummary(value) ?? '未设置';
   }
 
   const summary = formatApiDateTime(value);
@@ -191,11 +214,13 @@ export const WorkspaceComposerDock = ({
   canContinueManually,
   canStartFollowUp,
   canSubmitDraft,
+  draftSaving,
   composerExpanded,
   onToggleExpanded,
   onSubjectChange,
   onContentChange,
   onSelectedMaterialIdsChange,
+  onSaveDraft,
   onSendNow,
   onScheduleSend,
   onCancelSchedule,
@@ -220,6 +245,7 @@ export const WorkspaceComposerDock = ({
   );
   const scheduledSummary = formatScheduleSummary(scheduledAt);
   const draftTokenSummary = buildDraftTokenSummary(currentTask, currentTaskMode);
+  const editorDisabled = acting || draftSaving;
   const limitationHint =
     currentTaskMode === 'template'
       ? hasTemplateConfigured
@@ -278,6 +304,7 @@ export const WorkspaceComposerDock = ({
                   <SubjectTemplateInput
                     label="邮件主题"
                     value={subject}
+                    disabled={editorDisabled}
                     onChange={onSubjectChange}
                     placeholder="给老师的邮件主题"
                   />
@@ -285,6 +312,7 @@ export const WorkspaceComposerDock = ({
                   <EmailTemplateEditor
                     label="邮件正文"
                     html={contentHtml}
+                    disabled={editorDisabled}
                     onChange={onContentChange}
                   />
                 </div>
@@ -322,7 +350,7 @@ export const WorkspaceComposerDock = ({
                           <button
                             key={option.value}
                             type="button"
-                            disabled={acting || !canChangeMode}
+                            disabled={editorDisabled || !canChangeMode}
                             onClick={() => onChangeMode(option.value)}
                             className={clsx(
                               'rounded-2xl border px-3 py-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60',
@@ -339,7 +367,7 @@ export const WorkspaceComposerDock = ({
                     <div className="flex flex-wrap gap-2 border-t border-stone-100 pt-3">
                     <button
                       type="button"
-                      disabled={acting || !canCalculateMatch}
+                      disabled={editorDisabled || !canCalculateMatch}
                       onClick={onCalculateMatch}
                       className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -348,7 +376,7 @@ export const WorkspaceComposerDock = ({
                     </button>
                     <button
                       type="button"
-                      disabled={acting || !canGenerateDraft}
+                      disabled={editorDisabled || !canGenerateDraft}
                       onClick={onGenerateDraft}
                       className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -386,7 +414,11 @@ export const WorkspaceComposerDock = ({
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={editorDisabled}
                                 onChange={() => {
+                                  if (editorDisabled) {
+                                    return;
+                                  }
                                   onSelectedMaterialIdsChange(
                                     checked
                                       ? selectedMaterialIds.filter((item) => item !== material.id)
@@ -432,7 +464,7 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onContinueManually}
-                        disabled={acting}
+                        disabled={editorDisabled}
                         className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         作为单独联系继续
@@ -442,10 +474,21 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onStartFollowUp}
-                        disabled={acting}
+                        disabled={editorDisabled}
                         className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         写跟进邮件
+                      </button>
+                    ) : null}
+                    {canSubmitDraft ? (
+                      <button
+                        type="button"
+                        onClick={onSaveDraft}
+                        disabled={editorDisabled}
+                        className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Save className="h-4 w-4" />
+                        保存草稿
                       </button>
                     ) : null}
                     {canSubmitDraft ? (
@@ -453,7 +496,7 @@ export const WorkspaceComposerDock = ({
                         <button
                           type="button"
                           onClick={onCancelSchedule}
-                          disabled={acting}
+                          disabled={editorDisabled}
                           className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <TimerReset className="h-4 w-4" />
@@ -463,7 +506,7 @@ export const WorkspaceComposerDock = ({
                         <button
                           type="button"
                           onClick={onScheduleSend}
-                          disabled={acting || !draftReady}
+                          disabled={editorDisabled || !draftReady}
                           className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <CalendarClock className="h-4 w-4" />
@@ -475,7 +518,7 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onSendNow}
-                        disabled={acting || !draftReady}
+                        disabled={editorDisabled || !draftReady}
                         className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Send className="h-4 w-4" />
@@ -527,7 +570,7 @@ export const WorkspaceComposerDock = ({
                 <button
                   type="button"
                   onClick={onContinueManually}
-                  disabled={acting}
+                  disabled={editorDisabled}
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   作为单独联系继续
@@ -537,7 +580,7 @@ export const WorkspaceComposerDock = ({
                 <button
                   type="button"
                   onClick={onStartFollowUp}
-                  disabled={acting}
+                  disabled={editorDisabled}
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   写跟进邮件
@@ -546,7 +589,7 @@ export const WorkspaceComposerDock = ({
               <button
                 type="button"
                 onClick={onCalculateMatch}
-                disabled={acting || !canCalculateMatch}
+                disabled={editorDisabled || !canCalculateMatch}
                 className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCcw className="h-4 w-4" />
@@ -555,7 +598,7 @@ export const WorkspaceComposerDock = ({
               <button
                 type="button"
                 onClick={onGenerateDraft}
-                disabled={acting || !canGenerateDraft}
+                disabled={editorDisabled || !canGenerateDraft}
                 className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCcw className="h-4 w-4" />

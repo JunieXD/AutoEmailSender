@@ -15,6 +15,11 @@ const mockedNotifySuccess = vi.hoisted(() => vi.fn());
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
 }));
+vi.mock("@/context/useWorkspaceDraftGuard", () => ({
+  useWorkspaceDraftGuard: () => ({
+    requestWorkspaceDraftGuard: vi.fn(async () => true),
+  }),
+}));
 
 vi.mock("@/context/DesktopBackendContext", () => ({
   useDesktopBackend: mockedUseDesktopBackend,

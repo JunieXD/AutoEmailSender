@@ -53,6 +53,48 @@ def append_crawler_debug_event(job_id: int, event: Any) -> Path | None:
     return debug_file
 
 
+
+def append_crawler_v2_debug_event(
+    job_id: int,
+    *,
+    worker_kind: str,
+    event_name: str,
+    work_item_id: object | None = None,
+    payload: Mapping[str, object] | None = None,
+) -> Path | None:
+    try:
+        event: dict[str, object] = {
+            "runtime_version": "v2",
+            "worker_kind": worker_kind,
+            "event_name": event_name,
+        }
+        if work_item_id is not None:
+            event["work_item_id"] = str(work_item_id)
+        if payload:
+            event.update(_summarize_v2_debug_payload(payload))
+        return append_crawler_debug_event(job_id, event)
+    except Exception:
+        return None
+
+
+def _summarize_v2_debug_payload(payload: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): _summarize_v2_debug_value(str(key), value) for key, value in payload.items()}
+
+
+def _summarize_v2_debug_value(key: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(child_key): _summarize_v2_debug_value(str(child_key), child_value) for child_key, child_value in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [_summarize_v2_debug_value(key, item) for item in value]
+    if isinstance(value, str) and _is_large_v2_text_key(key) and len(value) > 600:
+        return f"{value[:600]}...（已截断，原始长度 {len(value)} 字符）"
+    return value
+
+
+def _is_large_v2_text_key(key: str) -> bool:
+    normalized = key.lower()
+    return normalized in {"content", "chunk_content", "html", "text", "markdown", "prompt"} or normalized.endswith("_content")
+
 def crawler_debug_file_path(job_id: int) -> Path:
     return get_settings().crawler_debug_dir / f"crawl-job-{job_id}.jsonl"
 

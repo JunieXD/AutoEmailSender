@@ -54,7 +54,7 @@ async def build_workspace_thread(
     professor = await _get_professor(session, professor_id)
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
-    current_task = await _get_latest_email_task(session, professor_id, identity_id, llm_profile_id)
+    current_task = await _get_latest_email_task(session, professor_id, identity_id)
     if _recover_legacy_sent_task_status(current_task):
         await session.commit()
         await session.refresh(current_task)
@@ -285,7 +285,7 @@ async def ensure_workspace_task(
     professor_pk = professor.id
     identity_pk = identity.id
 
-    current_task = await _get_latest_email_task(session, professor_pk, identity_pk, llm_profile_id)
+    current_task = await _get_latest_email_task(session, professor_pk, identity_pk)
     if current_task is not None:
         if _should_resume_workspace_task(current_task):
             return await _create_workspace_resume_task(session, current_task)
@@ -335,7 +335,7 @@ async def ensure_workspace_task(
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        existing_task = await _get_latest_email_task(session, professor_pk, identity_pk, llm_profile_id)
+        existing_task = await _get_latest_email_task(session, professor_pk, identity_pk)
         if existing_task is not None:
             return existing_task
         raise
@@ -363,14 +363,13 @@ async def _create_workspace_resume_task(
 ) -> EmailTask:
     professor_id = task.professor_id
     identity_id = task.identity_id
-    llm_profile_id = task.llm_profile_id
     resumed_task = _create_manual_child_task(task, reuse_existing_draft=True)
     session.add(resumed_task)
     try:
         await session.flush()
     except IntegrityError as exc:
         await session.rollback()
-        existing_task = await _get_latest_email_task(session, professor_id, identity_id, llm_profile_id)
+        existing_task = await _get_latest_email_task(session, professor_id, identity_id)
         if existing_task is not None:
             return existing_task
         raise ValueError("该工作区已经存在可继续编辑的手动任务") from exc
@@ -428,7 +427,6 @@ async def _get_latest_email_task(
     session: AsyncSession,
     professor_id: int,
     identity_id: int,
-    llm_profile_id: int,
 ) -> EmailTask | None:
     return await session.scalar(
         select(EmailTask)
@@ -439,7 +437,6 @@ async def _get_latest_email_task(
         .where(
             EmailTask.professor_id == professor_id,
             EmailTask.identity_id == identity_id,
-            EmailTask.llm_profile_id == llm_profile_id,
             EmailTask.source != EmailTaskSource.BATCH.value,
             ~(
                 (EmailTask.status == EmailTaskStatus.CANCELED.value)

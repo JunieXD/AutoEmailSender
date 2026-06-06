@@ -1,4 +1,4 @@
-﻿export {};
+export {};
 
 export type DesktopUpdateDownloadMode = "differential" | "full";
 
@@ -43,6 +43,15 @@ export type DesktopMaterialOpenResult =
       message: string;
     };
 
+export type DesktopBackendDatabaseError = {
+  code: "DATABASE_REQUIRES_NEWER_APP";
+  message: string;
+  currentAppVersion: string;
+  minimumSupportedAppVersion: string;
+  backupDirectory: string;
+  suggestedActions: string[];
+};
+
 export type DesktopBackendStartupPhase =
   | "starting"
   | "migrating_database"
@@ -74,6 +83,7 @@ export type DesktopBackendStatus =
       phase: "error";
       elapsedSeconds: number;
       detail?: string;
+      databaseError?: DesktopBackendDatabaseError;
     };
 
 export type DesktopStartupAtLoginStatus = {
@@ -88,6 +98,7 @@ declare global {
       backendBaseUrl?: string;
       getBackendBaseUrl?: () => string | undefined;
       getVersion: () => Promise<string>;
+      quitApp?: () => Promise<void>;
       selectProfessorImportFile?: () => Promise<{
         name: string;
         type: string;

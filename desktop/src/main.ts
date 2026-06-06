@@ -1,10 +1,11 @@
-﻿import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
 import { registerFileSelectionIpc } from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
 import { getStartupAtLoginStatus, setStartupAtLoginEnabled } from "./startup.js";
+import { bindTrayInteractions } from "./trayController.js";
 import { checkForUpdatesOnStartup, registerUpdateIpc } from "./updates.js";
 import {
   restoreExistingWindow,
@@ -24,8 +25,10 @@ let currentBackendStatus: BackendStatus = createInitialBackendStatus();
 let currentStartupAtLoginStatus: StartupAtLoginStatus | null = null;
 const windowCreationState = { pendingCreation: null as Promise<void> | null };
 
+
 const repoRoot = path.resolve(app.getAppPath(), "..");
 const launchedAtStartup = process.argv.includes("--startup");
+app.setAppUserModelId("com.juniexd.autoemailsender");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -123,17 +126,17 @@ function ensureTray(): void {
     return;
   }
 
-  tray = new Tray(
-    getWindowIconPath({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      repoRoot,
-    }),
-  );
+  tray = new Tray(getWindowIconPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    repoRoot,
+  }));
   tray.setToolTip("Auto Email Sender");
   refreshTrayContextMenu();
   void loadStartupAtLoginForTray();
-  tray.on("click", showMainWindow);
+  bindTrayInteractions(tray, {
+    openWindow: showMainWindow,
+  });
 }
 
 async function createWindow(): Promise<void> {
@@ -274,6 +277,9 @@ function getErrorMessage(error: unknown): string {
 }
 
 ipcMain.handle("app:get-version", () => app.getVersion());
+ipcMain.handle("app:quit", () => {
+  quitFromTray();
+});
 ipcMain.handle("startup:get-status", async () => {
   currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
   refreshTrayContextMenu();

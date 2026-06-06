@@ -10,11 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlWorkerKind, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_crawl4ai
+from app.services.crawler_debug import append_crawler_v2_debug_event
+from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 
-MAX_ENRICHMENT_ATTEMPTS = 3
 
 
 async def run_crawler_v2_enrichment_worker_once(
@@ -51,13 +53,30 @@ async def run_crawler_v2_enrichment_worker_once(
 
     try:
         enrichment_result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate.id)
+        raw_model_text = None
         if isinstance(enrichment_result, tuple):
-            payload, usage = enrichment_result
+            if len(enrichment_result) >= 3:
+                payload, usage, raw_model_text = enrichment_result[:3]
+            else:
+                payload, usage = enrichment_result
         else:
             payload = enrichment_result
             usage = None
         if not await _enrichment_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
             return 0
+        append_crawler_v2_debug_event(
+            job_id,
+            worker_kind="enrichment",
+            event_name="llm_response",
+            work_item_id=task_id,
+            payload={
+                "candidate_id": candidate.id,
+                "profile_url": candidate.profile_url,
+                "raw_payload": payload.model_dump() if hasattr(payload, "model_dump") else payload,
+                "raw_model_text": raw_model_text,
+                "token_usage": dict(usage) if usage is not None else None,
+            },
+        )
         if usage is not None:
             await record_crawler_v2_token_usage(
                 session_factory,
@@ -78,6 +97,13 @@ async def run_crawler_v2_enrichment_worker_once(
             if not await ensure_job_active(session, task.job_id):
                 return 0
             _apply_enrichment(candidate, payload)
+            append_crawler_v2_debug_event(
+                task.job_id,
+                worker_kind="enrichment",
+                event_name="enrichment_completed",
+                work_item_id=task_id,
+                payload={"candidate_id": candidate.id, "email": candidate.email, "department": candidate.department},
+            )
             task.status = CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
             task.worker_id = None
             task.claimed_at = None
@@ -88,15 +114,12 @@ async def run_crawler_v2_enrichment_worker_once(
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             if task is not None and _enrichment_task_owned_by_worker(task, worker_id) and await ensure_job_active(session, task.job_id):
-                task.last_error = str(exc)
-                task.status = (
-                    CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
-                    if int(task.attempt_count or 0) >= MAX_ENRICHMENT_ATTEMPTS
-                    else CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value
+                mark_crawler_v2_failed(
+                    task,
+                    message=str(exc),
+                    retryable_status=CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                    terminal_status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
                 )
-                task.worker_id = None
-                task.claimed_at = None
-                task.lease_expires_at = None
             await session.commit()
         return 1
 
@@ -106,8 +129,8 @@ async def enrich_candidate_once(
     *,
     candidate_id: int,
 ) -> CandidateEnrichmentPayload:
-    payload, _ = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
-    return payload
+    result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
+    return result[0]
 
 async def _enrichment_task_can_commit(
     session_factory: async_sessionmaker[AsyncSession],
@@ -133,7 +156,7 @@ async def enrich_candidate_once_with_usage(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     candidate_id: int,
-) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None]:
+) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     async with session_factory() as session:
         candidate = await session.get(CrawlCandidate, candidate_id)
         if candidate is None:
@@ -144,24 +167,25 @@ async def enrich_candidate_once_with_usage(
         llm_profile = await _resolve_llm_profile(session, job)
         if llm_profile is None:
             raise ValueError("缺少可用的 LLM Profile")
+        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
         ctx = CrawlToolContext(
             session_factory=session_factory,
             job_id=job.id,
             university=job.university,
             school=job.school,
             start_url=job.start_url,
+            thinking_extra_body=thinking_extra_body,
         )
         profile_url = candidate.profile_url or ""
     page_text = await fetch_profile_text(ctx, profile_url)
-    payload, usage = await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
-    return payload, usage
+    return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
 
 async def enrich_candidate_profile_with_llm_with_usage(
     ctx: CrawlToolContext,
     llm_profile: LLMProfile,
     candidate: CrawlCandidate,
     page_text: str,
-) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None]:
+) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     from app.services.crawl_job_runtime import build_candidate_enrichment_prompt
     from app.services.crawl_job_runtime import _extract_model_message_content, _build_structured_retry_prompt
     from app.services.crawl_job_runtime import DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS
@@ -182,7 +206,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
         else:
             try:
                 payload = parse_structured_result(content, CandidateEnrichmentPayload)
-                return payload, extract_token_usage_from_llm_response(response)
+                return payload, extract_token_usage_from_llm_response(response), content
             except LLMRuntimeError as exc:
                 last_error = exc
         if attempt + 1 >= DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS:

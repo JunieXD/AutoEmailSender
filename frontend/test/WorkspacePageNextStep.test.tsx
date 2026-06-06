@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import type {
@@ -29,6 +29,12 @@ const mockedNotificationApi = vi.hoisted(() => ({
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
+}));
+vi.mock("@/context/useWorkspaceDraftGuard", () => ({
+  useWorkspaceDraftGuard: () => ({
+    registerWorkspaceDraftGuard: vi.fn(() => vi.fn()),
+    requestWorkspaceDraftGuard: vi.fn(async () => true),
+  }),
 }));
 
 vi.mock("@/context/NotificationContext", () => ({
@@ -285,14 +291,14 @@ const buildWorkspaceMessage = (
   ...overrides,
 });
 
-const renderPage = () =>
-  render(
-    <MemoryRouter initialEntries={["/workspace/101"]}>
-      <Routes>
-        <Route path="/workspace/:id" element={<WorkspacePage />} />
-      </Routes>
-    </MemoryRouter>,
+const renderPage = () => {
+  const router = createMemoryRouter(
+    [{ path: "/workspace/:id", element: <WorkspacePage /> }],
+    { initialEntries: ["/workspace/101"] },
   );
+
+  return render(<RouterProvider router={router} />);
+};
 
 type MockComposerDockProps = {
   nextStepTitle: string;
@@ -696,7 +702,7 @@ describe("WorkspacePage next-step", () => {
     fireEvent.click(screen.getByRole("button", { name: "mock-generate-draft" }));
 
     await waitFor(() => {
-      expect(mockedGenerateDraft).toHaveBeenCalledWith(301);
+      expect(mockedGenerateDraft).toHaveBeenCalledWith(301, 1);
     });
 
     await waitFor(() => {

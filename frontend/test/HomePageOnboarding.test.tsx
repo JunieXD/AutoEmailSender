@@ -193,7 +193,6 @@ describe("HomePage onboarding", () => {
     await waitFor(() => {
       expect(mockedListProfessors).toHaveBeenCalledWith({
         identityId: 1,
-        llmProfileId: 1,
       });
     });
 
@@ -272,6 +271,41 @@ describe("HomePage onboarding", () => {
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
     expect(screen.getByRole("button", { name: "状态：全部状态" })).toBeInTheDocument();
+  });
+
+  it("formats dashboard API time labels as UTC instants when no timezone suffix is present", async () => {
+    mockedListProfessors.mockResolvedValue([
+      createProfessor(101, "已联系导师", "contacted", {
+        last_sent_at: "2026-04-22T10:00:00",
+      }),
+    ]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        current_primary_material_id: 11,
+        outreach_template_body_text: "老师您好",
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "排序" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送时间" }));
+
+    const expected = new Date("2026-04-22T10:00:00Z").toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(`发送 ${expected}`)).toBeInTheDocument();
+    });
   });
 
   it("renders professors as a compact contact queue on the dashboard", async () => {

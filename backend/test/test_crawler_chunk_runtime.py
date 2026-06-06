@@ -175,7 +175,7 @@ class CrawlerChunkRuntimeTests(unittest.TestCase):
                     token_estimate=1,
                     text_start_offset=0,
                     text_end_offset=2,
-                    split_depth=4,
+                    split_depth=7,
                 )
                 session.add(chunk)
                 await session.commit()

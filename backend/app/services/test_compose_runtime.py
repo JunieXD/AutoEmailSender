@@ -304,13 +304,12 @@ async def _get_or_create_test_compose_session(
 ) -> TestComposeSession:
     compose_session = await session.scalar(
         select(TestComposeSession)
-        .where(
-            TestComposeSession.identity_id == identity_id,
-            TestComposeSession.llm_profile_id == llm_profile_id,
-        )
+        .where(TestComposeSession.identity_id == identity_id)
         .order_by(TestComposeSession.updated_at.desc(), TestComposeSession.id.desc()),
     )
     if compose_session:
+        compose_session.llm_profile_id = llm_profile_id
+        compose_session.updated_at = utc_now()
         return compose_session
 
     compose_session = TestComposeSession(

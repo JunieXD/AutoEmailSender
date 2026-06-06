@@ -131,6 +131,42 @@ describe("api client desktop base url", () => {
     await expect(request).resolves.toEqual({ status: "ok" });
   });
 
+  it("keeps waiting while desktop backend status is restarting", async () => {
+    let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok" })));
+    vi.stubGlobal("fetch", fetchMock);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onBackendStatus: (callback) => {
+        backendStatusCallback = callback;
+        return () => undefined;
+      },
+      onUpdateStatus: () => () => undefined,
+    };
+
+    const request = apiFetch<{ status: string }>("/health");
+    await Promise.resolve();
+
+    backendStatusCallback?.({ state: "restarting", code: null, signal: null });
+    await Promise.resolve();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    backendStatusCallback?.({
+      state: "ready",
+      baseUrl: "http://127.0.0.1:48124",
+      phase: "ready",
+      message: "系统已准备就绪",
+      elapsedSeconds: 12,
+    });
+
+    await expect(request).resolves.toEqual({ status: "ok" });
+  });
+
   it("uses a user-facing message when desktop backend startup fails", async () => {
     let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
     window.autoEmailSender = {
@@ -158,5 +194,43 @@ describe("api client desktop base url", () => {
     });
 
     await expect(request).rejects.toThrow("系统准备失败");
+  });
+
+  it("uses database version guidance when desktop backend requires a newer app", async () => {
+    let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
+    window.autoEmailSender = {
+      getVersion: async () => "2.3.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "2.3.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "2.3.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "2.3.0" }),
+      quitAndInstall: async () => undefined,
+      onBackendStatus: (callback) => {
+        backendStatusCallback = callback;
+        return () => undefined;
+      },
+      onUpdateStatus: () => () => undefined,
+    };
+
+    const request = apiFetch<{ status: string }>("/health");
+    await Promise.resolve();
+
+    backendStatusCallback?.({
+      state: "error",
+      phase: "error",
+      message: "系统准备失败",
+      elapsedSeconds: 10,
+      detail: "当前数据由较新版本创建，当前版本无法直接打开。",
+      databaseError: {
+        code: "DATABASE_REQUIRES_NEWER_APP",
+        message: "当前数据由较新版本创建，当前版本无法直接打开。",
+        currentAppVersion: "2.3.0",
+        minimumSupportedAppVersion: "2.4.0",
+        backupDirectory: "C:\\Users\\Alice\\AppData\\Roaming\\AutoEmailSender\\backups\\schema",
+        suggestedActions: ["安装 2.4.0 或更高版本继续使用", "如需回退，请从升级前备份恢复数据库"],
+      },
+    });
+
+    await expect(request).rejects.toThrow("当前数据需要 AutoEmailSender 2.4.0 或更高版本");
+    await expect(request).rejects.toThrow("备份位置：C:\\Users\\Alice\\AppData\\Roaming\\AutoEmailSender\\backups\\schema");
   });
 });

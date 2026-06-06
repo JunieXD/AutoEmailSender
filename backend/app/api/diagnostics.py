@@ -168,16 +168,20 @@ def _build_operation_log_filters(
 
 
 def read_startup_logs() -> list[DiagnosticFileRead]:
-    startup_log = get_settings().data_dir / "logs" / "startup.log"
-    if not startup_log.is_file():
-        return []
-    return [
-        DiagnosticFileRead(
-            name=startup_log.name,
-            relative_path="logs/startup.log",
-            content=startup_log.read_text(encoding="utf-8", errors="replace"),
-        ),
-    ]
+    log_dir = get_settings().data_dir / "logs"
+    diagnostic_files: list[DiagnosticFileRead] = []
+    for log_name in ["startup.log", "backend-errors.log"]:
+        log_path = log_dir / log_name
+        if not log_path.is_file():
+            continue
+        diagnostic_files.append(
+            DiagnosticFileRead(
+                name=log_path.name,
+                relative_path=f"logs/{log_path.name}",
+                content=log_path.read_text(encoding="utf-8", errors="replace"),
+            ),
+        )
+    return diagnostic_files
 
 
 async def _count_operation_logs(session: AsyncSession, filters: list[object]) -> int:

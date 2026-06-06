@@ -86,6 +86,8 @@ const selectedProfessor: ProfessorDashboardItemDTO = {
   match_score: null,
   sent_count: 0,
   status: "not_contacted",
+  last_sent_at: null,
+  last_replied_at: null,
 };
 
 vi.mock("react-router-dom", async () => {
@@ -234,6 +236,82 @@ describe("CreateTaskPage", () => {
     );
   });
 
+  it("prefills resend context without carrying old schedule or llm profile", async () => {
+    window.sessionStorage.setItem("selected_professor_ids", JSON.stringify([selectedProfessor.id]));
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "过期任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_generation_mode: "template",
+        outreach_template_subject: "重发主题 {{name}}",
+        outreach_template_body_text: "重发正文",
+        outreach_template_body_html: "<p>重发正文</p>",
+        primary_material_id: null,
+        selected_material_ids: [7],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("张明")).toBeInTheDocument();
+    expect(screen.getByText(/已从「过期任务」带入 1 位老师/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("重新发起 - 过期任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      llm_profile_id: selectedLlmProfile.id,
+      outreach_generation_mode: "template",
+      outreach_template_subject: "重发主题 {{name}}",
+      outreach_template_body_text: "重发正文",
+      outreach_template_body_html: "<p>重发正文</p>",
+      selected_material_ids: [7],
+      schedule_type: "immediate",
+      scheduled_dates: null,
+      window_start_time: null,
+      window_end_time: null,
+      emails_per_window: null,
+    }));
+  });
+
+  it("clears resend prefill context after creating task", async () => {
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "过期任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_generation_mode: "llm",
+        outreach_template_subject: "AI 主题",
+        outreach_template_body_text: "AI 正文",
+        outreach_template_body_html: "<p>AI 正文</p>",
+        primary_material_id: null,
+        selected_material_ids: [],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(window.sessionStorage.getItem("batch_resend_prefill_context")).toBeNull();
+  });
   it("explains that scheduled AI rewritten drafts still need manual review", () => {
     expect(buildBatchCreateConfirmDescription("llm", "scheduled")).toContain(
       "AI 改写完成后仍需逐封审核通过",

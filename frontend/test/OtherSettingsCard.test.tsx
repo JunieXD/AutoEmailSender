@@ -17,8 +17,8 @@ vi.mock("@/lib/api/runtimeSettings", () => ({
     match_analysis_job_item_concurrency: 5,
     match_analysis_job_interval_seconds: 10,
     crawler_worker_count: 2,
-    crawler_profile_enrichment_concurrency: 5,
-    crawler_host_concurrency: 1,
+    crawler_profile_enrichment_concurrency: 3,
+    crawler_host_concurrency: 2,
     crawler_agent_max_chunks_per_run: 2,
     draft_max_tokens: 6000,
     batch_draft_generation_concurrency: 5,
@@ -57,8 +57,8 @@ describe("OtherSettingsCard", () => {
     expect(screen.getByLabelText("AI 草稿输出 token 上限")).toHaveValue(6000);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(5);
     expect(screen.getByLabelText("同时运行的抓取任务数")).toHaveValue(2);
-    expect(screen.getByLabelText("每个抓取任务同时补全详情页数")).toHaveValue(5);
-    expect(screen.getByLabelText("同一网站同时抓取页数")).toHaveValue(1);
+    expect(screen.getByLabelText("每个抓取任务同时补全详情页数")).toHaveValue(3);
+    expect(screen.getByLabelText("同一网站同时抓取页数")).toHaveValue(2);
 
     fireEvent.change(screen.getByLabelText("每个匹配任务同时分析导师数"), {
       target: { value: "4" },
@@ -95,8 +95,8 @@ describe("OtherSettingsCard", () => {
       match_analysis_job_item_concurrency: 5,
       match_analysis_job_interval_seconds: 10,
       crawler_worker_count: 2,
-      crawler_profile_enrichment_concurrency: 5,
-      crawler_host_concurrency: 1,
+      crawler_profile_enrichment_concurrency: 3,
+      crawler_host_concurrency: 2,
       crawler_agent_max_chunks_per_run: 2,
       draft_max_tokens: 6000,
       draft_rewrite_intensity: "moderate",
@@ -190,6 +190,22 @@ describe("OtherSettingsCard", () => {
     expect(screen.getByText("仅安装后的 Windows 桌面版支持开机自启动。")).toBeInTheDocument();
   });
 
+
+  it("shows a desktop quit action when running in the desktop app", async () => {
+    const quitApp = vi.fn(async () => undefined);
+    window.autoEmailSender = buildDesktopApi({ quitApp });
+
+    render(<OtherSettingsCard />);
+
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    const quitButton = await screen.findByRole("button", { name: "退出桌面应用" });
+
+    fireEvent.click(quitButton);
+
+    await waitFor(() => {
+      expect(quitApp).toHaveBeenCalledOnce();
+    });
+  });
   it("loads and updates startup at login in the desktop app", async () => {
     const setStartupAtLoginEnabled = vi.fn(async (enabled: boolean) => ({
       supported: true,

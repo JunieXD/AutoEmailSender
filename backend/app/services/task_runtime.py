@@ -26,6 +26,7 @@ from app.models import (
     IdentityProfile,
     ImapMailboxSyncState,
     MatchAnalysisRun,
+    LLMProfile,
     Professor,
 )
 from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskScheduleRequest
@@ -81,6 +82,16 @@ DISPATCHABLE_EMAIL_TASK_STATUSES = (
 
 STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
 INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
+
+SAVE_DRAFT_ALLOWED_STATUSES = {
+    EmailTaskStatus.DISCOVERED.value,
+    EmailTaskStatus.MATCHED.value,
+    EmailTaskStatus.DRAFT_FAILED.value,
+    EmailTaskStatus.REVIEW_REQUIRED.value,
+    EmailTaskStatus.APPROVED.value,
+    EmailTaskStatus.SCHEDULED.value,
+    EmailTaskStatus.SEND_FAILED.value,
+}
 
 MANUAL_DRAFT_CLAIMABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
@@ -488,12 +499,14 @@ async def generate_task_draft(
     ignore_batch_status: bool = False,
     automatic_batch: bool = False,
     require_running_batch: bool = False,
+    llm_profile_id: int | None = None,
 ) -> tuple[int, int, int]:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         task_identity = (task.professor_id, task.identity_id, task.llm_profile_id)
+        runtime_llm_profile: LLMProfile | None = None
         if task.status == EmailTaskStatus.GENERATING_DRAFT.value and not automatic_batch:
             raise ValueError("草稿正在后台生成，请稍后刷新")
         if (
@@ -585,6 +598,8 @@ async def generate_task_draft(
                 if detail:
                     raise ValueError(detail)
 
+                runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
+                task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
                 current_match = _build_match_result_from_task(task)
                 runtime_settings = await get_runtime_settings(session)
                 rewrite_preferences = llm_runtime.DraftRewritePreferences(
@@ -599,7 +614,7 @@ async def generate_task_draft(
                 generation = await llm_runtime.generate_draft_content(
                     identity=task.identity,
                     primary_material=task.primary_material,
-                    llm_profile=task.llm_profile,
+                    llm_profile=runtime_llm_profile,
                     professor=task.professor,
                     available_materials=list(task.identity.materials),
                     custom_subject=template_subject,
@@ -688,6 +703,8 @@ async def generate_task_draft(
         ):
             return task_identity
 
+        if runtime_llm_profile is not None:
+            task.llm_profile_id = runtime_llm_profile.id
         task.generated_subject = subject
         task.generated_content_text = body_text
         task.generated_content_html = body_html
@@ -734,11 +751,13 @@ async def calculate_task_match(
     force: bool,
     ignore_batch_status: bool = False,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    llm_profile_id: int | None = None,
 ) -> MatchCalculationActionResult:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
+        runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
         if (
             task.batch_task
             and task.batch_task.status != BatchTaskStatus.RUNNING.value
@@ -762,13 +781,14 @@ async def calculate_task_match(
         }:
             return _match_action_result(task)
 
+        task.llm_profile_id = runtime_llm_profile.id
         run = await _create_running_match_analysis_run(session, task)
         await session.commit()
         try:
             generation = await llm_runtime.generate_match_evaluation(
                 identity=task.identity,
                 primary_material=task.primary_material,
-                llm_profile=task.llm_profile,
+                llm_profile=runtime_llm_profile,
                 professor=task.professor,
                 available_materials=list(task.identity.materials),
             )
@@ -865,18 +885,28 @@ async def calculate_task_match(
 async def regenerate_task_draft(
     session_factory: async_sessionmaker[AsyncSession],
     task_id: int,
+    *,
+    llm_profile_id: int | None = None,
 ) -> tuple[int, int, int]:
-    return await generate_task_draft(session_factory, task_id, force=True)
+    return await generate_task_draft(
+        session_factory,
+        task_id,
+        force=True,
+        llm_profile_id=llm_profile_id,
+    )
 
 
 async def preview_task_draft(
     session_factory: async_sessionmaker[AsyncSession],
     task_id: int,
+    *,
+    llm_profile_id: int | None = None,
 ) -> llm_runtime.GeneratedDraftContent:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
+        runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
 
         outreach_config = _resolve_draft_generation_outreach_config(task)
         if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
@@ -915,7 +945,7 @@ async def preview_task_draft(
         return await llm_runtime.generate_draft_content(
             identity=task.identity,
             primary_material=task.primary_material,
-            llm_profile=task.llm_profile,
+            llm_profile=runtime_llm_profile,
             professor=task.professor,
             available_materials=list(task.identity.materials),
             custom_subject=template_subject,
@@ -998,8 +1028,15 @@ def _mark_match_analysis_run_failed(
 async def calculate_task_match_once(
     session_factory: async_sessionmaker[AsyncSession],
     task_id: int,
+    *,
+    llm_profile_id: int | None = None,
 ) -> MatchCalculationActionResult:
-    return await calculate_task_match(session_factory, task_id, force=True)
+    return await calculate_task_match(
+        session_factory,
+        task_id,
+        force=True,
+        llm_profile_id=llm_profile_id,
+    )
 
 
 async def update_task_primary_material(
@@ -1144,6 +1181,28 @@ async def approve_draft_task(
             session,
             task,
             "email_task.approved",
+            metadata={"selected_material_ids": task.selected_material_ids},
+        )
+        await session.commit()
+        return task.professor_id, task.identity_id, task.llm_profile_id
+
+
+async def save_task_draft(
+    session_factory: async_sessionmaker[AsyncSession],
+    task_id: int,
+    payload: EmailTaskApprovalRequest,
+) -> tuple[int, int, int]:
+    async with session_factory() as session:
+        task = await _load_email_task(session, task_id)
+        if not task:
+            raise ValueError(f"EmailTask {task_id} 不存在")
+        _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_allows_draft_save(task)
+        await _snapshot_saved_draft(session, task, payload)
+        await _record_email_task_log(
+            session,
+            task,
+            "email_task.draft_saved",
             metadata={"selected_material_ids": task.selected_material_ids},
         )
         await session.commit()
@@ -1742,6 +1801,33 @@ async def _snapshot_approval(
     task.last_error = None
 
 
+async def _snapshot_saved_draft(
+    session: AsyncSession,
+    task: EmailTask,
+    payload: EmailTaskApprovalRequest,
+) -> None:
+    await _validate_selected_material_ids(session, task.identity_id, payload.selected_material_ids)
+
+    body_text = payload.body_text.strip()
+    body_html = payload.body_html or ""
+    if not body_text:
+        normalized_body_html = ""
+    elif body_html.strip():
+        rendered = normalize_email_html(body_html)
+        body_text = rendered.text
+        normalized_body_html = rendered.html
+    else:
+        normalized_body_html = text_to_email_html(body_text).html
+    task.approved_subject = (payload.subject or "").strip()
+    task.approved_body_text = body_text
+    task.approved_body_html = normalized_body_html
+    if payload.selected_material_ids is not None:
+        task.selected_material_ids = payload.selected_material_ids
+    task.approved_at = utc_now()
+    task.updated_at = utc_now()
+    task.last_error = None
+
+
 async def _validate_primary_material_id(
     session: AsyncSession,
     identity_id: int,
@@ -1863,6 +1949,18 @@ async def _find_reply_target(
                 return task
     return candidate_tasks[0]
 
+
+async def _resolve_runtime_llm_profile(
+    session: AsyncSession,
+    task: EmailTask,
+    llm_profile_id: int | None,
+) -> LLMProfile:
+    if llm_profile_id is None or llm_profile_id == task.llm_profile_id:
+        return task.llm_profile
+    profile = await session.get(LLMProfile, llm_profile_id)
+    if profile is None:
+        raise ValueError("未找到 LLM 配置")
+    return profile
 
 async def _load_email_task(session: AsyncSession, task_id: int) -> EmailTask | None:
     return await session.scalar(
@@ -2180,6 +2278,12 @@ def _ensure_task_allows_approval(task: EmailTask) -> None:
         raise ValueError("该草稿已从批量任务中移除，不能再审核或发送")
     if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
         raise ValueError("草稿正在生成，请稍后再审核")
+
+
+def _ensure_task_allows_draft_save(task: EmailTask) -> None:
+    _ensure_task_allows_approval(task)
+    if task.status not in SAVE_DRAFT_ALLOWED_STATUSES:
+        raise ValueError("当前状态不能保存草稿")
 
 
 def extract_message_ids(*headers: str | None) -> set[str]:

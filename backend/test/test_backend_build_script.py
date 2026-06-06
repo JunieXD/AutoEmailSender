@@ -23,5 +23,8 @@ class BackendBuildScriptTest(unittest.TestCase):
             "pdfminer",
             "pdfplumber",
             "pypdf",
+            "crawl4ai",
+            "playwright",
+            "patchright",
         ]:
             self.assertIn(f"--collect-all {package_name}", content)

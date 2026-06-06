@@ -76,6 +76,31 @@ class CrawlJobEventsTests(unittest.TestCase):
         self.assertNotIn("Agent 调用 crawl_page 抓取页面", messages)
         self.assertIn("页面片段候选过密，已触发拆分", messages)
 
+
+    def test_build_events_merges_candidates_created_in_same_batch(self) -> None:
+        job = CrawlJob(
+            id=2,
+            university="示例大学",
+            school="计算机学院",
+            start_url="https://example.edu/faculty",
+            status=CrawlJobStatus.RUNNING.value,
+            created_at=datetime(2026, 4, 26, 10, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 26, 10, 0, tzinfo=UTC),
+        )
+        batch_time = datetime(2026, 4, 26, 10, 4, tzinfo=UTC)
+        candidates = [
+            CrawlCandidate(id=21, job_id=2, name="张教授", created_at=batch_time, updated_at=batch_time),
+            CrawlCandidate(id=22, job_id=2, name="李教授", created_at=batch_time, updated_at=batch_time),
+            CrawlCandidate(id=23, job_id=2, name="王教授", created_at=batch_time, updated_at=batch_time),
+        ]
+
+        events = build_crawl_job_events(job, pages=[], candidates=candidates)
+
+        candidate_events = [event for event in events if event["event_type"] == "candidate"]
+        self.assertEqual(len(candidate_events), 1)
+        self.assertEqual(candidate_events[0]["message"], "发现候选导师：张教授、李教授、王教授")
+        self.assertEqual(candidate_events[0]["raw"]["candidate_ids"], [21, 22, 23])
+
     def test_build_events_includes_status_trace_page_and_candidate(self) -> None:
         job = CrawlJob(
             id=1,

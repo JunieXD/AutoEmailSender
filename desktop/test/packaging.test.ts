@@ -66,16 +66,20 @@ describe("windows installer packaging", () => {
     expect(config).toContain("createDesktopShortcut: true");
   });
 
-  it("adds an explicit uninstall app data cleanup option", () => {
+  it("keeps app data cleanup as an opt-in uninstall section", () => {
     const scriptPath = path.resolve("build", "installer.nsh");
     const script = readFileSync(scriptPath, "utf8");
 
     expect(existsSync(scriptPath)).toBe(true);
-    expect(script).toContain("同时删除本地数据");
+    expect(script).toContain('Section /o "un.删除本地数据（数据库、材料、缓存和本地配置）"');
+    expect(script).not.toContain("是否同时删除本地数据");
+    expect(script).not.toContain('Section "un.DeleteAutoEmailSenderAppData"');
     expect(script).toContain("--delete-app-data");
     expect(script).toContain("永久删除 Auto Email Sender 的本地数据");
+    expect(script).toContain("MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2");
     expect(script).toContain("$APPDATA\\Auto Email Sender");
     expect(script).toContain("!macro customUnInstallSection");
-    expect(script).toContain("un.DeleteAutoEmailSenderAppData");
+    expect(script).toContain("un.ConfirmAndDeleteAutoEmailSenderAppData");
+    expect(script).toContain("un.DeleteAutoEmailSenderAppDataFromFlag");
   });
 });

@@ -5,6 +5,7 @@ import uuid
 from contextvars import ContextVar
 
 from starlette.responses import PlainTextResponse
+from app.core.backend_error_logging import write_backend_error_log
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
@@ -59,10 +60,16 @@ class RequestContextMiddleware:
 
         try:
             await self.app(scope, receive, send_with_request_id)
-        except Exception:
+        except Exception as exc:
             app = scope.get("app")
             if response_started or getattr(app, "debug", False):
                 raise
+            write_backend_error_log(
+                request_id=request_id,
+                method=str(scope.get("method", "")),
+                path=str(scope.get("path", "")),
+                exc=exc,
+            )
             response = PlainTextResponse(
                 "Internal Server Error",
                 status_code=500,

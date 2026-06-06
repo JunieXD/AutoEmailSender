@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteBatchTask, restoreBatchTask } from "@/lib/api/batchTasksApi";
+import { deleteBatchTask, getBatchTaskResendContext, restoreBatchTask } from "@/lib/api/batchTasksApi";
 
 const mockedApiFetch = vi.hoisted(() => vi.fn());
 
@@ -22,6 +22,13 @@ describe("batchTasksApi", () => {
     });
   });
 
+  it("fetches batch task resend context with the expected URL", async () => {
+    mockedApiFetch.mockResolvedValue({});
+
+    await getBatchTaskResendContext(12);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/batch-tasks/12/resend-context");
+  });
   it("restores a batch task from trash with the expected URL", async () => {
     mockedApiFetch.mockResolvedValue({});
 

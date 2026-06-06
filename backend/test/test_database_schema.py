@@ -15,7 +15,7 @@ from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "b2e7c9f1a4d6"
+HEAD_REVISION = "d6e4b8c2a1f0"
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
 
 
@@ -343,6 +343,14 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         self.assertEqual(imported.body_html, "<p>Hello <strong>{{name}}</strong></p>")
         self.assertEqual(imported.body_text, "Hello {{name}}")
+
+    def test_app_metadata_table_is_created_by_alembic_head(self) -> None:
+        self.assertIn("app_metadata", self._get_table_names())
+        self.assertEqual(
+            self._get_columns("app_metadata"),
+            {"key", "value"},
+        )
+
 
     def test_old_revision_can_upgrade_to_head(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "old_revision_upgrade.db"
@@ -1047,6 +1055,11 @@ class DatabaseSchemaTests(unittest.TestCase):
                 f"stdout:\n{result.stdout}\n"
                 f"stderr:\n{result.stderr}",
             )
+
+    def _get_table_names(self) -> set[str]:
+        rows = self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        return {row[0] for row in rows}
+
 
     def _get_columns(self, table_name: str) -> set[str]:
         rows = self.connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()

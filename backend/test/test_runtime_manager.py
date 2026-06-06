@@ -229,6 +229,158 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.match_analysis_job_interval_seconds, 7)
         self.assertEqual(app_settings_count, 0)
 
+    async def test_loop_immediately_continues_after_processing_work(self) -> None:
+        session_factory = Mock()
+        manager = RuntimeManager(session_factory)
+        processed_results = [1, 0]
+        worker_calls = 0
+        sleep_calls: list[float] = []
+
+        async def worker(session_factory_arg: object) -> int:
+            nonlocal worker_calls
+            self.assertIs(session_factory_arg, session_factory)
+            worker_calls += 1
+            if worker_calls == 2:
+                manager._stopped.set()
+            return processed_results.pop(0)
+
+        async def fake_wait_for(awaitable: object, timeout: float) -> object:
+            sleep_calls.append(timeout)
+            manager._stopped.set()
+            return await awaitable
+
+        with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+            await manager._loop("crawler-worker-1", 10, worker)
+
+        self.assertEqual(worker_calls, 2)
+        self.assertEqual(sleep_calls, [10])
+    async def test_loop_writes_backend_error_log_when_worker_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            from app.core.config import get_settings
+
+            get_settings.cache_clear()
+            session_factory = Mock()
+            manager = RuntimeManager(session_factory)
+
+            async def failing_worker(session_factory_arg: object) -> int:
+                self.assertIs(session_factory_arg, session_factory)
+                manager._stopped.set()
+                raise RuntimeError("crawler worker boom")
+
+            async def fake_wait_for(awaitable: object, timeout: float) -> object:
+                _ = timeout
+                return await awaitable
+
+            with patch.dict("os.environ", {"AUTO_EMAIL_SENDER_DATA_DIR": temp_dir}):
+                get_settings.cache_clear()
+                with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+                    await manager._loop("crawler-worker-1", 10, failing_worker)
+
+                log_path = Path(temp_dir) / "logs" / "backend-errors.log"
+                self.assertTrue(log_path.is_file())
+                log_text = log_path.read_text(encoding="utf-8")
+                self.assertIn("worker_name=crawler-worker-1", log_text)
+                self.assertIn("RuntimeError: crawler worker boom", log_text)
+
+            get_settings.cache_clear()
+    async def test_loop_waits_random_jitter_after_processing_crawler_work(self) -> None:
+        session_factory = Mock()
+        manager = RuntimeManager(session_factory)
+        worker_calls = 0
+        wait_calls: list[float] = []
+
+        async def worker(session_factory_arg: object) -> int:
+            nonlocal worker_calls
+            self.assertIs(session_factory_arg, session_factory)
+            worker_calls += 1
+            return 1
+
+        async def fake_wait_for(awaitable: object, timeout: float) -> object:
+            wait_calls.append(timeout)
+            manager._stopped.set()
+            return await awaitable
+
+        with patch("app.services.runtime_manager.random.uniform", return_value=7.5) as mocked_uniform, patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+            await manager._loop("crawler-worker-1", 10, worker, processed_jitter_seconds=(2, 10))
+
+        self.assertEqual(worker_calls, 1)
+        mocked_uniform.assert_called_once_with(2, 10)
+        self.assertEqual(wait_calls, [7.5])
+
+    async def test_start_configures_crawler_workers_with_claim_jitter(self) -> None:
+        session = object()
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=None)
+        session_factory = Mock(return_value=session_context)
+        manager = RuntimeManager(session_factory)
+
+        async def idle_loop() -> None:
+            await asyncio.Event().wait()
+
+        def build_idle_loop(*args: object, **kwargs: object):
+            _ = args, kwargs
+            return idle_loop()
+
+        async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+            self.assertIs(session_arg, session)
+            return SimpleNamespace(
+                crawler_worker_count=1,
+                match_analysis_job_worker_count=1,
+                match_analysis_job_interval_seconds=10,
+            )
+
+        with patch("app.services.runtime_manager.get_settings") as mocked_get_settings:
+            mocked_get_settings.return_value = type(
+                "SettingsStub",
+                (),
+                {
+                    "dispatcher_interval_seconds": 30,
+                    "imap_poll_interval_seconds": 60,
+                    "crawler_worker_count": 1,
+                    "match_analysis_job_worker_count": 1,
+                    "match_analysis_job_interval_seconds": 10,
+                },
+            )()
+            with patch(
+                "app.services.runtime_manager._load_worker_runtime_settings",
+                new=fake_load_worker_runtime_settings,
+            ), patch.object(
+                manager,
+                "_loop",
+                new=Mock(side_effect=build_idle_loop),
+            ) as mocked_loop:
+                await manager.start()
+
+        worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
+        self.assertEqual(worker_calls["crawler-worker-1"].kwargs["processed_jitter_seconds"], (2, 10))
+        self.assertNotIn("processed_jitter_seconds", worker_calls["dispatcher"].kwargs)
+
+        await manager.stop()
+    async def test_worker_startup_settings_default_crawler_worker_count_is_eight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "runtime-manager-defaults.db"
+            engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            manager = RuntimeManager(session_factory)
+            settings_stub = type(
+                "SettingsStub",
+                (),
+                {
+                    "match_analysis_job_worker_count": 1,
+                    "match_analysis_job_interval_seconds": 10,
+                },
+            )()
+
+            try:
+                resolved = await manager._resolve_worker_startup_settings(settings_stub)
+            finally:
+                await engine.dispose()
+
+        self.assertEqual(resolved.crawler_worker_count, 8)
     async def test_match_analysis_worker_uses_runtime_item_concurrency(self) -> None:
         session = object()
         session_context = MagicMock()

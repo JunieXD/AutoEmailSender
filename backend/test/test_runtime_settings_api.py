@@ -50,7 +50,9 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
         self.assertEqual(payload["match_analysis_job_item_concurrency"], 5)
-        self.assertEqual(payload["crawler_host_concurrency"], 1)
+        self.assertEqual(payload["crawler_worker_count"], 8)
+        self.assertEqual(payload["crawler_profile_enrichment_concurrency"], 3)
+        self.assertEqual(payload["crawler_host_concurrency"], 2)
         self.assertEqual(payload["crawler_agent_max_chunks_per_run"], 2)
         self.assertEqual(payload["draft_max_tokens"], 6000)
         self.assertEqual(payload["batch_draft_generation_concurrency"], 5)
@@ -71,7 +73,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "match_analysis_job_interval_seconds": 5,
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
-                "crawler_host_concurrency": 2,
+                "crawler_host_concurrency": 10,
                 "crawler_agent_max_chunks_per_run": 3,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 5,
@@ -89,6 +91,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["match_analysis_job_item_concurrency"], 4)
         self.assertEqual(response.json()["draft_max_tokens"], 4800)
         self.assertEqual(response.json()["batch_draft_generation_concurrency"], 5)
+        self.assertEqual(response.json()["crawler_host_concurrency"], 10)
         self.assertEqual(response.json()["crawler_agent_max_chunks_per_run"], 3)
         self.assertEqual(response.json()["draft_rewrite_intensity"], "strong")
         self.assertEqual(response.json()["draft_rewrite_tone"], "professional")
@@ -113,7 +116,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "match_analysis_job_interval_seconds": 5,
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
-                "crawler_host_concurrency": 2,
+                "crawler_host_concurrency": 10,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 5,
                 "draft_rewrite_intensity": "strong",
@@ -138,7 +141,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "match_analysis_job_interval_seconds": 5,
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
-                "crawler_host_concurrency": 2,
+                "crawler_host_concurrency": 10,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 3,
                 "draft_rewrite_intensity": "moderate",
@@ -162,7 +165,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "match_analysis_job_interval_seconds": 5,
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
-                "crawler_host_concurrency": 2,
+                "crawler_host_concurrency": 10,
                 "draft_max_tokens": 0,
                 "batch_draft_generation_concurrency": 3,
                 "draft_rewrite_intensity": "moderate",
@@ -186,7 +189,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "match_analysis_job_interval_seconds": 5,
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
-                "crawler_host_concurrency": 2,
+                "crawler_host_concurrency": 10,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 0,
                 "draft_rewrite_intensity": "moderate",
@@ -210,7 +213,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "match_analysis_job_interval_seconds": 5,
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
-                "crawler_host_concurrency": 2,
+                "crawler_host_concurrency": 10,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 3,
                 "draft_rewrite_intensity": "rewrite_everything",
