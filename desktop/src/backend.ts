@@ -158,11 +158,21 @@ function spawnBackend(input: {
     ["run", "python", "desktop_entry.py", "--host", "127.0.0.1", "--port", String(input.port)],
     {
       cwd: path.join(input.repoRoot, "backend"),
-      detached: process.platform !== "win32",
+      detached: shouldDetachBackend({
+        isPackaged: input.isPackaged,
+        platform: process.platform,
+      }),
       env: input.env,
       windowsHide: true,
     },
   );
+}
+
+export function shouldDetachBackend(input: {
+  isPackaged: boolean;
+  platform: NodeJS.Platform;
+}): boolean {
+  return input.isPackaged && input.platform !== "win32";
 }
 
 async function waitForReady(
@@ -440,8 +450,7 @@ export async function stopBackend(
     child.kill();
   } else {
     try {
-      const terminationPid = process.platform === "win32" ? child.pid : -child.pid;
-      await terminateProcessTree(terminationPid, port);
+      await terminateProcessTree(child.pid, port);
     } catch {
       child.kill();
     }
@@ -473,6 +482,9 @@ async function terminateBackendProcessTree(pid: number, port?: number): Promise<
   }
 
   process.kill(pid);
+  if (port !== undefined) {
+    await terminateUnixDesktopEntryProcesses(port);
+  }
 }
 
 async function terminateWindowsDesktopEntryProcesses(port: number): Promise<void> {
@@ -495,4 +507,16 @@ Get-CimInstance Win32_Process |
     ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
     { windowsHide: true },
   );
+}
+
+async function terminateUnixDesktopEntryProcesses(port: number): Promise<void> {
+  try {
+    await execFileAsync(
+      "pkill",
+      ["-TERM", "-f", `desktop_entry.py --host 127.0.0.1 --port ${port}`],
+      { windowsHide: true },
+    );
+  } catch {
+    // pkill exits non-zero when nothing matches; the direct child may already have exited.
+  }
 }

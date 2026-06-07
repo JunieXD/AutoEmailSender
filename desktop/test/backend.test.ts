@@ -10,6 +10,7 @@ import {
   getFrontendIndexPath,
   notifyBackendExit,
   normalizePort,
+  shouldDetachBackend,
   stopBackend,
   waitForHealth,
   waitForStartupStatus,
@@ -201,27 +202,33 @@ describe("desktop backend helpers", () => {
     expect(exits).toEqual([]);
   });
 
-  it("targets the backend process group during Unix stop", async () => {
+  it("keeps the dev backend attached to the terminal on Unix", () => {
+    expect(shouldDetachBackend({ isPackaged: false, platform: "linux" })).toBe(false);
+    expect(shouldDetachBackend({ isPackaged: false, platform: "darwin" })).toBe(false);
+  });
+
+  it("targets the direct backend process and port-specific descendants during Unix stop", async () => {
     const child = Object.assign(new EventEmitter(), {
       pid: 1234,
       exitCode: null as number | null,
       kill: () => {
-        throw new Error("direct child kill should not be used when a pid is available");
+        throw new Error("child.kill should not be used when a pid is available");
       },
     }) as unknown as ChildProcessWithoutNullStreams;
-    const terminatedPids: number[] = [];
+    const terminations: Array<{ pid: number; port?: number }> = [];
 
     await stopBackend(
       child,
       { intentionalStop: false },
-      async (pid) => {
-        terminatedPids.push(pid);
+      async (pid, port) => {
+        terminations.push({ pid, port });
         Object.assign(child, { exitCode: 0 });
         child.emit("exit", 0, null);
       },
+      48120,
     );
 
-    expect(terminatedPids).toEqual([-1234]);
+    expect(terminations).toEqual([{ pid: 1234, port: 48120 }]);
   });
 
   it("uses a 60 second default health check timeout", async () => {
