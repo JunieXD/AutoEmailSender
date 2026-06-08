@@ -18,6 +18,30 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _get_task_chain_tail_id(bind: sa.engine.Connection, task_id: int) -> int:
+    current_id = task_id
+    seen_ids = {task_id}
+    while True:
+        child_id = bind.scalar(
+            sa.text(
+                """
+                SELECT id
+                FROM email_tasks
+                WHERE parent_task_id = :parent_task_id
+                ORDER BY id
+                LIMIT 1
+                """
+            ),
+            {"parent_task_id": current_id},
+        )
+        if child_id is None:
+            return current_id
+        current_id = int(child_id)
+        if current_id in seen_ids:
+            raise RuntimeError(f"检测到重复工作区任务链循环：task_id={task_id}")
+        seen_ids.add(current_id)
+
+
 def _deduplicate_email_logs() -> None:
     op.execute(
         """
@@ -82,29 +106,50 @@ def _deduplicate_workspace_root_tasks() -> None:
         duplicate_ids = ids[:-1]
         params = {f"id_{index}": value for index, value in enumerate(duplicate_ids)}
         id_list = ", ".join(f":id_{index}" for index in range(len(duplicate_ids)))
+        duplicate_ids_with_children = {
+            int(row["parent_task_id"])
+            for row in bind.execute(
+                sa.text(
+                    f"""
+                    SELECT DISTINCT parent_task_id
+                    FROM email_tasks
+                    WHERE parent_task_id IN ({id_list})
+                    """
+                ),
+                params,
+            ).mappings()
+        }
 
-        child_count = bind.scalar(
-            sa.text(f"SELECT COUNT(*) FROM email_tasks WHERE parent_task_id IN ({id_list})"),
-            params,
-        )
-        if child_count:
-            raise RuntimeError(
-                "无法自动清理重复工作区任务：存在已派生子任务的重复根任务。"
-                f"professor_id={group['professor_id']}, "
-                f"identity_id={group['identity_id']}, "
-                f"llm_profile_id={group['llm_profile_id']}, "
-                f"duplicate_task_ids={duplicate_ids}。"
-                "请先在数据库中合并这些工作区任务，保留一个根任务并迁移或删除其子任务后重新运行迁移。"
+        delete_ids = [task_id for task_id in duplicate_ids if task_id not in duplicate_ids_with_children]
+        if delete_ids:
+            delete_params = {f"id_{index}": value for index, value in enumerate(delete_ids)}
+            delete_id_list = ", ".join(f":id_{index}" for index in range(len(delete_ids)))
+            bind.execute(
+                sa.text(f"UPDATE email_logs SET email_task_id = :keep_id WHERE email_task_id IN ({delete_id_list})"),
+                {"keep_id": keep_id, **delete_params},
+            )
+            bind.execute(
+                sa.text(f"DELETE FROM email_tasks WHERE id IN ({delete_id_list})"),
+                delete_params,
             )
 
-        bind.execute(
-            sa.text(f"UPDATE email_logs SET email_task_id = :keep_id WHERE email_task_id IN ({id_list})"),
-            {"keep_id": keep_id, **params},
-        )
-        bind.execute(
-            sa.text(f"DELETE FROM email_tasks WHERE id IN ({id_list})"),
-            params,
-        )
+        parent_task_id = _get_task_chain_tail_id(bind, keep_id)
+        for duplicate_id in duplicate_ids:
+            if duplicate_id not in duplicate_ids_with_children:
+                continue
+            parent_task_id = _get_task_chain_tail_id(bind, parent_task_id)
+            bind.execute(
+                sa.text(
+                    """
+                    UPDATE email_tasks
+                    SET parent_task_id = :parent_task_id,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :task_id
+                    """
+                ),
+                {"parent_task_id": parent_task_id, "task_id": duplicate_id},
+            )
+            parent_task_id = duplicate_id
 
 
 def upgrade() -> None:

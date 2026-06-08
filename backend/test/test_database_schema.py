@@ -11,11 +11,12 @@ import unittest
 from pathlib import Path
 
 from app.services.outreach_templates import import_outreach_template_file
+from app.core.migrations import get_alembic_config, get_head_revision
 from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "d6e4b8c2a1f0"
+HEAD_REVISION = get_head_revision(get_alembic_config())
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
 
 
@@ -468,6 +469,437 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertEqual(version, HEAD_REVISION)
         self.assertEqual(root_count, 1)
         self.assertEqual(log_count, 1)
+
+    def test_concurrency_guard_migration_merges_duplicate_roots_with_existing_child(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "concurrency_guard_existing_child.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "c6d7e8f9a012")
+        connection = sqlite3.connect(legacy_db_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            identity_id = self._insert_identity_into(connection, email_address="guard-scope@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="并发保护模型")
+            professor_id = self._insert_professor_into(connection, "guard-scope@example.edu")
+            duplicate_root_id = self._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+            )
+            keep_root_id = self._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+            )
+            existing_child_id = self._insert_manual_child_task_into(
+                connection,
+                parent_task_id=duplicate_root_id,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_id=professor_id,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "d0f1a2b3c4d5")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            root_count = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM email_tasks
+                WHERE source = 'manual'
+                  AND batch_task_id IS NULL
+                  AND parent_task_id IS NULL
+                  AND professor_id = ?
+                  AND identity_id = ?
+                  AND llm_profile_id = ?
+                """,
+                (professor_id, identity_id, llm_profile_id),
+            ).fetchone()[0]
+            duplicate_parent_id = connection.execute(
+                "SELECT parent_task_id FROM email_tasks WHERE id = ?",
+                (duplicate_root_id,),
+            ).fetchone()[0]
+            existing_child_parent_id = connection.execute(
+                "SELECT parent_task_id FROM email_tasks WHERE id = ?",
+                (existing_child_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(root_count, 1)
+        self.assertEqual(duplicate_parent_id, keep_root_id)
+        self.assertEqual(existing_child_parent_id, duplicate_root_id)
+
+    def test_contact_state_migration_tolerates_existing_backup_table(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "contact_state_existing_backup.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "2f6a9d8c1e20")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            identity_id = self._insert_identity_into(connection, email_address="contact-state@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="状态迁移模型")
+            professor_id = self._insert_professor_into(connection, "contact-state@example.edu")
+            skipped_task_id = connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    status
+                )
+                VALUES (?, ?, ?, 'skipped')
+                """,
+                (identity_id, llm_profile_id, professor_id),
+            ).lastrowid
+            connection.execute(
+                """
+                CREATE TABLE email_task_state_redesign_backup (
+                    email_task_id INTEGER PRIMARY KEY NOT NULL,
+                    previous_status VARCHAR(32) NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO email_task_state_redesign_backup (email_task_id, previous_status) VALUES (?, ?)",
+                (skipped_task_id, "skipped"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "4c1a2b3d4e5f")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            status, source = connection.execute(
+                "SELECT status, source FROM email_tasks WHERE id = ?",
+                (skipped_task_id,),
+            ).fetchone()
+            backup_count = connection.execute(
+                "SELECT COUNT(*) FROM email_task_state_redesign_backup WHERE email_task_id = ?",
+                (skipped_task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(status, "matched")
+        self.assertEqual(source, "manual")
+        self.assertEqual(backup_count, 1)
+
+    def test_crawl_job_runs_migration_tolerates_existing_backfill_run(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "crawl_runs_existing_backfill.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "6d7e8f9a0b12")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            job_id = connection.execute(
+                """
+                INSERT INTO crawl_jobs (
+                    university,
+                    school,
+                    start_url,
+                    status,
+                    progress_current,
+                    progress_total,
+                    agent_trace
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("半迁移大学", "计算机学院", "https://example.edu", "needs_review", 1, 1, json.dumps([])),
+            ).lastrowid
+            connection.execute(
+                """
+                CREATE TABLE crawl_job_runs (
+                    id INTEGER NOT NULL,
+                    job_id INTEGER NOT NULL,
+                    attempt_number INTEGER NOT NULL,
+                    status VARCHAR(64) NOT NULL,
+                    started_at DATETIME,
+                    active_started_at DATETIME,
+                    paused_at DATETIME,
+                    finished_at DATETIME,
+                    active_seconds INTEGER DEFAULT 0 NOT NULL,
+                    input_tokens INTEGER DEFAULT 0 NOT NULL,
+                    output_tokens INTEGER DEFAULT 0 NOT NULL,
+                    total_tokens INTEGER DEFAULT 0 NOT NULL,
+                    error_message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    CONSTRAINT pk_crawl_job_runs PRIMARY KEY (id),
+                    CONSTRAINT uq_crawl_job_runs_job_attempt UNIQUE (job_id, attempt_number),
+                    CONSTRAINT fk_crawl_job_runs_job_id_crawl_jobs FOREIGN KEY(job_id) REFERENCES crawl_jobs (id) ON DELETE CASCADE
+                )
+                """
+            )
+            run_id = connection.execute(
+                """
+                INSERT INTO crawl_job_runs (
+                    job_id,
+                    attempt_number,
+                    status,
+                    finished_at
+                ) VALUES (?, 1, 'needs_review', CURRENT_TIMESTAMP)
+                """,
+                (job_id,),
+            ).lastrowid
+            connection.execute("CREATE INDEX ix_crawl_job_runs_job_id ON crawl_job_runs (job_id)")
+            connection.execute("CREATE INDEX ix_crawl_job_runs_status ON crawl_job_runs (status)")
+            connection.execute("ALTER TABLE crawl_jobs ADD COLUMN current_run_id INTEGER")
+            connection.execute("UPDATE crawl_jobs SET current_run_id = ? WHERE id = ?", (run_id, job_id))
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "f2a7c9d8e1b3")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            run_count = connection.execute(
+                "SELECT COUNT(*) FROM crawl_job_runs WHERE job_id = ? AND attempt_number = 1",
+                (job_id,),
+            ).fetchone()[0]
+            current_run_id = connection.execute(
+                "SELECT current_run_id FROM crawl_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(run_count, 1)
+        self.assertEqual(current_run_id, run_id)
+
+    def test_identity_scope_migration_merges_duplicate_roots_with_existing_child(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "identity_scope_existing_child.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "b2e7c9f1a4d6")
+        connection = sqlite3.connect(legacy_db_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            identity_id = self._insert_identity_into(connection, email_address="identity-scope@example.com")
+            first_llm_profile_id = self._insert_llm_profile_into(connection, name="身份范围模型一")
+            second_llm_profile_id = self._insert_llm_profile_into(connection, name="身份范围模型二")
+            professor_id = self._insert_professor_into(connection, "identity-scope@example.edu")
+            duplicate_root_id = self._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                first_llm_profile_id,
+                professor_id,
+            )
+            keep_root_id = self._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                second_llm_profile_id,
+                professor_id,
+            )
+            existing_child_id = self._insert_manual_child_task_into(
+                connection,
+                parent_task_id=keep_root_id,
+                identity_id=identity_id,
+                llm_profile_id=second_llm_profile_id,
+                professor_id=professor_id,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "d6e4b8c2a1f0")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            root_count = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM email_tasks
+                WHERE source = 'manual'
+                  AND batch_task_id IS NULL
+                  AND parent_task_id IS NULL
+                  AND professor_id = ?
+                  AND identity_id = ?
+                """,
+                (professor_id, identity_id),
+            ).fetchone()[0]
+            duplicate_parent_id = connection.execute(
+                "SELECT parent_task_id FROM email_tasks WHERE id = ?",
+                (duplicate_root_id,),
+            ).fetchone()[0]
+            existing_child_parent_id = connection.execute(
+                "SELECT parent_task_id FROM email_tasks WHERE id = ?",
+                (existing_child_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(root_count, 1)
+        self.assertEqual(existing_child_parent_id, keep_root_id)
+        self.assertEqual(duplicate_parent_id, existing_child_id)
+
+    def test_identity_scope_migration_tolerates_existing_app_metadata_table(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "identity_scope_existing_metadata.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "b2e7c9f1a4d6")
+        connection = sqlite3.connect(legacy_db_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            identity_id = self._insert_identity_into(connection, email_address="retry-scope@example.com")
+            first_llm_profile_id = self._insert_llm_profile_into(connection, name="重试范围模型一")
+            second_llm_profile_id = self._insert_llm_profile_into(connection, name="重试范围模型二")
+            professor_id = self._insert_professor_into(connection, "retry-scope@example.edu")
+            duplicate_root_id = self._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                first_llm_profile_id,
+                professor_id,
+            )
+            keep_root_id = self._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                second_llm_profile_id,
+                professor_id,
+            )
+            existing_child_id = self._insert_manual_child_task_into(
+                connection,
+                parent_task_id=keep_root_id,
+                identity_id=identity_id,
+                llm_profile_id=second_llm_profile_id,
+                professor_id=professor_id,
+            )
+            connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "d6e4b8c2a1f0")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            metadata_table_count = connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_metadata'",
+            ).fetchone()[0]
+            duplicate_parent_id = connection.execute(
+                "SELECT parent_task_id FROM email_tasks WHERE id = ?",
+                (duplicate_root_id,),
+            ).fetchone()[0]
+            existing_child_parent_id = connection.execute(
+                "SELECT parent_task_id FROM email_tasks WHERE id = ?",
+                (existing_child_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(version, "d6e4b8c2a1f0")
+        self.assertEqual(metadata_table_count, 1)
+        self.assertEqual(existing_child_parent_id, keep_root_id)
+        self.assertEqual(duplicate_parent_id, existing_child_id)
+
+    def test_identity_scope_migration_tolerates_missing_legacy_workspace_index(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "identity_scope_missing_legacy_index.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "b2e7c9f1a4d6")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            connection.execute("DROP INDEX uq_email_tasks_workspace_task")
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "d6e4b8c2a1f0")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            indexes = {
+                row[1]
+                for row in connection.execute("PRAGMA index_list('email_tasks')").fetchall()
+            }
+            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(version, "d6e4b8c2a1f0")
+        self.assertIn("uq_email_tasks_workspace_task", indexes)
+
+    def test_professor_tags_migration_tolerates_existing_tables_and_default_tag(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "professor_tags_existing_tables.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "d6e4b8c2a1f0")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE professor_tags (
+                    id INTEGER NOT NULL,
+                    name VARCHAR(64) NOT NULL,
+                    text_color VARCHAR(16) NOT NULL,
+                    background_color VARCHAR(16) NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    CONSTRAINT pk_professor_tags PRIMARY KEY (id),
+                    CONSTRAINT uq_professor_tags_name UNIQUE (name)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE professor_tag_links (
+                    professor_id INTEGER NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    CONSTRAINT pk_professor_tag_links PRIMARY KEY (professor_id, tag_id),
+                    CONSTRAINT uq_professor_tag_links_professor_tag UNIQUE (professor_id, tag_id),
+                    CONSTRAINT fk_professor_tag_links_professor_id_professors FOREIGN KEY(professor_id) REFERENCES professors (id) ON DELETE CASCADE,
+                    CONSTRAINT fk_professor_tag_links_tag_id_professor_tags FOREIGN KEY(tag_id) REFERENCES professor_tags (id) ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute("CREATE INDEX ix_professor_tag_links_tag_id ON professor_tag_links (tag_id)")
+            connection.execute(
+                """
+                INSERT INTO professor_tags (name, text_color, background_color)
+                VALUES ('已退休', '#92400e', '#fef3c7')
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "20260606tags")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            tag_names = {
+                row[0]
+                for row in connection.execute("SELECT name FROM professor_tags").fetchall()
+            }
+            link_table_count = connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'professor_tag_links'",
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(
+            tag_names,
+            {"已退休", "高意愿", "低意愿", "羊导", "高强度"},
+        )
+        self.assertEqual(link_table_count, 1)
 
     def test_runtime_code_has_no_mail_delivery_mode_residue(self) -> None:
         banned_terms = [
@@ -1165,6 +1597,32 @@ class DatabaseSchemaTests(unittest.TestCase):
         return int(cursor.lastrowid)
 
     @staticmethod
+    def _insert_manual_child_task_into(
+        connection: sqlite3.Connection,
+        *,
+        parent_task_id: int,
+        identity_id: int,
+        llm_profile_id: int,
+        professor_id: int,
+    ) -> int:
+        cursor = connection.execute(
+            """
+            INSERT INTO email_tasks (
+                source,
+                parent_task_id,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                status,
+                selected_material_ids
+            )
+            VALUES ('manual', ?, ?, ?, ?, 'sent', ?)
+            """,
+            (parent_task_id, identity_id, llm_profile_id, professor_id, json.dumps([])),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
     def _insert_email_log_into(
         connection: sqlite3.Connection,
         email_task_id: int,
@@ -1194,5 +1652,3 @@ class DatabaseSchemaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

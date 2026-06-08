@@ -21,11 +21,51 @@ depends_on: Union[str, Sequence[str], None] = None
 WORKSPACE_TASK_WHERE = "source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"
 
 
+def _get_task_chain_tail_id(connection: sa.engine.Connection, task_id: int) -> int:
+    current_id = task_id
+    seen_ids = {task_id}
+    while True:
+        child_id = connection.scalar(
+            sa.text(
+                """
+                SELECT id
+                FROM email_tasks
+                WHERE parent_task_id = :parent_task_id
+                ORDER BY id
+                LIMIT 1
+                """
+            ),
+            {"parent_task_id": current_id},
+        )
+        if child_id is None:
+            return current_id
+        current_id = int(child_id)
+        if current_id in seen_ids:
+            raise RuntimeError(f"检测到重复工作区任务链循环：task_id={task_id}")
+        seen_ids.add(current_id)
+
+
+def _index_exists(connection: sa.engine.Connection, index_name: str) -> bool:
+    return bool(
+        connection.scalar(
+            sa.text(
+                """
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'index' AND name = :index_name
+                """
+            ),
+            {"index_name": index_name},
+        )
+    )
+
+
 def upgrade() -> None:
     op.create_table(
         "app_metadata",
         sa.Column("key", sa.Text(), primary_key=True),
         sa.Column("value", sa.Text(), nullable=False),
+        if_not_exists=True,
     )
 
     connection = op.get_bind()
@@ -62,7 +102,9 @@ def upgrade() -> None:
                 {"professor_id": professor_id, "identity_id": identity_id},
             ).fetchall()
         ]
+        parent_task_id = task_ids[0]
         for duplicate_task_id in task_ids[1:]:
+            parent_task_id = _get_task_chain_tail_id(connection, parent_task_id)
             connection.execute(
                 sa.text(
                     """
@@ -72,17 +114,20 @@ def upgrade() -> None:
                     WHERE id = :task_id
                     """
                 ),
-                {"task_id": duplicate_task_id, "parent_task_id": task_ids[0]},
+                {"task_id": duplicate_task_id, "parent_task_id": parent_task_id},
             )
+            parent_task_id = duplicate_task_id
 
-    op.drop_index("uq_email_tasks_workspace_task", table_name="email_tasks")
-    op.create_index(
-        "uq_email_tasks_workspace_task",
-        "email_tasks",
-        ["professor_id", "identity_id"],
-        unique=True,
-        sqlite_where=sa.text(WORKSPACE_TASK_WHERE),
-    )
+    if _index_exists(connection, "uq_email_tasks_workspace_task"):
+        op.drop_index("uq_email_tasks_workspace_task", table_name="email_tasks")
+    if not _index_exists(connection, "uq_email_tasks_workspace_task"):
+        op.create_index(
+            "uq_email_tasks_workspace_task",
+            "email_tasks",
+            ["professor_id", "identity_id"],
+            unique=True,
+            sqlite_where=sa.text(WORKSPACE_TASK_WHERE),
+        )
 
 
 def downgrade() -> None:

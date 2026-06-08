@@ -49,6 +49,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_professor_tags")),
         sa.UniqueConstraint("name", name=op.f("uq_professor_tags_name")),
+        if_not_exists=True,
     )
     op.create_table(
         "professor_tag_links",
@@ -82,31 +83,46 @@ def upgrade() -> None:
             "tag_id",
             name="uq_professor_tag_links_professor_tag",
         ),
+        if_not_exists=True,
     )
-    op.create_index(
-        op.f("ix_professor_tag_links_tag_id"),
-        "professor_tag_links",
-        ["tag_id"],
-        unique=False,
+    connection = op.get_bind()
+    index_name = op.f("ix_professor_tag_links_tag_id")
+    index_exists = connection.scalar(
+        sa.text(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'index' AND name = :index_name
+            """
+        ),
+        {"index_name": index_name},
     )
+    if not index_exists:
+        op.create_index(
+            index_name,
+            "professor_tag_links",
+            ["tag_id"],
+            unique=False,
+        )
 
-    tag_table = sa.table(
-        "professor_tags",
-        sa.column("name", sa.String),
-        sa.column("text_color", sa.String),
-        sa.column("background_color", sa.String),
-    )
-    op.bulk_insert(
-        tag_table,
-        [
+    for name, text_color, background_color in DEFAULT_TAGS:
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO professor_tags (name, text_color, background_color)
+                VALUES (:name, :text_color, :background_color)
+                ON CONFLICT(name) DO UPDATE SET
+                    text_color = excluded.text_color,
+                    background_color = excluded.background_color,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+            ),
             {
                 "name": name,
                 "text_color": text_color,
                 "background_color": background_color,
-            }
-            for name, text_color, background_color in DEFAULT_TAGS
-        ],
-    )
+            },
+        )
 
 
 def downgrade() -> None:

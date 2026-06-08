@@ -7,7 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.core.schema_metadata import DatabaseRequiresNewerAppError, read_app_metadata
+from app.core.schema_metadata import (
+    DatabaseRequiresNewerAppError,
+    get_current_app_version,
+    read_app_metadata,
+)
 
 class MigrationRuntimeTests(unittest.TestCase):
     def tearDown(self) -> None:
@@ -33,8 +37,9 @@ class MigrationRuntimeTests(unittest.TestCase):
             finally:
                 connection.close()
 
-        self.assertEqual(metadata["minimum_supported_app_version"], "2.3.0")
-        self.assertEqual(metadata["schema_updated_by_app_version"], "2.3.0")
+        current_app_version = get_current_app_version()
+        self.assertEqual(metadata["minimum_supported_app_version"], current_app_version)
+        self.assertEqual(metadata["schema_updated_by_app_version"], current_app_version)
         self.assertIn("schema_revision", metadata)
         self.assertIn("schema_updated_at", metadata)
 
@@ -105,8 +110,8 @@ class MigrationRuntimeTests(unittest.TestCase):
             finally:
                 connection.close()
 
-        self.assertEqual(metadata["minimum_supported_app_version"], "2.3.0")
-        self.assertEqual(metadata["schema_updated_by_app_version"], "2.3.0")
+        self.assertEqual(metadata["minimum_supported_app_version"], "2.4.0")
+        self.assertEqual(metadata["schema_updated_by_app_version"], "2.4.0")
 
     def test_backup_failure_prevents_alembic_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

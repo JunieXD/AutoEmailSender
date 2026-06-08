@@ -24,10 +24,11 @@ def upgrade() -> None:
         "email_task_state_redesign_backup",
         sa.Column("email_task_id", sa.Integer(), primary_key=True, nullable=False),
         sa.Column("previous_status", sa.String(length=32), nullable=False),
+        if_not_exists=True,
     )
     op.execute(
         """
-        INSERT INTO email_task_state_redesign_backup (email_task_id, previous_status)
+        INSERT OR IGNORE INTO email_task_state_redesign_backup (email_task_id, previous_status)
         SELECT id, status
         FROM email_tasks
         WHERE status = 'skipped'

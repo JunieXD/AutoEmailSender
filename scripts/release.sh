@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "用法: scripts/release.sh <version> [--dry-run] [--skip-verify] [--repo-root <path>]" >&2
+}
+
+version=""
+dry_run=0
+skip_verify=0
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+while (($#)); do
+  case "$1" in
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    --skip-verify)
+      skip_verify=1
+      shift
+      ;;
+    --repo-root)
+      if (($# < 2)); then
+        usage
+        exit 2
+      fi
+      repo_root="$2"
+      shift 2
+      ;;
+    -*)
+      usage
+      exit 2
+      ;;
+    *)
+      if [[ -n "$version" ]]; then
+        usage
+        exit 2
+      fi
+      version="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  usage
+  exit 2
+fi
+
+repo_root="$(cd "$repo_root" && pwd)"
+release_tag="v$version"
+curated_release_notes_path="$repo_root/docs/releases/$release_tag.md"
+desktop_release_notes_path="$repo_root/desktop/release-notes.md"
+
+run_git() {
+  if ((dry_run)); then
+    echo "[dry-run] git $*"
+    return 0
+  fi
+  git -C "$repo_root" "$@"
+}
+
+invoke_checked_command() {
+  local label="$1"
+  shift
+  if ! "$@"; then
+    echo "[fail] $label 失败。" >&2
+    exit 1
+  fi
+}
+
+assert_clean_repository() {
+  local branch
+  branch="$(git -C "$repo_root" branch --show-current)"
+  if ((dry_run)); then
+    echo "[dry-run] current branch is $branch; real release requires master"
+    return 0
+  fi
+
+  if [[ "$branch" != "master" ]]; then
+    echo "发布必须在 master 分支执行，当前分支是 $branch。" >&2
+    exit 1
+  fi
+
+  local allowed_release_notes_path="docs/releases/$release_tag.md"
+  local unexpected_status=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local path="${line:3}"
+    path="${path//\\//}"
+    if [[ "$path" != "$allowed_release_notes_path" ]]; then
+      unexpected_status=1
+      break
+    fi
+  done < <(git -C "$repo_root" status --porcelain --untracked-files=all)
+
+  if ((unexpected_status)); then
+    echo "工作区存在未提交改动，请先提交或清理后再发布。" >&2
+    exit 1
+  fi
+}
+
+assert_release_notes() {
+  local relative_path="docs/releases/$release_tag.md"
+  if [[ ! -f "$curated_release_notes_path" ]]; then
+    echo "缺少 $relative_path，请先运行 ./scripts/prepare-release.sh $version 并润色公告后再发布。" >&2
+    exit 1
+  fi
+}
+
+copy_release_notes() {
+  if ((dry_run)); then
+    echo "[dry-run] copy docs/releases/$release_tag.md to desktop/release-notes.md"
+    return 0
+  fi
+  cp "$curated_release_notes_path" "$desktop_release_notes_path"
+}
+
+invoke_verification() {
+  if ((skip_verify)); then
+    echo "[skip] 跳过发布前验证"
+    return 0
+  fi
+
+  echo "=== 验证 frontend ==="
+  (
+    cd "$repo_root/frontend"
+    invoke_checked_command "frontend: npm test" npm test
+    invoke_checked_command "frontend: npm run lint" npm run lint
+    invoke_checked_command "frontend: npm run build" npm run build
+  )
+
+  echo "=== 验证 backend ==="
+  (
+    cd "$repo_root/backend"
+    invoke_checked_command "backend: uv sync --dev" uv sync --dev
+    invoke_checked_command "backend: uv run python -m unittest test.test_desktop_runtime" \
+      uv run python -m unittest test.test_desktop_runtime
+    invoke_checked_command "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" \
+      uv run python -m unittest test.test_database_schema test.test_migrations_runtime
+  )
+
+  echo "=== 验证 desktop ==="
+  (
+    cd "$repo_root/desktop"
+    invoke_checked_command "desktop: npm test" npm test
+  )
+}
+
+set_npm_version() {
+  local directory="$1"
+  (
+    cd "$repo_root/$directory"
+    if ((dry_run)); then
+      echo "[dry-run] npm version $version --no-git-tag-version in $directory"
+      return 0
+    fi
+    npm version "$version" --no-git-tag-version
+  )
+}
+
+assert_clean_repository
+assert_release_notes
+invoke_verification
+set_npm_version "desktop"
+set_npm_version "frontend"
+copy_release_notes
+
+run_git add desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$release_tag.md"
+run_git commit -m "chore(release): $release_tag"
+run_git tag "$release_tag"
+run_git push origin master
+run_git push origin "$release_tag"
+
+if ((dry_run)); then
+  echo "[dry-run] 未创建提交、tag 或推送。真实发布会触发 GitHub Actions 创建 Release。"
+else
+  echo "已发布 $release_tag。GitHub Actions 将自动创建 Release。"
+fi

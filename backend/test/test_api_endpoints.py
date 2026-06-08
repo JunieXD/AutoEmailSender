@@ -16,11 +16,12 @@ from unittest.mock import AsyncMock, patch
 from openpyxl import Workbook, load_workbook
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+from app.core.migrations import get_alembic_config, get_head_revision
 from test.migrated_database import create_migrated_sqlite_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "d6e4b8c2a1f0"
+HEAD_REVISION = get_head_revision(get_alembic_config())
 
 
 class ApiEndpointTests(unittest.TestCase):

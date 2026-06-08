@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -32,7 +33,9 @@ class SchemaMetadataTests(unittest.TestCase):
     def test_current_app_version_falls_back_to_desktop_package_json(self) -> None:
         previous = os.environ.pop("AUTO_EMAIL_SENDER_APP_VERSION", None)
         try:
-            self.assertEqual(get_current_app_version(), "2.3.0")
+            package_json = Path(__file__).resolve().parents[2] / "desktop" / "package.json"
+            expected_version = json.loads(package_json.read_text(encoding="utf-8"))["version"]
+            self.assertEqual(get_current_app_version(), expected_version)
         finally:
             if previous is not None:
                 os.environ["AUTO_EMAIL_SENDER_APP_VERSION"] = previous
@@ -71,7 +74,7 @@ class SchemaMetadataTests(unittest.TestCase):
         self.assertEqual(metadata["schema_version"], str(CURRENT_SCHEMA_VERSION))
         self.assertEqual(metadata["schema_revision"], "d6e4b8c2a1f0")
         self.assertEqual(metadata["schema_updated_by_app_version"], "2.3.0")
-        self.assertEqual(metadata["minimum_supported_app_version"], "2.3.0")
+        self.assertEqual(metadata["minimum_supported_app_version"], get_current_app_version())
         self.assertIn("schema_updated_at", metadata)
 
     def test_allows_missing_metadata_for_legacy_database(self) -> None:

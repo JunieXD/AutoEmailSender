@@ -7,6 +7,7 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToStr
 $tempBin = Join-Path $tempRoot "bin"
 $stdoutPath = Join-Path $tempRoot "stdout.txt"
 $stderrPath = Join-Path $tempRoot "stderr.txt"
+$uvCallsPath = Join-Path $tempRoot "uv-calls.txt"
 $releaseNotesDirectory = Join-Path $repoRoot "docs\releases"
 $releaseNotesPath = Join-Path $releaseNotesDirectory "v9.9.9.md"
 
@@ -59,6 +60,7 @@ exit /b 0
   New-CmdShim -Directory $tempBin -Name "uv" -Content @"
 @echo off
 echo fake uv %*
+echo %* >> "$uvCallsPath"
 exit /b 0
 "@
 
@@ -119,6 +121,31 @@ exit /b 0
 echo fake npm %*
 exit /b 0
 "@
+    if (Test-Path $uvCallsPath) {
+      Remove-Item -LiteralPath $uvCallsPath -Force
+    }
+
+    $verificationProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
+      "-NoLogo",
+      "-NoProfile",
+      "-File",
+      $releaseScript,
+      "9.9.9",
+      "-DryRun",
+      "-RepoRoot",
+      $releaseRepo
+    ) -WorkingDirectory $repoRoot -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+
+    $verificationOutput = "$(Get-Content -Raw -Encoding UTF8 $stdoutPath)`n$(Get-Content -Raw -Encoding UTF8 $stderrPath)"
+    if ($verificationProcess.ExitCode -ne 0) {
+      throw "release.ps1 在验证命令都成功时应该完成 dry-run。`n$verificationOutput"
+    }
+    $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
+    Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_database_schema test.test_migrations_runtime" -Message "release.ps1 没有执行迁移相关后端测试。`n$uvCalls"
+
+    if (Test-Path $uvCallsPath) {
+      Remove-Item -LiteralPath $uvCallsPath -Force
+    }
 
     $process = Start-Process -FilePath $pwshPath -ArgumentList @(
       "-NoLogo",

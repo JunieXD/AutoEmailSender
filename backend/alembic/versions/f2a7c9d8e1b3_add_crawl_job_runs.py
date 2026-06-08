@@ -19,67 +19,124 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    op.create_table(
-        "crawl_job_runs",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("job_id", sa.Integer(), nullable=False),
-        sa.Column("attempt_number", sa.Integer(), nullable=False),
-        sa.Column("status", sa.String(length=64), nullable=False),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("active_started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("paused_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("active_seconds", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("input_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("output_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("CURRENT_TIMESTAMP"),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("CURRENT_TIMESTAMP"),
-            nullable=False,
-        ),
-        sa.ForeignKeyConstraint(
-            ["job_id"],
-            ["crawl_jobs.id"],
-            name=op.f("fk_crawl_job_runs_job_id_crawl_jobs"),
-            ondelete="CASCADE",
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_crawl_job_runs")),
-        sa.UniqueConstraint("job_id", "attempt_number", name=op.f("uq_crawl_job_runs_job_attempt")),
-    )
-    op.create_index(op.f("ix_crawl_job_runs_job_id"), "crawl_job_runs", ["job_id"], unique=False)
-    op.create_index(op.f("ix_crawl_job_runs_status"), "crawl_job_runs", ["status"], unique=False)
-
-    with op.batch_alter_table("crawl_jobs") as batch_op:
-        batch_op.add_column(sa.Column("current_run_id", sa.Integer(), nullable=True))
-        batch_op.create_foreign_key(
-            batch_op.f("fk_crawl_jobs_current_run_id_crawl_job_runs"),
-            "crawl_job_runs",
-            ["current_run_id"],
-            ["id"],
-            ondelete="SET NULL",
+def _table_exists(connection: sa.engine.Connection, table_name: str) -> bool:
+    return bool(
+        connection.scalar(
+            sa.text(
+                """
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'table' AND name = :table_name
+                """
+            ),
+            {"table_name": table_name},
         )
+    )
 
+
+def _index_exists(connection: sa.engine.Connection, index_name: str) -> bool:
+    return bool(
+        connection.scalar(
+            sa.text(
+                """
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'index' AND name = :index_name
+                """
+            ),
+            {"index_name": index_name},
+        )
+    )
+
+
+def _column_exists(connection: sa.engine.Connection, table_name: str, column_name: str) -> bool:
+    rows = connection.execute(sa.text(f"PRAGMA table_info({table_name})")).mappings()
+    return any(row["name"] == column_name for row in rows)
+
+
+def upgrade() -> None:
     connection = op.get_bind()
+    if not _table_exists(connection, "crawl_job_runs"):
+        op.create_table(
+            "crawl_job_runs",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("job_id", sa.Integer(), nullable=False),
+            sa.Column("attempt_number", sa.Integer(), nullable=False),
+            sa.Column("status", sa.String(length=64), nullable=False),
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("active_started_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("paused_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("active_seconds", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("input_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("output_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("error_message", sa.Text(), nullable=True),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+                nullable=False,
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+                nullable=False,
+            ),
+            sa.ForeignKeyConstraint(
+                ["job_id"],
+                ["crawl_jobs.id"],
+                name=op.f("fk_crawl_job_runs_job_id_crawl_jobs"),
+                ondelete="CASCADE",
+            ),
+            sa.PrimaryKeyConstraint("id", name=op.f("pk_crawl_job_runs")),
+            sa.UniqueConstraint("job_id", "attempt_number", name=op.f("uq_crawl_job_runs_job_attempt")),
+        )
+    if not _index_exists(connection, op.f("ix_crawl_job_runs_job_id")):
+        op.create_index(op.f("ix_crawl_job_runs_job_id"), "crawl_job_runs", ["job_id"], unique=False)
+    if not _index_exists(connection, op.f("ix_crawl_job_runs_status")):
+        op.create_index(op.f("ix_crawl_job_runs_status"), "crawl_job_runs", ["status"], unique=False)
+
+    if not _column_exists(connection, "crawl_jobs", "current_run_id"):
+        with op.batch_alter_table("crawl_jobs") as batch_op:
+            batch_op.add_column(sa.Column("current_run_id", sa.Integer(), nullable=True))
+            batch_op.create_foreign_key(
+                batch_op.f("fk_crawl_jobs_current_run_id_crawl_job_runs"),
+                "crawl_job_runs",
+                ["current_run_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+
     jobs = connection.execute(
         sa.text(
             """
-            SELECT id, status, created_at, updated_at, agent_trace
+            SELECT id, status, created_at, updated_at, agent_trace, current_run_id
             FROM crawl_jobs
             ORDER BY id
             """
         )
     ).mappings()
     for job in jobs:
+        existing_run_id = connection.scalar(
+            sa.text(
+                """
+                SELECT id
+                FROM crawl_job_runs
+                WHERE job_id = :job_id AND attempt_number = 1
+                """
+            ),
+            {"job_id": job["id"]},
+        )
+        if existing_run_id is not None:
+            run_id = existing_run_id
+            if job["current_run_id"] is None:
+                connection.execute(
+                    sa.text("UPDATE crawl_jobs SET current_run_id = :run_id WHERE id = :job_id"),
+                    {"run_id": run_id, "job_id": job["id"]},
+                )
+            continue
         active_seconds = _legacy_active_seconds(job["created_at"], job["updated_at"])
         tokens = _legacy_token_totals(job["agent_trace"])
         result = connection.execute(
