@@ -651,17 +651,16 @@ async def generate_task_draft(
                         await session.commit()
                         return task.professor_id, task.identity_id, task.llm_profile_id
         except asyncio.CancelledError:
-            if automatic_batch:
-                await session.refresh(task)
-                if _is_user_removed_batch_item(task):
-                    raise
-                batch_status = (
-                    await session.scalar(select(BatchTask.status).where(BatchTask.id == task.batch_task_id))
-                    if task.batch_task_id is not None
-                    else None
-                )
-                _restore_or_cancel_interrupted_draft_generation(task, batch_status=batch_status)
-                await session.commit()
+            await session.refresh(task)
+            if _is_user_removed_batch_item(task):
+                raise
+            batch_status = (
+                await session.scalar(select(BatchTask.status).where(BatchTask.id == task.batch_task_id))
+                if task.batch_task_id is not None
+                else None
+            )
+            _restore_or_cancel_interrupted_draft_generation(task, batch_status=batch_status)
+            await session.commit()
             raise
         except llm_runtime.LLMRuntimeError as exc:
             await session.refresh(task)
@@ -2030,7 +2029,10 @@ def _restore_or_cancel_interrupted_draft_generation(
     batch_status: str | None = None,
 ) -> None:
     resolved_batch_status = batch_status or (task.batch_task.status if task.batch_task else None)
-    if resolved_batch_status == BatchTaskStatus.PAUSED.value:
+    if task.batch_task is None:
+        task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
+        task.cancellation_reason = None
+    elif resolved_batch_status == BatchTaskStatus.PAUSED.value:
         task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
     elif resolved_batch_status == BatchTaskStatus.EXPIRED.value:
         task.status = EmailTaskStatus.CANCELED.value
@@ -2302,4 +2304,3 @@ def normalize_subject(subject: str | None) -> str:
     normalized = re.sub(r"^(re|fw|fwd)\s*:\s*", "", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized
-

@@ -63,8 +63,12 @@ async def recover_stale_generating_drafts(
             if task.batch_task and task.batch_task.status == BatchTaskStatus.STOPPED.value:
                 task.status = EmailTaskStatus.CANCELED.value
                 task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
+            elif task.batch_task and task.batch_task.status == BatchTaskStatus.EXPIRED.value:
+                task.status = EmailTaskStatus.CANCELED.value
+                task.cancellation_reason = EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
             else:
                 task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
+                task.cancellation_reason = None
             task.draft_generation_previous_status = None
             task.updated_at = resolved_now
         await session.commit()
@@ -148,5 +152,3 @@ async def _claim_queued_llm_drafts(
             claimed.append((task.id, task.batch_task_id))
         await session.commit()
         return claimed
-
-

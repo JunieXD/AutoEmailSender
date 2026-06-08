@@ -3860,6 +3860,75 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(row, ("canceled", "user_removed"))
 
+    def test_manual_generation_cancellation_restores_previous_status(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="manual-cancel-resume.txt",
+            content=b"AI agents and information extraction",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="manual-generation-canceled@example.edu")
+        ensure_response = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+        )
+        self.assertEqual(ensure_response.status_code, 200, msg=ensure_response.text)
+        task_id = ensure_response.json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET primary_material_id = ?,
+                    selected_material_ids = ?,
+                    outreach_generation_mode = 'llm',
+                    outreach_template_subject = ?,
+                    outreach_template_body_text = ?,
+                    status = 'matched'
+                WHERE id = ?
+                """,
+                (
+                    material_id,
+                    json.dumps([material_id]),
+                    "Hello {{name}}",
+                    "Body {{research_direction}}",
+                    task_id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        async def _cancel_generation(**_kwargs):
+            raise asyncio.CancelledError()
+
+        from app.core.database import get_session_factory
+        from app.services.task_runtime import generate_task_draft
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=_cancel_generation),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                self._run_async(generate_task_draft(get_session_factory(), task_id, force=True))
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT status, draft_generation_previous_status, generated_subject, generated_content_text
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("matched", None, None, None))
+
     def test_remove_last_batch_task_item_marks_task_completed(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()

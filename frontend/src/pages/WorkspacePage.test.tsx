@@ -233,6 +233,28 @@ beforeEach(() => {
 });
 
 describe("WorkspacePage draft saving", () => {
+  it("keeps the last draft visible while generation is in progress", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          status: "generating_draft",
+          generated_subject: "生成前主题",
+          generated_content_text: "生成前正文",
+          generated_content_html: "<p>生成前正文</p>",
+        },
+      }),
+    );
+
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    expect(screen.getByLabelText("邮件主题")).toHaveValue("生成前主题");
+    expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>生成前正文</p>");
+    expect(screen.getByLabelText("邮件主题")).toBeDisabled();
+    expect(screen.getByLabelText("邮件正文")).toBeDisabled();
+  });
+
   it("saves edited workspace draft without sending", async () => {
     renderWorkspace();
 

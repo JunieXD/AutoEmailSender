@@ -13,6 +13,7 @@ from app.models import (
     AppSetting,
     BatchTask,
     BatchTaskStatus,
+    EmailTaskCancellationReason,
     EmailTask,
     EmailTaskSource,
     EmailTaskStatus,
@@ -130,6 +131,29 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         self.assertEqual(restored_count, 1)
         self.assertEqual(task.status, EmailTaskStatus.MATCHED.value)
+        self.assertIsNone(task.draft_generation_previous_status)
+
+    def test_recover_stale_generating_draft_cancels_expired_batch_item(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.GENERATING_DRAFT.value],
+                previous_status=EmailTaskStatus.MATCHED.value,
+                updated_at=datetime.now(UTC) - timedelta(minutes=45),
+                batch_status=BatchTaskStatus.EXPIRED.value,
+            ),
+        )
+
+        restored_count = self._run_async(
+            recover_stale_generating_drafts(
+                self.session_factory,
+                stale_after=timedelta(minutes=30),
+            ),
+        )
+        task = self._run_async(self._get_task(task_ids[0]))
+
+        self.assertEqual(restored_count, 1)
+        self.assertEqual(task.status, EmailTaskStatus.CANCELED.value)
+        self.assertEqual(task.cancellation_reason, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value)
         self.assertIsNone(task.draft_generation_previous_status)
 
     def test_llm_failure_marks_draft_failed_without_retry(self) -> None:
@@ -318,6 +342,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         outreach_generation_mode: str | None = "llm",
         with_primary_material: bool = True,
         professor_research_direction: str = "Large language models",
+        batch_status: str = BatchTaskStatus.RUNNING.value,
     ) -> list[int]:
         async with self.session_factory() as session:
             session.add(AppSetting(id=1))
@@ -362,7 +387,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 llm_profile=llm_profile,
                 name="批量草稿任务",
                 schedule_type="immediate",
-                status=BatchTaskStatus.RUNNING.value,
+                status=batch_status,
                 primary_material=material if with_primary_material else None,
                 email_subject="申请与{{name}}老师交流",
                 email_body="老师您好，我是{{sender_name}}。",
@@ -428,5 +453,3 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

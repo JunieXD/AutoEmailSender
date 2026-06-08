@@ -137,6 +137,16 @@ const shouldBlockDirectDraftActions = (task: WorkspaceTaskSummaryDTO | null) =>
       task?.is_replied,
   );
 
+const shouldHideDirectDraftContent = (task: WorkspaceTaskSummaryDTO | null) =>
+  Boolean(
+      task?.can_continue_manually ||
+      task?.can_write_follow_up ||
+      task?.status === 'canceled' ||
+      task?.status === 'sending' ||
+      task?.sent_at ||
+      task?.is_replied,
+  );
+
 const hasProfessorMatchEvidence = (professor: WorkspaceProfessorDTO | null | undefined) =>
   Boolean(professor?.research_direction?.trim()) ||
   Boolean(professor?.recent_papers?.some((paper) => paper.trim()));
@@ -397,9 +407,9 @@ export const WorkspacePage = () => {
     }
 
     const currentTask = getCurrentTaskOrNull(data);
-    const blockedDraftActions = shouldBlockDirectDraftActions(currentTask);
+    const hiddenDraftContent = shouldHideDirectDraftContent(currentTask);
     const latestDraftMessage = getLatestDraftMessage(data.messages);
-    const preferredDraftMessage = blockedDraftActions ? null : latestDraftMessage;
+    const preferredDraftMessage = hiddenDraftContent ? null : latestDraftMessage;
     const draftSubject =
       currentTask?.approved_subject ??
       currentTask?.generated_subject ??
@@ -439,17 +449,17 @@ export const WorkspacePage = () => {
           templateSubject: renderedTemplateSubject,
           templateContentText: renderedTemplateContentText,
         }));
-    const nextSubject = blockedDraftActions
+    const nextSubject = hiddenDraftContent
       ? ''
       : shouldUseDraftRecord
         ? draftSubject
         : renderedTemplateSubject;
-    const nextContentHtml = blockedDraftActions
+    const nextContentHtml = hiddenDraftContent
       ? null
       : shouldUseDraftRecord
         ? draftContentHtml
         : renderedTemplateContentHtml;
-    const nextContentText = blockedDraftActions
+    const nextContentText = hiddenDraftContent
       ? ''
       : shouldUseDraftRecord
         ? draftContentText
@@ -464,12 +474,12 @@ export const WorkspacePage = () => {
     setContent(nextContentText);
     setContentHtml(nextContentHtml);
     setComposerHasSendableDraft(hasMeaningfulBody({
-      content: blockedDraftActions ? '' : sendableDraftContent.content,
-      contentHtml: blockedDraftActions ? null : sendableDraftContent.contentHtml,
+      content: hiddenDraftContent ? '' : sendableDraftContent.content,
+      contentHtml: hiddenDraftContent ? null : sendableDraftContent.contentHtml,
     }));
-    setSelectedMaterialIds(blockedDraftActions ? [] : currentTask?.selected_material_ids ?? []);
+    setSelectedMaterialIds(hiddenDraftContent ? [] : currentTask?.selected_material_ids ?? []);
     setScheduledAt(
-      !blockedDraftActions && currentTask?.scheduled_at
+      !hiddenDraftContent && currentTask?.scheduled_at
         ? (() => {
             const scheduled = parseApiDateTime(currentTask.scheduled_at);
             const local = new Date(
@@ -631,6 +641,7 @@ export const WorkspacePage = () => {
   const currentTaskMode = currentTask?.outreach_generation_mode ?? 'llm';
   const statusLabel = getStatusLabel(currentTask, thread?.messages ?? []);
   const blocksDirectDraftActions = shouldBlockDirectDraftActions(currentTask);
+  const taskGeneratingDraft = currentTask?.status === 'generating_draft';
   const canChangeMode =
     currentTask?.id != null && !blocksDirectDraftActions;
   const canCalculateMatch =
@@ -1183,7 +1194,7 @@ export const WorkspacePage = () => {
                   contentHtml={contentHtml || textToEmailHtml(content)}
                   selectedMaterialIds={selectedMaterialIds}
                   scheduledAt={scheduledAt}
-                  acting={acting}
+                  acting={acting || taskGeneratingDraft}
                   canChangeMode={canChangeMode}
                   canCalculateMatch={canCalculateMatch}
                   canGenerateDraft={canGenerateDraft}

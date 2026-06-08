@@ -5,7 +5,7 @@ import logging
 import traceback
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -23,6 +23,7 @@ from app.core.startup_logging import write_startup_phase_log
 from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 from app.services.operation_logs import cleanup_old_operation_logs
 from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
+from app.services.batch_draft_generation_runtime import recover_stale_generating_drafts
 from app.services.runtime_manager import RuntimeManager
 from app.services.task_runtime import recover_interrupted_match_analysis_runs
 
@@ -166,6 +167,10 @@ async def cleanup_runtime_state() -> None:
         await session.commit()
     await recover_interrupted_crawl_jobs(get_session_factory())
     await recover_interrupted_match_analysis_runs(get_session_factory())
+    await recover_stale_generating_drafts(
+        get_session_factory(),
+        stale_after=timedelta(seconds=0),
+    )
 
 
 async def run_startup_step_with_database_lock_retry(
