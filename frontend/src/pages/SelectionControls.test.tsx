@@ -828,7 +828,7 @@ describe("selection controls", () => {
     });
   });
 
-  it("queues homepage tag order changes while a previous tag save is in flight", async () => {
+  it("shows folded homepage tags without enabling primary tag saves", async () => {
     const professorWithTags = {
       ...createDashboardProfessor(401, "排序导师"),
       tags: [
@@ -858,23 +858,7 @@ describe("selection controls", () => {
         },
       ],
     };
-    const firstSave = deferred<ProfessorManagementItemDTO>();
     vi.mocked(listProfessors).mockResolvedValue([professorWithTags]);
-    vi.mocked(updateProfessorTags)
-      .mockImplementationOnce(
-        () => firstSave.promise,
-      )
-      .mockResolvedValue({
-        ...managementProfessors[0],
-        id: professorWithTags.id,
-        name: professorWithTags.name,
-        tags: [
-          professorWithTags.tags[3],
-          professorWithTags.tags[1],
-          professorWithTags.tags[0],
-          professorWithTags.tags[2],
-        ],
-      });
 
     render(
       <MemoryRouter>
@@ -888,35 +872,14 @@ describe("selection controls", () => {
       name: "查看全部标签，剩余 2 个",
     });
     fireEvent.click(overflowButton);
-    fireEvent.click(screen.getByRole("button", { name: "选择标签 高强度" }));
+    const foldedTags = screen.getByRole("dialog", { name: "折叠标签" });
 
-    await waitFor(() => {
-      expect(updateProfessorTags).toHaveBeenCalledTimes(1);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "选择标签 已退休" }));
-
-    expect(updateProfessorTags).toHaveBeenCalledTimes(1);
-
-    firstSave.resolve({
-      ...managementProfessors[0],
-      id: professorWithTags.id,
-      name: professorWithTags.name,
-      tags: [
-        professorWithTags.tags[2],
-        professorWithTags.tags[0],
-        professorWithTags.tags[1],
-        professorWithTags.tags[3],
-      ],
-    });
-
-    await waitFor(() => {
-      expect(updateProfessorTags).toHaveBeenCalledTimes(2);
-    });
-    expect(updateProfessorTags).toHaveBeenLastCalledWith(
-      professorWithTags.id,
-      [4, 1, 2, 3],
-    );
+    expect(within(foldedTags).getByText("高强度")).toBeInTheDocument();
+    expect(within(foldedTags).getByText("已退休")).toBeInTheDocument();
+    expect(
+      within(foldedTags).queryByRole("button", { name: "选择标签 高强度" }),
+    ).not.toBeInTheDocument();
+    expect(updateProfessorTags).not.toHaveBeenCalled();
   });
 
   it("queues management primary tag changes while a previous tag save is in flight", async () => {
@@ -976,7 +939,8 @@ describe("selection controls", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "查看全部标签，剩余 3 个" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "选择标签 高强度" }));
+    const foldedTags = screen.getByRole("dialog", { name: "折叠标签" });
+    fireEvent.click(within(foldedTags).getByRole("button", { name: "选择标签 高强度" }));
 
     await waitFor(() => {
       expect(updateProfessorTags).toHaveBeenCalledTimes(1);
@@ -987,7 +951,7 @@ describe("selection controls", () => {
       [3, 1, 2, 4],
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "选择标签 已退休" }));
+    fireEvent.click(within(foldedTags).getByRole("button", { name: "选择标签 已退休" }));
 
     expect(updateProfessorTags).toHaveBeenCalledTimes(1);
 
