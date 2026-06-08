@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
 
 from app.core.time import utc_now
 
@@ -13,8 +12,6 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
 from app.models import (
-    EmailDirection,
-    EmailLog,
     EmailTask,
     EmailTaskCancellationReason,
     EmailTaskStatus,
@@ -37,6 +34,7 @@ from app.schemas.professor import (
     ProfessorTagUsageRead,
     ProfessorUpsertPayload,
 )
+from app.services.contact_status import build_contact_status_by_professor
 from app.services.operation_logs import record_operation_log
 from app.services.professor_management import (
     build_professor_export,
@@ -51,18 +49,6 @@ from app.services.sample_professors import SAMPLE_PROFESSORS
 router = APIRouter(prefix="/api/professors", tags=["professors"])
 DEFAULT_IMPORTED_TAG_TEXT_COLOR = "#166534"
 DEFAULT_IMPORTED_TAG_BACKGROUND_COLOR = "#dcfce7"
-
-
-def _keep_latest_timestamp(
-    values: dict[int, datetime],
-    professor_id: int,
-    timestamp: datetime | None,
-) -> None:
-    if timestamp is None:
-        return
-    current = values.get(professor_id)
-    if current is None or timestamp > current:
-        values[professor_id] = timestamp
 
 
 @router.get("", response_model=list[ProfessorDashboardItemRead])
@@ -90,9 +76,7 @@ async def list_professors(
 
     professor_ids = [professor.id for professor in professors]
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
-    sent_count_by_professor: dict[int, int] = defaultdict(int)
-    last_sent_at_by_professor: dict[int, datetime] = {}
-    last_replied_at_by_professor: dict[int, datetime] = {}
+    contact_status_by_professor = {}
 
     if identity_id is not None:
         task_result = await session.execute(
@@ -109,81 +93,42 @@ async def list_professors(
         )
         for task in task_result.scalars():
             tasks_by_professor[task.professor_id].append(task)
-
-        log_result = await session.execute(
-            select(EmailLog)
-            .where(
-                EmailLog.identity_id == identity_id,
-                EmailLog.professor_id.in_(professor_ids),
-                EmailLog.direction.in_(
-                    [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
-                ),
-            ),
+        contact_status_by_professor = await build_contact_status_by_professor(
+            session,
+            identity_id=identity_id,
+            professor_ids=professor_ids,
         )
-        for log in log_result.scalars():
-            if log.direction == EmailDirection.SENT.value and not log.failure_summary:
-                sent_count_by_professor[log.professor_id] += 1
-                _keep_latest_timestamp(
-                    last_sent_at_by_professor,
-                    log.professor_id,
-                    log.created_at,
-                )
-            elif log.direction == EmailDirection.RECEIVED.value:
-                _keep_latest_timestamp(
-                    last_replied_at_by_professor,
-                    log.professor_id,
-                    log.created_at,
-                )
 
     latest_match_task_by_professor: dict[int, EmailTask] = {}
     for professor_id, tasks in tasks_by_professor.items():
         latest_match = next((task for task in tasks if task.match_score is not None), None)
         if latest_match is not None:
             latest_match_task_by_professor[professor_id] = latest_match
-        has_sent_log = professor_id in last_sent_at_by_professor
-        has_reply_log = professor_id in last_replied_at_by_professor
-        for task in tasks:
-            if not has_sent_log:
-                _keep_latest_timestamp(
-                    last_sent_at_by_professor,
-                    professor_id,
-                    task.sent_at,
-                )
-            if (
-                not has_reply_log
-                and (task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value)
-            ):
-                _keep_latest_timestamp(
-                    last_replied_at_by_professor,
-                    professor_id,
-                    task.updated_at,
-                )
 
-    return [
-        ProfessorDashboardItemRead(
-            id=professor.id,
-            name=professor.name,
-            email=professor.email,
-            title=professor.title,
-            university=professor.university,
-            school=professor.school,
-            department=professor.department,
-            research_direction=professor.research_direction,
-            recent_papers=professor.recent_papers or [],
-            match_score=latest_match_task_by_professor.get(professor.id).match_score
-            if professor.id in latest_match_task_by_professor
-            else None,
-            sent_count=sent_count_by_professor.get(professor.id, 0),
-            status=_map_dashboard_status(
-                tasks_by_professor.get(professor.id, []),
-                sent_count_by_professor.get(professor.id, 0),
-            ),
-            last_sent_at=last_sent_at_by_professor.get(professor.id),
-            last_replied_at=last_replied_at_by_professor.get(professor.id),
-            tags=_serialize_professor_tags(professor),
+    items: list[ProfessorDashboardItemRead] = []
+    for professor in professors:
+        contact_status = contact_status_by_professor.get(professor.id)
+        latest_match_task = latest_match_task_by_professor.get(professor.id)
+        items.append(
+            ProfessorDashboardItemRead(
+                id=professor.id,
+                name=professor.name,
+                email=professor.email,
+                title=professor.title,
+                university=professor.university,
+                school=professor.school,
+                department=professor.department,
+                research_direction=professor.research_direction,
+                recent_papers=professor.recent_papers or [],
+                match_score=latest_match_task.match_score if latest_match_task else None,
+                sent_count=contact_status.sent_count if contact_status else 0,
+                status=contact_status.status if contact_status else "not_contacted",
+                last_sent_at=contact_status.last_sent_at if contact_status else None,
+                last_replied_at=contact_status.last_replied_at if contact_status else None,
+                tags=_serialize_professor_tags(professor),
+            )
         )
-        for professor in professors
-    ]
+    return items
 
 
 @router.get("/management", response_model=list[ProfessorManagementItemRead])
@@ -908,41 +853,3 @@ async def _load_tags_by_ids(
     if missing:
         raise HTTPException(status_code=400, detail="标签不存在")
     return [tags_by_id[tag_id] for tag_id in tag_ids]
-
-
-def _map_dashboard_status(tasks: list[EmailTask], sent_count: int = 0) -> str:
-    if any(
-        task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value
-        for task in tasks
-    ):
-        return "replied"
-
-    if sent_count > 0 or any(task.status == EmailTaskStatus.SENT.value or task.sent_at for task in tasks):
-        return "contacted"
-
-    if not tasks:
-        return "not_contacted"
-
-    latest_task = tasks[0]
-    if latest_task.status in {
-        EmailTaskStatus.DRAFT_FAILED.value,
-        EmailTaskStatus.SEND_FAILED.value,
-    }:
-        return "failed"
-
-    if latest_task.status in {
-        EmailTaskStatus.APPROVED.value,
-        EmailTaskStatus.SCHEDULED.value,
-        EmailTaskStatus.SENDING.value,
-    }:
-        return "ready_to_send"
-
-    if latest_task.status in {
-        EmailTaskStatus.DISCOVERED.value,
-        EmailTaskStatus.MATCHED.value,
-        EmailTaskStatus.GENERATING_DRAFT.value,
-        EmailTaskStatus.REVIEW_REQUIRED.value,
-    }:
-        return "preparing"
-
-    return "not_contacted"

@@ -188,6 +188,7 @@ const CRAWL_DETAILS_REFRESH_INTERVAL_MS = 5000;
 const SCHEDULE_DATE_PATTERN = /^\d{4}-(\d{2})-(\d{2})$/;
 const TASKS_PAGE_SIZE = 8;
 const MONITOR_SECTION_PAGE_SIZE = 5;
+const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;
 
 const formatScheduleDate = (value: string) => {
   const match = SCHEDULE_DATE_PATTERN.exec(value);
@@ -704,6 +705,8 @@ export const TasksPage = () => {
   const [batchPage, setBatchPage] = useState(1);
   const [matchPage, setMatchPage] = useState(1);
   const [crawlPage, setCrawlPage] = useState(1);
+  const [batchSentItemPage, setBatchSentItemPage] = useState(1);
+  const [batchPendingItemPage, setBatchPendingItemPage] = useState(1);
   const [crawlEventPage, setCrawlEventPage] = useState(1);
   const [crawlDetailPagePage, setCrawlDetailPagePage] = useState(1);
   const [crawlCandidatePage, setCrawlCandidatePage] = useState(1);
@@ -864,13 +867,35 @@ export const TasksPage = () => {
   const selectedBatchWaitingSendCount = selectedBatchTask
     ? getBatchTaskWaitingSendCount(selectedBatchTask)
     : 0;
-  const selectedBatchNeedsManualItems = selectedBatchTaskItems.filter(
-    (item) =>
-      item.next_action === "complete_professor_profile" ||
-      item.next_action === "select_primary_material" ||
-      item.next_action === "review_draft" ||
-      item.next_action === "missing_schedule" ||
-      item.next_action === "retry_draft_generation",
+  const selectedBatchNeedsManualItems = useMemo(
+    () =>
+      selectedBatchTaskItems.filter(
+        (item) =>
+          item.next_action === "complete_professor_profile" ||
+          item.next_action === "select_primary_material" ||
+          item.next_action === "review_draft" ||
+          item.next_action === "missing_schedule" ||
+          item.next_action === "retry_draft_generation",
+      ),
+    [selectedBatchTaskItems],
+  );
+  const visibleSentBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        sentBatchTaskItems,
+        batchSentItemPage,
+        BATCH_DETAIL_ITEM_PAGE_SIZE,
+      ),
+    [batchSentItemPage, sentBatchTaskItems],
+  );
+  const visiblePendingBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        pendingBatchTaskItems,
+        batchPendingItemPage,
+        BATCH_DETAIL_ITEM_PAGE_SIZE,
+      ),
+    [batchPendingItemPage, pendingBatchTaskItems],
   );
   const visibleBatchTasks = useMemo(
     () => getPageItems(tasks, batchPage, TASKS_PAGE_SIZE),
@@ -1305,6 +1330,24 @@ const selectedCrawlJobCanReview =
   }, [crawlJobCandidates.length]);
 
   useEffect(() => {
+    setBatchSentItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(sentBatchTaskItems.length, BATCH_DETAIL_ITEM_PAGE_SIZE),
+      ),
+    );
+  }, [sentBatchTaskItems.length]);
+
+  useEffect(() => {
+    setBatchPendingItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(pendingBatchTaskItems.length, BATCH_DETAIL_ITEM_PAGE_SIZE),
+      ),
+    );
+  }, [pendingBatchTaskItems.length]);
+
+  useEffect(() => {
     if (crawlJobsPreloadedRef.current) {
       return;
     }
@@ -1377,6 +1420,11 @@ const selectedCrawlJobCanReview =
       window.clearInterval(timer);
     };
   }, [loadBatchTaskDetails, selectedBatchTask]);
+
+  useEffect(() => {
+    setBatchSentItemPage(1);
+    setBatchPendingItemPage(1);
+  }, [selectedBatchTask?.id]);
 
   useEffect(() => {
     if (!selectedMatchJob) {
@@ -3255,7 +3303,7 @@ const selectedCrawlJobCanReview =
                 </h3>
                 <div className="mt-3 space-y-2">
                   {sentBatchTaskItems.length > 0 ? (
-                    sentBatchTaskItems.map((item) => (
+                    visibleSentBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-stone-100 px-4 py-3"
@@ -3300,6 +3348,12 @@ const selectedCrawlJobCanReview =
                     </p>
                   )}
                 </div>
+                <TaskListPagination
+                  page={batchSentItemPage}
+                  totalCount={sentBatchTaskItems.length}
+                  onPageChange={setBatchSentItemPage}
+                  pageSize={BATCH_DETAIL_ITEM_PAGE_SIZE}
+                />
               </section>
 
               <section className="mt-6">
@@ -3318,7 +3372,7 @@ const selectedCrawlJobCanReview =
                 ) : null}
                 <div className="mt-3 space-y-2">
                   {pendingBatchTaskItems.length > 0 ? (
-                    pendingBatchTaskItems.map((item) => {
+                    visiblePendingBatchTaskItems.map((item) => {
                       const cancellationText = getBatchTaskItemCancellationText(item);
                       return (
                         <div
@@ -3370,6 +3424,12 @@ const selectedCrawlJobCanReview =
                     </p>
                   )}
                 </div>
+                <TaskListPagination
+                  page={batchPendingItemPage}
+                  totalCount={pendingBatchTaskItems.length}
+                  onPageChange={setBatchPendingItemPage}
+                  pageSize={BATCH_DETAIL_ITEM_PAGE_SIZE}
+                />
               </section>
 
               {generatingDraftBatchTaskItems.length > 0 ? (

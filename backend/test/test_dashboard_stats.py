@@ -384,6 +384,64 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.send_failed_count, 1)
         self.assertEqual(result.email.summary.send_failed_rate, 0.25)
 
+    def test_dashboard_service_counts_workspace_visible_sent_logs_without_task_binding(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+
+        async def seed_unbound_workspace_logs() -> None:
+            async with self.session_factory() as session:
+                zhang_task = await session.scalar(
+                    select(EmailTask).where(EmailTask.match_score == 92)
+                )
+                sun_task = await session.scalar(
+                    select(EmailTask).where(EmailTask.match_score == 85)
+                )
+                assert zhang_task is not None
+                assert sun_task is not None
+                session.add_all(
+                    [
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=zhang_task.professor_id,
+                            direction=EmailDirection.SENT.value,
+                            subject="申请交流",
+                            content="张老师您好",
+                            created_at=datetime.now(UTC) - timedelta(hours=2),
+                        ),
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=sun_task.professor_id,
+                            direction=EmailDirection.SENT.value,
+                            subject="申请交流失败",
+                            content="孙老师您好",
+                            failure_summary="SMTP 失败",
+                            created_at=datetime.now(UTC) - timedelta(hours=1),
+                        ),
+                    ]
+                )
+                await session.commit()
+
+        self._run_async(seed_unbound_workspace_logs())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.mentor.summary.high_score_uncontacted_count, 1)
+        self.assertNotIn("张老师", {item.name for item in result.mentor.high_score_uncontacted})
+        self.assertIn("孙老师", {item.name for item in result.mentor.high_score_uncontacted})
+        self.assertEqual(result.email.summary.sent_count, 4)
+        self.assertEqual(result.email.summary.contacted_professor_count, 3)
+
     def test_dashboard_service_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id, _, alternate_llm_profile_id = self._run_async(self._seed_dashboard_data())
 

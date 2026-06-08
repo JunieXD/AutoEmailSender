@@ -831,6 +831,41 @@ describe("TasksPage crawl job monitor", () => {
 });
 
 describe("TasksPage batch draft review", () => {
+  it("paginates large sent item lists in batch task details", async () => {
+    const task = buildBatchTask({
+      name: "超大批量任务",
+      target_count: 2000,
+      completed_count: 2000,
+      sent_count: 2000,
+      replied_count: 0,
+    });
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      buildBatchItem({
+        id: index + 1,
+        professor_id: index + 1,
+        professor_name: `已发送导师 ${index + 1}`,
+        status: "sent",
+        sent_at: "2026-05-08T01:00:00",
+      }),
+    );
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue(items);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("超大批量任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+
+    expect(await screen.findByText("已发送导师 1")).toBeInTheDocument();
+    expect(screen.getByText("已发送导师 20")).toBeInTheDocument();
+    expect(screen.queryByText("已发送导师 21")).not.toBeInTheDocument();
+    expect(screen.getByText("显示 1-20 / 2000 个任务")).toBeInTheDocument();
+  });
+
   it("opens the generated draft inside the existing batch detail panel", async () => {
     const task = buildBatchTask({
       name: "AI 改写批量任务",

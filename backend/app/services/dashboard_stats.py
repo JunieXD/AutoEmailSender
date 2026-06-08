@@ -29,10 +29,11 @@ from app.schemas.dashboard import (
     DashboardSchoolFilterRead,
     DashboardSchoolFilterSchoolRead,
 )
+from app.services.contact_status import build_contact_status_by_professor
 
 
 HIGH_SCORE_DEFAULT = 80
-EmailTrendEvent = tuple[int, int, datetime]
+EmailTrendEvent = tuple[int | None, int, datetime]
 
 PROFESSOR_STATUS_LABELS: dict[str, str] = {
     "not_contacted": "未联系",
@@ -105,15 +106,14 @@ async def build_dashboard_overview(
         if professor_tasks
     }
     latest_match_score_by_professor = _build_latest_match_score_by_professor(tasks_by_professor)
-    sent_count_by_professor = await _build_sent_count_by_professor(
+    professor_ids = [professor.id for professor in professors]
+    contact_status_by_professor = await build_contact_status_by_professor(
         session,
-        task_ids=[task.id for task in tasks],
+        identity_id=identity_id,
+        professor_ids=professor_ids,
     )
     professor_status_by_id = {
-        professor.id: _map_dashboard_status(
-            tasks_by_professor.get(professor.id, []),
-            sent_count=sent_count_by_professor.get(professor.id, 0),
-        )
+        professor.id: contact_status_by_professor[professor.id].status
         for professor in professors
     }
     filtered_professors = _filter_professors_for_mentor_analysis(
@@ -136,6 +136,8 @@ async def build_dashboard_overview(
     email_section = await _build_email_section(
         session,
         tasks=tasks,
+        identity_id=identity_id,
+        professor_ids=professor_ids,
         professor_status_by_id=professor_status_by_id,
         latest_task_by_professor=latest_task_by_professor,
         threshold=identity.match_threshold or HIGH_SCORE_DEFAULT,
@@ -306,6 +308,8 @@ async def _build_email_section(
     session: AsyncSession,
     *,
     tasks: list[EmailTask],
+    identity_id: int,
+    professor_ids: list[int],
     professor_status_by_id: dict[int, str],
     latest_task_by_professor: dict[int, EmailTask],
     threshold: int,
@@ -323,12 +327,14 @@ async def _build_email_section(
     task_by_id = {task.id: task for task in tasks}
     sent_logs: list[EmailLog] = []
     received_logs: list[EmailLog] = []
-    if task_ids:
+    if professor_ids:
         logs = list(
             await session.scalars(
                 select(EmailLog)
+                .options(selectinload(EmailLog.professor))
                 .where(
-                    EmailLog.email_task_id.in_(task_ids),
+                    EmailLog.identity_id == identity_id,
+                    EmailLog.professor_id.in_(professor_ids),
                     EmailLog.direction.in_(
                         [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
                     ),
@@ -364,11 +370,12 @@ async def _build_email_section(
     sent_events: list[EmailTrendEvent] = []
     seen_sent_log_task_ids: set[int] = set()
     for log in sent_logs:
-        if log.email_task_id is None or log.professor_id is None:
+        if log.professor_id is None:
             continue
         task = task_by_id.get(log.email_task_id)
+        professor = task.professor if task is not None else log.professor
         if not _professor_matches_school_filters(
-            task.professor if task is not None else None,
+            professor,
             university=email_university,
             school=email_school,
         ):
@@ -376,7 +383,8 @@ async def _build_email_section(
         if not _datetime_in_range(log.created_at, start_at=start_at, end_at=end_at):
             continue
         sent_events.append((log.email_task_id, log.professor_id, log.created_at))
-        seen_sent_log_task_ids.add(log.email_task_id)
+        if log.email_task_id is not None:
+            seen_sent_log_task_ids.add(log.email_task_id)
 
     for task in all_sent_tasks:
         if task.id in seen_sent_log_task_ids:
@@ -459,29 +467,6 @@ def _build_latest_match_score_by_professor(
         if latest_score_task is not None and latest_score_task.match_score is not None:
             scores[professor_id] = latest_score_task.match_score
     return scores
-
-
-async def _build_sent_count_by_professor(
-    session: AsyncSession,
-    *,
-    task_ids: list[int],
-) -> dict[int, int]:
-    if not task_ids:
-        return {}
-
-    rows = await session.execute(
-        select(EmailLog.professor_id, EmailLog.id)
-        .where(
-            EmailLog.email_task_id.in_(task_ids),
-            EmailLog.direction == EmailDirection.SENT.value,
-            EmailLog.failure_summary.is_(None),
-        )
-        .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
-    )
-    sent_count_by_professor: dict[int, int] = defaultdict(int)
-    for professor_id, _ in rows.all():
-        sent_count_by_professor[professor_id] += 1
-    return sent_count_by_professor
 
 
 def _build_match_score_distribution(
@@ -907,36 +892,6 @@ def _build_email_follow_up_reason(*, status: str) -> str:
     }.get(status, "待跟进")
 
 
-def _map_dashboard_status(tasks: list[EmailTask], sent_count: int = 0) -> str:
-    if any(task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value for task in tasks):
-        return "replied"
-    if sent_count > 0 or any(task.status == EmailTaskStatus.SENT.value or task.sent_at for task in tasks):
-        return "contacted"
-    if not tasks:
-        return "not_contacted"
-
-    latest_task = tasks[0]
-    if latest_task.status in {
-        EmailTaskStatus.DRAFT_FAILED.value,
-        EmailTaskStatus.SEND_FAILED.value,
-    }:
-        return "failed"
-    if latest_task.status in {
-        EmailTaskStatus.APPROVED.value,
-        EmailTaskStatus.SCHEDULED.value,
-        EmailTaskStatus.SENDING.value,
-    }:
-        return "ready_to_send"
-    if latest_task.status in {
-        EmailTaskStatus.DISCOVERED.value,
-        EmailTaskStatus.MATCHED.value,
-        EmailTaskStatus.GENERATING_DRAFT.value,
-        EmailTaskStatus.REVIEW_REQUIRED.value,
-    }:
-        return "preparing"
-    return "not_contacted"
-
-
 def _has_text(value: str | None) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
@@ -973,5 +928,3 @@ def _floor_day(value: datetime) -> datetime:
     if value.tzinfo is None:
         value = as_utc_aware(value)
     return value.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-
-
