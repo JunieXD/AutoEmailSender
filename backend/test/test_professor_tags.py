@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import os
 import sqlite3
 import tempfile
@@ -11,6 +13,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from test.migrated_database import create_migrated_sqlite_database
+from app.services.professor_management import PROFESSOR_TEMPLATE_COLUMNS
 
 
 class ProfessorTagsApiTests(unittest.TestCase):
@@ -192,6 +195,100 @@ class ProfessorTagsApiTests(unittest.TestCase):
 
         self.assertEqual(delete_response.status_code, 200, msg=delete_response.text)
         self.assertEqual(refreshed["tags"], [])
+
+    def test_import_file_creates_missing_tags_and_preserves_tag_order(self) -> None:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        writer.writerow(
+            [
+                "导入标签导师",
+                "import-tags@example.edu",
+                "教授",
+                "示例大学",
+                "计算机学院",
+                "",
+                "大语言模型",
+                "",
+                "",
+                "",
+                "高意愿；已联系；羊导",
+            ],
+        )
+
+        response = self.client.post(
+            "/api/professors/import-file",
+            files={
+                "file": (
+                    "professors.csv",
+                    buffer.getvalue().encode("utf-8-sig"),
+                    "text/csv",
+                ),
+            },
+        )
+        professors = self.client.get("/api/professors/management").json()
+        imported = next(
+            professor
+            for professor in professors
+            if professor["email"] == "import-tags@example.edu"
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["inserted_count"], 1)
+        self.assertIn("创建标签 1 个", response.json()["message"])
+        self.assertEqual(
+            [tag["name"] for tag in imported["tags"]],
+            ["高意愿", "已联系", "羊导"],
+        )
+        self.assertIn(
+            "已联系",
+            [tag["name"] for tag in self.client.get("/api/professors/tags").json()],
+        )
+
+    def test_import_file_blank_tags_keeps_existing_professor_tags(self) -> None:
+        tag = self.client.get("/api/professors/tags").json()[0]
+        created = self.client.post(
+            "/api/professors",
+            json={
+                "name": "保留标签导师",
+                "email": "keep-tags@example.edu",
+                "tag_ids": [tag["id"]],
+            },
+        ).json()
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        writer.writerow(
+            [
+                "保留标签导师更新",
+                "keep-tags@example.edu",
+                "教授",
+                "示例大学",
+                "",
+                "",
+                "智能体",
+                "",
+                "",
+                "",
+                "",
+            ],
+        )
+
+        response = self.client.post(
+            "/api/professors/import-file",
+            files={
+                "file": (
+                    "professors.csv",
+                    buffer.getvalue().encode("utf-8-sig"),
+                    "text/csv",
+                ),
+            },
+        )
+        refreshed = self.client.get(f"/api/professors/{created['id']}").json()
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["updated_count"], 1)
+        self.assertEqual([item["id"] for item in refreshed["tags"]], [tag["id"]])
 
 
 if __name__ == "__main__":

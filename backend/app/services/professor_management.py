@@ -28,8 +28,12 @@ PROFESSOR_TEMPLATE_COLUMNS = [
     "recent_papers",
     "profile_url",
     "source_url",
+    "tags",
 ]
-PROFESSOR_EXPORT_COLUMNS = [*PROFESSOR_TEMPLATE_COLUMNS, "tags"]
+PROFESSOR_LEGACY_TEMPLATE_COLUMNS = [
+    column for column in PROFESSOR_TEMPLATE_COLUMNS if column != "tags"
+]
+PROFESSOR_EXPORT_COLUMNS = PROFESSOR_TEMPLATE_COLUMNS
 
 PROFESSOR_TEMPLATE_HELP_LINES = [
     "# 导师导入模板",
@@ -45,6 +49,7 @@ PROFESSOR_TEMPLATE_HELP_LINES = [
     "# recent_papers：近期论文，多篇用 | 分隔；最多保留前 8 篇。示例：Paper A|Paper B",
     "# profile_url：导师主页链接。示例：https://example.edu/zhang",
     "# source_url：数据来源链接。示例：https://example.edu/faculty",
+    "# tags：导师标签，多个标签用中文分号 ； 分隔；也兼容英文分号 ;、竖线 |、逗号 ,。示例：高意愿；羊导",
 ]
 
 PROFESSOR_TEMPLATE_EXAMPLE_ROW = [
@@ -58,6 +63,7 @@ PROFESSOR_TEMPLATE_EXAMPLE_ROW = [
     "Paper A|Paper B",
     "https://example.edu/zhang",
     "https://example.edu/faculty",
+    "高意愿；羊导",
 ]
 
 SUPPORTED_IMPORT_EXTENSIONS = {".csv", ".xlsx"}
@@ -93,6 +99,7 @@ EMAIL_DOT_PATTERN = re.compile(
 EMAIL_CHINESE_DOT_PATTERN = re.compile(r"(?<=[A-Za-z0-9])\s*点\s*(?=[A-Za-z0-9])")
 SPREADSHEET_FORMULA_PREFIXES = ("=", "+", "-", "@")
 TITLE_SPLIT_PATTERN = re.compile(r"[、，,/／|｜；;\s]+")
+TAG_SPLIT_PATTERN = re.compile(r"[；;|｜,，]+")
 ALLOWED_TITLES = (
     "教授",
     "副教授",
@@ -398,9 +405,11 @@ def _parse_tabular_rows(rows: list[list[Any] | tuple[Any, ...]]) -> list[dict[st
 def _find_header_row_index(rows: list[list[Any] | tuple[Any, ...]]) -> int:
     for index, row in enumerate(rows):
         normalized = [str(cell).strip() if cell is not None else "" for cell in row]
-        if all(column in normalized for column in PROFESSOR_TEMPLATE_COLUMNS):
+        if all(column in normalized for column in PROFESSOR_LEGACY_TEMPLATE_COLUMNS):
             return index
-    raise ValueError(f"导入文件缺少必要列：{', '.join(PROFESSOR_TEMPLATE_COLUMNS)}")
+    raise ValueError(
+        f"导入文件缺少必要列：{', '.join(PROFESSOR_LEGACY_TEMPLATE_COLUMNS)}",
+    )
 
 
 def _validate_columns(columns: list[str] | tuple[str, ...] | None) -> None:
@@ -408,7 +417,9 @@ def _validate_columns(columns: list[str] | tuple[str, ...] | None) -> None:
         raise ValueError("导入文件缺少表头")
 
     normalized = [str(item).strip() for item in columns]
-    missing = [column for column in PROFESSOR_TEMPLATE_COLUMNS if column not in normalized]
+    missing = [
+        column for column in PROFESSOR_LEGACY_TEMPLATE_COLUMNS if column not in normalized
+    ]
     if missing:
         raise ValueError(f"导入文件缺少必要列：{', '.join(missing)}")
 
@@ -434,6 +445,7 @@ def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "recent_papers": _parse_recent_papers(raw_values["recent_papers"]),
         "profile_url": raw_values["profile_url"],
         "source_url": raw_values["source_url"],
+        "tag_names": _parse_tag_names(raw_values["tags"]),
     }
 
 
@@ -459,3 +471,18 @@ def _clean_cell_value(value: Any) -> str | None:
 
 def _parse_recent_papers(value: str | None) -> list[str]:
     return normalize_recent_papers(value)
+
+
+def _parse_tag_names(value: str | None) -> list[str]:
+    if not value:
+        return []
+
+    tag_names = []
+    seen = set()
+    for item in TAG_SPLIT_PATTERN.split(value):
+        name = item.strip()
+        if not name or name in seen:
+            continue
+        tag_names.append(name)
+        seen.add(name)
+    return tag_names

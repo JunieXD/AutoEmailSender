@@ -133,6 +133,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
                 "recent_papers": ["Paper C"],
                 "profile_url": "https://example.edu/new",
                 "source_url": "https://example.edu/faculty",
+                "tag_names": [],
             },
         )
 
@@ -152,6 +153,49 @@ class ProfessorManagementServiceTests(unittest.TestCase):
             parsed.data["zhang@example.edu"]["recent_papers"],
             ["Paper1", "Paper2", "Paper3", "Paper4", "Paper5", "Paper6", "Paper7", "Paper8"],
         )
+
+    def test_parse_csv_import_reads_tags_from_supported_separators(self) -> None:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        writer.writerow(
+            [
+                "张三",
+                "zhang@example.edu",
+                "教授",
+                "示例大学",
+                "人工智能学院",
+                "计算机科学系",
+                "大语言模型",
+                "",
+                "",
+                "",
+                "高意愿； 羊导;高强度|已联系,重点关注",
+            ],
+        )
+
+        parsed = parse_professor_import_file(
+            "professors.csv",
+            buffer.getvalue().encode("utf-8-sig"),
+        )
+
+        self.assertEqual(
+            parsed.data["zhang@example.edu"]["tag_names"],
+            ["高意愿", "羊导", "高强度", "已联系", "重点关注"],
+        )
+
+    def test_parse_csv_import_accepts_legacy_template_without_tags_column(self) -> None:
+        legacy_columns = [column for column in PROFESSOR_TEMPLATE_COLUMNS if column != "tags"]
+        csv_content = (
+            ",".join(legacy_columns)
+            + "\n"
+            + "张三,zhang@example.edu,教授,示例大学,人工智能学院,计算机科学系,大语言模型,,,,\n"
+        ).encode("utf-8-sig")
+
+        parsed = parse_professor_import_file("professors.csv", csv_content)
+
+        self.assertEqual(parsed.failed_count, 0)
+        self.assertEqual(parsed.data["zhang@example.edu"]["tag_names"], [])
 
     def test_parse_xlsx_import_finds_header_after_help_rows_and_reads_sparse_rows(self) -> None:
         workbook = Workbook()
@@ -190,6 +234,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(csv_filename, "professors_import_template.csv")
         self.assertTrue(csv_content.startswith(b"\xef\xbb\xbf"))
         self.assertIn("name,email,title", csv_content.decode("utf-8-sig"))
+        self.assertIn("tags", csv_content.decode("utf-8-sig").splitlines()[-2])
 
         self.assertEqual(
             xlsx_media_type,
@@ -197,6 +242,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         )
         self.assertEqual(xlsx_filename, "professors_import_template.xlsx")
         self.assertGreater(len(xlsx_content), 100)
+        workbook = load_workbook(io.BytesIO(xlsx_content), read_only=True, data_only=True)
+        rows = list(workbook.active.iter_rows(values_only=True))
+        self.assertIn("tags", rows[-2])
 
         with self.assertRaisesRegex(ValueError, "仅支持 csv 或 xlsx 模板"):
             build_professor_template("json")
@@ -310,7 +358,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(rows[1][5], "'=计算机科学系")
         self.assertEqual(rows[1][7], "'=Paper A|'+Paper B|Normal Paper")
 
-    def test_build_professor_export_includes_tags_column_for_view_only(self) -> None:
+    def test_build_professor_export_includes_tags_column_for_round_trip_import(self) -> None:
         tag = type(
             "Tag",
             (),
@@ -340,6 +388,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         parsed = parse_professor_import_file(filename, content)
         self.assertEqual(parsed.failed_count, 0)
         self.assertEqual(parsed.data["li@example.edu"]["name"], "李伟")
+        self.assertEqual(parsed.data["li@example.edu"]["tag_names"], ["高意愿"])
 
 
 if __name__ == "__main__":

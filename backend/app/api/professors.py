@@ -49,6 +49,8 @@ from app.services.sample_professors import SAMPLE_PROFESSORS
 
 
 router = APIRouter(prefix="/api/professors", tags=["professors"])
+DEFAULT_IMPORTED_TAG_TEXT_COLOR = "#166534"
+DEFAULT_IMPORTED_TAG_BACKGROUND_COLOR = "#dcfce7"
 
 
 def _keep_latest_timestamp(
@@ -260,6 +262,7 @@ async def import_professors_from_file(
 
     inserted_count = 0
     updated_count = 0
+    created_tag_count = 0
     if parsed.data:
         existing_professors = {
             professor.email.lower(): professor
@@ -274,7 +277,17 @@ async def import_professors_from_file(
         for email, payload in parsed.data.items():
             professor = existing_professors.get(email)
             if professor is None:
-                session.add(Professor(**payload))
+                professor_data = {
+                    key: value for key, value in payload.items() if key != "tag_names"
+                }
+                professor = Professor(**professor_data)
+                session.add(professor)
+                await session.flush()
+                created_tag_count += await _sync_professor_tags_by_names(
+                    session,
+                    professor,
+                    payload["tag_names"],
+                )
                 inserted_count += 1
                 continue
 
@@ -288,6 +301,12 @@ async def import_professors_from_file(
             professor.recent_papers = payload["recent_papers"]
             professor.profile_url = payload["profile_url"]
             professor.source_url = payload["source_url"]
+            if payload["tag_names"]:
+                created_tag_count += await _sync_professor_tags_by_names(
+                    session,
+                    professor,
+                    payload["tag_names"],
+                )
             professor.archived_at = None
             professor.updated_at = utc_now()
             updated_count += 1
@@ -301,6 +320,7 @@ async def import_professors_from_file(
             "filename": file.filename,
             "inserted_count": inserted_count,
             "updated_count": updated_count,
+            "created_tag_count": created_tag_count,
             "failed_count": parsed.failed_count,
             "row_count": len(parsed.data),
         },
@@ -312,7 +332,8 @@ async def import_professors_from_file(
         updated_count=updated_count,
         failed_count=parsed.failed_count,
         message=(
-            f"导入完成：新增 {inserted_count} 条，更新 {updated_count} 条，失败 {parsed.failed_count} 条。"
+            f"导入完成：新增 {inserted_count} 条，更新 {updated_count} 条，"
+            f"创建标签 {created_tag_count} 个，失败 {parsed.failed_count} 条。"
         ),
     )
 
@@ -821,6 +842,48 @@ async def _sync_professor_tags(
     session.expire(professor, ["tags"])
 
 
+async def _sync_professor_tags_by_names(
+    session: AsyncSession,
+    professor: Professor,
+    tag_names: list[str],
+) -> int:
+    tags, created_count = await _load_or_create_tags_by_names(session, tag_names)
+    await _sync_professor_tags(session, professor, [tag.id for tag in tags])
+    return created_count
+
+
+async def _load_or_create_tags_by_names(
+    session: AsyncSession,
+    tag_names: list[str],
+) -> tuple[list[ProfessorTag], int]:
+    if not tag_names:
+        return [], 0
+
+    existing_tags = list(
+        (
+            await session.execute(
+                select(ProfessorTag).where(ProfessorTag.name.in_(tag_names)),
+            )
+        ).scalars(),
+    )
+    tags_by_name = {tag.name: tag for tag in existing_tags}
+    created_count = 0
+    for name in tag_names:
+        if name in tags_by_name:
+            continue
+        tag = ProfessorTag(
+            name=name,
+            text_color=DEFAULT_IMPORTED_TAG_TEXT_COLOR,
+            background_color=DEFAULT_IMPORTED_TAG_BACKGROUND_COLOR,
+        )
+        session.add(tag)
+        await session.flush()
+        tags_by_name[name] = tag
+        created_count += 1
+
+    return [tags_by_name[name] for name in tag_names], created_count
+
+
 async def _load_tags_by_ids(
     session: AsyncSession,
     tag_ids: list[int],
@@ -883,4 +946,3 @@ def _map_dashboard_status(tasks: list[EmailTask], sent_count: int = 0) -> str:
         return "preparing"
 
     return "not_contacted"
-
