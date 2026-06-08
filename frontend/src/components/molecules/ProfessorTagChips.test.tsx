@@ -10,10 +10,10 @@ const tag = (id: number, name: string) => ({
 });
 
 describe("ProfessorTagChips", () => {
-  it("shows no tag state", () => {
+  it("hides empty tag placeholder when there are no tags", () => {
     render(<ProfessorTagChips tags={[]} />);
 
-    expect(screen.getByText("暂无标签")).toBeInTheDocument();
+    expect(screen.queryByText("暂无标签")).not.toBeInTheDocument();
   });
 
   it("limits visible tags and shows overflow count", () => {

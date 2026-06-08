@@ -51,9 +51,6 @@ export const ProfessorTagChips = ({
         data-testid="professor-tag-chips"
         className={`flex min-w-0 flex-wrap items-center gap-1.5 ${className}`}
       >
-        <span className="inline-flex max-w-full items-center rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs font-medium text-stone-500">
-          暂无标签
-        </span>
         {onAddTag ? (
           <button
             type="button"

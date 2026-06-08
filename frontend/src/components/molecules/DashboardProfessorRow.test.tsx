@@ -71,6 +71,7 @@ describe("DashboardProfessorRow", () => {
       />,
     );
 
+    expect(screen.queryByText("暂无标签")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "给导师添加标签" }));
 
     expect(handleAddTag).toHaveBeenCalled();

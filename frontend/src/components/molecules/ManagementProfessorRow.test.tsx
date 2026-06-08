@@ -112,4 +112,27 @@ describe("ManagementProfessorRow", () => {
 
     expect(handleAddTag).toHaveBeenCalled();
   });
+
+  it("hides empty tag placeholder while keeping add button", () => {
+    const handleAddTag = vi.fn();
+
+    render(
+      <ManagementProfessorRow
+        professor={{ ...professor, tags: [] }}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onAddTag={handleAddTag}
+      />,
+    );
+
+    expect(screen.queryByText("暂无标签")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "给导师添加标签" }));
+
+    expect(handleAddTag).toHaveBeenCalled();
+  });
 });
