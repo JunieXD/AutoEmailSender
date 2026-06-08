@@ -51,6 +51,26 @@ describe("DashboardProfessorRow", () => {
     expect(nameLine).toHaveTextContent("高意愿");
   });
 
+  it("renders homepage tags as non-draggable display chips", () => {
+    render(
+      <DashboardProfessorRow
+        professor={professor}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("高意愿")).not.toHaveAttribute("draggable", "true");
+  });
+
   it("shows add tag button when professor has no tags", () => {
     const handleAddTag = vi.fn();
 
@@ -77,9 +97,7 @@ describe("DashboardProfessorRow", () => {
     expect(handleAddTag).toHaveBeenCalled();
   });
 
-  it("notifies when homepage tag order changes", () => {
-    const handleTagOrderChange = vi.fn();
-
+  it("renders homepage overflow tags as non-draggable display chips", () => {
     render(
       <DashboardProfessorRow
         professor={{
@@ -115,14 +133,14 @@ describe("DashboardProfessorRow", () => {
         onToggleSelection={vi.fn()}
         onCalculateMatch={vi.fn()}
         onOpenWorkspace={vi.fn()}
-        onTagOrderChange={handleTagOrderChange}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "查看全部标签，剩余 1 个" }));
     const dialog = screen.getByRole("dialog", { name: "折叠标签" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "选择标签 高强度" }));
-
-    expect(handleTagOrderChange).toHaveBeenCalledWith([3, 1, 2]);
+    expect(within(dialog).getByText("高强度")).not.toHaveAttribute(
+      "draggable",
+      "true",
+    );
   });
 });

@@ -342,9 +342,6 @@ export const HomePage = () => {
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
-  const tagOrderSaveRef = useRef<
-    Map<number, { saving: boolean; pendingTagIds: number[] | null }>
-  >(new Map());
   const filtersSessionKeyRef = useRef(dashboardFiltersSessionKey);
   const skipNextFiltersPersistRef = useRef(false);
   const professorsRequestKey =
@@ -548,33 +545,6 @@ export const HomePage = () => {
     );
     if (saved) {
       closeTagEditor();
-    }
-  };
-
-  const handleDashboardTagOrderChange = async (
-    professor: ProfessorDashboardItemDTO,
-    tagIds: number[],
-  ) => {
-    const existingState = tagOrderSaveRef.current.get(professor.id);
-    if (existingState?.saving) {
-      existingState.pendingTagIds = tagIds;
-      return;
-    }
-
-    const saveState = { saving: true, pendingTagIds: null as number[] | null };
-    tagOrderSaveRef.current.set(professor.id, saveState);
-
-    try {
-      let nextTagIds: number[] | null = tagIds;
-      while (nextTagIds) {
-        const currentTagIds = nextTagIds;
-        nextTagIds = null;
-        await saveProfessorTags(professor, currentTagIds);
-        nextTagIds = saveState.pendingTagIds;
-        saveState.pendingTagIds = null;
-      }
-    } finally {
-      tagOrderSaveRef.current.delete(professor.id);
     }
   };
 
@@ -1347,9 +1317,6 @@ export const HomePage = () => {
                   onCalculateMatch={() => void handleGenerateOne(professor.id)}
                   onOpenWorkspace={() => navigate(`/workspace/${professor.id}`)}
                   onAddTag={() => openTagEditor(professor)}
-                  onTagOrderChange={(tagIds) =>
-                    void handleDashboardTagOrderChange(professor, tagIds)
-                  }
                 />
               ))}
             </div>
