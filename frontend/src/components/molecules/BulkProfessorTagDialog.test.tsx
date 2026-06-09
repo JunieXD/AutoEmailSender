@@ -83,10 +83,15 @@ describe("BulkProfessorTagDialog", () => {
     expect(screen.getByRole("button", { name: "移除标签" })).toBeDisabled();
   });
 
-  it("calls delete tag callback from each tag row", () => {
+  it("reveals tag delete buttons after entering delete mode", () => {
     const onDeleteTag = vi.fn();
     renderDialog({ onDeleteTag });
 
+    expect(
+      screen.queryByRole("button", { name: "删除标签 高意愿" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除标签" }));
     fireEvent.click(screen.getByRole("button", { name: "删除标签 高意愿" }));
 
     expect(onDeleteTag).toHaveBeenCalledWith(tags[0]);

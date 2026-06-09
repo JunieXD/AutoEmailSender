@@ -1057,6 +1057,9 @@ describe("selection controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "选择标签 高意愿" }));
     fireEvent.click(screen.getByRole("button", { name: "追加标签" }));
 
+    expect(bulkUpdateProfessorTags).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "确认追加" }));
+
     await waitFor(() => {
       expect(bulkUpdateProfessorTags).toHaveBeenCalledWith({
         professor_ids: [11],
@@ -1079,6 +1082,10 @@ describe("selection controls", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
     fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    expect(
+      screen.queryByRole("button", { name: "删除标签 高意愿" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "删除标签" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "删除标签 高意愿" }),
     );
@@ -1127,6 +1134,9 @@ describe("selection controls", () => {
     fireEvent.click(await screen.findByRole("button", { name: "切换为移除标签" }));
     fireEvent.click(screen.getByRole("button", { name: "选择标签 高意愿" }));
     fireEvent.click(screen.getByRole("button", { name: "移除标签" }));
+
+    expect(bulkUpdateProfessorTags).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "确认移除" }));
 
     await waitFor(() => {
       expect(bulkUpdateProfessorTags).toHaveBeenCalledWith({

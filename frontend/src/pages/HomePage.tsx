@@ -94,6 +94,27 @@ type ProfessorDashboardTimeSortKey = Extract<
   "lastSentAt" | "lastRepliedAt"
 >;
 
+const bulkTagConfirmLabels: Record<
+  ProfessorBulkTagModeDTO,
+  { title: string; confirmLabel: string; actionDescription: string }
+> = {
+  add: {
+    title: "确认追加标签？",
+    confirmLabel: "确认追加",
+    actionDescription: "追加到",
+  },
+  remove: {
+    title: "确认移除标签？",
+    confirmLabel: "确认移除",
+    actionDescription: "从",
+  },
+  replace: {
+    title: "确认覆盖标签？",
+    confirmLabel: "确认覆盖",
+    actionDescription: "覆盖",
+  },
+};
+
 const DEFAULT_TIME_SORT_DIRECTIONS: Record<
   ProfessorDashboardTimeSortKey,
   ProfessorDashboardSortDirection
@@ -613,6 +634,25 @@ export const HomePage = () => {
   }) => {
     if (selectedIds.size === 0) {
       notifyWarning("请先选择导师", "选择至少一位导师后再批量修改标签。");
+      return;
+    }
+    const labels = bulkTagConfirmLabels[mode];
+    const tagNames = tagIds
+      .map((tagId) => professorTags.find((tag) => tag.id === tagId)?.name)
+      .filter((tagName): tagName is string => Boolean(tagName));
+    const tagDescription =
+      tagNames.length > 0 ? tagNames.join("、") : "不选择任何标签";
+    const confirmed = await confirm({
+      title: labels.title,
+      description:
+        mode === "replace" && tagIds.length === 0
+          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。`
+          : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
+      confirmLabel: labels.confirmLabel,
+      cancelLabel: "先不处理",
+      tone: mode === "remove" || mode === "replace" ? "danger" : "default",
+    });
+    if (!confirmed) {
       return;
     }
     setSavingBulkTags(true);

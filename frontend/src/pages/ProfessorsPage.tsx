@@ -120,6 +120,27 @@ const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
 
+const bulkTagConfirmLabels: Record<
+  ProfessorBulkTagModeDTO,
+  { title: string; confirmLabel: string; actionDescription: string }
+> = {
+  add: {
+    title: "确认追加标签？",
+    confirmLabel: "确认追加",
+    actionDescription: "追加到",
+  },
+  remove: {
+    title: "确认移除标签？",
+    confirmLabel: "确认移除",
+    actionDescription: "从",
+  },
+  replace: {
+    title: "确认覆盖标签？",
+    confirmLabel: "确认覆盖",
+    actionDescription: "覆盖",
+  },
+};
+
 const archiveFilterLabels: Record<ArchiveFilter, string> = {
   active: "正常",
   archived: "已删除",
@@ -1001,6 +1022,25 @@ export const ProfessorsPage = () => {
   }) => {
     if (selectedIds.size === 0) {
       notifyWarning("请先选择导师", "选择至少一位导师后再批量修改标签。");
+      return;
+    }
+    const labels = bulkTagConfirmLabels[mode];
+    const tagNames = tagIds
+      .map((tagId) => professorTags.find((tag) => tag.id === tagId)?.name)
+      .filter((tagName): tagName is string => Boolean(tagName));
+    const tagDescription =
+      tagNames.length > 0 ? tagNames.join("、") : "不选择任何标签";
+    const confirmed = await confirm({
+      title: labels.title,
+      description:
+        mode === "replace" && tagIds.length === 0
+          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。`
+          : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
+      confirmLabel: labels.confirmLabel,
+      cancelLabel: "先不处理",
+      tone: mode === "remove" || mode === "replace" ? "danger" : "default",
+    });
+    if (!confirmed) {
       return;
     }
     setSavingBulkTags(true);

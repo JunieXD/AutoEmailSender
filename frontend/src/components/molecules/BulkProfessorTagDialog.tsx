@@ -42,6 +42,7 @@ export const BulkProfessorTagDialog = ({
   const [mode, setMode] = useState<ProfessorBulkTagModeDTO>("add");
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
   const [creatingCustomTag, setCreatingCustomTag] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
   const [name, setName] = useState("");
   const [textColor, setTextColor] = useState(DEFAULT_TEXT_COLOR);
   const [backgroundColor, setBackgroundColor] = useState(
@@ -58,6 +59,7 @@ export const BulkProfessorTagDialog = ({
     setMode("add");
     setSelectedTagIds([]);
     setCreatingCustomTag(false);
+    setDeleteMode(false);
     setName("");
     setTextColor(DEFAULT_TEXT_COLOR);
     setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
@@ -102,6 +104,7 @@ export const BulkProfessorTagDialog = ({
         setTextColor(DEFAULT_TEXT_COLOR);
         setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
         setCreatingCustomTag(false);
+        setDeleteMode(false);
       }
     } finally {
       createInFlightRef.current = false;
@@ -195,15 +198,17 @@ export const BulkProfessorTagDialog = ({
                   {selected ? <Check className="h-3.5 w-3.5" /> : null}
                   {tag.name}
                 </button>
-                <button
-                  type="button"
-                  aria-label={`删除标签 ${tag.name}`}
-                  disabled={busy}
-                  onClick={() => onDeleteTag(tag)}
-                  className="inline-flex w-9 items-center justify-center border-l border-stone-200 bg-white text-stone-400 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {deleteMode ? (
+                  <button
+                    type="button"
+                    aria-label={`删除标签 ${tag.name}`}
+                    disabled={busy}
+                    onClick={() => onDeleteTag(tag)}
+                    className="inline-flex w-9 items-center justify-center border-l border-stone-200 bg-white text-stone-400 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
             );
           })}
@@ -215,15 +220,34 @@ export const BulkProfessorTagDialog = ({
           </div>
         ) : null}
 
-        <div className="mt-5">
+        <div className="mt-5 flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => setCreatingCustomTag((previous) => !previous)}
+            onClick={() => {
+              setCreatingCustomTag((previous) => !previous);
+              setDeleteMode(false);
+            }}
             disabled={busy}
             className="ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Plus className="h-4 w-4" />
             新增标签
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteMode((previous) => !previous);
+              setCreatingCustomTag(false);
+            }}
+            disabled={busy || tags.length === 0}
+            aria-pressed={deleteMode}
+            className={clsx(
+              "ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60",
+              deleteMode ? "border-red-200 bg-red-50 text-red-700" : "",
+            )}
+          >
+            <Trash2 className="h-4 w-4" />
+            删除标签
           </button>
         </div>
 
