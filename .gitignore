@@ -12,6 +12,7 @@ data/
 data/uploads/
 frontend/dist/
 website/.vitepress/dist/
+website/.vitepress/cache/
 backend/build/
 backend/dist/
 backend/ms-playwright/
