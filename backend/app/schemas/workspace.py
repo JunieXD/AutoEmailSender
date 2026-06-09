@@ -34,6 +34,15 @@ class WorkspaceLLMRead(ApiSchema):
     model_name: str
 
 
+class WorkspaceDraftRead(ApiSchema):
+    subject: str | None
+    body_text: str
+    body_html: str | None
+    source: str
+    sendable: bool
+    editable: bool
+
+
 class WorkspaceTaskSummaryRead(ApiSchema):
     id: int | None
     source: str | None
@@ -78,6 +87,7 @@ class WorkspaceTaskSummaryRead(ApiSchema):
     last_draft_prompt_tokens: int | None = None
     last_draft_completion_tokens: int | None = None
     last_draft_total_tokens: int | None = None
+    draft: WorkspaceDraftRead
 
 
 class WorkspaceMessageRead(ApiSchema):

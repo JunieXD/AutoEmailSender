@@ -24,6 +24,7 @@ from app.models import (
     Professor,
 )
 from app.schemas.workspace import (
+    WorkspaceDraftRead,
     WorkspaceIdentityRead,
     WorkspaceLLMRead,
     WorkspaceMessageRead,
@@ -233,6 +234,10 @@ async def _build_workspace_thread_read(
             last_draft_prompt_tokens=latest_draft_usage.get("prompt_tokens"),
             last_draft_completion_tokens=latest_draft_usage.get("completion_tokens"),
             last_draft_total_tokens=latest_draft_usage.get("total_tokens"),
+            draft=_build_workspace_draft(
+                task=current_task,
+                rendered_template=rendered_template,
+            ),
         ),
         messages=[_serialize_workspace_message(log) for log in logs],
     )
@@ -573,9 +578,6 @@ def _render_workspace_template_summary(
     professor: Professor,
     outreach_config,
 ) -> RenderedOutreachTemplate | None:
-    if outreach_config.generation_mode != OUTREACH_GENERATION_MODE_TEMPLATE:
-        return None
-
     try:
         return render_outreach_template(
             identity,
@@ -586,6 +588,100 @@ def _render_workspace_template_summary(
         )
     except ValueError:
         return None
+
+
+def _build_workspace_draft(
+    *,
+    task: EmailTask | None,
+    rendered_template: RenderedOutreachTemplate | None,
+) -> WorkspaceDraftRead:
+    if task is not None and task.status == EmailTaskStatus.GENERATING_DRAFT.value:
+        return WorkspaceDraftRead(
+            subject=_first_text(
+                task.draft_rewrite_source_subject,
+                task.approved_subject,
+                task.generated_subject,
+                rendered_template.subject if rendered_template else None,
+            ),
+            body_text=_first_text(
+                task.draft_rewrite_source_body_text,
+                task.approved_body_text,
+                task.generated_content_text,
+                rendered_template.body_text if rendered_template else None,
+            ) or "",
+            body_html=_first_text(
+                task.draft_rewrite_source_body_html,
+                task.approved_body_html,
+                task.generated_content_html,
+                rendered_template.body_html if rendered_template else None,
+            ),
+            source="rewrite_source",
+            sendable=False,
+            editable=False,
+        )
+
+    if task is not None and _has_meaningful_body(task.approved_body_text, task.approved_body_html):
+        subject = task.approved_subject
+        body_text = task.approved_body_text or ""
+        body_html = task.approved_body_html
+        source = "saved"
+    elif task is not None and _has_meaningful_body(task.generated_content_text, task.generated_content_html):
+        subject = task.generated_subject
+        body_text = task.generated_content_text or ""
+        body_html = task.generated_content_html
+        source = "ai_rewrite"
+    elif rendered_template is not None and _has_meaningful_body(
+        rendered_template.body_text,
+        rendered_template.body_html,
+    ):
+        subject = rendered_template.subject
+        body_text = rendered_template.body_text
+        body_html = rendered_template.body_html
+        source = "template"
+    else:
+        subject = None
+        body_text = ""
+        body_html = None
+        source = "manual_empty"
+
+    blocked = _task_blocks_draft_actions(task)
+    return WorkspaceDraftRead(
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        source=source,
+        sendable=_has_meaningful_body(body_text, body_html) and not blocked,
+        editable=not blocked,
+    )
+
+
+def _has_meaningful_body(body_text: str | None, body_html: str | None) -> bool:
+    return bool((body_text or "").strip() or (body_html or "").strip())
+
+
+def _first_text(*values: str | None) -> str | None:
+    for value in values:
+        if value is not None and value.strip():
+            return value
+    return None
+
+
+def _task_blocks_draft_actions(task: EmailTask | None) -> bool:
+    if task is None:
+        return False
+    return bool(
+        task.status in {
+            EmailTaskStatus.GENERATING_DRAFT.value,
+            EmailTaskStatus.SENDING.value,
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+            EmailTaskStatus.CANCELED.value,
+        }
+        or task.sent_at
+        or task.is_replied
+        or _can_continue_manually(task)
+        or _can_write_follow_up(task)
+    )
 
 
 def _resolve_task_outreach_config(identity: IdentityProfile, task: EmailTask):
@@ -649,5 +745,4 @@ def _should_resume_workspace_task(task: EmailTask | None) -> bool:
     ):
         return True
     return task.status == EmailTaskStatus.SEND_FAILED.value
-
 
