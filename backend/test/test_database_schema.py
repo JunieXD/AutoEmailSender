@@ -285,6 +285,15 @@ class DatabaseSchemaTests(unittest.TestCase):
             }.issubset(match_job_item_indexes),
         )
 
+    def test_email_tasks_contains_workspace_rewrite_fields(self) -> None:
+        task_columns = self._get_columns("email_tasks")
+
+        self.assertIn("draft_generation_started_at", task_columns)
+        self.assertIn("draft_rewrite_source_subject", task_columns)
+        self.assertIn("draft_rewrite_source_body_text", task_columns)
+        self.assertIn("draft_rewrite_source_body_html", task_columns)
+        self.assertIn("draft_rewrite_source_selected_material_ids", task_columns)
+
     def test_task_tables_have_deleted_at_for_trash(self) -> None:
         self.assertIn("deleted_at", self._get_columns("batch_tasks"))
         self.assertIn("deleted_at", self._get_columns("crawl_jobs"))
