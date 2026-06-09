@@ -652,7 +652,7 @@ export const HomePage = () => {
           : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
       confirmLabel: labels.confirmLabel,
       cancelLabel: "先不处理",
-      tone: mode === "remove" || mode === "replace" ? "danger" : "default",
+      tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
     });
     if (!confirmed) {
       return;
@@ -1518,9 +1518,9 @@ export const HomePage = () => {
         </section>
 
         {selectedIds.size > 0 ? (
-          <div className="sticky bottom-4 z-20 mt-6">
-            <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
-              <div>
+          <div className="sticky bottom-4 z-20 mt-6 flex justify-center px-2">
+            <div className="flex w-fit max-w-full flex-wrap items-center justify-center gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
+              <div className="shrink-0">
                 <div className="text-sm font-medium text-stone-900">
                   已选中 {selectedIds.size} 位导师
                 </div>
@@ -1528,7 +1528,7 @@ export const HomePage = () => {
                   可批量分析匹配度，或创建批量任务。
                 </div>
               </div>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap justify-center gap-3">
                 <button
                   type="button"
                   onClick={() => setSelectedIds(new Set())}

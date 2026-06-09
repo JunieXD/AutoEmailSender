@@ -1040,7 +1040,7 @@ export const ProfessorsPage = () => {
           : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
       confirmLabel: labels.confirmLabel,
       cancelLabel: "先不处理",
-      tone: mode === "remove" || mode === "replace" ? "danger" : "default",
+      tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
     });
     if (!confirmed) {
       return;

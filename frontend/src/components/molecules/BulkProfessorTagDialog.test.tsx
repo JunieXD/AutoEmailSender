@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { BulkProfessorTagDialog } from "./BulkProfessorTagDialog";
-import type { ProfessorTagDTO } from "@/types";
+import type { ProfessorBulkTagModeDTO, ProfessorTagDTO } from "@/types";
 
 const tags: ProfessorTagDTO[] = [
   {
@@ -22,8 +22,11 @@ const renderDialog = ({
   onSave = vi.fn(),
   onDeleteTag = vi.fn(),
 }: {
-  onSave?: ReturnType<typeof vi.fn>;
-  onDeleteTag?: ReturnType<typeof vi.fn>;
+  onSave?: (payload: {
+    mode: ProfessorBulkTagModeDTO;
+    tagIds: number[];
+  }) => void;
+  onDeleteTag?: (tag: ProfessorTagDTO) => void;
 } = {}) =>
   render(
     <BulkProfessorTagDialog
