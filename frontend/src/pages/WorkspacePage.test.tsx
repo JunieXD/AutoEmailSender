@@ -241,6 +241,100 @@ beforeEach(() => {
 });
 
 describe("WorkspacePage draft saving", () => {
+  it("disables rewrite save send schedule and editor while rewriting", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          status: "generating_draft",
+          draft: {
+            subject: "源主题",
+            body_text: "源正文",
+            body_html: "<p>源正文</p>",
+            source: "rewrite_source",
+            sendable: false,
+            editable: false,
+          },
+        },
+      }),
+    );
+
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: /写信|编辑草稿/ }));
+
+    expect(screen.getByText("AI 改写中")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 改写" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "立即发送" })).toBeDisabled();
+    expect(screen.getByLabelText("邮件主题")).toBeDisabled();
+    expect(screen.getByLabelText("邮件正文")).toBeDisabled();
+  });
+
+  it("keeps AI rewrite disabled for empty draft", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          primary_material_id: 7,
+          primary_material: {
+            id: 7,
+            display_name: "resume.txt",
+            original_filename: "resume.txt",
+            mime_type: "text/plain",
+            size_bytes: 128,
+            material_type: "resume",
+            is_primary: true,
+            created_at: "2026-06-01T00:00:00",
+          },
+          draft: {
+            subject: null,
+            body_text: "",
+            body_html: null,
+            source: "manual_empty",
+            sendable: false,
+            editable: true,
+          },
+        },
+      }),
+    );
+
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: /写信|编辑草稿/ }));
+
+    expect(screen.getByRole("button", { name: "AI 改写" })).toBeDisabled();
+    expect(screen.getByText("先写入正文或配置默认模板后再使用 AI 改写。")).toBeInTheDocument();
+  });
+
+  it("does not block route navigation while AI rewrite is in progress", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          status: "generating_draft",
+          draft: {
+            subject: "源主题",
+            body_text: "源正文",
+            body_html: "<p>源正文</p>",
+            source: "rewrite_source",
+            sendable: false,
+            editable: false,
+          },
+        },
+      }),
+    );
+    const router = renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: /写信|编辑草稿/ }));
+    await router.navigate("/");
+
+    expect(screen.queryByText("保存草稿修改？")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("首页")).toBeInTheDocument();
+    });
+  });
+
   it("keeps the last draft visible while generation is in progress", async () => {
     apiMocks.getWorkspaceThread.mockResolvedValueOnce(
       buildWorkspaceThread({
@@ -264,7 +358,7 @@ describe("WorkspacePage draft saving", () => {
 
     renderWorkspace();
 
-    fireEvent.click(await screen.findByRole("button", { name: "写信" }));
+    fireEvent.click(await screen.findByRole("button", { name: /写信|编辑草稿/ }));
     expect(screen.getByLabelText("邮件主题")).toHaveValue("生成前主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>生成前正文</p>");
     expect(screen.getByLabelText("邮件主题")).toBeDisabled();
@@ -722,7 +816,7 @@ describe("WorkspacePage draft saving", () => {
     fireEvent.change(screen.getByLabelText("邮件正文"), {
       target: { value: "<p>未保存旧正文</p>" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "生成草稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "AI 改写" }));
 
     await waitFor(() => {
       expect(apiMocks.rewriteDraft).toHaveBeenCalledWith(101, {

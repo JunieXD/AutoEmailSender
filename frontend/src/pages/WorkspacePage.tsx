@@ -122,7 +122,6 @@ const shouldBlockDirectDraftActions = (task: WorkspaceTaskSummaryDTO | null) =>
       task?.can_continue_manually ||
       task?.can_write_follow_up ||
       task?.status === 'canceled' ||
-      task?.status === 'generating_draft' ||
       task?.status === 'sending' ||
       task?.sent_at ||
       task?.is_replied,
@@ -172,7 +171,7 @@ const getWorkspaceNextStepDescription = (title: string) => {
     case '选择分析材料':
       return '选择材料后可分析匹配度。';
     case '生成邮件草稿':
-      return '生成草稿后再人工检查。';
+      return '用 AI 改写当前草稿后再人工检查。';
     case '确认发送时间':
       return '确认发送时间，或改为立即发送。';
     default:
@@ -350,7 +349,6 @@ export const WorkspacePage = () => {
   const [subject, setSubject] = useState('');
   const [content, setContent] = useState('');
   const [contentHtml, setContentHtml] = useState<string | null>(null);
-  const [composerHasSendableDraft, setComposerHasSendableDraft] = useState(false);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [scheduledAt, setScheduledAt] = useState(getDefaultScheduledAtValue);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
@@ -361,7 +359,9 @@ export const WorkspacePage = () => {
   const [newReceivedCount, setNewReceivedCount] = useState(0);
   const [composerDirty, setComposerDirty] = useState(false);
   const [draftSaving, setDraftSaving] = useState(false);
+  const [draftRewriting, setDraftRewriting] = useState(false);
   const [savingBeforeNavigate, setSavingBeforeNavigate] = useState(false);
+  const mountedRef = useRef(true);
   const loadedThreadKeyRef = useRef<string | null>(null);
   const activeThreadRequestKeyRef = useRef<string | null>(null);
   const latestThreadRequestIdRef = useRef(0);
@@ -374,6 +374,12 @@ export const WorkspacePage = () => {
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
       ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}`
       : null;
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const syncComposer = useCallback((data: WorkspaceThreadDTO, options: SyncComposerOptions = {}) => {
     if (options.preserveDirty && composerDirtyRef.current) {
@@ -390,7 +396,6 @@ export const WorkspacePage = () => {
     setSubject(nextSubject);
     setContent(nextContentText);
     setContentHtml(nextContentHtml);
-    setComposerHasSendableDraft(Boolean(!hiddenDraftContent && draft?.sendable));
     setSelectedMaterialIds(hiddenDraftContent ? [] : currentTask?.selected_material_ids ?? []);
     setScheduledAt(
       !hiddenDraftContent && currentTask?.scheduled_at
@@ -542,6 +547,7 @@ export const WorkspacePage = () => {
     setLastThreadCheckedAt(null);
     setNewReceivedCount(0);
     setDraftSaving(false);
+    setDraftRewriting(false);
     composerDirtyRef.current = false;
     setComposerDirty(false);
   }, [workspaceRequestKey]);
@@ -556,22 +562,24 @@ export const WorkspacePage = () => {
   const statusLabel = getStatusLabel(currentTask, thread?.messages ?? []);
   const blocksDirectDraftActions = shouldBlockDirectDraftActions(currentTask);
   const taskGeneratingDraft = currentTask?.status === 'generating_draft';
+  const isRewriting = taskGeneratingDraft || draftRewriting;
   const canChangeMode =
-    currentTask?.id != null && !blocksDirectDraftActions;
+    currentTask?.id != null && !blocksDirectDraftActions && !isRewriting;
   const canCalculateMatch =
     Boolean(currentTaskId) &&
     Boolean(currentTask?.primary_material_id) &&
     hasProfessorMatchEvidence(thread?.professor) &&
     !blocksDirectDraftActions;
   const preparedBodyText = deriveBodyTextFromDraft({ content, contentHtml });
-  const currentComposerHasBody = hasMeaningfulBody({
+  const hasDraftBody = hasMeaningfulBody({
     content: preparedBodyText,
     contentHtml,
   });
   const canGenerateDraft =
     Boolean(currentTaskId) &&
     !blocksDirectDraftActions &&
-    currentComposerHasBody &&
+    !isRewriting &&
+    hasDraftBody &&
     Boolean(currentTask?.primary_material_id) &&
     hasProfessorResearchDirection(thread?.professor);
   const canSubmitDraft = Boolean(currentTaskId) && !blocksDirectDraftActions;
@@ -584,7 +592,7 @@ export const WorkspacePage = () => {
     setNewReceivedCount(0);
     void loadThread({ refreshReplies: true, silent: true });
   }, [loadThread]);
-  const hasDraft = composerHasSendableDraft;
+  const hasDraft = Boolean(currentTask?.draft?.sendable || hasDraftBody);
   const buildDraftPayload = useCallback(
     () => ({
       subject: subject.trim() || null,
@@ -709,10 +717,6 @@ export const WorkspacePage = () => {
     setComposerDirty(true);
     setContent(value.text);
     setContentHtml(value.html);
-    setComposerHasSendableDraft(hasMeaningfulBody({
-      content: value.text,
-      contentHtml: value.html,
-    }));
   }, []);
 
   const handleSelectedMaterialIdsChange = useCallback((ids: number[]) => {
@@ -860,6 +864,7 @@ export const WorkspacePage = () => {
     }
 
     const startedAt = Date.now();
+    setDraftRewriting(true);
     void runAction(
       () =>
         rewriteDraft(currentTaskId, {
@@ -878,7 +883,11 @@ export const WorkspacePage = () => {
           buildDraftGenerationSuccessDescription(data.current_task, Date.now() - startedAt),
         );
       },
-    );
+    ).finally(() => {
+      if (mountedRef.current) {
+        setDraftRewriting(false);
+      }
+    });
   }, [
     contentHtml,
     currentTaskId,
@@ -937,7 +946,7 @@ export const WorkspacePage = () => {
   }, [choose, notifySuccess, saveCurrentDraft]);
 
   const hasDirtyDraft = Boolean(composerDirty && currentTaskId);
-  const shouldBlockNavigation = hasDirtyDraft;
+  const shouldBlockNavigation = hasDirtyDraft && !isRewriting;
   const blocker = useBlocker(({ currentLocation, nextLocation }) =>
     shouldBlockNavigation && currentLocation.pathname !== nextLocation.pathname,
   );
@@ -990,6 +999,9 @@ export const WorkspacePage = () => {
       if (!composerDirtyRef.current || !currentTaskId) {
         return true;
       }
+      if (isRewriting) {
+        return true;
+      }
       if (acting || draftSaving) {
         notifyError('草稿正在保存', '请等待当前操作完成后再切换身份或模型。');
         return false;
@@ -1003,7 +1015,7 @@ export const WorkspacePage = () => {
         return false;
       }
     });
-  }, [acting, confirmDirtyDraftExit, currentTaskId, draftSaving, notifyError, registerWorkspaceDraftGuard]);
+  }, [acting, confirmDirtyDraftExit, currentTaskId, draftSaving, isRewriting, notifyError, registerWorkspaceDraftGuard]);
 
   if (!Number.isFinite(professorId)) {
     return <Navigate to="/404" replace />;
@@ -1122,7 +1134,9 @@ export const WorkspacePage = () => {
                   contentHtml={contentHtml || textToEmailHtml(content)}
                   selectedMaterialIds={selectedMaterialIds}
                   scheduledAt={scheduledAt}
-                  acting={acting || taskGeneratingDraft}
+                  acting={acting}
+                  isRewriting={isRewriting}
+                  hasDraftBody={hasDraftBody}
                   canChangeMode={canChangeMode}
                   canCalculateMatch={canCalculateMatch}
                   canGenerateDraft={canGenerateDraft}

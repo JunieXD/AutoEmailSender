@@ -40,6 +40,8 @@ type WorkspaceComposerDockProps = {
   selectedMaterialIds: number[];
   scheduledAt: string;
   acting: boolean;
+  isRewriting: boolean;
+  hasDraftBody: boolean;
   canChangeMode: boolean;
   canCalculateMatch: boolean;
   canGenerateDraft: boolean;
@@ -208,6 +210,8 @@ export const WorkspaceComposerDock = ({
   selectedMaterialIds,
   scheduledAt,
   acting,
+  isRewriting,
+  hasDraftBody,
   canChangeMode,
   canCalculateMatch,
   canGenerateDraft,
@@ -240,24 +244,30 @@ export const WorkspaceComposerDock = ({
     .filter((item): item is string => Boolean(item));
 
   const hasProfessorResearchDirection = Boolean(thread.professor.research_direction?.trim());
-  const hasTemplateConfigured = Boolean(
-    currentTask.outreach_template_body_text?.trim() || currentTask.outreach_template_body_html?.trim(),
-  );
   const scheduledSummary = formatScheduleSummary(scheduledAt);
   const draftTokenSummary = buildDraftTokenSummary(currentTask, currentTaskMode);
-  const editorDisabled = acting || draftSaving;
+  const actionDisabled = acting || draftSaving || isRewriting;
+  const editorDisabled = actionDisabled || currentTask.draft?.editable === false;
+  const rewriteDescription = isRewriting
+    ? '正在改写当前草稿，完成前不能保存或发送。'
+    : hasDraftBody
+      ? '基于当前编辑器内容生成个性化版本。'
+      : '先写入正文或配置默认模板后再使用 AI 改写。';
   const limitationHint =
-    currentTaskMode === 'template'
-      ? hasTemplateConfigured
-        ? null
-        : '请先在身份页补充模板。'
-      : !hasTemplateConfigured
-        ? '请先在身份页补充套磁信模板。'
-        : !currentTask.primary_material_id
-          ? '请选择用于匹配的材料。'
-          : !hasProfessorResearchDirection
-            ? '请先补充导师研究方向，再使用 AI 生成草稿。'
-            : null;
+    !hasDraftBody
+      ? '先写入正文或配置默认模板后再使用 AI 改写。'
+      : !currentTask.primary_material_id
+        ? '请选择用于匹配的材料。'
+        : !hasProfessorResearchDirection
+          ? '请先补充导师研究方向，再使用 AI 改写。'
+          : null;
+  const draftStateLabel = isRewriting ? 'AI 改写中' : hasDraftBody ? '草稿可编辑' : '空草稿';
+  const collapsedTitle = isRewriting ? 'AI 正在改写' : hasDraftBody ? '继续写信' : '写第一封信';
+  const collapsedDescription = isRewriting
+    ? '当前草稿已锁定，完成后会自动显示新版本。'
+    : hasDraftBody
+      ? '可直接编辑、保存或发送，也可以让 AI 改写。'
+      : '先写入正文或配置默认模板后再使用 AI 改写。';
 
   return (
     <div className="relative z-20 overflow-visible border-t border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.94),rgba(255,248,240,0.98))] px-4 py-4 backdrop-blur-xl sm:px-6">
@@ -273,7 +283,7 @@ export const WorkspaceComposerDock = ({
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-lg font-semibold text-stone-950">写信区</div>
                     <span className="rounded-full border border-stone-200 bg-white px-2.5 py-1 text-xs font-medium text-stone-600">
-                      {draftReady ? '草稿可发送' : '等待草稿'}
+                      {draftStateLabel}
                     </span>
                   </div>
                   <div className="mt-1 text-sm leading-6 text-stone-500">
@@ -339,8 +349,8 @@ export const WorkspaceComposerDock = ({
 
                 <ComposerSection
                   icon={<Bot className="h-4 w-4" />}
-                  title="生成草稿"
-                  description={limitationHint ?? '选择写信方式，并生成下一版草稿。'}
+                  title="AI 改写"
+                  description={rewriteDescription}
                 >
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-2">
@@ -381,7 +391,7 @@ export const WorkspaceComposerDock = ({
                       className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <RefreshCcw className="h-4 w-4" />
-                      生成草稿
+                      AI 改写
                     </button>
                     </div>
                     <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-3 py-2 text-xs leading-5 text-stone-500">
@@ -464,7 +474,7 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onContinueManually}
-                        disabled={editorDisabled}
+                        disabled={actionDisabled}
                         className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         作为单独联系继续
@@ -474,7 +484,7 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onStartFollowUp}
-                        disabled={editorDisabled}
+                        disabled={actionDisabled}
                         className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         写跟进邮件
@@ -484,7 +494,7 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onSaveDraft}
-                        disabled={editorDisabled}
+                        disabled={editorDisabled || !canSubmitDraft}
                         className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Save className="h-4 w-4" />
@@ -506,7 +516,7 @@ export const WorkspaceComposerDock = ({
                         <button
                           type="button"
                           onClick={onScheduleSend}
-                          disabled={editorDisabled || !draftReady}
+                          disabled={editorDisabled || !canSubmitDraft || !draftReady}
                           className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <CalendarClock className="h-4 w-4" />
@@ -518,7 +528,7 @@ export const WorkspaceComposerDock = ({
                       <button
                         type="button"
                         onClick={onSendNow}
-                        disabled={editorDisabled || !draftReady}
+                        disabled={editorDisabled || !canSubmitDraft || !draftReady}
                         className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Send className="h-4 w-4" />
@@ -537,12 +547,10 @@ export const WorkspaceComposerDock = ({
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-stone-900">
-                {draftReady ? '继续写信' : '写第一封信'}
+                {collapsedTitle}
               </div>
               <div className="mt-1 text-xs leading-5 text-stone-500">
-                {draftReady
-                  ? '草稿已生成，可继续编辑。'
-                  : '展开后编辑草稿和发送设置。'}
+                {collapsedDescription}
               </div>
               <div className="mt-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3">
                 <div className="text-sm font-semibold text-stone-900">{nextStepTitle}</div>
@@ -570,7 +578,7 @@ export const WorkspaceComposerDock = ({
                 <button
                   type="button"
                   onClick={onContinueManually}
-                  disabled={editorDisabled}
+                  disabled={actionDisabled}
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   作为单独联系继续
@@ -580,7 +588,7 @@ export const WorkspaceComposerDock = ({
                 <button
                   type="button"
                   onClick={onStartFollowUp}
-                  disabled={editorDisabled}
+                  disabled={actionDisabled}
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   写跟进邮件
@@ -602,7 +610,7 @@ export const WorkspaceComposerDock = ({
                 className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCcw className="h-4 w-4" />
-                生成草稿
+                AI 改写
               </button>
               <button
                 type="button"
