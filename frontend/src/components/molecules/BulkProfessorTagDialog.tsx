@@ -13,8 +13,13 @@ type BulkProfessorTagDialogProps = {
   tags: ProfessorTagDTO[];
   saving?: boolean;
   creating?: boolean;
-  onSave: (payload: { mode: ProfessorBulkTagModeDTO; tagIds: number[] }) => void;
-  onCreateTag: (payload: ProfessorTagPayloadDTO) => Promise<ProfessorTagDTO | null>;
+  onSave: (payload: {
+    mode: ProfessorBulkTagModeDTO;
+    tagIds: number[];
+  }) => void;
+  onCreateTag: (
+    payload: ProfessorTagPayloadDTO,
+  ) => Promise<ProfessorTagDTO | null>;
   onDeleteTag: (tag: ProfessorTagDTO) => void;
   onClose: () => void;
 };
@@ -50,7 +55,8 @@ export const BulkProfessorTagDialog = ({
   );
   const createInFlightRef = useRef(false);
   const busy = saving || creating;
-  const saveDisabled = busy || (mode !== "replace" && selectedTagIds.length === 0);
+  const saveDisabled =
+    busy || (mode !== "replace" && selectedTagIds.length === 0);
 
   useEffect(() => {
     if (!open) {
@@ -124,32 +130,39 @@ export const BulkProfessorTagDialog = ({
       }}
     >
       <div
-        className="w-full max-w-lg rounded-[28px] border border-stone-200 bg-white p-5 shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-stone-900">
-              批量修改导师标签
-            </h2>
-            <p className="mt-1 text-sm text-stone-500">
-              将应用到 {selectedCount} 位导师
-            </p>
+        <div className="shrink-0 px-5 pt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-stone-900">
+                批量修改导师标签
+              </h2>
+              <p className="mt-1 text-sm text-stone-500">
+                将应用到 {selectedCount} 位导师
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label="关闭批量标签修改"
+            >
+              ×
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
-            aria-label="关闭批量标签修改"
-          >
-            ×
-          </button>
         </div>
 
-        <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-stone-100 p-1">
-          {(["add", "remove", "replace"] satisfies ProfessorBulkTagModeDTO[]).map(
-            (item) => (
+        <div
+          aria-label="批量标签候选和编辑区"
+          className="min-h-0 overflow-y-auto px-5 pb-4"
+        >
+          <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-stone-100 p-1">
+            {(
+              ["add", "remove", "replace"] satisfies ProfessorBulkTagModeDTO[]
+            ).map((item) => (
               <button
                 key={item}
                 type="button"
@@ -166,144 +179,147 @@ export const BulkProfessorTagDialog = ({
               >
                 {modeLabels[item]}
               </button>
-            ),
-          )}
-        </div>
+            ))}
+          </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          {tags.map((tag) => {
-            const selected = selectedTagIds.includes(tag.id);
-            return (
-              <div
-                key={tag.id}
-                className="inline-flex items-center overflow-hidden rounded-full"
-              >
-                <button
-                  type="button"
-                  aria-label={`选择标签 ${tag.name}`}
-                  aria-pressed={selected}
-                  disabled={busy}
-                  onClick={() => toggleTag(tag.id)}
-                  className={clsx(
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                    selected
-                      ? "shadow-sm shadow-primary/10"
-                      : "hover:brightness-95",
-                  )}
-                  style={{
-                    backgroundColor: tag.background_color,
-                    color: tag.text_color,
-                  }}
+          <div className="mt-5 flex flex-wrap gap-2">
+            {tags.map((tag) => {
+              const selected = selectedTagIds.includes(tag.id);
+              return (
+                <div
+                  key={tag.id}
+                  className="inline-flex items-center overflow-hidden rounded-full"
                 >
-                  {selected ? <Check className="h-3.5 w-3.5" /> : null}
-                  {tag.name}
-                </button>
-                {deleteMode ? (
                   <button
                     type="button"
-                    aria-label={`删除标签 ${tag.name}`}
+                    aria-label={`选择标签 ${tag.name}`}
+                    aria-pressed={selected}
                     disabled={busy}
-                    onClick={() => onDeleteTag(tag)}
-                    className="inline-flex h-8 w-8 -translate-x-1 animate-[tag-trash-in_160ms_ease-out] items-center justify-center rounded-full border border-red-100 bg-white text-red-500 opacity-100 transition duration-200 ease-out hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => toggleTag(tag.id)}
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                      selected
+                        ? "shadow-sm shadow-primary/10"
+                        : "hover:brightness-95",
+                    )}
+                    style={{
+                      backgroundColor: tag.background_color,
+                      color: tag.text_color,
+                    }}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    {selected ? <Check className="h-3.5 w-3.5" /> : null}
+                    {tag.name}
                   </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-
-        {tags.length === 0 ? (
-          <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-500">
-            暂无可选标签，可先新增一个标签。
+                  {deleteMode ? (
+                    <button
+                      type="button"
+                      aria-label={`删除标签 ${tag.name}`}
+                      disabled={busy}
+                      onClick={() => onDeleteTag(tag)}
+                      className="inline-flex h-8 w-8 -translate-x-1 animate-[tag-trash-in_160ms_ease-out] items-center justify-center rounded-full border border-red-100 bg-white text-red-500 opacity-100 transition duration-200 ease-out hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
-        ) : null}
 
-        <div className="mt-5 flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setCreatingCustomTag((previous) => !previous);
-              setDeleteMode(false);
-            }}
-            disabled={busy}
-            className="ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Plus className="h-4 w-4" />
-            新增标签
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setDeleteMode((previous) => !previous);
-              setCreatingCustomTag(false);
-            }}
-            disabled={busy || tags.length === 0}
-            aria-pressed={deleteMode}
-            className={clsx(
-              "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-              deleteMode
-                ? "border-red-200 bg-red-50 text-red-700"
-                : "border-stone-200 bg-white text-stone-600 hover:border-red-200 hover:text-red-600",
-            )}
-          >
-            <Trash2 className="h-4 w-4" />
-            删除标签
-          </button>
-        </div>
+          {tags.length === 0 ? (
+            <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-500">
+              暂无可选标签，可先新增一个标签。
+            </div>
+          ) : null}
 
-        {creatingCustomTag ? (
-          <div className="mt-4 grid gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
-            <label className="block md:col-span-3">
-              <div className="mb-1 text-xs font-medium text-stone-600">
-                标签名
-              </div>
-              <input
-                aria-label="新增标签名"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-                placeholder="例如：已联系"
-              />
-            </label>
-            <label className="block">
-              <div className="mb-1 text-xs font-medium text-stone-600">
-                字体颜色
-              </div>
-              <input
-                aria-label="新增标签字体颜色"
-                type="color"
-                value={textColor}
-                onChange={(event) => setTextColor(event.target.value)}
-                className="h-10 w-full rounded-xl border border-stone-200 bg-white px-2"
-              />
-            </label>
-            <label className="block">
-              <div className="mb-1 text-xs font-medium text-stone-600">
-                背景颜色
-              </div>
-              <input
-                aria-label="新增标签背景颜色"
-                type="color"
-                value={backgroundColor}
-                onChange={(event) => setBackgroundColor(event.target.value)}
-                className="h-10 w-full rounded-xl border border-stone-200 bg-white px-2"
-              />
-            </label>
+          <div className="mt-5 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() => void handleCreate()}
-              disabled={busy || !name.trim()}
-              className="ui-btn-primary justify-center self-end disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => {
+                setCreatingCustomTag((previous) => !previous);
+                setDeleteMode(false);
+              }}
+              disabled={busy}
+              className="ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              创建标签
+              <Plus className="h-4 w-4" />
+              新增标签
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteMode((previous) => !previous);
+                setCreatingCustomTag(false);
+              }}
+              disabled={busy || tags.length === 0}
+              aria-pressed={deleteMode}
+              className={clsx(
+                "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                deleteMode
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-stone-200 bg-white text-stone-600 hover:border-red-200 hover:text-red-600",
+              )}
+            >
+              <Trash2 className="h-4 w-4" />
+              删除标签
             </button>
           </div>
-        ) : null}
 
-        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          {creatingCustomTag ? (
+            <div className="mt-4 grid gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
+              <label className="block md:col-span-3">
+                <div className="mb-1 text-xs font-medium text-stone-600">
+                  标签名
+                </div>
+                <input
+                  aria-label="新增标签名"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                  placeholder="例如：已联系"
+                />
+              </label>
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-stone-600">
+                  字体颜色
+                </div>
+                <input
+                  aria-label="新增标签字体颜色"
+                  type="color"
+                  value={textColor}
+                  onChange={(event) => setTextColor(event.target.value)}
+                  className="h-10 w-full rounded-xl border border-stone-200 bg-white px-2"
+                />
+              </label>
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-stone-600">
+                  背景颜色
+                </div>
+                <input
+                  aria-label="新增标签背景颜色"
+                  type="color"
+                  value={backgroundColor}
+                  onChange={(event) => setBackgroundColor(event.target.value)}
+                  className="h-10 w-full rounded-xl border border-stone-200 bg-white px-2"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void handleCreate()}
+                disabled={busy || !name.trim()}
+                className="ui-btn-primary justify-center self-end disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                创建标签
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          aria-label="批量标签操作"
+          className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-stone-100 px-5 py-4"
+        >
           <button
             type="button"
             onClick={onClose}

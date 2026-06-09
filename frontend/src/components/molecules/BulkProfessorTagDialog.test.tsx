@@ -119,4 +119,42 @@ describe("BulkProfessorTagDialog", () => {
 
     expect(onDeleteTag).toHaveBeenCalledWith(tags[0]);
   });
+
+  it("keeps actions reachable when many tags need scrolling", () => {
+    const manyTags: ProfessorTagDTO[] = Array.from(
+      { length: 30 },
+      (_, index) => ({
+        id: index + 1,
+        name: `标签 ${index + 1}`,
+        text_color: "#166534",
+        background_color: "#dcfce7",
+      }),
+    );
+
+    render(
+      <BulkProfessorTagDialog
+        open
+        selectedCount={3}
+        tags={manyTags}
+        saving={false}
+        creating={false}
+        onCreateTag={vi.fn()}
+        onDeleteTag={vi.fn()}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "批量修改导师标签" });
+    const scrollRegion = screen.getByLabelText("批量标签候选和编辑区");
+    const actions = screen.getByLabelText("批量标签操作");
+
+    expect(dialog.firstElementChild).toHaveClass(
+      "max-h-[calc(100vh-2rem)]",
+      "flex",
+      "flex-col",
+    );
+    expect(scrollRegion).toHaveClass("min-h-0", "overflow-y-auto");
+    expect(actions).toHaveClass("shrink-0", "border-t");
+  });
 });
