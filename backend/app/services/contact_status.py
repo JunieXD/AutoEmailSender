@@ -58,15 +58,17 @@ async def build_contact_status_by_professor(
             _keep_latest_timestamp(last_sent_at_by_professor, log.professor_id, log.created_at)
         elif log.direction == EmailDirection.RECEIVED.value:
             _keep_latest_timestamp(last_replied_at_by_professor, log.professor_id, log.created_at)
+    professors_with_sent_logs = set(last_sent_at_by_professor)
+    professors_with_reply_logs = set(last_replied_at_by_professor)
 
     statuses: dict[int, ProfessorContactStatus] = {}
     for professor_id in unique_professor_ids:
         tasks = resolved_tasks_by_professor.get(professor_id, [])
         for task in tasks:
-            if professor_id not in last_sent_at_by_professor:
+            if professor_id not in professors_with_sent_logs:
                 _keep_latest_timestamp(last_sent_at_by_professor, professor_id, task.sent_at)
             if (
-                professor_id not in last_replied_at_by_professor
+                professor_id not in professors_with_reply_logs
                 and (task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value)
             ):
                 _keep_latest_timestamp(last_replied_at_by_professor, professor_id, task.updated_at)
