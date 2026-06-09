@@ -30,15 +30,13 @@ export default defineConfig({
           items: [{ text: "个人配置", link: "/docs/profile" }]
         },
         {
-          text: "导师与分析",
+          text: "日常使用",
           items: [
+            { text: "首页", link: "/docs/dashboard" },
             { text: "导师管理", link: "/docs/mentors" },
-            { text: "匹配分析", link: "/docs/matching" }
+            { text: "匹配分析", link: "/docs/matching" },
+            { text: "任务与工作区", link: "/docs/tasks-workspace" }
           ]
-        },
-        {
-          text: "发送流程",
-          items: [{ text: "任务与工作区", link: "/docs/tasks-workspace" }]
         },
         {
           text: "帮助",
