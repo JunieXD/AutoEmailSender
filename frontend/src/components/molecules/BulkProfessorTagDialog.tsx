@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { Check, Loader2, Plus, Tags } from "lucide-react";
+import { Check, Loader2, Plus, Tags, Trash2 } from "lucide-react";
 import type {
   ProfessorBulkTagModeDTO,
   ProfessorTagDTO,
@@ -15,6 +15,7 @@ type BulkProfessorTagDialogProps = {
   creating?: boolean;
   onSave: (payload: { mode: ProfessorBulkTagModeDTO; tagIds: number[] }) => void;
   onCreateTag: (payload: ProfessorTagPayloadDTO) => Promise<ProfessorTagDTO | null>;
+  onDeleteTag: (tag: ProfessorTagDTO) => void;
   onClose: () => void;
 };
 
@@ -35,6 +36,7 @@ export const BulkProfessorTagDialog = ({
   creating = false,
   onSave,
   onCreateTag,
+  onDeleteTag,
   onClose,
 }: BulkProfessorTagDialogProps) => {
   const [mode, setMode] = useState<ProfessorBulkTagModeDTO>("add");
@@ -60,6 +62,13 @@ export const BulkProfessorTagDialog = ({
     setTextColor(DEFAULT_TEXT_COLOR);
     setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
   }, [open]);
+
+  useEffect(() => {
+    const availableTagIds = new Set(tags.map((tag) => tag.id));
+    setSelectedTagIds((previous) =>
+      previous.filter((tagId) => availableTagIds.has(tagId)),
+    );
+  }, [tags]);
 
   if (!open) {
     return null;
@@ -162,27 +171,40 @@ export const BulkProfessorTagDialog = ({
           {tags.map((tag) => {
             const selected = selectedTagIds.includes(tag.id);
             return (
-              <button
+              <div
                 key={tag.id}
-                type="button"
-                aria-label={`选择标签 ${tag.name}`}
-                aria-pressed={selected}
-                disabled={busy}
-                onClick={() => toggleTag(tag.id)}
-                className={clsx(
-                  "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                  selected
-                    ? "border-primary/40 shadow-sm shadow-primary/10"
-                    : "border-stone-200 hover:border-stone-300",
-                )}
-                style={{
-                  backgroundColor: tag.background_color,
-                  color: tag.text_color,
-                }}
+                className="inline-flex min-h-9 overflow-hidden rounded-full border border-stone-200 bg-white shadow-sm"
               >
-                {selected ? <Check className="h-3.5 w-3.5" /> : null}
-                {tag.name}
-              </button>
+                <button
+                  type="button"
+                  aria-label={`选择标签 ${tag.name}`}
+                  aria-pressed={selected}
+                  disabled={busy}
+                  onClick={() => toggleTag(tag.id)}
+                  className={clsx(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                    selected
+                      ? "shadow-sm shadow-primary/10"
+                      : "hover:brightness-95",
+                  )}
+                  style={{
+                    backgroundColor: tag.background_color,
+                    color: tag.text_color,
+                  }}
+                >
+                  {selected ? <Check className="h-3.5 w-3.5" /> : null}
+                  {tag.name}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`删除标签 ${tag.name}`}
+                  disabled={busy}
+                  onClick={() => onDeleteTag(tag)}
+                  className="inline-flex w-9 items-center justify-center border-l border-stone-200 bg-white text-stone-400 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             );
           })}
         </div>

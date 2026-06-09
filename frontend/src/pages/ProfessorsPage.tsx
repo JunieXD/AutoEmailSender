@@ -2498,6 +2498,7 @@ export const ProfessorsPage = () => {
         saving={savingBulkTags}
         creating={creatingAssignmentTag}
         onCreateTag={handleCreateAssignmentTag}
+        onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
         onSave={(payload) => void saveBulkTags(payload)}
         onClose={() => {
           if (!savingBulkTags && !creatingAssignmentTag) {

@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bulkUpdateProfessorTags,
   createProfessorTag,
+  deleteProfessorTag,
+  getProfessorTagUsage,
   listProfessors,
   listProfessorsForManagement,
   updateProfessorTags,
@@ -179,6 +181,20 @@ vi.mock("@/lib/api/professorsApi", () => ({
     text_color: "#1d4ed8",
     background_color: "#dbeafe",
   })),
+  deleteProfessorTag: vi.fn(async () => ({
+    ok: true,
+    affected_count: 1,
+    message: "标签已删除",
+  })),
+  getProfessorTagUsage: vi.fn(async () => ({
+    tag: {
+      id: 1,
+      name: "高意愿",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    },
+    professors: [],
+  })),
   getProfessorTemplateDownloadUrl: vi.fn(),
   importProfessorsFromFile: vi.fn(),
   listProfessorTags: vi.fn(async () => [
@@ -224,6 +240,20 @@ describe("selection controls", () => {
       name: "已联系",
       text_color: "#1d4ed8",
       background_color: "#dbeafe",
+    });
+    vi.mocked(deleteProfessorTag).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "标签已删除",
+    });
+    vi.mocked(getProfessorTagUsage).mockResolvedValue({
+      tag: {
+        id: 1,
+        name: "高意愿",
+        text_color: "#166534",
+        background_color: "#dcfce7",
+      },
+      professors: [],
     });
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
@@ -1037,6 +1067,30 @@ describe("selection controls", () => {
     expect(notifyMock.notifySuccess).toHaveBeenCalledWith(
       "标签已更新",
       "已更新 1 位导师的标签。",
+    );
+  });
+
+  it("deletes a professor tag from the home bulk tag dialog", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "删除标签 高意愿" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(getProfessorTagUsage).toHaveBeenCalledWith(1);
+      expect(deleteProfessorTag).toHaveBeenCalledWith(1);
+    });
+    expect(notifyMock.notifySuccess).toHaveBeenCalledWith(
+      "删除标签成功",
+      "标签已删除",
     );
   });
 

@@ -64,6 +64,8 @@ import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import {
   bulkUpdateProfessorTags,
   createProfessorTag,
+  deleteProfessorTag,
+  getProfessorTagUsage,
   listProfessorTags,
   listProfessors,
   updateProfessorTags as updateProfessorTagsRequest,
@@ -525,6 +527,80 @@ export const HomePage = () => {
       return null;
     } finally {
       setCreatingProfessorTag(false);
+    }
+  };
+
+  const handleDeleteProfessorTag = async (tag: ProfessorTagDTO) => {
+    let usageProfessors: Array<{
+      id: number;
+      name: string;
+      email: string | null;
+      university: string | null;
+      school: string | null;
+    }> = [];
+    try {
+      const usage = await getProfessorTagUsage(tag.id);
+      usageProfessors = usage.professors;
+    } catch (usageError) {
+      const message =
+        usageError instanceof Error ? usageError.message : "查询标签使用情况失败";
+      notifyError("查询标签使用情况失败", message);
+      return;
+    }
+
+    const usageDescription =
+      usageProfessors.length === 0
+        ? "是否要删除这个标签？"
+        : [
+            "是否要删除这个标签？下列导师该标签将删除",
+            ...usageProfessors.map((professor) => {
+              const context = [professor.university, professor.school]
+                .filter(Boolean)
+                .join(" / ");
+              return context
+                ? `${professor.name}（${context}）`
+                : professor.name;
+            }),
+          ].join("\n");
+
+    const confirmed = await confirm({
+      title: `删除标签“${tag.name}”？`,
+      description: usageDescription,
+      confirmLabel: "确认删除",
+      cancelLabel: "先不删除",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const result = await deleteProfessorTag(tag.id);
+      setProfessorTags((previous) =>
+        previous.filter((item) => item.id !== tag.id),
+      );
+      setTagEditorSelectedIds((previous) =>
+        previous.filter((tagId) => tagId !== tag.id),
+      );
+      setTagEditorProfessor((previous) =>
+        previous
+          ? {
+              ...previous,
+              tags: previous.tags.filter((item) => item.id !== tag.id),
+            }
+          : previous,
+      );
+      setProfessors((previous) =>
+        previous.map((professor) => ({
+          ...professor,
+          tags: professor.tags.filter((item) => item.id !== tag.id),
+        })),
+      );
+      notifySuccess("删除标签成功", result.message);
+    } catch (deleteError) {
+      const message =
+        deleteError instanceof Error ? deleteError.message : "删除标签失败";
+      notifyError("删除标签失败", message);
     }
   };
 
@@ -1472,6 +1548,7 @@ export const HomePage = () => {
         saving={savingBulkTags}
         creating={creatingProfessorTag}
         onCreateTag={handleCreateAssignmentTag}
+        onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
         onSave={(payload) => void saveBulkTags(payload)}
         onClose={() => {
           if (!savingBulkTags && !creatingProfessorTag) {
