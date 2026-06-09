@@ -178,6 +178,22 @@ class ProfessorBulkArchivePayload(BaseModel):
     ids: list[int]
 
 
+ProfessorBulkTagMode = Literal["add", "remove", "replace"]
+
+
+class ProfessorBulkTagsPayload(BaseModel):
+    professor_ids: list[int]
+    mode: ProfessorBulkTagMode
+    tag_ids: list[int]
+
+
+class ProfessorBulkTagsResult(ApiSchema):
+    ok: bool
+    affected_count: int
+    professors: list[ProfessorManagementItemRead]
+    message: str
+
+
 class ProfessorActionResult(ApiSchema):
     ok: bool
     affected_count: int

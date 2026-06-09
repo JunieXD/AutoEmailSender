@@ -47,4 +47,33 @@ describe("ConfirmDialog", () => {
 
     expect(onCancel).not.toHaveBeenCalled();
   });
+
+  it("keeps actions reachable when the description is long", () => {
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    const longDescription = Array.from(
+      { length: 80 },
+      (_, index) => `导师 ${index + 1}`,
+    ).join("\n");
+
+    render(
+      <ConfirmDialog
+        open
+        title="删除标签“高意愿”？"
+        description={longDescription}
+        confirmLabel="确认删除"
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "删除标签“高意愿”？" });
+    const description = screen.getByText(/导师 80/);
+
+    expect(dialog).toHaveClass("max-h-[calc(100vh-2rem)]");
+    expect(description).toHaveClass("max-h-[min(42vh,22rem)]", "overflow-y-auto");
+    expect(
+      screen.getByRole("button", { name: "确认删除" }),
+    ).toBeInTheDocument();
+  });
 });

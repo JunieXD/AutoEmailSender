@@ -2,6 +2,8 @@ import { apiFetch, buildApiUrl } from '@/lib/api/client';
 import type {
   ProfessorActionResultDTO,
   ProfessorBulkArchivePayloadDTO,
+  ProfessorBulkTagsPayloadDTO,
+  ProfessorBulkTagsResultDTO,
   ProfessorDTO,
   ProfessorDashboardItemDTO,
   ProfessorImportFileResultDTO,
@@ -76,6 +78,12 @@ export const archiveProfessor = (professorId: number) =>
 
 export const bulkArchiveProfessors = (payload: ProfessorBulkArchivePayloadDTO) =>
   apiFetch<ProfessorActionResultDTO>('/api/professors/bulk-archive', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const bulkUpdateProfessorTags = (payload: ProfessorBulkTagsPayloadDTO) =>
+  apiFetch<ProfessorBulkTagsResultDTO>('/api/professors/bulk-tags', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

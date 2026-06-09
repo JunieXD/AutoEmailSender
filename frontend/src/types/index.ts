@@ -324,6 +324,21 @@ export interface ProfessorBulkArchivePayloadDTO {
   ids: number[];
 }
 
+export type ProfessorBulkTagModeDTO = 'add' | 'remove' | 'replace';
+
+export interface ProfessorBulkTagsPayloadDTO {
+  professor_ids: number[];
+  mode: ProfessorBulkTagModeDTO;
+  tag_ids: number[];
+}
+
+export interface ProfessorBulkTagsResultDTO {
+  ok: boolean;
+  affected_count: number;
+  professors: ProfessorManagementItemDTO[];
+  message: string;
+}
+
 export interface ProfessorActionResultDTO {
   ok: boolean;
   affected_count: number;

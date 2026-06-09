@@ -8,7 +8,10 @@ import {
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  bulkUpdateProfessorTags,
   createProfessorTag,
+  deleteProfessorTag,
+  getProfessorTagUsage,
   listProfessors,
   listProfessorsForManagement,
   updateProfessorTags,
@@ -170,12 +173,27 @@ vi.mock("@/features/onboarding/client/getOnboardingState", () => ({
 vi.mock("@/lib/api/professorsApi", () => ({
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
+  bulkUpdateProfessorTags: vi.fn(),
   createProfessor: vi.fn(),
   createProfessorTag: vi.fn(async () => ({
     id: 2,
     name: "已联系",
     text_color: "#1d4ed8",
     background_color: "#dbeafe",
+  })),
+  deleteProfessorTag: vi.fn(async () => ({
+    ok: true,
+    affected_count: 1,
+    message: "标签已删除",
+  })),
+  getProfessorTagUsage: vi.fn(async () => ({
+    tag: {
+      id: 1,
+      name: "高意愿",
+      text_color: "#166534",
+      background_color: "#dcfce7",
+    },
+    professors: [],
   })),
   getProfessorTemplateDownloadUrl: vi.fn(),
   importProfessorsFromFile: vi.fn(),
@@ -223,6 +241,20 @@ describe("selection controls", () => {
       text_color: "#1d4ed8",
       background_color: "#dbeafe",
     });
+    vi.mocked(deleteProfessorTag).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "标签已删除",
+    });
+    vi.mocked(getProfessorTagUsage).mockResolvedValue({
+      tag: {
+        id: 1,
+        name: "高意愿",
+        text_color: "#166534",
+        background_color: "#dcfce7",
+      },
+      professors: [],
+    });
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
     vi.mocked(updateProfessorTags).mockResolvedValue({
@@ -233,6 +265,24 @@ describe("selection controls", () => {
           name: "高意愿",
           text_color: "#166534",
           background_color: "#dcfce7",
+        },
+      ],
+    });
+    vi.mocked(bulkUpdateProfessorTags).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "已更新 1 位导师的标签",
+      professors: [
+        {
+          ...managementProfessors[0],
+          tags: [
+            {
+              id: 1,
+              name: "高意愿",
+              text_color: "#166534",
+              background_color: "#dcfce7",
+            },
+          ],
         },
       ],
     });
@@ -292,6 +342,14 @@ describe("selection controls", () => {
     expect(
       await screen.findByText("已选中 11 位导师"),
     ).toBeInTheDocument();
+    const homeSelectionDock = screen.getByText("已选中 11 位导师")
+      .parentElement?.parentElement;
+    expect(homeSelectionDock).toHaveClass(
+      "w-fit",
+      "max-w-full",
+      "justify-center",
+    );
+    expect(homeSelectionDock).not.toHaveClass("max-w-3xl", "justify-between");
     expect(
       screen.getByRole("button", { name: "清空选择" }),
     ).toBeInTheDocument();
@@ -972,5 +1030,145 @@ describe("selection controls", () => {
       professorWithTags.id,
       [4, 1, 2, 3],
     );
+  });
+
+  it("bulk updates tags from the home selection bar", async () => {
+    vi.mocked(bulkUpdateProfessorTags).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "已更新 1 位导师的标签",
+      professors: [
+        {
+          ...managementProfessors[0],
+          id: 11,
+          name: "导师 11",
+          tags: [
+            {
+              id: 1,
+              name: "高意愿",
+              text_color: "#166534",
+              background_color: "#dcfce7",
+            },
+          ],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(screen.getByRole("button", { name: "追加标签" }));
+
+    expect(bulkUpdateProfessorTags).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "确认追加" }));
+
+    await waitFor(() => {
+      expect(bulkUpdateProfessorTags).toHaveBeenCalledWith({
+        professor_ids: [11],
+        mode: "add",
+        tag_ids: [1],
+      });
+    });
+    expect(notifyMock.notifySuccess).toHaveBeenCalledWith(
+      "标签已更新",
+      "已更新 1 位导师的标签。",
+    );
+  });
+
+  it("deletes a professor tag from the home bulk tag dialog", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    expect(
+      screen.queryByRole("button", { name: "删除标签 高意愿" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "删除标签" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "删除标签 高意愿" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(getProfessorTagUsage).toHaveBeenCalledWith(1);
+      expect(deleteProfessorTag).toHaveBeenCalledWith(1);
+    });
+    expect(notifyMock.notifySuccess).toHaveBeenCalledWith(
+      "删除标签成功",
+      "标签已删除",
+    );
+  });
+
+  it("bulk updates tags from the management selection bar", async () => {
+    vi.mocked(bulkUpdateProfessorTags).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "已更新 1 位导师的标签",
+      professors: [
+        {
+          ...managementProfessors[0],
+          id: 11,
+          name: "导师 11",
+          tags: [
+            {
+              id: 2,
+              name: "已联系",
+              text_color: "#1d4ed8",
+              background_color: "#dbeafe",
+            },
+          ],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(await screen.findByRole("button", { name: "切换为移除标签" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(screen.getByRole("button", { name: "移除标签" }));
+
+    expect(bulkUpdateProfessorTags).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "确认移除" }));
+
+    await waitFor(() => {
+      expect(bulkUpdateProfessorTags).toHaveBeenCalledWith({
+        professor_ids: [11],
+        mode: "remove",
+        tag_ids: [1],
+      });
+    });
+  });
+
+  it("warns that original tags will be replaced before bulk replace", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(await screen.findByRole("button", { name: "切换为覆盖标签" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(screen.getByRole("button", { name: "覆盖标签" }));
+
+    expect(await screen.findByText("确认覆盖标签？")).toBeInTheDocument();
+    expect(screen.getByText(/原来的标签将会被替换/)).toBeInTheDocument();
   });
 });

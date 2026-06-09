@@ -24,10 +24,12 @@ import {
   Square,
   SquareCheck,
   SquareMinus,
+  Tags,
   Upload,
   Users,
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { BulkProfessorTagDialog } from "@/components/molecules/BulkProfessorTagDialog";
 import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
@@ -48,6 +50,7 @@ import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import {
   archiveProfessor,
+  bulkUpdateProfessorTags,
   bulkArchiveProfessors,
   createProfessor,
   createProfessorTag,
@@ -66,6 +69,7 @@ import type {
   CrawlJobEntryTypeDTO,
   ProfessorImportFileResultDTO,
   ProfessorManagementItemDTO,
+  ProfessorBulkTagModeDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
   ProfessorUpsertPayloadDTO,
@@ -115,6 +119,27 @@ const PROFESSORS_FILTERS_STORAGE_KEY = "professors_page_filters";
 const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
+
+const bulkTagConfirmLabels: Record<
+  ProfessorBulkTagModeDTO,
+  { title: string; confirmLabel: string; actionDescription: string }
+> = {
+  add: {
+    title: "确认追加标签？",
+    confirmLabel: "确认追加",
+    actionDescription: "追加到",
+  },
+  remove: {
+    title: "确认移除标签？",
+    confirmLabel: "确认移除",
+    actionDescription: "从",
+  },
+  replace: {
+    title: "确认覆盖标签？",
+    confirmLabel: "确认覆盖",
+    actionDescription: "覆盖",
+  },
+};
 
 const archiveFilterLabels: Record<ArchiveFilter, string> = {
   active: "正常",
@@ -536,6 +561,8 @@ export const ProfessorsPage = () => {
   const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
   const [savingProfessorTags, setSavingProfessorTags] = useState(false);
   const [creatingAssignmentTag, setCreatingAssignmentTag] = useState(false);
+  const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
+  const [savingBulkTags, setSavingBulkTags] = useState(false);
   const primaryTagSaveRef = useRef<
     Map<number, { saving: boolean; pendingTagIds: number[] | null }>
   >(new Map());
@@ -983,6 +1010,69 @@ export const ProfessorsPage = () => {
       return await createAndRegisterProfessorTag(payload);
     } finally {
       setCreatingAssignmentTag(false);
+    }
+  };
+
+  const saveBulkTags = async ({
+    mode,
+    tagIds,
+  }: {
+    mode: ProfessorBulkTagModeDTO;
+    tagIds: number[];
+  }) => {
+    if (selectedIds.size === 0) {
+      notifyWarning("请先选择导师", "选择至少一位导师后再批量修改标签。");
+      return;
+    }
+    const labels = bulkTagConfirmLabels[mode];
+    const tagNames = tagIds
+      .map((tagId) => professorTags.find((tag) => tag.id === tagId)?.name)
+      .filter((tagName): tagName is string => Boolean(tagName));
+    const tagDescription =
+      tagNames.length > 0 ? tagNames.join("、") : "不选择任何标签";
+    const confirmed = await confirm({
+      title: labels.title,
+      description:
+        mode === "replace" && tagIds.length === 0
+          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。原来的标签将会被替换。`
+          : mode === "replace"
+            ? `将“${tagDescription}”覆盖选中的 ${selectedIds.size} 位导师，原来的标签将会被替换。`
+          : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
+      confirmLabel: labels.confirmLabel,
+      cancelLabel: "先不处理",
+      tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
+    });
+    if (!confirmed) {
+      return;
+    }
+    setSavingBulkTags(true);
+    try {
+      const result = await bulkUpdateProfessorTags({
+        professor_ids: Array.from(selectedIds),
+        mode,
+        tag_ids: tagIds,
+      });
+      const tagsByProfessorId = new Map(
+        result.professors.map((professor) => [professor.id, professor.tags]),
+      );
+      setProfessors((previous) =>
+        previous.map((professor) => {
+          const tags = tagsByProfessorId.get(professor.id);
+          return tags ? { ...professor, tags } : professor;
+        }),
+      );
+      notifySuccess(
+        "标签已更新",
+        `已更新 ${result.affected_count} 位导师的标签。`,
+      );
+      setBulkTagDialogOpen(false);
+    } catch (saveError) {
+      notifyError(
+        "批量修改标签失败",
+        getActionErrorMessage(saveError, "批量修改标签失败"),
+      );
+    } finally {
+      setSavingBulkTags(false);
     }
   };
 
@@ -1865,6 +1955,14 @@ export const ProfessorsPage = () => {
               </button>
               <button
                 type="button"
+                onClick={() => setBulkTagDialogOpen(true)}
+                className="ui-btn-secondary"
+              >
+                <Tags className="h-4 w-4" />
+                批量改标签
+              </button>
+              <button
+                type="button"
                 onClick={() =>
                   archiveFilter === "archived"
                     ? void handleBulkRestore()
@@ -2433,6 +2531,22 @@ export const ProfessorsPage = () => {
         onCreateTag={handleCreateAssignmentTag}
         onSave={() => void saveTagEditor()}
         onClose={closeTagEditor}
+      />
+
+      <BulkProfessorTagDialog
+        open={bulkTagDialogOpen}
+        selectedCount={selectedIds.size}
+        tags={professorTags}
+        saving={savingBulkTags}
+        creating={creatingAssignmentTag}
+        onCreateTag={handleCreateAssignmentTag}
+        onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
+        onSave={(payload) => void saveBulkTags(payload)}
+        onClose={() => {
+          if (!savingBulkTags && !creatingAssignmentTag) {
+            setBulkTagDialogOpen(false);
+          }
+        }}
       />
 
       {confirmDialog}
