@@ -773,6 +773,23 @@ export interface WorkspaceTaskSummaryDTO {
   last_draft_prompt_tokens: number | null;
   last_draft_completion_tokens: number | null;
   last_draft_total_tokens: number | null;
+  draft: WorkspaceDraftDTO;
+}
+
+export type WorkspaceDraftSourceDTO =
+  | 'saved'
+  | 'ai_rewrite'
+  | 'template'
+  | 'manual_empty'
+  | 'rewrite_source';
+
+export interface WorkspaceDraftDTO {
+  subject: string | null;
+  body_text: string;
+  body_html: string | null;
+  source: WorkspaceDraftSourceDTO;
+  sendable: boolean;
+  editable: boolean;
 }
 
 export interface WorkspaceMessageDTO {
@@ -851,6 +868,10 @@ export interface EmailTaskApprovalPayloadDTO {
   body_text: string;
   body_html: string | null;
   selected_material_ids: number[] | null;
+}
+
+export interface EmailTaskRewriteDraftPayloadDTO extends EmailTaskApprovalPayloadDTO {
+  llm_profile_id: number | null;
 }
 
 export interface EmailTaskOutreachConfigPayloadDTO {

@@ -2,6 +2,7 @@ import { apiFetch } from '@/lib/api/client';
 import type {
   EmailTaskApprovalPayloadDTO,
   EmailTaskOutreachConfigPayloadDTO,
+  EmailTaskRewriteDraftPayloadDTO,
   EmailTaskSchedulePayloadDTO,
   MatchCalculationResultDTO,
   WorkspaceThreadDTO,
@@ -26,6 +27,12 @@ export const generateDraft = (taskId: number, llmProfileId?: number | null) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/generate-draft`, {
     method: 'POST',
     body: buildRuntimeProfileBody(llmProfileId),
+  });
+
+export const rewriteDraft = (taskId: number, payload: EmailTaskRewriteDraftPayloadDTO) =>
+  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/rewrite-draft`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 
 export const approveDraft = (taskId: number, payload: EmailTaskApprovalPayloadDTO) =>

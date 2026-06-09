@@ -49,6 +49,14 @@ const buildTask = (
   last_draft_prompt_tokens: null,
   last_draft_completion_tokens: null,
   last_draft_total_tokens: null,
+  draft: {
+    subject: null,
+    body_text: "",
+    body_html: null,
+    source: "manual_empty",
+    sendable: false,
+    editable: true,
+  },
   ...overrides,
 });
 

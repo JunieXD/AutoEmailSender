@@ -17,7 +17,7 @@ import {
   calculateMatch,
   cancelScheduledTask,
   continueManually,
-  generateDraft,
+  rewriteDraft,
   saveDraft,
   startFollowUp,
   updateTaskOutreachConfig,
@@ -115,15 +115,6 @@ const getCurrentTaskOrNull = (
 
 type SyncComposerOptions = {
   preserveDirty?: boolean;
-};
-
-const getLatestDraftMessage = (messages: WorkspaceMessageDTO[]) => {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].direction === 'draft') {
-      return messages[index];
-    }
-  }
-  return null;
 };
 
 const shouldBlockDirectDraftActions = (task: WorkspaceTaskSummaryDTO | null) =>
@@ -227,23 +218,6 @@ const hasMeaningfulBody = ({
   content: string;
   contentHtml: string | null;
 }) => Boolean(deriveBodyTextFromDraft({ content, contentHtml }).trim());
-
-const normalizeComposerText = (value: string | null | undefined) =>
-  (value ?? '').replace(/\s+/g, ' ').trim();
-
-const draftMatchesTemplate = ({
-  draftSubject,
-  draftContentText,
-  templateSubject,
-  templateContentText,
-}: {
-  draftSubject: string;
-  draftContentText: string;
-  templateSubject: string;
-  templateContentText: string;
-}) =>
-  normalizeComposerText(draftSubject) === normalizeComposerText(templateSubject) &&
-  normalizeComposerText(draftContentText) === normalizeComposerText(templateContentText);
 
 const ScheduleSendDialog = ({
   open,
@@ -408,75 +382,15 @@ export const WorkspacePage = () => {
 
     const currentTask = getCurrentTaskOrNull(data);
     const hiddenDraftContent = shouldHideDirectDraftContent(currentTask);
-    const latestDraftMessage = getLatestDraftMessage(data.messages);
-    const preferredDraftMessage = hiddenDraftContent ? null : latestDraftMessage;
-    const draftSubject =
-      currentTask?.approved_subject ??
-      currentTask?.generated_subject ??
-      preferredDraftMessage?.subject ??
-      '';
-    const draftContentHtml =
-      currentTask?.approved_body_html ??
-      currentTask?.generated_content_html ??
-      preferredDraftMessage?.content_html ??
-      null;
-    const draftContentText = deriveBodyTextFromDraft({
-      content:
-        currentTask?.approved_body_text ??
-        currentTask?.generated_content_text ??
-        preferredDraftMessage?.content ??
-        '',
-      contentHtml: draftContentHtml,
-    });
-    const hasSavedDraftRecord = Boolean(
-      currentTask?.approved_subject != null ||
-        currentTask?.approved_body_text != null ||
-        currentTask?.approved_body_html != null,
-    );
-    const hasDraftRecord = Boolean(
-      draftSubject.trim() || draftContentText.trim() || draftContentHtml?.trim(),
-    );
-    const renderedTemplateSubject = currentTask?.rendered_template_subject ?? '';
-    const renderedTemplateContentText = currentTask?.rendered_template_body_text ?? '';
-    const renderedTemplateContentHtml = currentTask?.rendered_template_body_html ?? null;
-    const shouldUseDraftRecord =
-      hasDraftRecord &&
-      (hasSavedDraftRecord ||
-        currentTask?.outreach_generation_mode !== 'template' ||
-        draftMatchesTemplate({
-          draftSubject,
-          draftContentText,
-          templateSubject: renderedTemplateSubject,
-          templateContentText: renderedTemplateContentText,
-        }));
-    const nextSubject = hiddenDraftContent
-      ? ''
-      : shouldUseDraftRecord
-        ? draftSubject
-        : renderedTemplateSubject;
-    const nextContentHtml = hiddenDraftContent
-      ? null
-      : shouldUseDraftRecord
-        ? draftContentHtml
-        : renderedTemplateContentHtml;
-    const nextContentText = hiddenDraftContent
-      ? ''
-      : shouldUseDraftRecord
-        ? draftContentText
-        : renderedTemplateContentText;
-    const sendableDraftContent = shouldUseDraftRecord
-      ? { content: draftContentText, contentHtml: draftContentHtml }
-      : currentTask?.outreach_generation_mode === 'template'
-        ? { content: renderedTemplateContentText, contentHtml: renderedTemplateContentHtml }
-        : { content: '', contentHtml: null };
+    const draft = currentTask?.draft;
+    const nextSubject = hiddenDraftContent ? '' : draft?.subject ?? '';
+    const nextContentHtml = hiddenDraftContent ? null : draft?.body_html ?? null;
+    const nextContentText = hiddenDraftContent ? '' : draft?.body_text ?? '';
 
     setSubject(nextSubject);
     setContent(nextContentText);
     setContentHtml(nextContentHtml);
-    setComposerHasSendableDraft(hasMeaningfulBody({
-      content: hiddenDraftContent ? '' : sendableDraftContent.content,
-      contentHtml: hiddenDraftContent ? null : sendableDraftContent.contentHtml,
-    }));
+    setComposerHasSendableDraft(Boolean(!hiddenDraftContent && draft?.sendable));
     setSelectedMaterialIds(hiddenDraftContent ? [] : currentTask?.selected_material_ids ?? []);
     setScheduledAt(
       !hiddenDraftContent && currentTask?.scheduled_at
@@ -649,18 +563,17 @@ export const WorkspacePage = () => {
     Boolean(currentTask?.primary_material_id) &&
     hasProfessorMatchEvidence(thread?.professor) &&
     !blocksDirectDraftActions;
-  const hasTemplateConfigured = Boolean(
-    currentTask?.outreach_template_body_text?.trim() ||
-      currentTask?.outreach_template_body_html?.trim(),
-  );
+  const preparedBodyText = deriveBodyTextFromDraft({ content, contentHtml });
+  const currentComposerHasBody = hasMeaningfulBody({
+    content: preparedBodyText,
+    contentHtml,
+  });
   const canGenerateDraft =
     Boolean(currentTaskId) &&
     !blocksDirectDraftActions &&
-    (currentTaskMode === 'template'
-      ? hasTemplateConfigured
-      : hasTemplateConfigured &&
-        Boolean(currentTask?.primary_material_id) &&
-        hasProfessorResearchDirection(thread?.professor));
+    currentComposerHasBody &&
+    Boolean(currentTask?.primary_material_id) &&
+    hasProfessorResearchDirection(thread?.professor);
   const canSubmitDraft = Boolean(currentTaskId) && !blocksDirectDraftActions;
   const realMessageCount = useMemo(
     () => thread?.messages.filter((message) => message.direction !== 'draft').length ?? 0,
@@ -671,7 +584,6 @@ export const WorkspacePage = () => {
     setNewReceivedCount(0);
     void loadThread({ refreshReplies: true, silent: true });
   }, [loadThread]);
-  const preparedBodyText = deriveBodyTextFromDraft({ content, contentHtml });
   const hasDraft = composerHasSendableDraft;
   const buildDraftPayload = useCallback(
     () => ({
@@ -949,18 +861,34 @@ export const WorkspacePage = () => {
 
     const startedAt = Date.now();
     void runAction(
-      () => generateDraft(currentTaskId, selectedLlmProfileId),
-      '生成草稿失败',
-      '生成草稿失败',
+      () =>
+        rewriteDraft(currentTaskId, {
+          subject: subject.trim() || null,
+          body_text: preparedBodyText,
+          body_html: contentHtml,
+          selected_material_ids: selectedMaterialIds,
+          llm_profile_id: selectedLlmProfileId ?? null,
+        }),
+      'AI 改写失败',
+      'AI 改写失败',
       (data) => {
         setComposerExpanded(true);
         notifySuccess(
-          'AI 草稿已生成',
+          'AI 改写已完成',
           buildDraftGenerationSuccessDescription(data.current_task, Date.now() - startedAt),
         );
       },
     );
-  }, [currentTaskId, notifySuccess, runAction, selectedLlmProfileId]);
+  }, [
+    contentHtml,
+    currentTaskId,
+    notifySuccess,
+    preparedBodyText,
+    runAction,
+    selectedLlmProfileId,
+    selectedMaterialIds,
+    subject,
+  ]);
 
   const handleChangeMode = useCallback(
     (nextMode: OutreachGenerationMode) => {

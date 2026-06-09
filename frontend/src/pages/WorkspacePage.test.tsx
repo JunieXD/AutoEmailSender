@@ -9,7 +9,7 @@ const apiMocks = vi.hoisted(() => ({
   getWorkspaceThread: vi.fn(),
   refreshWorkspaceReplies: vi.fn(),
   saveDraft: vi.fn(),
-  generateDraft: vi.fn(),
+  rewriteDraft: vi.fn(),
   calculateMatch: vi.fn(),
   updateTaskOutreachConfig: vi.fn(),
   continueManually: vi.fn(),
@@ -67,7 +67,7 @@ vi.mock("@/lib/api/workspacesApi", () => ({
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
   saveDraft: apiMocks.saveDraft,
-  generateDraft: apiMocks.generateDraft,
+  rewriteDraft: apiMocks.rewriteDraft,
   calculateMatch: apiMocks.calculateMatch,
   updateTaskOutreachConfig: apiMocks.updateTaskOutreachConfig,
   continueManually: apiMocks.continueManually,
@@ -195,6 +195,14 @@ const buildWorkspaceThread = (
     last_draft_prompt_tokens: null,
     last_draft_completion_tokens: null,
     last_draft_total_tokens: null,
+    draft: {
+      subject: "AI 原始主题",
+      body_text: "AI 原始正文",
+      body_html: "<p>AI 原始正文</p>",
+      source: "ai_rewrite",
+      sendable: true,
+      editable: true,
+    },
   },
   messages: [],
   ...overrides,
@@ -242,13 +250,21 @@ describe("WorkspacePage draft saving", () => {
           generated_subject: "生成前主题",
           generated_content_text: "生成前正文",
           generated_content_html: "<p>生成前正文</p>",
+          draft: {
+            subject: "生成前主题",
+            body_text: "生成前正文",
+            body_html: "<p>生成前正文</p>",
+            source: "rewrite_source",
+            sendable: false,
+            editable: false,
+          },
         },
       }),
     );
 
     renderWorkspace();
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(await screen.findByRole("button", { name: "写信" }));
     expect(screen.getByLabelText("邮件主题")).toHaveValue("生成前主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>生成前正文</p>");
     expect(screen.getByLabelText("邮件主题")).toBeDisabled();
@@ -337,6 +353,14 @@ describe("WorkspacePage draft saving", () => {
         rendered_template_subject: "模板渲染主题",
         rendered_template_body_text: "模板渲染正文",
         rendered_template_body_html: "<p>模板渲染正文</p>",
+        draft: {
+          subject: "模板渲染主题",
+          body_text: "模板渲染正文",
+          body_html: "<p>模板渲染正文</p>",
+          source: "template",
+          sendable: true,
+          editable: true,
+        },
       },
     });
     apiMocks.getWorkspaceThread.mockResolvedValueOnce(templateThread);
@@ -348,6 +372,14 @@ describe("WorkspacePage draft saving", () => {
           approved_body_text: "用户改过的模板正文",
           approved_body_html: "<p>用户改过的模板正文</p>",
           approved_at: "2026-06-01T00:00:00",
+          draft: {
+            subject: "用户改过的模板主题",
+            body_text: "用户改过的模板正文",
+            body_html: "<p>用户改过的模板正文</p>",
+            source: "saved",
+            sendable: true,
+            editable: true,
+          },
         },
       }),
     );
@@ -625,7 +657,7 @@ describe("WorkspacePage draft saving", () => {
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>未保存的本地正文</p>");
   });
 
-  it("shows the newly generated draft instead of preserving stale local edits", async () => {
+  it("sends the current editor content when rewriting the draft", async () => {
     apiMocks.getWorkspaceThread.mockResolvedValueOnce(
       buildWorkspaceThread({
         current_task: {
@@ -648,7 +680,7 @@ describe("WorkspacePage draft saving", () => {
         },
       }),
     );
-    apiMocks.generateDraft.mockResolvedValueOnce(
+    apiMocks.rewriteDraft.mockResolvedValueOnce(
       buildWorkspaceThread({
         current_task: {
           ...buildWorkspaceThread().current_task,
@@ -666,6 +698,14 @@ describe("WorkspacePage draft saving", () => {
           generated_subject: "新生成主题",
           generated_content_text: "新生成正文",
           generated_content_html: "<p>新生成正文</p>",
+          draft: {
+            subject: "新生成主题",
+            body_text: "新生成正文",
+            body_html: "<p>新生成正文</p>",
+            source: "ai_rewrite",
+            sendable: true,
+            editable: true,
+          },
         },
         professor: {
           ...buildWorkspaceThread().professor,
@@ -685,7 +725,13 @@ describe("WorkspacePage draft saving", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成草稿" }));
 
     await waitFor(() => {
-      expect(apiMocks.generateDraft).toHaveBeenCalledWith(101, 2);
+      expect(apiMocks.rewriteDraft).toHaveBeenCalledWith(101, {
+        subject: "未保存旧主题",
+        body_text: "未保存旧正文",
+        body_html: "<p>未保存旧正文</p>",
+        selected_material_ids: [],
+        llm_profile_id: 2,
+      });
     });
     expect(screen.getByLabelText("邮件主题")).toHaveValue("新生成主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>新生成正文</p>");
@@ -706,6 +752,14 @@ describe("WorkspacePage draft saving", () => {
           approved_subject: "已发送父任务主题",
           approved_body_text: "已发送父任务正文",
           approved_body_html: "<p>已发送父任务正文</p>",
+          draft: {
+            subject: null,
+            body_text: "",
+            body_html: null,
+            source: "manual_empty",
+            sendable: false,
+            editable: false,
+          },
         },
       }),
     );
@@ -719,6 +773,14 @@ describe("WorkspacePage draft saving", () => {
           generated_subject: "跟进任务主题",
           generated_content_text: "跟进任务正文",
           generated_content_html: "<p>跟进任务正文</p>",
+          draft: {
+            subject: "跟进任务主题",
+            body_text: "跟进任务正文",
+            body_html: "<p>跟进任务正文</p>",
+            source: "ai_rewrite",
+            sendable: true,
+            editable: true,
+          },
         },
       }),
     );
