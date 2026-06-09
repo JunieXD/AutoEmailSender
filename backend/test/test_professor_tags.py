@@ -7,6 +7,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -115,11 +116,12 @@ class ProfessorTagsApiTests(unittest.TestCase):
                 "email": "missing-email@example.edu",
             },
         ).json()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute(
                 "UPDATE professors SET email = NULL WHERE id = ?",
                 (created["id"],),
             )
+            connection.commit()
 
         response = self.client.patch(
             f"/api/professors/{created['id']}/tags",
