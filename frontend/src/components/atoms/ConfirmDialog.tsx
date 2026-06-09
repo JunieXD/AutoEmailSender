@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useId } from "react";
 import clsx from "clsx";
 import { AlertTriangle, X } from "lucide-react";
 
@@ -32,6 +33,7 @@ export const ConfirmDialog = ({
   onConfirm,
   onSecondary,
 }: ConfirmDialogProps) => {
+  const titleId = useId();
   const resolvedCancelLabel = cancelLabel ?? "取消";
   const showCancelButton = cancelLabel !== null;
   const {
@@ -67,12 +69,15 @@ export const ConfirmDialog = ({
       onMouseDown={onBackdropMouseDown}
     >
       <div
-        className="relative w-full max-w-md overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >
         <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_68%)]" />
-        <div className="relative px-6 py-6">
+        <div className="relative flex min-h-0 flex-col px-6 py-6">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
               <div
@@ -85,12 +90,15 @@ export const ConfirmDialog = ({
               >
                 <AlertTriangle className="h-5 w-5" />
               </div>
-              <div>
-                <h3 className="text-lg font-semibold tracking-[0.01em] text-stone-900">
+              <div className="min-w-0 flex-1">
+                <h3
+                  id={titleId}
+                  className="text-lg font-semibold tracking-[0.01em] text-stone-900"
+                >
                   {title}
                 </h3>
                 {description ? (
-                  <p className="mt-2 text-sm leading-6 text-stone-600">
+                  <p className="mt-2 max-h-[min(42vh,22rem)] overflow-y-auto whitespace-pre-line pr-2 text-sm leading-6 text-stone-600">
                     {description}
                   </p>
                 ) : null}
