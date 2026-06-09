@@ -13,8 +13,10 @@ import {
   Sparkles,
   Square,
   SquareCheck,
+  Tags,
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { BulkProfessorTagDialog } from "@/components/molecules/BulkProfessorTagDialog";
 import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import {
   DashboardProfessorRow,
@@ -60,6 +62,7 @@ import { calculateMatch } from "@/lib/api/emailTasksApi";
 import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import {
+  bulkUpdateProfessorTags,
   createProfessorTag,
   listProfessorTags,
   listProfessors,
@@ -76,6 +79,7 @@ import {
 import type {
   ProfessorDashboardItemDTO,
   ProfessorDashboardStatus,
+  ProfessorBulkTagModeDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
 } from "@/types";
@@ -339,6 +343,8 @@ export const HomePage = () => {
   const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
   const [savingProfessorTags, setSavingProfessorTags] = useState(false);
   const [creatingProfessorTag, setCreatingProfessorTag] = useState(false);
+  const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
+  const [savingBulkTags, setSavingBulkTags] = useState(false);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
@@ -519,6 +525,47 @@ export const HomePage = () => {
       return null;
     } finally {
       setCreatingProfessorTag(false);
+    }
+  };
+
+  const saveBulkTags = async ({
+    mode,
+    tagIds,
+  }: {
+    mode: ProfessorBulkTagModeDTO;
+    tagIds: number[];
+  }) => {
+    if (selectedIds.size === 0) {
+      notifyWarning("请先选择导师", "选择至少一位导师后再批量修改标签。");
+      return;
+    }
+    setSavingBulkTags(true);
+    try {
+      const result = await bulkUpdateProfessorTags({
+        professor_ids: Array.from(selectedIds),
+        mode,
+        tag_ids: tagIds,
+      });
+      const tagsByProfessorId = new Map(
+        result.professors.map((professor) => [professor.id, professor.tags]),
+      );
+      setProfessors((previous) =>
+        previous.map((professor) => {
+          const tags = tagsByProfessorId.get(professor.id);
+          return tags ? { ...professor, tags } : professor;
+        }),
+      );
+      notifySuccess(
+        "标签已更新",
+        `已更新 ${result.affected_count} 位导师的标签。`,
+      );
+      setBulkTagDialogOpen(false);
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "批量修改标签失败";
+      notifyError("批量修改标签失败", message);
+    } finally {
+      setSavingBulkTags(false);
     }
   };
 
@@ -1373,6 +1420,14 @@ export const HomePage = () => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setBulkTagDialogOpen(true)}
+                  className="ui-btn-secondary"
+                >
+                  <Tags className="h-4 w-4" />
+                  批量改标签
+                </button>
+                <button
+                  type="button"
                   onClick={() => void handleGenerateSelected()}
                   disabled={bulkScoring}
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
@@ -1409,6 +1464,20 @@ export const HomePage = () => {
         onCreateTag={handleCreateAssignmentTag}
         onSave={() => void saveTagEditor()}
         onClose={closeTagEditor}
+      />
+      <BulkProfessorTagDialog
+        open={bulkTagDialogOpen}
+        selectedCount={selectedIds.size}
+        tags={professorTags}
+        saving={savingBulkTags}
+        creating={creatingProfessorTag}
+        onCreateTag={handleCreateAssignmentTag}
+        onSave={(payload) => void saveBulkTags(payload)}
+        onClose={() => {
+          if (!savingBulkTags && !creatingProfessorTag) {
+            setBulkTagDialogOpen(false);
+          }
+        }}
       />
       {confirmDialog}
     </>

@@ -8,6 +8,7 @@ import {
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  bulkUpdateProfessorTags,
   createProfessorTag,
   listProfessors,
   listProfessorsForManagement,
@@ -170,6 +171,7 @@ vi.mock("@/features/onboarding/client/getOnboardingState", () => ({
 vi.mock("@/lib/api/professorsApi", () => ({
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
+  bulkUpdateProfessorTags: vi.fn(),
   createProfessor: vi.fn(),
   createProfessorTag: vi.fn(async () => ({
     id: 2,
@@ -233,6 +235,24 @@ describe("selection controls", () => {
           name: "高意愿",
           text_color: "#166534",
           background_color: "#dcfce7",
+        },
+      ],
+    });
+    vi.mocked(bulkUpdateProfessorTags).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "已更新 1 位导师的标签",
+      professors: [
+        {
+          ...managementProfessors[0],
+          tags: [
+            {
+              id: 1,
+              name: "高意愿",
+              text_color: "#166534",
+              background_color: "#dcfce7",
+            },
+          ],
         },
       ],
     });
@@ -972,5 +992,94 @@ describe("selection controls", () => {
       professorWithTags.id,
       [4, 1, 2, 3],
     );
+  });
+
+  it("bulk updates tags from the home selection bar", async () => {
+    vi.mocked(bulkUpdateProfessorTags).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "已更新 1 位导师的标签",
+      professors: [
+        {
+          ...managementProfessors[0],
+          id: 11,
+          name: "导师 11",
+          tags: [
+            {
+              id: 1,
+              name: "高意愿",
+              text_color: "#166534",
+              background_color: "#dcfce7",
+            },
+          ],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(screen.getByRole("button", { name: "追加标签" }));
+
+    await waitFor(() => {
+      expect(bulkUpdateProfessorTags).toHaveBeenCalledWith({
+        professor_ids: [11],
+        mode: "add",
+        tag_ids: [1],
+      });
+    });
+    expect(notifyMock.notifySuccess).toHaveBeenCalledWith(
+      "标签已更新",
+      "已更新 1 位导师的标签。",
+    );
+  });
+
+  it("bulk updates tags from the management selection bar", async () => {
+    vi.mocked(bulkUpdateProfessorTags).mockResolvedValue({
+      ok: true,
+      affected_count: 1,
+      message: "已更新 1 位导师的标签",
+      professors: [
+        {
+          ...managementProfessors[0],
+          id: 11,
+          name: "导师 11",
+          tags: [
+            {
+              id: 2,
+              name: "已联系",
+              text_color: "#1d4ed8",
+              background_color: "#dbeafe",
+            },
+          ],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(await screen.findByRole("button", { name: "切换为移除标签" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(screen.getByRole("button", { name: "移除标签" }));
+
+    await waitFor(() => {
+      expect(bulkUpdateProfessorTags).toHaveBeenCalledWith({
+        professor_ids: [11],
+        mode: "remove",
+        tag_ids: [1],
+      });
+    });
   });
 });
