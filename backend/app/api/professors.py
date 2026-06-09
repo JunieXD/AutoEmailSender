@@ -22,6 +22,8 @@ from app.models import (
 from app.schemas.professor import (
     ProfessorActionResult,
     ProfessorBulkArchivePayload,
+    ProfessorBulkTagsPayload,
+    ProfessorBulkTagsResult,
     ProfessorDashboardItemRead,
     ProfessorImportFileResult,
     ProfessorImportResult,
@@ -581,6 +583,98 @@ async def bulk_archive_professors(
         ok=True,
         affected_count=affected_count,
         message=f"已将 {affected_count} 位导师移入回收站",
+    )
+
+
+@router.post("/bulk-tags", response_model=ProfessorBulkTagsResult)
+async def bulk_update_professor_tags(
+    payload: ProfessorBulkTagsPayload,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorBulkTagsResult:
+    if not payload.professor_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一位导师")
+    if payload.mode in {"add", "remove"} and not payload.tag_ids:
+        raise HTTPException(status_code=400, detail="请选择要追加或移除的标签")
+
+    requested_professor_ids = list(dict.fromkeys(payload.professor_ids))
+    professors = list(
+        (
+            await session.execute(
+                select(Professor)
+                .options(selectinload(Professor.tags))
+                .where(Professor.id.in_(requested_professor_ids)),
+            )
+        ).scalars(),
+    )
+    professors_by_id = {professor.id: professor for professor in professors}
+    missing_professor_ids = [
+        professor_id
+        for professor_id in requested_professor_ids
+        if professor_id not in professors_by_id
+    ]
+    if missing_professor_ids:
+        raise HTTPException(status_code=404, detail="导师不存在")
+
+    tags = await _load_tags_by_ids(session, payload.tag_ids)
+    tag_ids = [tag.id for tag in tags]
+    now = utc_now()
+    for professor_id in requested_professor_ids:
+        professor = professors_by_id[professor_id]
+        current_tag_ids = [tag.id for tag in professor.tags]
+        if payload.mode == "add":
+            next_tag_ids = current_tag_ids + [
+                tag_id for tag_id in tag_ids if tag_id not in current_tag_ids
+            ]
+        elif payload.mode == "remove":
+            remove_tag_ids = set(tag_ids)
+            next_tag_ids = [
+                tag_id for tag_id in current_tag_ids if tag_id not in remove_tag_ids
+            ]
+        else:
+            next_tag_ids = tag_ids
+        await _sync_professor_tags(session, professor, next_tag_ids)
+        professor.updated_at = now
+
+    await session.flush()
+    refreshed_professors = list(
+        (
+            await session.execute(
+                select(Professor)
+                .options(selectinload(Professor.tags))
+                .where(Professor.id.in_(requested_professor_ids)),
+            )
+        ).scalars(),
+    )
+    refreshed_by_id = {
+        professor.id: professor for professor in refreshed_professors
+    }
+    ordered_professors = [
+        refreshed_by_id[professor_id]
+        for professor_id in requested_professor_ids
+    ]
+
+    await record_operation_log(
+        session,
+        category="user_action",
+        event_name="professor.bulk_tags_updated",
+        entity_type="professor",
+        metadata={
+            "requested_count": len(requested_professor_ids),
+            "affected_count": len(ordered_professors),
+            "ids": requested_professor_ids,
+            "mode": payload.mode,
+            "tag_ids": tag_ids,
+        },
+    )
+    await session.commit()
+    return ProfessorBulkTagsResult(
+        ok=True,
+        affected_count=len(ordered_professors),
+        professors=[
+            _serialize_management_professor(professor)
+            for professor in ordered_professors
+        ],
+        message=f"已更新 {len(ordered_professors)} 位导师的标签",
     )
 
 

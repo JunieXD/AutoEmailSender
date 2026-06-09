@@ -131,6 +131,151 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["tags"][0]["id"], tag["id"])
         self.assertEqual(refreshed["tags"][0]["id"], tag["id"])
 
+    def test_bulk_add_professor_tags_preserves_existing_tags(self) -> None:
+        tags = self.client.get("/api/professors/tags").json()
+        first_tag_id = tags[0]["id"]
+        second_tag_id = tags[1]["id"]
+        first = self.client.post(
+            "/api/professors",
+            json={
+                "name": "批量追加一",
+                "email": "bulk-add-1@example.edu",
+                "tag_ids": [first_tag_id],
+            },
+        ).json()
+        second = self.client.post(
+            "/api/professors",
+            json={
+                "name": "批量追加二",
+                "email": "bulk-add-2@example.edu",
+                "tag_ids": [],
+            },
+        ).json()
+
+        response = self.client.post(
+            "/api/professors/bulk-tags",
+            json={
+                "professor_ids": [first["id"], second["id"]],
+                "mode": "add",
+                "tag_ids": [second_tag_id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["affected_count"], 2)
+        tags_by_id = {
+            item["id"]: [tag["id"] for tag in item["tags"]]
+            for item in payload["professors"]
+        }
+        self.assertEqual(tags_by_id[first["id"]], [first_tag_id, second_tag_id])
+        self.assertEqual(tags_by_id[second["id"]], [second_tag_id])
+
+    def test_bulk_remove_professor_tags_preserves_other_tags(self) -> None:
+        tags = self.client.get("/api/professors/tags").json()
+        first_tag_id = tags[0]["id"]
+        second_tag_id = tags[1]["id"]
+        professor = self.client.post(
+            "/api/professors",
+            json={
+                "name": "批量移除",
+                "email": "bulk-remove@example.edu",
+                "tag_ids": [first_tag_id, second_tag_id],
+            },
+        ).json()
+
+        response = self.client.post(
+            "/api/professors/bulk-tags",
+            json={
+                "professor_ids": [professor["id"]],
+                "mode": "remove",
+                "tag_ids": [first_tag_id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            [tag["id"] for tag in response.json()["professors"][0]["tags"]],
+            [second_tag_id],
+        )
+
+    def test_bulk_replace_professor_tags_allows_empty_tags(self) -> None:
+        tags = self.client.get("/api/professors/tags").json()
+        tag_id = tags[0]["id"]
+        professor = self.client.post(
+            "/api/professors",
+            json={
+                "name": "批量覆盖",
+                "email": "bulk-replace@example.edu",
+                "tag_ids": [tag_id],
+            },
+        ).json()
+
+        response = self.client.post(
+            "/api/professors/bulk-tags",
+            json={
+                "professor_ids": [professor["id"]],
+                "mode": "replace",
+                "tag_ids": [],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["professors"][0]["tags"], [])
+
+    def test_bulk_tags_rejects_empty_add_without_partial_update(self) -> None:
+        tags = self.client.get("/api/professors/tags").json()
+        tag_id = tags[0]["id"]
+        professor = self.client.post(
+            "/api/professors",
+            json={
+                "name": "批量错误",
+                "email": "bulk-error@example.edu",
+                "tag_ids": [tag_id],
+            },
+        ).json()
+
+        response = self.client.post(
+            "/api/professors/bulk-tags",
+            json={
+                "professor_ids": [professor["id"]],
+                "mode": "add",
+                "tag_ids": [],
+            },
+        )
+        refreshed = self.client.get(f"/api/professors/{professor['id']}").json()
+
+        self.assertEqual(response.status_code, 400, msg=response.text)
+        self.assertEqual(response.json()["detail"], "请选择要追加或移除的标签")
+        self.assertEqual([tag["id"] for tag in refreshed["tags"]], [tag_id])
+
+    def test_bulk_tags_rejects_missing_professor_without_partial_update(self) -> None:
+        tags = self.client.get("/api/professors/tags").json()
+        first_tag_id = tags[0]["id"]
+        second_tag_id = tags[1]["id"]
+        professor = self.client.post(
+            "/api/professors",
+            json={
+                "name": "批量缺失导师",
+                "email": "bulk-missing-professor@example.edu",
+                "tag_ids": [first_tag_id],
+            },
+        ).json()
+
+        response = self.client.post(
+            "/api/professors/bulk-tags",
+            json={
+                "professor_ids": [professor["id"], 999999],
+                "mode": "replace",
+                "tag_ids": [second_tag_id],
+            },
+        )
+        refreshed = self.client.get(f"/api/professors/{professor['id']}").json()
+
+        self.assertEqual(response.status_code, 404, msg=response.text)
+        self.assertEqual(response.json()["detail"], "导师不存在")
+        self.assertEqual([tag["id"] for tag in refreshed["tags"]], [first_tag_id])
+
     def test_create_duplicate_tag_constraint_returns_conflict(self) -> None:
         async def miss_preflight_duplicate_check(*args: object, **kwargs: object) -> None:
             return None
