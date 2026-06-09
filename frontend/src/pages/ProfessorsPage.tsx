@@ -88,6 +88,10 @@ import {
   type ProfessorManagementFilterState,
 } from "@/features/professor-management/client/filterManagementProfessors";
 import {
+  bulkTagConfirmLabels,
+  buildBulkTagConfirmDescription,
+} from "@/features/professor-management/client/bulkTagConfirmCopy";
+import {
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
   sortManagementProfessors,
   type ProfessorManagementSortKey,
@@ -119,27 +123,6 @@ const PROFESSORS_FILTERS_STORAGE_KEY = "professors_page_filters";
 const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
-
-const bulkTagConfirmLabels: Record<
-  ProfessorBulkTagModeDTO,
-  { title: string; confirmLabel: string; actionDescription: string }
-> = {
-  add: {
-    title: "确认追加标签？",
-    confirmLabel: "确认追加",
-    actionDescription: "追加到",
-  },
-  remove: {
-    title: "确认移除标签？",
-    confirmLabel: "确认移除",
-    actionDescription: "从",
-  },
-  replace: {
-    title: "确认覆盖标签？",
-    confirmLabel: "确认覆盖",
-    actionDescription: "覆盖",
-  },
-};
 
 const archiveFilterLabels: Record<ArchiveFilter, string> = {
   active: "正常",
@@ -1028,16 +1011,13 @@ export const ProfessorsPage = () => {
     const tagNames = tagIds
       .map((tagId) => professorTags.find((tag) => tag.id === tagId)?.name)
       .filter((tagName): tagName is string => Boolean(tagName));
-    const tagDescription =
-      tagNames.length > 0 ? tagNames.join("、") : "不选择任何标签";
     const confirmed = await confirm({
       title: labels.title,
-      description:
-        mode === "replace" && tagIds.length === 0
-          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。原来的标签将会被替换。`
-          : mode === "replace"
-            ? `将“${tagDescription}”覆盖选中的 ${selectedIds.size} 位导师，原来的标签将会被替换。`
-          : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
+      description: buildBulkTagConfirmDescription({
+        mode,
+        selectedCount: selectedIds.size,
+        tagNames,
+      }),
       confirmLabel: labels.confirmLabel,
       cancelLabel: "先不处理",
       tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
@@ -2529,6 +2509,7 @@ export const ProfessorsPage = () => {
         creating={creatingAssignmentTag}
         onChange={setTagEditorSelectedIds}
         onCreateTag={handleCreateAssignmentTag}
+        onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
         onSave={() => void saveTagEditor()}
         onClose={closeTagEditor}
       />

@@ -42,6 +42,10 @@ import {
   type DashboardKeywordSearchScope,
 } from "@/features/home-dashboard/client/filterDashboardProfessors";
 import {
+  bulkTagConfirmLabels,
+  buildBulkTagConfirmDescription,
+} from "@/features/professor-management/client/bulkTagConfirmCopy";
+import {
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
   isProfessorDashboardTimeSortKey,
   sortDashboardProfessors,
@@ -93,27 +97,6 @@ type ProfessorDashboardTimeSortKey = Extract<
   ProfessorDashboardSortKey,
   "lastSentAt" | "lastRepliedAt"
 >;
-
-const bulkTagConfirmLabels: Record<
-  ProfessorBulkTagModeDTO,
-  { title: string; confirmLabel: string; actionDescription: string }
-> = {
-  add: {
-    title: "确认追加标签？",
-    confirmLabel: "确认追加",
-    actionDescription: "追加到",
-  },
-  remove: {
-    title: "确认移除标签？",
-    confirmLabel: "确认移除",
-    actionDescription: "从",
-  },
-  replace: {
-    title: "确认覆盖标签？",
-    confirmLabel: "确认覆盖",
-    actionDescription: "覆盖",
-  },
-};
 
 const DEFAULT_TIME_SORT_DIRECTIONS: Record<
   ProfessorDashboardTimeSortKey,
@@ -640,16 +623,13 @@ export const HomePage = () => {
     const tagNames = tagIds
       .map((tagId) => professorTags.find((tag) => tag.id === tagId)?.name)
       .filter((tagName): tagName is string => Boolean(tagName));
-    const tagDescription =
-      tagNames.length > 0 ? tagNames.join("、") : "不选择任何标签";
     const confirmed = await confirm({
       title: labels.title,
-      description:
-        mode === "replace" && tagIds.length === 0
-          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。原来的标签将会被替换。`
-          : mode === "replace"
-            ? `将“${tagDescription}”覆盖选中的 ${selectedIds.size} 位导师，原来的标签将会被替换。`
-          : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
+      description: buildBulkTagConfirmDescription({
+        mode,
+        selectedCount: selectedIds.size,
+        tagNames,
+      }),
       confirmLabel: labels.confirmLabel,
       cancelLabel: "先不处理",
       tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
@@ -1580,6 +1560,7 @@ export const HomePage = () => {
         creating={creatingProfessorTag}
         onChange={setTagEditorSelectedIds}
         onCreateTag={handleCreateAssignmentTag}
+        onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
         onSave={() => void saveTagEditor()}
         onClose={closeTagEditor}
       />

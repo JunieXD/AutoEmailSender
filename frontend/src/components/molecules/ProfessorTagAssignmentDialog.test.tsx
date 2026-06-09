@@ -29,6 +29,35 @@ const deferred = <T,>() => {
 };
 
 describe("ProfessorTagAssignmentDialog", () => {
+  it("reveals tag delete buttons after entering delete mode", () => {
+    const handleDeleteTag = vi.fn();
+
+    render(
+      <ProfessorTagAssignmentDialog
+        open
+        scopeKey="mentor-a"
+        professorName="导师甲"
+        tags={tags}
+        selectedTagIds={[]}
+        onChange={vi.fn()}
+        onCreateTag={vi.fn()}
+        onDeleteTag={handleDeleteTag}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const deleteModeButton = screen.getByRole("button", { name: "删除标签" });
+    expect(
+      screen.queryByRole("button", { name: "删除标签 高意愿" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(deleteModeButton);
+    fireEvent.click(screen.getByRole("button", { name: "删除标签 高意愿" }));
+
+    expect(handleDeleteTag).toHaveBeenCalledWith(tags[0]);
+  });
+
   it("resets the custom tag form after closing and reopening", () => {
     const Harness = () => {
       const [open, setOpen] = useState(false);
@@ -47,6 +76,7 @@ describe("ProfessorTagAssignmentDialog", () => {
             selectedTagIds={selectedTagIds}
             onChange={setSelectedTagIds}
             onCreateTag={vi.fn()}
+            onDeleteTag={vi.fn()}
             onSave={vi.fn()}
             onClose={() => setOpen(false)}
           />
@@ -116,6 +146,7 @@ describe("ProfessorTagAssignmentDialog", () => {
             selectedTagIds={selectedTagIds}
             onChange={changeSelectedTagIds}
             onCreateTag={handleCreateTag}
+            onDeleteTag={vi.fn()}
             onSave={vi.fn()}
             onClose={() => setOpen(false)}
           />
@@ -163,6 +194,7 @@ describe("ProfessorTagAssignmentDialog", () => {
         creating={false}
         onChange={handleChange}
         onCreateTag={() => createRequest.promise}
+        onDeleteTag={vi.fn()}
         onSave={handleSave}
         onClose={handleClose}
       />,
@@ -183,6 +215,7 @@ describe("ProfessorTagAssignmentDialog", () => {
         creating
         onChange={handleChange}
         onCreateTag={() => createRequest.promise}
+        onDeleteTag={vi.fn()}
         onSave={handleSave}
         onClose={handleClose}
       />,
@@ -211,6 +244,7 @@ describe("ProfessorTagAssignmentDialog", () => {
         selectedTagIds={[]}
         onChange={handleChange}
         onCreateTag={() => createRequest.promise}
+        onDeleteTag={vi.fn()}
         onSave={vi.fn()}
         onClose={vi.fn()}
       />,
@@ -231,6 +265,7 @@ describe("ProfessorTagAssignmentDialog", () => {
         selectedTagIds={[]}
         onChange={handleChange}
         onCreateTag={() => createRequest.promise}
+        onDeleteTag={vi.fn()}
         onSave={vi.fn()}
         onClose={vi.fn()}
       />,
@@ -256,6 +291,7 @@ describe("ProfessorTagAssignmentDialog", () => {
         creating={false}
         onChange={vi.fn()}
         onCreateTag={handleCreateTag}
+        onDeleteTag={vi.fn()}
         onSave={vi.fn()}
         onClose={vi.fn()}
       />,

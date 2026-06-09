@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { Check, Loader2, Plus } from "lucide-react";
+import { Check, Loader2, Plus, Trash2 } from "lucide-react";
 import type { ProfessorTagDTO, ProfessorTagPayloadDTO } from "@/types";
 
 type ProfessorTagAssignmentDialogProps = {
@@ -13,6 +13,7 @@ type ProfessorTagAssignmentDialogProps = {
   creating?: boolean;
   onChange: (tagIds: number[]) => void;
   onCreateTag: (payload: ProfessorTagPayloadDTO) => Promise<ProfessorTagDTO | null>;
+  onDeleteTag: (tag: ProfessorTagDTO) => void;
   onSave: () => void;
   onClose: () => void;
 };
@@ -30,10 +31,12 @@ export const ProfessorTagAssignmentDialog = ({
   creating = false,
   onChange,
   onCreateTag,
+  onDeleteTag,
   onSave,
   onClose,
 }: ProfessorTagAssignmentDialogProps) => {
   const [creatingCustomTag, setCreatingCustomTag] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
   const [name, setName] = useState("");
   const [textColor, setTextColor] = useState(DEFAULT_TEXT_COLOR);
   const [backgroundColor, setBackgroundColor] = useState(
@@ -49,6 +52,7 @@ export const ProfessorTagAssignmentDialog = ({
     setTextColor(DEFAULT_TEXT_COLOR);
     setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
     setCreatingCustomTag(false);
+    setDeleteMode(false);
   };
 
   useEffect(() => {
@@ -125,33 +129,48 @@ export const ProfessorTagAssignmentDialog = ({
           {tags.map((tag) => {
             const selected = selectedTagIds.includes(tag.id);
             return (
-              <button
+              <span
                 key={tag.id}
-                type="button"
-                aria-label={`选择标签 ${tag.name}`}
-                aria-pressed={selected}
-                disabled={busy}
-                onClick={() =>
-                  onChange(
-                    selected
-                      ? selectedTagIds.filter((tagId) => tagId !== tag.id)
-                      : [...selectedTagIds, tag.id],
-                  )
-                }
-                className={clsx(
-                  "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                  selected
-                    ? "border-primary/40 shadow-sm shadow-primary/10"
-                    : "border-stone-200 hover:border-stone-300",
-                )}
-                style={{
-                  backgroundColor: tag.background_color,
-                  color: tag.text_color,
-                }}
+                className="inline-flex items-center overflow-hidden rounded-full"
               >
-                {selected ? <Check className="h-3.5 w-3.5" /> : null}
-                {tag.name}
-              </button>
+                <button
+                  type="button"
+                  aria-label={`选择标签 ${tag.name}`}
+                  aria-pressed={selected}
+                  disabled={busy}
+                  onClick={() =>
+                    onChange(
+                      selected
+                        ? selectedTagIds.filter((tagId) => tagId !== tag.id)
+                        : [...selectedTagIds, tag.id],
+                    )
+                  }
+                  className={clsx(
+                    "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                    selected
+                      ? "border-primary/40 shadow-sm shadow-primary/10"
+                      : "border-stone-200 hover:border-stone-300",
+                  )}
+                  style={{
+                    backgroundColor: tag.background_color,
+                    color: tag.text_color,
+                  }}
+                >
+                  {selected ? <Check className="h-3.5 w-3.5" /> : null}
+                  {tag.name}
+                </button>
+                {deleteMode ? (
+                  <button
+                    type="button"
+                    aria-label={`删除标签 ${tag.name}`}
+                    disabled={busy}
+                    onClick={() => onDeleteTag(tag)}
+                    className="inline-flex h-8 w-8 -translate-x-1 animate-[tag-trash-in_160ms_ease-out] items-center justify-center rounded-full border border-red-100 bg-white text-red-500 opacity-100 transition duration-200 ease-out hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </span>
             );
           })}
         </div>
@@ -162,15 +181,36 @@ export const ProfessorTagAssignmentDialog = ({
           </div>
         ) : null}
 
-        <div className="mt-5">
+        <div className="mt-5 flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => setCreatingCustomTag((previous) => !previous)}
+            onClick={() => {
+              setCreatingCustomTag((previous) => !previous);
+              setDeleteMode(false);
+            }}
             disabled={busy}
             className="ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Plus className="h-4 w-4" />
             新增标签
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteMode((previous) => !previous);
+              setCreatingCustomTag(false);
+            }}
+            disabled={busy || tags.length === 0}
+            aria-pressed={deleteMode}
+            className={clsx(
+              "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+              deleteMode
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-stone-200 bg-white text-stone-600 hover:border-red-200 hover:text-red-600",
+            )}
+          >
+            <Trash2 className="h-4 w-4" />
+            删除标签
           </button>
         </div>
 
