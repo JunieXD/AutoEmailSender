@@ -2452,10 +2452,12 @@ def _ensure_task_allows_approval(task: EmailTask) -> None:
     ):
         raise ValueError("该草稿已从批量任务中移除，不能再审核或发送")
     if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
-        raise ValueError("草稿正在生成，请稍后再审核")
+        raise ValueError("AI 正在改写当前草稿，请等待完成后再发送。")
 
 
 def _ensure_task_allows_draft_save(task: EmailTask) -> None:
+    if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
+        raise ValueError("AI 正在改写当前草稿，请等待完成后再保存。")
     _ensure_task_allows_approval(task)
     if task.status not in SAVE_DRAFT_ALLOWED_STATUSES:
         raise ValueError("当前状态不能保存草稿")

@@ -1826,6 +1826,29 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
 
+    def test_save_send_and_schedule_reject_generating_rewrite(self) -> None:
+        task_id = self._create_generating_workspace_rewrite_task()
+        payload = {
+            "subject": "主题",
+            "body_text": "正文",
+            "body_html": "<p>正文</p>",
+            "selected_material_ids": [],
+        }
+
+        save_response = self.client.post(f"/api/email-tasks/{task_id}/save-draft", json=payload)
+        send_response = self.client.post(f"/api/email-tasks/{task_id}/approve-and-send", json=payload)
+        schedule_response = self.client.post(
+            f"/api/email-tasks/{task_id}/approve-and-schedule",
+            json={**payload, "scheduled_at": "2030-01-01T10:00:00+00:00"},
+        )
+
+        self.assertEqual(save_response.status_code, 400, msg=save_response.text)
+        self.assertEqual(send_response.status_code, 400, msg=send_response.text)
+        self.assertEqual(schedule_response.status_code, 400, msg=schedule_response.text)
+        self.assertEqual(save_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再保存。")
+        self.assertEqual(send_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。")
+        self.assertEqual(schedule_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。")
+
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -8398,6 +8421,38 @@ class ApiEndpointTests(unittest.TestCase):
             match_reason="方向匹配",
             outreach_generation_mode="llm",
         )
+
+    def _create_generating_workspace_rewrite_task(self) -> int:
+        task_id = self._create_rewrite_ready_task()
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = ?,
+                    draft_generation_previous_status = ?,
+                    draft_generation_started_at = ?,
+                    draft_rewrite_source_subject = ?,
+                    draft_rewrite_source_body_text = ?,
+                    draft_rewrite_source_body_html = ?,
+                    draft_rewrite_source_selected_material_ids = ?
+                WHERE id = ?
+                """,
+                (
+                    "generating_draft",
+                    "matched",
+                    datetime.now(UTC).isoformat(),
+                    "源主题",
+                    "源正文",
+                    "<p>源正文</p>",
+                    json.dumps([]),
+                    task_id,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        return task_id
 
     def _create_canceled_batch_stopped_parent_task(self, *, email: str) -> int:
         identity_id = self._create_identity(with_imap=False)

@@ -28,6 +28,7 @@ from test.schema_database import create_schema_sqlite_database
 from app.services.batch_draft_generation_runtime import (
     BatchDraftGenerationCoordinator,
     recover_stale_generating_drafts,
+    recover_stale_workspace_draft_rewrites,
     run_queued_batch_drafts_once,
 )
 
@@ -155,6 +156,42 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.status, EmailTaskStatus.CANCELED.value)
         self.assertEqual(task.cancellation_reason, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value)
         self.assertIsNone(task.draft_generation_previous_status)
+
+    def test_recover_stale_workspace_rewrite_uses_started_at_and_restores_source(self) -> None:
+        task_id = self._run_async(
+            self._create_manual_workspace_rewrite_task(
+                started_at=datetime.now(UTC) - timedelta(minutes=6),
+                previous_status=EmailTaskStatus.MATCHED.value,
+                source_body="改写前正文",
+            ),
+        )
+
+        restored_count = self._run_async(recover_stale_workspace_draft_rewrites(self.session_factory))
+        task = self._run_async(self._get_task(task_id))
+
+        self.assertEqual(restored_count, 1)
+        self.assertEqual(task.status, EmailTaskStatus.MATCHED.value)
+        self.assertEqual(task.approved_body_text, "改写前正文")
+        self.assertEqual(task.approved_body_html, "<p>改写前正文</p>")
+        self.assertEqual(task.last_error, "AI 改写已中断，请重试")
+        self.assertIsNone(task.draft_generation_previous_status)
+        self.assertIsNone(task.draft_generation_started_at)
+
+    def test_recover_stale_workspace_rewrite_skips_recent_started_at(self) -> None:
+        task_id = self._run_async(
+            self._create_manual_workspace_rewrite_task(
+                started_at=datetime.now(UTC) - timedelta(minutes=4),
+                previous_status=EmailTaskStatus.MATCHED.value,
+                source_body="改写前正文",
+            ),
+        )
+
+        restored_count = self._run_async(recover_stale_workspace_draft_rewrites(self.session_factory))
+        task = self._run_async(self._get_task(task_id))
+
+        self.assertEqual(restored_count, 0)
+        self.assertEqual(task.status, EmailTaskStatus.GENERATING_DRAFT.value)
+        self.assertEqual(task.draft_rewrite_source_body_text, "改写前正文")
 
     def test_llm_failure_marks_draft_failed_without_retry(self) -> None:
         task_ids = self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
@@ -424,6 +461,79 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             session.add_all([batch_task, *tasks])
             await session.commit()
             return [task.id for task in tasks]
+
+    async def _create_manual_workspace_rewrite_task(
+        self,
+        *,
+        started_at: datetime,
+        previous_status: str,
+        source_body: str,
+    ) -> int:
+        async with self.session_factory() as session:
+            session.add(AppSetting(id=1))
+            identity = IdentityProfile(
+                name="工作区恢复身份",
+                profile_name="工作区恢复身份",
+                sender_name="王同学",
+                email_address=f"workspace-rewrite-{datetime.now(UTC).timestamp()}@example.com",
+                smtp_host="smtp.example.com",
+                smtp_port=465,
+                smtp_username="sender@example.com",
+                smtp_password="secret",
+                default_language="zh-CN",
+                outreach_generation_mode="llm",
+                outreach_template_subject="申请与{{name}}老师交流",
+                outreach_template_body_text="老师您好，我是{{sender_name}}。",
+                is_default=True,
+            )
+            material = IdentityMaterial(
+                identity=identity,
+                display_name="简历",
+                original_filename="resume.txt",
+                file_path="resume.txt",
+                mime_type="text/plain",
+                size_bytes=32,
+                sha256="1" * 64,
+                extracted_text="My research focuses on agents.",
+                material_type=IdentityMaterialType.RESUME.value,
+            )
+            identity.current_primary_material = material
+            llm_profile = LLMProfile(
+                name=f"工作区恢复模型-{datetime.now(UTC).timestamp()}",
+                provider="openai",
+                api_base_url="https://api.example.com/v1",
+                api_key="sk-test-key",
+                model_name="gpt-test",
+                is_default=True,
+            )
+            task = EmailTask(
+                source=EmailTaskSource.MANUAL.value,
+                identity=identity,
+                llm_profile=llm_profile,
+                professor=Professor(
+                    name="工作区恢复导师",
+                    email=f"workspace-rewrite-professor-{datetime.now(UTC).timestamp()}@example.edu",
+                    title="Professor",
+                    university="Example University",
+                    school="School of AI",
+                    department="Computer Science",
+                    research_direction="Large language models",
+                    recent_papers=[],
+                ),
+                primary_material=material,
+                status=EmailTaskStatus.GENERATING_DRAFT.value,
+                draft_generation_previous_status=previous_status,
+                draft_generation_started_at=started_at,
+                draft_rewrite_source_subject="改写前主题",
+                draft_rewrite_source_body_text=source_body,
+                draft_rewrite_source_body_html=f"<p>{source_body}</p>",
+                draft_rewrite_source_selected_material_ids=[],
+                selected_material_ids=[],
+                updated_at=started_at,
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
 
     async def _get_task(self, task_id: int) -> EmailTask:
         async with self.session_factory() as session:

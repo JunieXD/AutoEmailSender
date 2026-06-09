@@ -17,7 +17,12 @@ from app.services.batch_task_item_actions import (
     batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
 )
-from app.services.task_runtime import generate_task_draft
+from app.services.rich_text import text_to_email_html
+from app.services.task_runtime import (
+    WORKSPACE_DRAFT_REWRITE_INTERRUPTED_MESSAGE,
+    WORKSPACE_DRAFT_REWRITE_TIMEOUT,
+    generate_task_draft,
+)
 
 
 class BatchDraftGenerationCoordinator:
@@ -55,6 +60,7 @@ async def recover_stale_generating_drafts(
                 .options(selectinload(EmailTask.batch_task))
                 .where(
                     EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value,
+                    EmailTask.draft_generation_started_at.is_(None),
                     EmailTask.updated_at < cutoff,
                 ),
             ),
@@ -70,6 +76,41 @@ async def recover_stale_generating_drafts(
                 task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
                 task.cancellation_reason = None
             task.draft_generation_previous_status = None
+            task.updated_at = resolved_now
+        await session.commit()
+        return len(tasks)
+
+
+async def recover_stale_workspace_draft_rewrites(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    now: datetime | None = None,
+) -> int:
+    resolved_now = now or utc_now()
+    cutoff = resolved_now - WORKSPACE_DRAFT_REWRITE_TIMEOUT
+    async with session_factory() as session:
+        tasks = list(
+            await session.scalars(
+                select(EmailTask).where(
+                    EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value,
+                    EmailTask.draft_generation_started_at.is_not(None),
+                    EmailTask.draft_generation_started_at < cutoff,
+                ),
+            ),
+        )
+        for task in tasks:
+            source_body_text = task.draft_rewrite_source_body_text or ""
+            source_body_html = task.draft_rewrite_source_body_html
+            if source_body_text and not source_body_html:
+                source_body_html = text_to_email_html(source_body_text).html
+            task.approved_subject = task.draft_rewrite_source_subject
+            task.approved_body_text = source_body_text
+            task.approved_body_html = source_body_html
+            task.selected_material_ids = task.draft_rewrite_source_selected_material_ids
+            task.status = task.draft_generation_previous_status or EmailTaskStatus.REVIEW_REQUIRED.value
+            task.draft_generation_previous_status = None
+            task.draft_generation_started_at = None
+            task.last_error = WORKSPACE_DRAFT_REWRITE_INTERRUPTED_MESSAGE
             task.updated_at = resolved_now
         await session.commit()
         return len(tasks)

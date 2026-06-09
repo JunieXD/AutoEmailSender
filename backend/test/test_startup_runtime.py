@@ -45,6 +45,7 @@ class StartupRuntimeTest(unittest.TestCase):
                     patch.object(main, "cleanup_old_operation_logs", AsyncMock()),
                     patch.object(main, "recover_interrupted_crawl_jobs", AsyncMock()),
                     patch.object(main, "recover_interrupted_match_analysis_runs", AsyncMock()),
+                    patch.object(main, "recover_stale_workspace_draft_rewrites", AsyncMock()),
                     patch.object(main, "recover_stale_generating_drafts", AsyncMock()),
                     patch.object(main, "get_session_factory", return_value=_session_factory()),
                     patch.object(main, "get_settings", return_value=SimpleNamespace(enable_background_workers=False, data_dir=Path(temp_dir))),
@@ -66,16 +67,19 @@ class StartupRuntimeTest(unittest.TestCase):
     def test_cleanup_runtime_state_recovers_generating_drafts_immediately(self) -> None:
         async def run_test() -> None:
             session_factory = _session_factory()
+            recover_workspace_rewrites = AsyncMock(return_value=1)
             recover_generating_drafts = AsyncMock(return_value=1)
             with (
                 patch.object(main, "cleanup_old_operation_logs", AsyncMock()),
                 patch.object(main, "recover_interrupted_crawl_jobs", AsyncMock()),
                 patch.object(main, "recover_interrupted_match_analysis_runs", AsyncMock()),
+                patch.object(main, "recover_stale_workspace_draft_rewrites", recover_workspace_rewrites),
                 patch.object(main, "recover_stale_generating_drafts", recover_generating_drafts),
                 patch.object(main, "get_session_factory", return_value=session_factory),
             ):
                 await main.cleanup_runtime_state()
 
+            recover_workspace_rewrites.assert_awaited_once_with(session_factory)
             recover_generating_drafts.assert_awaited_once_with(
                 session_factory,
                 stale_after=timedelta(seconds=0),
@@ -96,6 +100,7 @@ class StartupRuntimeTest(unittest.TestCase):
                         patch.object(main, "cleanup_old_operation_logs", AsyncMock()),
                         patch.object(main, "recover_interrupted_crawl_jobs", AsyncMock()),
                         patch.object(main, "recover_interrupted_match_analysis_runs", AsyncMock()),
+                        patch.object(main, "recover_stale_workspace_draft_rewrites", AsyncMock()),
                         patch.object(main, "get_session_factory", return_value=session_factory),
                     ):
                         await main.cleanup_runtime_state()
