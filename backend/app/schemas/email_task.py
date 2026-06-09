@@ -34,6 +34,10 @@ class EmailTaskRuntimeProfileRequest(BaseModel):
     llm_profile_id: int | None = None
 
 
+class EmailTaskRewriteDraftRequest(EmailTaskApprovalRequest):
+    llm_profile_id: int | None = None
+
+
 class TokenUsageRead(ApiSchema):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
@@ -53,4 +57,3 @@ class DraftPreviewRead(ApiSchema):
     body_html: str | None = None
     rich_body: dict[str, object] | None = None
     usage: TokenUsageRead | None = None
-

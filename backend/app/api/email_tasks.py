@@ -10,6 +10,7 @@ from app.schemas.email_task import (
     EmailTaskApprovalRequest,
     EmailTaskOutreachConfigRequest,
     EmailTaskPrimaryMaterialRequest,
+    EmailTaskRewriteDraftRequest,
     EmailTaskRuntimeProfileRequest,
     EmailTaskScheduleRequest,
     MatchCalculationResultRead,
@@ -27,6 +28,7 @@ from app.services.task_runtime import (
     MatchAnalysisAlreadyRunningError,
     regenerate_task_draft,
     preview_task_draft,
+    rewrite_task_draft,
     save_task_draft,
     start_follow_up_task,
     update_task_outreach_config,
@@ -102,6 +104,18 @@ async def generate_draft(
             task_id,
             llm_profile_id=payload.llm_profile_id if payload else None,
         ),
+    )
+
+
+@router.post("/{task_id}/rewrite-draft", response_model=WorkspaceThreadRead)
+async def rewrite_draft(
+    task_id: int,
+    payload: EmailTaskRewriteDraftRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    return await _run_workspace_action(
+        session,
+        lambda: rewrite_task_draft(get_session_factory(), task_id, payload),
     )
 
 

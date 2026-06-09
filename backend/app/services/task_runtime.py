@@ -29,7 +29,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskScheduleRequest
+from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest, EmailTaskScheduleRequest
 from app.services import llm_runtime, mail_runtime
 from app.services.imap_message_fetcher import ImapFetchedMessage
 from app.services.imap_sync_state import (
@@ -82,6 +82,10 @@ DISPATCHABLE_EMAIL_TASK_STATUSES = (
 
 STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
 INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
+WORKSPACE_DRAFT_REWRITE_TIMEOUT = timedelta(minutes=5)
+WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS = int(WORKSPACE_DRAFT_REWRITE_TIMEOUT.total_seconds())
+WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE = "AI 改写超时，请稍后重试"
+WORKSPACE_DRAFT_REWRITE_INTERRUPTED_MESSAGE = "AI 改写已中断，请重试"
 
 SAVE_DRAFT_ALLOWED_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
@@ -893,6 +897,159 @@ async def regenerate_task_draft(
         force=True,
         llm_profile_id=llm_profile_id,
     )
+
+
+async def rewrite_task_draft(
+    session_factory: async_sessionmaker[AsyncSession],
+    task_id: int,
+    payload: EmailTaskRewriteDraftRequest,
+) -> tuple[int, int, int]:
+    source_subject = (payload.subject or "").strip() or None
+    source_body_text = payload.body_text.strip()
+    source_body_html = (payload.body_html or "").strip()
+    if not source_body_text and source_body_html:
+        source_body_text = normalize_email_html(source_body_html).text
+    if not source_body_text and not source_body_html:
+        raise ValueError("先写入正文或配置默认模板后再使用 AI 改写")
+
+    async with session_factory() as session:
+        task = await _load_email_task(session, task_id)
+        if not task:
+            raise ValueError(f"EmailTask {task_id} 不存在")
+        _ensure_task_allows_legacy_manual_actions(task)
+        if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
+            raise ValueError("AI 正在改写当前草稿，请稍后刷新")
+        if task.primary_material is None:
+            raise ValueError("请选择用于匹配的材料后再使用 AI 改写")
+        if not _has_professor_research_direction(task.professor):
+            raise ValueError("请先补充导师研究方向，再使用 AI 改写")
+        await _validate_selected_material_ids(session, task.identity_id, payload.selected_material_ids)
+        ensure_material_extracted_text(task.primary_material)
+
+        runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, payload.llm_profile_id)
+        runtime_settings = await get_runtime_settings(session)
+        rewrite_preferences = llm_runtime.DraftRewritePreferences(
+            draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
+            draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
+            draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
+            draft_rewrite_length=runtime_settings.draft_rewrite_length,
+            draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
+            draft_template_preservation=runtime_settings.draft_template_preservation,
+            draft_custom_instruction=runtime_settings.draft_custom_instruction,
+        )
+        current_match = _build_match_result_from_task(task)
+        identity = task.identity
+        primary_material = task.primary_material
+        professor = task.professor
+        available_materials = list(task.identity.materials)
+        task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
+
+        now = utc_now()
+        task.llm_profile_id = runtime_llm_profile.id
+        task.draft_generation_previous_status = task.status or EmailTaskStatus.REVIEW_REQUIRED.value
+        task.draft_generation_started_at = now
+        task.draft_rewrite_source_subject = source_subject
+        task.draft_rewrite_source_body_text = source_body_text
+        task.draft_rewrite_source_body_html = source_body_html or None
+        task.draft_rewrite_source_selected_material_ids = payload.selected_material_ids
+        task.selected_material_ids = payload.selected_material_ids
+        task.status = EmailTaskStatus.GENERATING_DRAFT.value
+        task.last_error = None
+        task.updated_at = now
+        await session.commit()
+
+        try:
+            generation = await asyncio.wait_for(
+                llm_runtime.generate_draft_content(
+                    identity=identity,
+                    primary_material=primary_material,
+                    llm_profile=runtime_llm_profile,
+                    professor=professor,
+                    available_materials=available_materials,
+                    custom_subject=source_subject,
+                    custom_body=source_body_text,
+                    custom_body_html=source_body_html or None,
+                    current_match=current_match,
+                    max_tokens=runtime_settings.draft_max_tokens,
+                    rewrite_preferences=rewrite_preferences,
+                ),
+                timeout=WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            _restore_workspace_rewrite_source(task, WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE)
+            await session.commit()
+            raise ValueError(WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE) from exc
+        except llm_runtime.LLMRuntimeError as exc:
+            await session.refresh(task)
+            _restore_workspace_rewrite_source(task, str(exc))
+            await session.commit()
+            raise
+        except ValueError as exc:
+            await session.refresh(task)
+            _restore_workspace_rewrite_source(task, str(exc))
+            await session.commit()
+            raise
+
+        await session.refresh(task)
+        if task.status != EmailTaskStatus.GENERATING_DRAFT.value:
+            return task_identity
+
+        result = generation.result
+        usage = generation.usage
+        task.generated_subject = result.subject
+        task.generated_content_text = result.body_text
+        task.generated_content_html = result.body_html
+        task.approved_subject = None
+        task.approved_body_text = None
+        task.approved_body_html = None
+        task.approved_at = None
+        task.status = EmailTaskStatus.REVIEW_REQUIRED.value
+        task.draft_generation_previous_status = None
+        task.draft_generation_started_at = None
+        task.updated_at = utc_now()
+        task.last_error = None
+        provider_payload = {
+            "source": "workspace_rewrite",
+            "primary_material_id": task.primary_material_id,
+            "usage": (
+                {
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "cached_tokens": usage.cached_tokens,
+                    "total_tokens": usage.total_tokens,
+                }
+                if usage is not None
+                else None
+            ),
+        }
+        session.add(
+            EmailLog(
+                email_task_id=task.id,
+                identity_id=task.identity_id,
+                llm_profile_id=task.llm_profile_id,
+                professor_id=task.professor_id,
+                direction=EmailDirection.DRAFT.value,
+                subject=result.subject,
+                content=result.body_text or "",
+                content_html=result.body_html,
+                provider_payload=provider_payload,
+            ),
+        )
+        await _record_email_task_log(
+            session,
+            task,
+            "email_task.draft_rewritten",
+            metadata={
+                "has_usage": usage is not None,
+                "prompt_tokens": usage.prompt_tokens if usage is not None else None,
+                "completion_tokens": usage.completion_tokens if usage is not None else None,
+                "cached_tokens": usage.cached_tokens if usage is not None else None,
+                "total_tokens": usage.total_tokens if usage is not None else None,
+                "selected_material_ids": task.selected_material_ids,
+            },
+        )
+        await session.commit()
+        return task_identity
 
 
 async def preview_task_draft(
@@ -1825,6 +1982,22 @@ async def _snapshot_saved_draft(
     task.approved_at = utc_now()
     task.updated_at = utc_now()
     task.last_error = None
+
+
+def _restore_workspace_rewrite_source(task: EmailTask, error_message: str) -> None:
+    source_body_text = task.draft_rewrite_source_body_text or ""
+    source_body_html = task.draft_rewrite_source_body_html
+    if source_body_text and not source_body_html:
+        source_body_html = text_to_email_html(source_body_text).html
+    task.approved_subject = task.draft_rewrite_source_subject
+    task.approved_body_text = source_body_text
+    task.approved_body_html = source_body_html
+    task.selected_material_ids = task.draft_rewrite_source_selected_material_ids
+    task.status = task.draft_generation_previous_status or EmailTaskStatus.REVIEW_REQUIRED.value
+    task.draft_generation_previous_status = None
+    task.draft_generation_started_at = None
+    task.updated_at = utc_now()
+    task.last_error = error_message
 
 
 async def _validate_primary_material_id(

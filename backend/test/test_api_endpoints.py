@@ -1718,6 +1718,114 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(match_payload["thread"]["llm_profile"]["id"], second_llm_id)
         self.assertEqual(match_payload["thread"]["current_task"]["match_score"], 91)
         self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
+
+    def test_rewrite_draft_uses_request_body_as_llm_input(self) -> None:
+        task_id = self._create_rewrite_ready_task()
+
+        async def fake_generate_draft_content(**kwargs):
+            self.assertEqual(kwargs["custom_subject"], "用户改过主题")
+            self.assertEqual(kwargs["custom_body"], "用户改过正文")
+            self.assertEqual(kwargs["custom_body_html"], "<p>用户改过正文</p>")
+            return self._build_draft_generation_result(
+                subject="AI 改写主题",
+                body_text="AI 改写正文",
+                body_html="<p>AI 改写正文</p>",
+                prompt_tokens=12,
+                completion_tokens=8,
+            )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fake_generate_draft_content),
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "用户改过主题",
+                    "body_text": "用户改过正文",
+                    "body_html": "<p>用户改过正文</p>",
+                    "selected_material_ids": [],
+                    "llm_profile_id": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["current_task"]
+        self.assertEqual(current_task["draft"]["source"], "ai_rewrite")
+        self.assertEqual(current_task["draft"]["subject"], "AI 改写主题")
+        self.assertEqual(current_task["draft"]["body_text"], "AI 改写正文")
+
+    def test_rewrite_draft_rejects_empty_body_without_calling_llm(self) -> None:
+        task_id = self._create_rewrite_ready_task()
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=AssertionError("空正文不能调用 LLM")),
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "主题",
+                    "body_text": "",
+                    "body_html": "",
+                    "selected_material_ids": [],
+                    "llm_profile_id": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, msg=response.text)
+        self.assertEqual(response.json()["detail"], "先写入正文或配置默认模板后再使用 AI 改写")
+
+    def test_rewrite_draft_persists_source_before_llm_returns(self) -> None:
+        task_id = self._create_rewrite_ready_task()
+
+        async def fake_generate_draft_content(**kwargs):
+            connection = sqlite3.connect(self.db_path)
+            try:
+                row = connection.execute(
+                    """
+                    SELECT status, draft_generation_previous_status, draft_generation_started_at,
+                           draft_rewrite_source_subject, draft_rewrite_source_body_text,
+                           draft_rewrite_source_body_html, selected_material_ids
+                    FROM email_tasks
+                    WHERE id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row[0], "generating_draft")
+            self.assertEqual(row[1], "matched")
+            self.assertIsNotNone(row[2])
+            self.assertEqual(row[3], "点击瞬间主题")
+            self.assertEqual(row[4], "点击瞬间正文")
+            self.assertEqual(row[5], "<p>点击瞬间正文</p>")
+            self.assertEqual(json.loads(row[6]), [])
+            return self._build_draft_generation_result(
+                subject="AI 改写主题",
+                body_text="AI 改写正文",
+                body_html="<p>AI 改写正文</p>",
+            )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fake_generate_draft_content),
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "点击瞬间主题",
+                    "body_text": "点击瞬间正文",
+                    "body_html": "<p>点击瞬间正文</p>",
+                    "selected_material_ids": [],
+                    "llm_profile_id": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -8268,6 +8376,28 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
+
+    def _create_rewrite_ready_task(self) -> int:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="rewrite-ready-resume.txt",
+            content=b"My background is in AI agents and research workflows.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email=f"rewrite-ready-{datetime.now(UTC).timestamp()}@example.edu")
+        return self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=material_id,
+            selected_material_ids=[],
+            match_score=82,
+            match_reason="方向匹配",
+            outreach_generation_mode="llm",
+        )
 
     def _create_canceled_batch_stopped_parent_task(self, *, email: str) -> int:
         identity_id = self._create_identity(with_imap=False)
