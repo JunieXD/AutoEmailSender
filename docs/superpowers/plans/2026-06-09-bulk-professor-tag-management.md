@@ -17,8 +17,8 @@
 - 修改 `backend/test/test_professor_tags.py`：增加批量追加、移除、覆盖、清空和错误回滚测试。
 - 修改 `frontend/src/types/index.ts`：新增批量标签模式、请求 DTO、更新结果 DTO。
 - 修改 `frontend/src/lib/api/professorsApi.ts`：新增 `bulkUpdateProfessorTags` API。
-- 创建 `frontend/src/components/molecules/BulkProfessorTagDialog.tsx`：批量模式切换、标签选择、新建标签、保存。
-- 创建 `frontend/src/components/molecules/BulkProfessorTagDialog.test.tsx`：覆盖默认模式、提交 payload、追加/移除空标签禁用、覆盖空标签允许。
+- 创建 `frontend/src/components/molecules/BulkProfessorTagDialog.tsx`：批量模式切换、标签选择、新建标签、删除标签定义、保存。
+- 创建 `frontend/src/components/molecules/BulkProfessorTagDialog.test.tsx`：覆盖默认模式、提交 payload、追加/移除空标签禁用、覆盖空标签允许、删除标签入口。
 - 修改 `frontend/src/pages/HomePage.tsx`：新增批量标签弹窗状态、保存逻辑、sticky 按钮和列表标签刷新。
 - 修改 `frontend/src/pages/ProfessorsPage.tsx`：新增批量标签弹窗状态、保存逻辑、sticky 按钮和列表标签刷新。
 - 修改 `frontend/src/pages/SelectionControls.test.tsx`：覆盖两页入口和成功更新行为。
