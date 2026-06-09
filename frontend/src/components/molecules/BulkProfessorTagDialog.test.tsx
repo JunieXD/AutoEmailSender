@@ -87,12 +87,32 @@ describe("BulkProfessorTagDialog", () => {
     const onDeleteTag = vi.fn();
     renderDialog({ onDeleteTag });
 
+    const deleteModeButton = screen.getByRole("button", { name: "删除标签" });
+    expect(deleteModeButton).toHaveClass(
+      "border-stone-200",
+      "hover:border-red-200",
+      "hover:text-red-600",
+    );
     expect(
       screen.queryByRole("button", { name: "删除标签 高意愿" }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "删除标签" }));
-    fireEvent.click(screen.getByRole("button", { name: "删除标签 高意愿" }));
+    fireEvent.click(deleteModeButton);
+    expect(deleteModeButton).toHaveClass(
+      "border-red-200",
+      "bg-red-50",
+      "text-red-700",
+    );
+    const tagDeleteButton = screen.getByRole("button", {
+      name: "删除标签 高意愿",
+    });
+    expect(tagDeleteButton).toHaveClass(
+      "animate-[tag-trash-in_160ms_ease-out]",
+      "-translate-x-1",
+      "rounded-full",
+      "text-red-500",
+    );
+    fireEvent.click(tagDeleteButton);
 
     expect(onDeleteTag).toHaveBeenCalledWith(tags[0]);
   });

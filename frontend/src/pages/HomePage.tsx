@@ -646,7 +646,9 @@ export const HomePage = () => {
       title: labels.title,
       description:
         mode === "replace" && tagIds.length === 0
-          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。`
+          ? `将清空选中的 ${selectedIds.size} 位导师的全部标签。原来的标签将会被替换。`
+          : mode === "replace"
+            ? `将“${tagDescription}”覆盖选中的 ${selectedIds.size} 位导师，原来的标签将会被替换。`
           : `将“${tagDescription}”${labels.actionDescription}选中的 ${selectedIds.size} 位导师。`,
       confirmLabel: labels.confirmLabel,
       cancelLabel: "先不处理",

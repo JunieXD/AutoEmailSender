@@ -176,7 +176,7 @@ export const BulkProfessorTagDialog = ({
             return (
               <div
                 key={tag.id}
-                className="inline-flex min-h-9 overflow-hidden rounded-full border border-stone-200 bg-white shadow-sm"
+                className="inline-flex items-center overflow-hidden rounded-full"
               >
                 <button
                   type="button"
@@ -204,7 +204,7 @@ export const BulkProfessorTagDialog = ({
                     aria-label={`删除标签 ${tag.name}`}
                     disabled={busy}
                     onClick={() => onDeleteTag(tag)}
-                    className="inline-flex w-9 items-center justify-center border-l border-stone-200 bg-white text-stone-400 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-8 w-8 -translate-x-1 animate-[tag-trash-in_160ms_ease-out] items-center justify-center rounded-full border border-red-100 bg-white text-red-500 opacity-100 transition duration-200 ease-out hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -242,8 +242,10 @@ export const BulkProfessorTagDialog = ({
             disabled={busy || tags.length === 0}
             aria-pressed={deleteMode}
             className={clsx(
-              "ui-btn-secondary px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60",
-              deleteMode ? "border-red-200 bg-red-50 text-red-700" : "",
+              "inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+              deleteMode
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-stone-200 bg-white text-stone-600 hover:border-red-200 hover:text-red-600",
             )}
           >
             <Trash2 className="h-4 w-4" />

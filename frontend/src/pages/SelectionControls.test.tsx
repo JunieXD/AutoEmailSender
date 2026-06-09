@@ -1146,4 +1146,21 @@ describe("selection controls", () => {
       });
     });
   });
+
+  it("warns that original tags will be replaced before bulk replace", async () => {
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择 导师 11" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量改标签" }));
+    fireEvent.click(await screen.findByRole("button", { name: "切换为覆盖标签" }));
+    fireEvent.click(screen.getByRole("button", { name: "选择标签 高意愿" }));
+    fireEvent.click(screen.getByRole("button", { name: "覆盖标签" }));
+
+    expect(await screen.findByText("确认覆盖标签？")).toBeInTheDocument();
+    expect(screen.getByText(/原来的标签将会被替换/)).toBeInTheDocument();
+  });
 });
