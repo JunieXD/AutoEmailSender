@@ -193,8 +193,68 @@ describe("CreateTaskPage", () => {
         outreach_template_subject: "申请与{{name}}老师交流",
         outreach_template_body_text: "{{name}}老师您好",
         outreach_template_body_html: "<p><strong>{{name}}</strong>老师您好</p>",
+        primary_material_id: null,
       }),
     );
+  });
+
+  it("does not show the legacy placeholder hint in template mode", async () => {
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    expect(
+      screen.queryByText("支持 {{name}}、{{university}}、{{sender_name}}、{{year}}、{{month}}、{{day}} 等占位符。"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("AI 写信参考材料")).not.toBeInTheDocument();
+  });
+
+  it("defaults the AI reference material from the selected primary material", async () => {
+    const previousPrimaryMaterial = selectedIdentity.current_primary_material;
+    const previousPrimaryMaterialId = selectedIdentity.current_primary_material_id;
+    const previousGenerationMode = selectedIdentity.outreach_generation_mode;
+    selectedIdentity.current_primary_material = {
+      id: 7,
+      display_name: "Portfolio.pdf",
+      original_filename: "portfolio.pdf",
+      mime_type: "application/pdf",
+      size_bytes: 1024,
+      material_type: "portfolio",
+      is_primary: true,
+      created_at: "2026-05-01T00:00:00",
+    };
+    selectedIdentity.current_primary_material_id = 7;
+    selectedIdentity.outreach_generation_mode = "llm";
+
+    try {
+      render(
+        <MemoryRouter>
+          <CreateTaskPage />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /AI 辅助写信/ }));
+
+      expect(screen.getByText("AI 写信参考材料")).toBeInTheDocument();
+      expect(screen.getByRole("radio")).toBeChecked();
+      fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+      await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+      expect(createBatchTaskMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outreach_generation_mode: "llm",
+          primary_material_id: 7,
+        }),
+      );
+    } finally {
+      selectedIdentity.current_primary_material = previousPrimaryMaterial;
+      selectedIdentity.current_primary_material_id = previousPrimaryMaterialId;
+      selectedIdentity.outreach_generation_mode = previousGenerationMode;
+    }
   });
 
 
@@ -224,9 +284,7 @@ describe("CreateTaskPage", () => {
     );
 
     expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
-    const materialLabel = screen.getAllByText("Portfolio.pdf")[1].closest("label");
-    expect(materialLabel).not.toBeNull();
-    fireEvent.click(materialLabel!.querySelector("input")!);
+    fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: /\u521b\u5efa\u4efb\u52a1/ }));
 
     await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
@@ -284,34 +342,56 @@ describe("CreateTaskPage", () => {
   });
 
   it("clears resend prefill context after creating task", async () => {
-    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
-      sourceTaskId: 12,
-      sourceTaskName: "过期任务",
-      identityId: selectedIdentity.id,
-      professorIds: [selectedProfessor.id],
-      defaults: {
-        identity_id: selectedIdentity.id,
-        outreach_generation_mode: "llm",
-        outreach_template_subject: "AI 主题",
-        outreach_template_body_text: "AI 正文",
-        outreach_template_body_html: "<p>AI 正文</p>",
-        primary_material_id: null,
-        selected_material_ids: [],
-      },
-      warnings: [],
-    }));
+    const previousPrimaryMaterial = selectedIdentity.current_primary_material;
+    const previousPrimaryMaterialId = selectedIdentity.current_primary_material_id;
+    const previousGenerationMode = selectedIdentity.outreach_generation_mode;
+    selectedIdentity.current_primary_material = {
+      id: 7,
+      display_name: "Portfolio.pdf",
+      original_filename: "portfolio.pdf",
+      mime_type: "application/pdf",
+      size_bytes: 1024,
+      material_type: "portfolio",
+      is_primary: true,
+      created_at: "2026-05-01T00:00:00",
+    };
+    selectedIdentity.current_primary_material_id = 7;
+    selectedIdentity.outreach_generation_mode = "llm";
 
-    render(
-      <MemoryRouter>
-        <CreateTaskPage />
-      </MemoryRouter>,
-    );
+    try {
+      window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+        sourceTaskId: 12,
+        sourceTaskName: "过期任务",
+        identityId: selectedIdentity.id,
+        professorIds: [selectedProfessor.id],
+        defaults: {
+          identity_id: selectedIdentity.id,
+          outreach_generation_mode: "llm",
+          outreach_template_subject: "AI 主题",
+          outreach_template_body_text: "AI 正文",
+          outreach_template_body_html: "<p>AI 正文</p>",
+          primary_material_id: 7,
+          selected_material_ids: [],
+        },
+        warnings: [],
+      }));
 
-    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+      render(
+        <MemoryRouter>
+          <CreateTaskPage />
+        </MemoryRouter>,
+      );
 
-    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
-    expect(window.sessionStorage.getItem("batch_resend_prefill_context")).toBeNull();
+      expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+      await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+      expect(window.sessionStorage.getItem("batch_resend_prefill_context")).toBeNull();
+    } finally {
+      selectedIdentity.current_primary_material = previousPrimaryMaterial;
+      selectedIdentity.current_primary_material_id = previousPrimaryMaterialId;
+      selectedIdentity.outreach_generation_mode = previousGenerationMode;
+    }
   });
   it("explains that scheduled AI rewritten drafts still need manual review", () => {
     expect(buildBatchCreateConfirmDescription("llm", "scheduled")).toContain(
@@ -350,5 +430,3 @@ describe("CreateTaskPage", () => {
     expect(screen.getByText("导师13")).toBeInTheDocument();
   });
 });
-
-

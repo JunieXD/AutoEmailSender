@@ -262,6 +262,9 @@ export const CreateTaskPage = () => {
     if (taskMode === 'llm' && !body.trim()) {
       validationErrors.push('AI 辅助写信需要填写套磁信模板正文');
     }
+    if (taskMode === 'llm' && primaryMaterialId === null) {
+      validationErrors.push('AI 写信参考材料为必选项');
+    }
 
     if (validationErrors.length > 0) {
       notifyFormErrors('请检查表单', validationErrors);
@@ -309,6 +312,7 @@ export const CreateTaskPage = () => {
         taskMode === 'llm' ? llmTemplateBodyText : templateBodyText.trim() || null;
       const taskTemplateBodyHtml =
         taskMode === 'llm' ? llmTemplateBodyHtml : templateBodyHtml.trim() || null;
+      const taskPrimaryMaterialId = taskMode === 'llm' ? primaryMaterialId : null;
 
       await createBatchTask({
         identity_id: identityId,
@@ -321,7 +325,7 @@ export const CreateTaskPage = () => {
         window_end_time: scheduleType === 'scheduled' ? endTime : null,
         emails_per_window:
           scheduleType === 'scheduled' ? Number(emailsPerWindow || '0') || null : null,
-        primary_material_id: primaryMaterialId,
+        primary_material_id: taskPrimaryMaterialId,
         email_subject: llmTemplateSubject,
         email_body: llmTemplateBodyText,
         selected_material_ids: selectedMaterialIds.length ? selectedMaterialIds : null,
@@ -572,56 +576,42 @@ export const CreateTaskPage = () => {
                       setTemplateBodyText(text);
                     }}
                   />
-                  <p className="text-xs leading-6 text-stone-500">
-                    支持 {'{{name}}'}、{'{{university}}'}、{'{{sender_name}}'}、
-                    {'{{year}}'}、{'{{month}}'}、{'{{day}}'} 等占位符。
-                  </p>
                 </div>
               )}
 
-              <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
-                <div className="text-sm font-medium text-stone-900">分析材料（可选）</div>
-                <p className="mt-1 text-xs text-stone-500">用于匹配分析，可稍后在工作区选择。</p>
-                {primaryMaterialOptions.length === 0 ? (
-                  <p className="mt-3 text-sm text-stone-500">
-                    暂无可分析材料，仍可创建任务并手动写信。
-                  </p>
-                ) : (
-                  <div className="mt-3 space-y-2">
-                    <label className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-stone-300 bg-white px-4 py-3 text-sm text-stone-700">
-                      <span className="flex items-center gap-3">
-                        <input
-                          type="radio"
-                          name="primary-material"
-                          checked={primaryMaterialId === null}
-                          onChange={() => setPrimaryMaterialId(null)}
-                        />
-                        <span>暂不指定</span>
-                      </span>
-                      <span className="text-xs text-stone-500">匹配时再选</span>
-                    </label>
-                    {primaryMaterialOptions.map((material) => (
-                      <label
-                        key={material.id}
-                        className="flex items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700"
-                      >
-                        <span className="flex items-center gap-3">
-                          <input
-                            type="radio"
-                            name="primary-material"
-                            checked={primaryMaterialId === material.id}
-                            onChange={() => setPrimaryMaterialId(material.id)}
-                          />
-                          <span>{material.display_name}</span>
-                        </span>
-                        <span className="text-xs text-stone-500">
-                          {MATERIAL_TYPE_LABELS[material.material_type]}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {taskMode === 'llm' ? (
+                <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
+                  <div className="text-sm font-medium text-stone-900">AI 写信参考材料</div>
+                  <p className="mt-1 text-xs text-stone-500">AI 会基于这份主材料生成或改写草稿。</p>
+                  {primaryMaterialOptions.length === 0 ? (
+                    <p className="mt-3 text-sm text-stone-500">
+                      暂无可用参考材料，请先在身份中设置可用于 AI 写信的主材料。
+                    </p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {primaryMaterialOptions.map((material) => (
+                        <label
+                          key={material.id}
+                          className="flex items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700"
+                        >
+                          <span className="flex items-center gap-3">
+                            <input
+                              type="radio"
+                              name="primary-material"
+                              checked={primaryMaterialId === material.id}
+                              onChange={() => setPrimaryMaterialId(material.id)}
+                            />
+                            <span>{material.display_name}</span>
+                          </span>
+                          <span className="text-xs text-stone-500">
+                            {MATERIAL_TYPE_LABELS[material.material_type]}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
                 <div className="text-sm font-medium text-stone-900">随信附件</div>

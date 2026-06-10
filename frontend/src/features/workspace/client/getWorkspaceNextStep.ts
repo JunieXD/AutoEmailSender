@@ -29,7 +29,7 @@ export const getWorkspaceNextStep = (
   }
 
   if (!input.hasPrimaryMaterial) {
-    return { title: "选择分析材料" };
+    return { title: "选择 AI 写信参考材料" };
   }
 
   if (!input.hasDraft) {
