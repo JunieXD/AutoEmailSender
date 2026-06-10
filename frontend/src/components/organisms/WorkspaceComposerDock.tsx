@@ -19,10 +19,9 @@ import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor'
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
 import { formatApiDateTime } from '@/lib/dateTime';
 type RichEmailValue = { html: string; text: string };
-import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import {
   MATERIAL_TYPE_LABELS,
-  type OutreachGenerationMode,
+  type WorkspaceDraftSourceDTO,
   type WorkspaceTaskSummaryDTO,
   type WorkspaceThreadDTO,
 } from '@/types';
@@ -30,7 +29,6 @@ import {
 type WorkspaceComposerDockProps = {
   thread: WorkspaceThreadDTO;
   currentTask: WorkspaceTaskSummaryDTO;
-  currentTaskMode: OutreachGenerationMode;
   draftReady: boolean;
   nextStepTitle: string;
   nextStepDescription: string;
@@ -42,7 +40,6 @@ type WorkspaceComposerDockProps = {
   acting: boolean;
   isRewriting: boolean;
   hasDraftBody: boolean;
-  canChangeMode: boolean;
   canCalculateMatch: boolean;
   canGenerateDraft: boolean;
   canContinueManually: boolean;
@@ -62,16 +59,7 @@ type WorkspaceComposerDockProps = {
   onStartFollowUp: () => void;
   onCalculateMatch: () => void;
   onGenerateDraft: () => void;
-  onChangeMode: (value: OutreachGenerationMode) => void;
 };
-
-const MODE_OPTIONS: Array<{
-  value: OutreachGenerationMode;
-  label: string;
-}> = [
-  { value: 'llm', label: getTaskModeCopy('llm').title },
-  { value: 'template', label: getTaskModeCopy('template').title },
-];
 
 const ComposerSection = ({
   icon,
@@ -171,14 +159,7 @@ const formatScheduleSummary = (value: string) => {
 const formatTokenCount = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('zh-CN') : '未知';
 
-const buildDraftTokenSummary = (
-  task: WorkspaceTaskSummaryDTO,
-  mode: OutreachGenerationMode,
-) => {
-  if (mode === 'template') {
-    return '模板模式不消耗 token';
-  }
-
+const buildDraftTokenSummary = (task: WorkspaceTaskSummaryDTO) => {
   if (
     task.last_draft_prompt_tokens != null ||
     task.last_draft_completion_tokens != null ||
@@ -195,13 +176,23 @@ const buildDraftTokenSummary = (
     return `预计上限：输入 ${formatTokenCount(task.estimated_prompt_tokens)} / 输出最多 ${formatTokenCount(task.estimated_completion_tokens_upper_bound)} / 总计最多 ${formatTokenCount(task.estimated_total_tokens_upper_bound)}`;
   }
 
-  return '暂无 token 记录';
+  return 'AI 改写会在执行后记录 token';
 };
+
+const DRAFT_SOURCE_LABELS: Record<WorkspaceDraftSourceDTO, string> = {
+  saved: '已保存草稿',
+  ai_rewrite: 'AI 改写结果',
+  template: '来自模板',
+  manual_empty: '空草稿',
+  rewrite_source: '改写前草稿',
+};
+
+const getDraftSourceLabel = (source: WorkspaceDraftSourceDTO | null | undefined) =>
+  source ? DRAFT_SOURCE_LABELS[source] : '空草稿';
 
 export const WorkspaceComposerDock = ({
   thread,
   currentTask,
-  currentTaskMode,
   draftReady,
   nextStepTitle,
   nextStepDescription,
@@ -212,7 +203,6 @@ export const WorkspaceComposerDock = ({
   acting,
   isRewriting,
   hasDraftBody,
-  canChangeMode,
   canCalculateMatch,
   canGenerateDraft,
   canContinueManually,
@@ -232,7 +222,6 @@ export const WorkspaceComposerDock = ({
   onStartFollowUp,
   onCalculateMatch,
   onGenerateDraft,
-  onChangeMode,
 }: WorkspaceComposerDockProps) => {
   const attachmentNameMap = useMemo(
     () => new Map(thread.material_options.map((material) => [material.id, material.display_name])),
@@ -245,7 +234,8 @@ export const WorkspaceComposerDock = ({
 
   const hasProfessorResearchDirection = Boolean(thread.professor.research_direction?.trim());
   const scheduledSummary = formatScheduleSummary(scheduledAt);
-  const draftTokenSummary = buildDraftTokenSummary(currentTask, currentTaskMode);
+  const draftTokenSummary = buildDraftTokenSummary(currentTask);
+  const draftSourceLabel = getDraftSourceLabel(currentTask.draft?.source);
   const actionDisabled = acting || draftSaving || isRewriting;
   const editorDisabled = actionDisabled || currentTask.draft?.editable === false;
   const rewriteDescription = isRewriting
@@ -335,8 +325,8 @@ export const WorkspaceComposerDock = ({
                   description="发送前快速确认关键项。"
                 >
                   <div className="space-y-2">
-                    <SummaryLine label="方式">
-                      {getTaskModeCopy(currentTaskMode).title}
+                    <SummaryLine label="草稿">
+                      {draftSourceLabel}
                     </SummaryLine>
                     <SummaryLine label="附件">
                       {selectedAttachmentNames.length > 0
@@ -349,32 +339,11 @@ export const WorkspaceComposerDock = ({
 
                 <ComposerSection
                   icon={<Bot className="h-4 w-4" />}
-                  title="AI 改写"
+                  title="AI 辅助"
                   description={rewriteDescription}
                 >
                   <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      {MODE_OPTIONS.map((option) => {
-                        const active = currentTaskMode === option.value;
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            disabled={editorDisabled || !canChangeMode}
-                            onClick={() => onChangeMode(option.value)}
-                            className={clsx(
-                              'rounded-2xl border px-3 py-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60',
-                              active
-                                ? 'border-primary bg-primary text-white'
-                                : 'border-stone-200 bg-white text-stone-700 hover:border-primary/30 hover:bg-primary/5',
-                            )}
-                          >
-                            {option.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="flex flex-wrap gap-2 border-t border-stone-100 pt-3">
+                    <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       disabled={editorDisabled || !canCalculateMatch}
@@ -544,7 +513,7 @@ export const WorkspaceComposerDock = ({
 
         {!composerExpanded ? (
         <div className="rounded-[28px] border border-stone-200 bg-white/94 px-4 py-4 shadow-[0_18px_40px_-34px_rgba(41,37,36,0.28)]">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-stone-900">
                 {collapsedTitle}
@@ -552,13 +521,9 @@ export const WorkspaceComposerDock = ({
               <div className="mt-1 text-xs leading-5 text-stone-500">
                 {collapsedDescription}
               </div>
-              <div className="mt-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3">
-                <div className="text-sm font-semibold text-stone-900">{nextStepTitle}</div>
-                <div className="mt-1 text-xs leading-5 text-stone-600">{nextStepDescription}</div>
-              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs text-stone-600">
-                  {getTaskModeCopy(currentTaskMode).title}
+                  {draftSourceLabel}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs text-stone-600">
                   <Paperclip className="mr-1 inline h-3.5 w-3.5" />
@@ -573,7 +538,7 @@ export const WorkspaceComposerDock = ({
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 md:pt-0.5">
               {canContinueManually ? (
                 <button
                   type="button"
@@ -594,24 +559,6 @@ export const WorkspaceComposerDock = ({
                   写跟进邮件
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={onCalculateMatch}
-                disabled={editorDisabled || !canCalculateMatch}
-                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                分析匹配度
-              </button>
-              <button
-                type="button"
-                onClick={onGenerateDraft}
-                disabled={editorDisabled || !canGenerateDraft}
-                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                AI 改写
-              </button>
               <button
                 type="button"
                 onClick={onToggleExpanded}

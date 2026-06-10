@@ -8,7 +8,6 @@ import { WorkspaceSidebar } from '@/components/organisms/WorkspaceSidebar';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { useWorkspaceDraftGuard } from '@/context/useWorkspaceDraftGuard';
-import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
 import { bootstrapWorkspaceThread } from '@/features/workspace/client/openWorkspaceThread';
 import {
@@ -20,7 +19,6 @@ import {
   rewriteDraft,
   saveDraft,
   startFollowUp,
-  updateTaskOutreachConfig,
 } from '@/lib/api/emailTasksApi';
 import {
   getWorkspaceThread,
@@ -33,7 +31,6 @@ import { useConfirmDialog } from '@/lib/useConfirmDialog';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
 import {
   PROFESSOR_STATUS_LABELS,
-  type OutreachGenerationMode,
   type WorkspaceMessageDTO,
   type WorkspaceProfessorDTO,
   type WorkspaceTaskStatusLabelKey,
@@ -558,13 +555,10 @@ export const WorkspacePage = () => {
 
   const currentTask = getCurrentTaskOrNull(thread);
   const currentTaskId = currentTask?.id ?? null;
-  const currentTaskMode = currentTask?.outreach_generation_mode ?? 'llm';
   const statusLabel = getStatusLabel(currentTask, thread?.messages ?? []);
   const blocksDirectDraftActions = shouldBlockDirectDraftActions(currentTask);
   const taskGeneratingDraft = currentTask?.status === 'generating_draft';
   const isRewriting = taskGeneratingDraft || draftRewriting;
-  const canChangeMode =
-    currentTask?.id != null && !blocksDirectDraftActions && !isRewriting;
   const canCalculateMatch =
     Boolean(currentTaskId) &&
     Boolean(currentTask?.primary_material_id) &&
@@ -899,26 +893,6 @@ export const WorkspacePage = () => {
     subject,
   ]);
 
-  const handleChangeMode = useCallback(
-    (nextMode: OutreachGenerationMode) => {
-      if (!currentTaskId || nextMode === currentTaskMode) {
-        return;
-      }
-
-      void runAction(
-        () =>
-          updateTaskOutreachConfig(currentTaskId, {
-            outreach_generation_mode: nextMode,
-          }),
-        '切换模式失败',
-        '切换模式失败',
-        undefined,
-        { preserveDirtyComposer: true },
-      );
-    },
-    [currentTaskId, currentTaskMode, runAction],
-  );
-
   const confirmDirtyDraftExit = useCallback(async () => {
     const action = await choose({
       title: '保存草稿修改？',
@@ -1093,9 +1067,6 @@ export const WorkspacePage = () => {
               <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1 text-xs font-medium text-stone-600">
                 通信 {realMessageCount} 条
               </span>
-              <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1 text-xs font-medium text-stone-600">
-                {getTaskModeCopy(currentTaskMode).title}
-              </span>
             </div>
           </div>
         </header>
@@ -1125,7 +1096,6 @@ export const WorkspacePage = () => {
                 <WorkspaceComposerDock
                   thread={thread}
                   currentTask={currentTask}
-                  currentTaskMode={currentTaskMode}
                   draftReady={hasDraft}
                   nextStepTitle={nextStep?.title ?? '继续整理沟通动作'}
                   nextStepDescription={nextStepDescription}
@@ -1137,7 +1107,6 @@ export const WorkspacePage = () => {
                   acting={acting}
                   isRewriting={isRewriting}
                   hasDraftBody={hasDraftBody}
-                  canChangeMode={canChangeMode}
                   canCalculateMatch={canCalculateMatch}
                   canGenerateDraft={canGenerateDraft}
                   canContinueManually={Boolean(currentTask.can_continue_manually)}
@@ -1159,7 +1128,6 @@ export const WorkspacePage = () => {
                   onStartFollowUp={handleStartFollowUp}
                   onCalculateMatch={handleCalculateMatch}
                   onGenerateDraft={handleGenerateDraft}
-                  onChangeMode={handleChangeMode}
                 />
               </>
             ) : (

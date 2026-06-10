@@ -241,6 +241,121 @@ beforeEach(() => {
 });
 
 describe("WorkspacePage draft saving", () => {
+  it("keeps AI actions out of the collapsed composer", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          primary_material_id: 7,
+          primary_material: {
+            id: 7,
+            display_name: "resume.txt",
+            original_filename: "resume.txt",
+            mime_type: "text/plain",
+            size_bytes: 128,
+            material_type: "resume",
+            is_primary: true,
+            created_at: "2026-06-01T00:00:00",
+          },
+        },
+        professor: {
+          ...buildWorkspaceThread().professor,
+          recent_papers: ["Paper"],
+        },
+      }),
+    );
+
+    renderWorkspace();
+
+    await screen.findByText("继续写信");
+
+    expect(screen.queryByRole("button", { name: "分析匹配度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "AI 改写" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+
+    expect(screen.getByRole("button", { name: "分析匹配度" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 改写" })).toBeInTheDocument();
+  });
+
+  it("aligns the collapsed composer entry action with the summary top", async () => {
+    renderWorkspace();
+
+    const editButton = await screen.findByRole("button", { name: "编辑草稿" });
+    const actionRow = editButton.parentElement;
+    const collapsedLayout = actionRow?.parentElement;
+
+    expect(actionRow).toHaveClass("md:pt-0.5");
+    expect(collapsedLayout).toHaveClass("md:items-start");
+    expect(collapsedLayout).not.toHaveClass("md:items-center");
+  });
+
+  it("does not show the generic next-step card while collapsed", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          primary_material_id: 7,
+          primary_material: {
+            id: 7,
+            display_name: "resume.txt",
+            original_filename: "resume.txt",
+            mime_type: "text/plain",
+            size_bytes: 128,
+            material_type: "resume",
+            is_primary: true,
+            created_at: "2026-06-01T00:00:00",
+          },
+        },
+      }),
+    );
+
+    renderWorkspace();
+
+    await screen.findByText("继续写信");
+
+    expect(screen.queryByText("检查后发送")).not.toBeInTheDocument();
+    expect(screen.queryByText("检查主题、正文和附件后发送。")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+
+    expect(screen.getByText("AI 辅助")).toBeInTheDocument();
+  });
+
+  it("does not expose legacy draft generation modes in the workspace composer", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          outreach_generation_mode: "template",
+          draft: {
+            subject: "模板主题",
+            body_text: "模板正文",
+            body_html: "<p>模板正文</p>",
+            source: "template",
+            sendable: true,
+            editable: true,
+          },
+        },
+      }),
+    );
+
+    renderWorkspace();
+
+    await screen.findByText("继续写信");
+
+    expect(screen.queryByText("AI 辅助写信")).not.toBeInTheDocument();
+    expect(screen.queryByText("直接套用模板")).not.toBeInTheDocument();
+    expect(screen.getByText("来自模板")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+
+    expect(screen.queryByText("AI 辅助写信")).not.toBeInTheDocument();
+    expect(screen.queryByText("直接套用模板")).not.toBeInTheDocument();
+    expect(screen.getAllByText("来自模板").length).toBeGreaterThan(0);
+    expect(apiMocks.updateTaskOutreachConfig).not.toHaveBeenCalled();
+  });
+
   it("disables rewrite save send schedule and editor while rewriting", async () => {
     apiMocks.getWorkspaceThread.mockResolvedValueOnce(
       buildWorkspaceThread({
