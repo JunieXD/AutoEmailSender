@@ -81,6 +81,25 @@ class WorkspaceSupportTest(unittest.TestCase):
         self.assertEqual(draft.body_text, "保存正文")
         self.assertEqual(draft.body_html, "<p>保存正文</p>")
 
+    def test_workspace_draft_uses_saved_empty_body_before_generated_result(self) -> None:
+        draft = _build_workspace_draft(
+            task=self._task(
+                generated_subject="AI 主题",
+                generated_content_text="AI 正文",
+                generated_content_html="<p>AI 正文</p>",
+                approved_subject="只保留主题",
+                approved_body_text="",
+                approved_body_html="",
+            ),
+            rendered_template=self._rendered_template(),
+        )
+
+        self.assertEqual(draft.source, "saved")
+        self.assertEqual(draft.subject, "只保留主题")
+        self.assertEqual(draft.body_text, "")
+        self.assertEqual(draft.body_html, "")
+        self.assertFalse(draft.sendable)
+
     def test_workspace_draft_uses_ai_rewrite_when_no_saved_draft(self) -> None:
         draft = _build_workspace_draft(
             task=self._task(

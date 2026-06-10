@@ -27,6 +27,7 @@ from app.services import llm_runtime
 from test.schema_database import create_schema_sqlite_database
 from app.services.batch_draft_generation_runtime import (
     BatchDraftGenerationCoordinator,
+    recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,
     recover_stale_workspace_draft_rewrites,
     run_queued_batch_drafts_once,
@@ -192,6 +193,44 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(restored_count, 0)
         self.assertEqual(task.status, EmailTaskStatus.GENERATING_DRAFT.value)
         self.assertEqual(task.draft_rewrite_source_body_text, "改写前正文")
+
+    def test_recover_stale_workspace_rewrite_recovers_at_five_minute_cutoff(self) -> None:
+        now = datetime.now(UTC)
+        task_id = self._run_async(
+            self._create_manual_workspace_rewrite_task(
+                started_at=now - timedelta(minutes=5),
+                previous_status=EmailTaskStatus.MATCHED.value,
+                source_body="改写前正文",
+            ),
+        )
+
+        restored_count = self._run_async(
+            recover_stale_workspace_draft_rewrites(self.session_factory, now=now),
+        )
+        task = self._run_async(self._get_task(task_id))
+
+        self.assertEqual(restored_count, 1)
+        self.assertEqual(task.status, EmailTaskStatus.MATCHED.value)
+        self.assertEqual(task.approved_body_text, "改写前正文")
+
+    def test_recover_interrupted_workspace_rewrite_restores_recent_started_at(self) -> None:
+        task_id = self._run_async(
+            self._create_manual_workspace_rewrite_task(
+                started_at=datetime.now(UTC) - timedelta(minutes=1),
+                previous_status=EmailTaskStatus.MATCHED.value,
+                source_body="重启前正文",
+            ),
+        )
+
+        restored_count = self._run_async(
+            recover_interrupted_workspace_draft_rewrites(self.session_factory),
+        )
+        task = self._run_async(self._get_task(task_id))
+
+        self.assertEqual(restored_count, 1)
+        self.assertEqual(task.status, EmailTaskStatus.MATCHED.value)
+        self.assertEqual(task.approved_body_text, "重启前正文")
+        self.assertEqual(task.last_error, "AI 改写已中断，请重试")
 
     def test_llm_failure_marks_draft_failed_without_retry(self) -> None:
         task_ids = self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))

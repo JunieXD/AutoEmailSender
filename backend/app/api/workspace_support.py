@@ -620,7 +620,7 @@ def _build_workspace_draft(
             editable=False,
         )
 
-    if task is not None and _has_meaningful_body(task.approved_body_text, task.approved_body_html):
+    if task is not None and _has_saved_draft_snapshot(task):
         subject = task.approved_subject
         body_text = task.approved_body_text or ""
         body_html = task.approved_body_html
@@ -657,6 +657,14 @@ def _build_workspace_draft(
 
 def _has_meaningful_body(body_text: str | None, body_html: str | None) -> bool:
     return bool((body_text or "").strip() or (body_html or "").strip())
+
+
+def _has_saved_draft_snapshot(task: EmailTask) -> bool:
+    return (
+        task.approved_subject is not None
+        or task.approved_body_text is not None
+        or task.approved_body_html is not None
+    )
 
 
 def _first_text(*values: str | None) -> str | None:
@@ -745,4 +753,3 @@ def _should_resume_workspace_task(task: EmailTask | None) -> bool:
     ):
         return True
     return task.status == EmailTaskStatus.SEND_FAILED.value
-

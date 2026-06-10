@@ -1826,6 +1826,67 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
 
+    def test_rewrite_draft_normalizes_source_html_before_persisting(self) -> None:
+        task_id = self._create_rewrite_ready_task()
+
+        async def fake_generate_draft_content(**kwargs):
+            self.assertEqual(kwargs["custom_body"], "用户改过正文")
+            self.assertEqual(kwargs["custom_body_html"], "<p>用户改过正文</p>")
+            raise RuntimeError("停止在源草稿持久化之后")
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fake_generate_draft_content),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    f"/api/email-tasks/{task_id}/rewrite-draft",
+                    json={
+                        "subject": "点击瞬间主题",
+                        "body_text": "用户改过正文",
+                        "body_html": "<p>用户改过正文</p><script>alert(1)</script>",
+                        "selected_material_ids": [],
+                        "llm_profile_id": None,
+                    },
+                )
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT draft_rewrite_source_body_text, draft_rewrite_source_body_html
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+
+        self.assertEqual(row[0], "用户改过正文")
+        self.assertEqual(row[1], "<p>用户改过正文</p>")
+
+    def test_rewrite_draft_rejects_second_request_after_task_is_claimed(self) -> None:
+        task_id = self._create_generating_workspace_rewrite_task()
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=AssertionError("已领取任务不能再次调用 LLM")),
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "第二次主题",
+                    "body_text": "第二次正文",
+                    "body_html": "<p>第二次正文</p>",
+                    "selected_material_ids": [],
+                    "llm_profile_id": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, msg=response.text)
+        self.assertEqual(response.json()["detail"], "AI 正在改写当前草稿，请稍后刷新")
+
     def test_save_send_and_schedule_reject_generating_rewrite(self) -> None:
         task_id = self._create_generating_workspace_rewrite_task()
         payload = {
@@ -1848,6 +1909,48 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(save_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再保存。")
         self.assertEqual(send_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。")
         self.assertEqual(schedule_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。")
+
+    def test_material_and_mode_changes_reject_generating_rewrite(self) -> None:
+        task_id = self._create_generating_workspace_rewrite_task()
+        connection = sqlite3.connect(self.db_path)
+        try:
+            identity_id, primary_material_id = connection.execute(
+                "SELECT identity_id, primary_material_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        second_material_id = self._upload_material(
+            identity_id,
+            filename="second-resume.txt",
+            content=b"Another background in AI systems.",
+            material_type="resume",
+        )
+        self.assertNotEqual(second_material_id, primary_material_id)
+
+        material_response = self.client.post(
+            f"/api/email-tasks/{task_id}/primary-material",
+            json={"primary_material_id": second_material_id},
+        )
+        mode_response = self.client.post(
+            f"/api/email-tasks/{task_id}/outreach-config",
+            json={"outreach_generation_mode": "template"},
+        )
+
+        self.assertEqual(material_response.status_code, 400, msg=material_response.text)
+        self.assertEqual(mode_response.status_code, 400, msg=mode_response.text)
+        self.assertEqual(material_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再修改。")
+        self.assertEqual(mode_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再修改。")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT primary_material_id, outreach_generation_mode FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row[0], primary_material_id)
+        self.assertEqual(row[1], "llm")
 
     def test_template_mode_can_generate_draft_without_primary_material(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -2348,6 +2451,8 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["approved_subject"], "只保留主题")
         self.assertEqual(current_task["approved_body_text"], "")
         self.assertEqual(current_task["approved_body_html"], "")
+        self.assertEqual(current_task["draft"]["source"], "saved")
+        self.assertFalse(current_task["draft"]["sendable"])
         stored_task = self._get_email_task_delete_state(task_id)
         self.assertEqual(stored_task["approved_body_text"], "")
         self.assertEqual(stored_task["approved_body_html"], "")
@@ -2382,6 +2487,8 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["approved_subject"], "只保留主题")
         self.assertEqual(current_task["approved_body_text"], "")
         self.assertEqual(current_task["approved_body_html"], "")
+        self.assertEqual(current_task["draft"]["source"], "saved")
+        self.assertFalse(current_task["draft"]["sendable"])
         stored_task = self._get_email_task_delete_state(task_id)
         self.assertEqual(stored_task["approved_body_text"], "")
         self.assertEqual(stored_task["approved_body_html"], "")

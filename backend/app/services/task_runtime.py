@@ -907,8 +907,11 @@ async def rewrite_task_draft(
     source_subject = (payload.subject or "").strip() or None
     source_body_text = payload.body_text.strip()
     source_body_html = (payload.body_html or "").strip()
-    if not source_body_text and source_body_html:
-        source_body_text = normalize_email_html(source_body_html).text
+    if source_body_html:
+        rendered_source_html = normalize_email_html(source_body_html)
+        source_body_html = rendered_source_html.html
+        if not source_body_text:
+            source_body_text = rendered_source_html.text
     if not source_body_text and not source_body_html:
         raise ValueError("先写入正文或配置默认模板后再使用 AI 改写")
 
@@ -945,18 +948,32 @@ async def rewrite_task_draft(
         task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
 
         now = utc_now()
-        task.llm_profile_id = runtime_llm_profile.id
-        task.draft_generation_previous_status = task.status or EmailTaskStatus.REVIEW_REQUIRED.value
-        task.draft_generation_started_at = now
-        task.draft_rewrite_source_subject = source_subject
-        task.draft_rewrite_source_body_text = source_body_text
-        task.draft_rewrite_source_body_html = source_body_html or None
-        task.draft_rewrite_source_selected_material_ids = payload.selected_material_ids
-        task.selected_material_ids = payload.selected_material_ids
-        task.status = EmailTaskStatus.GENERATING_DRAFT.value
-        task.last_error = None
-        task.updated_at = now
+        previous_status = task.status or EmailTaskStatus.REVIEW_REQUIRED.value
+        claim_result = await session.execute(
+            update(EmailTask)
+            .where(
+                EmailTask.id == task.id,
+                EmailTask.status != EmailTaskStatus.GENERATING_DRAFT.value,
+            )
+            .values(
+                llm_profile_id=runtime_llm_profile.id,
+                draft_generation_previous_status=previous_status,
+                draft_generation_started_at=now,
+                draft_rewrite_source_subject=source_subject,
+                draft_rewrite_source_body_text=source_body_text,
+                draft_rewrite_source_body_html=source_body_html or None,
+                draft_rewrite_source_selected_material_ids=payload.selected_material_ids,
+                selected_material_ids=payload.selected_material_ids,
+                status=EmailTaskStatus.GENERATING_DRAFT.value,
+                last_error=None,
+                updated_at=now,
+            )
+        )
+        if claim_result.rowcount != 1:
+            await session.rollback()
+            raise ValueError("AI 正在改写当前草稿，请稍后刷新")
         await session.commit()
+        await session.refresh(task)
 
         try:
             generation = await asyncio.wait_for(
@@ -976,17 +993,17 @@ async def rewrite_task_draft(
                 timeout=WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError as exc:
-            _restore_workspace_rewrite_source(task, WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE)
+            restore_workspace_rewrite_source(task, WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE)
             await session.commit()
             raise ValueError(WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE) from exc
         except llm_runtime.LLMRuntimeError as exc:
             await session.refresh(task)
-            _restore_workspace_rewrite_source(task, str(exc))
+            restore_workspace_rewrite_source(task, str(exc))
             await session.commit()
             raise
         except ValueError as exc:
             await session.refresh(task)
-            _restore_workspace_rewrite_source(task, str(exc))
+            restore_workspace_rewrite_source(task, str(exc))
             await session.commit()
             raise
 
@@ -1205,6 +1222,7 @@ async def update_task_primary_material(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_not_generating_for_workspace_change(task)
         if task.status in {
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
@@ -1250,6 +1268,7 @@ async def update_task_outreach_config(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         _ensure_task_allows_legacy_manual_actions(task)
+        _ensure_task_not_generating_for_workspace_change(task)
         if task.status in {
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
@@ -1984,7 +2003,12 @@ async def _snapshot_saved_draft(
     task.last_error = None
 
 
-def _restore_workspace_rewrite_source(task: EmailTask, error_message: str) -> None:
+def restore_workspace_rewrite_source(
+    task: EmailTask,
+    error_message: str,
+    *,
+    now: datetime | None = None,
+) -> None:
     source_body_text = task.draft_rewrite_source_body_text or ""
     source_body_html = task.draft_rewrite_source_body_html
     if source_body_text and not source_body_html:
@@ -1996,7 +2020,7 @@ def _restore_workspace_rewrite_source(task: EmailTask, error_message: str) -> No
     task.status = task.draft_generation_previous_status or EmailTaskStatus.REVIEW_REQUIRED.value
     task.draft_generation_previous_status = None
     task.draft_generation_started_at = None
-    task.updated_at = utc_now()
+    task.updated_at = now or utc_now()
     task.last_error = error_message
 
 
@@ -2443,6 +2467,11 @@ def _ensure_task_allows_legacy_manual_actions(task: EmailTask) -> None:
         and task.cancellation_reason == EmailTaskCancellationReason.BATCH_STOPPED.value
     ):
         raise ValueError("该任务已因批量任务停止而取消，请先“作为单独联系继续”后再执行此操作")
+
+
+def _ensure_task_not_generating_for_workspace_change(task: EmailTask) -> None:
+    if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
+        raise ValueError("AI 正在改写当前草稿，请等待完成后再修改。")
 
 
 def _ensure_task_allows_approval(task: EmailTask) -> None:

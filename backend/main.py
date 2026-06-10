@@ -24,8 +24,8 @@ from app.core.windows_event_loop import ensure_windows_proactor_event_loop_polic
 from app.services.operation_logs import cleanup_old_operation_logs
 from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
 from app.services.batch_draft_generation_runtime import (
+    recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,
-    recover_stale_workspace_draft_rewrites,
 )
 from app.services.runtime_manager import RuntimeManager
 from app.services.task_runtime import recover_interrupted_match_analysis_runs
@@ -170,7 +170,7 @@ async def cleanup_runtime_state() -> None:
         await session.commit()
     await recover_interrupted_crawl_jobs(get_session_factory())
     await recover_interrupted_match_analysis_runs(get_session_factory())
-    await recover_stale_workspace_draft_rewrites(get_session_factory())
+    await recover_interrupted_workspace_draft_rewrites(get_session_factory())
     await recover_stale_generating_drafts(
         get_session_factory(),
         stale_after=timedelta(seconds=0),
