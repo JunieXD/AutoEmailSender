@@ -709,6 +709,30 @@ describe("WorkspacePage draft saving", () => {
     await expect(confirmedSwitch).resolves.toBe(true);
   });
 
+  it("does not reopen the dirty draft prompt after canceling home navigation", async () => {
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.change(screen.getByLabelText("邮件主题"), {
+      target: { value: "返回首页前的主题" },
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "返回首页" }));
+    expect(await screen.findByText("保存草稿修改？")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    await waitFor(() => {
+      expect(screen.queryByText("保存草稿修改？")).not.toBeInTheDocument();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("保存草稿修改？")).not.toBeInTheDocument();
+    expect(screen.getByText("返回首页")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "返回首页" }));
+    expect(await screen.findByText("保存草稿修改？")).toBeInTheDocument();
+  });
+
   it("locks dirty draft while saving so switching cannot discard in-flight changes", async () => {
     let resolveSaveDraft: (value: WorkspaceThreadDTO) => void = () => undefined;
     apiMocks.saveDraft.mockReturnValueOnce(

@@ -359,6 +359,7 @@ export const WorkspacePage = () => {
   const [draftRewriting, setDraftRewriting] = useState(false);
   const [savingBeforeNavigate, setSavingBeforeNavigate] = useState(false);
   const mountedRef = useRef(true);
+  const handledBlockerLocationKeyRef = useRef<string | null>(null);
   const loadedThreadKeyRef = useRef<string | null>(null);
   const activeThreadRequestKeyRef = useRef<string | null>(null);
   const latestThreadRequestIdRef = useRef(0);
@@ -939,7 +940,19 @@ export const WorkspacePage = () => {
   );
 
   useEffect(() => {
-    if (blocker.state !== 'blocked' || savingBeforeNavigate) {
+    if (blocker.state !== 'blocked') {
+      handledBlockerLocationKeyRef.current = null;
+      return;
+    }
+
+    const blockerLocationKey =
+      blocker.location?.key ?? `${blocker.location?.pathname ?? ''}${blocker.location?.search ?? ''}${blocker.location?.hash ?? ''}`;
+    if (handledBlockerLocationKeyRef.current === blockerLocationKey) {
+      return;
+    }
+    handledBlockerLocationKeyRef.current = blockerLocationKey;
+
+    if (savingBeforeNavigate) {
       return;
     }
 
