@@ -12,7 +12,15 @@ from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
 from app.services.crawler_page_fetch_ledger import should_prefer_browser_for_fetch_domain
 from app.services.crawler_debug import append_crawler_v2_debug_event
-from app.services.crawler_tools import CrawlToolContext, PageSnapshot, ProfessorCandidatePayload, browser_investigate, crawl_page_with_http, save_candidate_payloads_shared
+from app.services.crawler_tools import (
+    CrawlToolContext,
+    PageSnapshot,
+    ProfessorCandidatePayload,
+    browser_investigate,
+    crawl_page_with_http,
+    looks_like_unrendered_dynamic_teacher_directory,
+    save_candidate_payloads_shared,
+)
 from app.services.crawler_v2_profile_extraction import invoke_v2_profile_extraction_agent
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
@@ -156,6 +164,8 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     text = (snapshot.text or "").strip()
     html = (snapshot.html or "").strip()
     if snapshot.suspicious_empty:
+        return True
+    if looks_like_unrendered_dynamic_teacher_directory(snapshot):
         return True
     if not text and len(html) < 80:
         return True
