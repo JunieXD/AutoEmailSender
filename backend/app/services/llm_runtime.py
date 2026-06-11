@@ -234,6 +234,7 @@ class ChatCompletionUsage:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     cached_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass(slots=True)
@@ -470,6 +471,7 @@ async def generate_match_evaluation(
     llm_profile: LLMProfile,
     professor: Professor,
     available_materials: list[IdentityMaterial],
+    thinking_extra_body: dict[str, object] | None = None,
 ) -> GeneratedMatchEvaluation:
     prompt_parts = build_match_prompt_parts(
         identity=identity,
@@ -499,6 +501,7 @@ async def generate_match_evaluation(
     completion = await request_chat_completion(
         llm_profile,
         payload,
+        extra_body=thinking_extra_body,
     )
     result = parse_structured_result(completion.content, MatchEvaluationResult)
     return GeneratedMatchEvaluation(
@@ -528,6 +531,7 @@ async def generate_draft_content(
     current_match: MatchEvaluationResult | None = None,
     max_tokens: int | None = None,
     rewrite_preferences: DraftRewritePreferences | None = None,
+    thinking_extra_body: dict[str, object] | None = None,
 ) -> GeneratedDraftContent:
     template_html = custom_body_html
     if not template_html and custom_body:
@@ -565,7 +569,11 @@ async def generate_draft_content(
         }
         if prompt_parts.prompt_cache_key is not None:
             payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
-        completion = await request_chat_completion(llm_profile, payload)
+        completion = await request_chat_completion(
+            llm_profile,
+            payload,
+            extra_body=thinking_extra_body,
+        )
         rewrite_result = parse_structured_result(completion.content, DraftRewriteResult)
         try:
             rendered = apply_draft_rewrite_replacements(
@@ -614,6 +622,7 @@ async def generate_draft_content(
             "temperature": llm_profile.temperature if llm_profile.temperature is not None else DEFAULT_LLM_TEMPERATURE,
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         },
+        extra_body=thinking_extra_body,
     )
     result = parse_structured_result(completion.content, DraftGenerationResult)
     return GeneratedDraftContent(result=result, usage=completion.usage)
@@ -782,6 +791,7 @@ async def probe_llm_profile(
     profile: LLMProfile,
     *,
     session: "AsyncSession | None" = None,
+    thinking_extra_body: dict[str, object] | None = None,
 ) -> LLMProbeResult:
     """Test that the model is reachable. Single-turn ping only.
 
@@ -811,6 +821,7 @@ async def probe_llm_profile(
         completion = await request_chat_completion(
             profile,
             payload,
+            extra_body=thinking_extra_body,
             allow_empty_content=True,
         )
     except LLMRuntimeError as exc:
@@ -1703,6 +1714,8 @@ def build_responses_payload(payload: dict[str, object]) -> dict[str, object]:
     for key in ("thinking", "enable_thinking", "reasoning", "thinking_budget"):
         if key in payload:
             request_payload[key] = payload[key]
+    if payload.get("reasoning_effort") is not None:
+        request_payload["reasoning_effort"] = payload["reasoning_effort"]
     if payload.get("temperature") is not None:
         request_payload["temperature"] = payload["temperature"]
     if payload.get("max_tokens") is not None:
@@ -1826,6 +1839,13 @@ def parse_completion_usage(raw_usage: object) -> ChatCompletionUsage | None:
                 cached_tokens = _coerce_token_count(details.get("cached_tokens"))
                 if cached_tokens is not None:
                     break
+    reasoning_tokens = None
+    for details_key in ("completion_tokens_details", "output_tokens_details"):
+        details = raw_usage.get(details_key)
+        if isinstance(details, dict):
+            reasoning_tokens = _coerce_token_count(details.get("reasoning_tokens"))
+            if reasoning_tokens is not None:
+                break
     return ChatCompletionUsage(
         prompt_tokens=_coerce_token_count(
             raw_usage.get("prompt_tokens", raw_usage.get("input_tokens")),
@@ -1835,6 +1855,7 @@ def parse_completion_usage(raw_usage: object) -> ChatCompletionUsage | None:
         ),
         total_tokens=_coerce_token_count(raw_usage.get("total_tokens")),
         cached_tokens=cached_tokens,
+        reasoning_tokens=reasoning_tokens,
     )
 
 

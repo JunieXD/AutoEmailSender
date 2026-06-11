@@ -68,6 +68,10 @@ class ApiEndpointTests(unittest.TestCase):
             patch("app.api.identities.test_smtp_connection", AsyncMock(return_value=(True, "SMTP 连接测试成功"))),
             patch("app.api.identities.test_imap_connection", AsyncMock(return_value=(True, "IMAP 连接测试成功"))),
             patch(
+                "app.api.llm_profiles.ensure_thinking_adaptation",
+                AsyncMock(return_value={"enable_thinking": False}),
+            ),
+            patch(
                 "app.api.llm_profiles.probe_llm_profile",
                 AsyncMock(
                     return_value=self._build_probe_result(
@@ -248,6 +252,10 @@ class ApiEndpointTests(unittest.TestCase):
                     ),
                 ),
             ) as probe_mock,
+            patch(
+                "app.api.llm_profiles.ensure_thinking_adaptation",
+                AsyncMock(return_value={"enable_thinking": False}),
+            ) as thinking_mock,
         ):
             models_response = self.client.post("/api/llm-profiles/preview/models", json=payload)
             test_response = self.client.post("/api/llm-profiles/preview/test", json=payload)
@@ -256,6 +264,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(test_response.status_code, 200, msg=test_response.text)
         fetch_mock.assert_awaited_once()
         probe_mock.assert_awaited_once()
+        thinking_mock.assert_awaited_once()
         self.assertEqual(fetch_mock.await_args.args[0].api_base_url, payload["api_base_url"])
         self.assertEqual(fetch_mock.await_args.args[0].api_key, payload["api_key"])
         self.assertEqual(probe_mock.await_args.args[0].api_base_url, payload["api_base_url"])

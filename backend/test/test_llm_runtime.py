@@ -1711,6 +1711,55 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.usage.completion_tokens, 7)
         self.assertEqual(result.usage.total_tokens, 19)
 
+    def test_parse_completion_usage_reads_reasoning_tokens(self) -> None:
+        usage = parse_completion_usage(
+            {
+                "prompt_tokens": 250,
+                "completion_tokens": 152,
+                "total_tokens": 402,
+                "completion_tokens_details": {"reasoning_tokens": 144},
+            },
+        )
+
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        self.assertEqual(usage.prompt_tokens, 250)
+        self.assertEqual(usage.completion_tokens, 152)
+        self.assertEqual(usage.total_tokens, 402)
+        self.assertEqual(usage.reasoning_tokens, 144)
+
+    async def test_probe_llm_profile_accepts_explicit_thinking_disable(self) -> None:
+        profile = LLMProfile(
+            name="siliconflow",
+            provider="openai",
+            api_base_url="https://api.siliconflow.cn/v1",
+            api_key="test-key",
+            model_name="deepseek-ai/DeepSeek-V4-Pro",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "OK"}}]},
+            ),
+        ]
+
+        with (
+            patch(
+                "app.services.llm_runtime.httpx.AsyncClient",
+                side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+            ),
+        ):
+            result = await probe_llm_profile(
+                profile,
+                thinking_extra_body={"enable_thinking": False},
+            )
+
+        self.assertTrue(result.ok)
+        sent = calls[0][1]
+        assert sent is not None
+        self.assertEqual(sent.get("enable_thinking"), False)
+
     async def test_probe_llm_profile_no_longer_hardcodes_thinking_for_deepseek(self) -> None:
         # Probe should not unconditionally inject `thinking` for deepseek when no session is provided.
         profile = LLMProfile(
@@ -2046,13 +2095,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "messages": [{"role": "user", "content": "ping"}],
                     "max_tokens": 8,
                 },
-                extra_body={"reasoning": {"effort": "off"}},
+                extra_body={"reasoning": {"effort": "off"}, "reasoning_effort": "low"},
             )
 
         self.assertEqual(result.endpoint_kind, "responses")
         responses_payload = calls[1][1]
         assert responses_payload is not None
         self.assertEqual(responses_payload.get("reasoning"), {"effort": "off"})
+        self.assertEqual(responses_payload.get("reasoning_effort"), "low")
 
     async def test_request_chat_completion_strips_thinking_keys_when_extra_body_none(self) -> None:
         profile = LLMProfile(

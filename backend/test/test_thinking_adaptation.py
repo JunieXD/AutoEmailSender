@@ -102,9 +102,25 @@ class ThinkingDisableCandidatesTests(unittest.TestCase):
                 {"thinking": {"type": "disabled"}},
                 {"enable_thinking": False},
                 {"reasoning": {"effort": "off"}},
+                {"reasoning_effort": "low"},
                 {"thinking_budget": 0},
             ],
         )
+
+    def test_thinking_keys_include_reasoning_effort(self) -> None:
+        from app.services.thinking_adaptation import merge_extra_body
+
+        merged = merge_extra_body(
+            {
+                "model": "deepseek-v4",
+                "messages": [{"role": "user", "content": "ping"}],
+                "reasoning_effort": "high",
+            },
+            {"enable_thinking": False},
+        )
+
+        self.assertEqual(merged["enable_thinking"], False)
+        self.assertNotIn("reasoning_effort", merged)
 
     def test_merge_extra_body_overrides_existing_thinking_keys(self) -> None:
         from app.services.thinking_adaptation import merge_extra_body
@@ -306,6 +322,115 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertTrue(hit)
         self.assertIsNone(value)
+
+    async def test_silent_thinking_model_selects_lower_token_candidate(self) -> None:
+        from unittest.mock import patch
+
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            probe_and_learn_extra_body,
+        )
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 250,
+                        "completion_tokens": 152,
+                        "total_tokens": 402,
+                        "completion_tokens_details": {"reasoning_tokens": 144},
+                    },
+                },
+            ),
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 250,
+                        "completion_tokens": 80,
+                        "total_tokens": 330,
+                        "completion_tokens_details": {"reasoning_tokens": 20},
+                    },
+                },
+            ),
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 250,
+                        "completion_tokens": 2,
+                        "total_tokens": 252,
+                        "completion_tokens_details": {"reasoning_tokens": 0},
+                    },
+                },
+            ),
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 250,
+                        "completion_tokens": 10,
+                        "total_tokens": 260,
+                        "completion_tokens_details": {"reasoning_tokens": 1},
+                    },
+                },
+            ),
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 250,
+                        "completion_tokens": 8,
+                        "total_tokens": 258,
+                        "completion_tokens_details": {"reasoning_tokens": 1},
+                    },
+                },
+            ),
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 250,
+                        "completion_tokens": 12,
+                        "total_tokens": 262,
+                        "completion_tokens_details": {"reasoning_tokens": 1},
+                    },
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(session, self._profile())
+                await session.commit()
+
+        self.assertEqual(result, {"enable_thinking": False})
+        self.assertEqual(len(calls), 6)
+        selected_payload = calls[2][1]
+        assert selected_payload is not None
+        self.assertEqual(selected_payload["enable_thinking"], False)
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-think-v1",
+            )
+        self.assertTrue(hit)
+        self.assertEqual(value, {"enable_thinking": False})
 
     async def test_thinking_model_retries_first_candidate_and_caches(self) -> None:
         from unittest.mock import patch

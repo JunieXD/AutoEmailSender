@@ -30,6 +30,7 @@ THINKING_DISABLE_CANDIDATES: Final[tuple[dict[str, object], ...]] = (
     {"thinking": {"type": "disabled"}},
     {"enable_thinking": False},
     {"reasoning": {"effort": "off"}},
+    {"reasoning_effort": "low"},
     {"thinking_budget": 0},
 )
 
@@ -37,6 +38,7 @@ _THINKING_KEYS: Final[tuple[str, ...]] = (
     "thinking",
     "enable_thinking",
     "reasoning",
+    "reasoning_effort",
     "thinking_budget",
 )
 
@@ -167,6 +169,52 @@ class ThinkingAdaptationFailed(RuntimeError):
         self.last_error = last_error
 
 
+def _usage_completion_tokens(result: object) -> int | None:
+    usage = getattr(result, "usage", None)
+    return getattr(usage, "completion_tokens", None)
+
+
+def _usage_reasoning_tokens(result: object) -> int | None:
+    usage = getattr(result, "usage", None)
+    return getattr(usage, "reasoning_tokens", None)
+
+
+def _looks_like_thinking_enabled(result: object) -> bool:
+    reasoning_tokens = _usage_reasoning_tokens(result)
+    if reasoning_tokens is not None:
+        return reasoning_tokens > 0
+    completion_tokens = _usage_completion_tokens(result)
+    return completion_tokens is not None and completion_tokens > 32
+
+
+def _is_better_thinking_disable_result(
+    *,
+    candidate_result: object,
+    baseline_result: object,
+) -> bool:
+    candidate_reasoning = _usage_reasoning_tokens(candidate_result)
+    baseline_reasoning = _usage_reasoning_tokens(baseline_result)
+    candidate_completion = _usage_completion_tokens(candidate_result)
+    baseline_completion = _usage_completion_tokens(baseline_result)
+    if candidate_reasoning is not None or baseline_reasoning is not None:
+        if candidate_reasoning is None:
+            return False
+        if baseline_reasoning is None:
+            return candidate_reasoning == 0 and (
+                candidate_completion is not None
+                and (baseline_completion is None or candidate_completion < baseline_completion)
+            )
+        if candidate_reasoning != baseline_reasoning:
+            return candidate_reasoning < baseline_reasoning
+        if candidate_completion is None or baseline_completion is None:
+            return False
+        return candidate_completion < baseline_completion
+
+    if candidate_completion is None or baseline_completion is None:
+        return False
+    return candidate_completion < baseline_completion
+
+
 def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
     """Build a 3-turn payload that triggers thinking-mode protocol errors on
     affected models, but is harmless on regular models (they just answer "7")."""
@@ -212,7 +260,11 @@ async def probe_and_learn_extra_body(
 
     for index, candidate in enumerate(attempts):
         try:
-            await request_chat_completion(profile, payload, extra_body=candidate)
+            completion = await request_chat_completion(
+                profile,
+                payload,
+                extra_body=candidate,
+            )
         except LLMRuntimeError as exc:
             last_error = exc
             # 两种"思考模式信号"会触发候选切换：
@@ -236,6 +288,36 @@ async def probe_and_learn_extra_body(
                     last_error=exc,
                 ) from exc
             continue
+
+        if candidate is None and _looks_like_thinking_enabled(completion):
+            baseline_completion = completion
+            best_candidate: dict[str, object] | None = None
+            best_completion = completion
+            for disable_candidate in THINKING_DISABLE_CANDIDATES:
+                try:
+                    disable_completion = await request_chat_completion(
+                        profile,
+                        payload,
+                        extra_body=disable_candidate,
+                    )
+                except LLMRuntimeError:
+                    continue
+                if _is_better_thinking_disable_result(
+                    candidate_result=disable_completion,
+                    baseline_result=baseline_completion,
+                ) and _is_better_thinking_disable_result(
+                    candidate_result=disable_completion,
+                    baseline_result=best_completion,
+                ):
+                    best_candidate = disable_candidate
+                    best_completion = disable_completion
+            await record_thinking_adaptation(
+                session,
+                api_base_url=resolve_base_url_for_cache(profile.api_base_url),
+                model_name=profile.model_name,
+                learned_extra_body=best_candidate,
+            )
+            return dict(best_candidate) if best_candidate else None
 
         await record_thinking_adaptation(
             session,
@@ -280,6 +362,24 @@ async def ensure_thinking_adaptation(
         if hit:
             return value
         raise
+
+
+async def resolve_thinking_extra_body(profile: LLMProfile) -> dict[str, object] | None:
+    """Best-effort process-wide resolver for callers that lack a database session.
+
+    Session-owning workflows should prefer :func:`ensure_thinking_adaptation`,
+    which can actively probe and persist cache misses. Direct LLM calls use this
+    function to pick up already learned cache rows without forcing every call site
+    to pass ``extra_body`` manually.
+    """
+
+    try:
+        from app.core.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            return await ensure_thinking_adaptation(session, profile)
+    except Exception:
+        return None
 
 
 

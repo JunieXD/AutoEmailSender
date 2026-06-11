@@ -21,6 +21,7 @@ from app.schemas.llm_profile import (
 )
 from app.services.llm_runtime import fetch_llm_profile_models, probe_llm_profile
 from app.services.operation_logs import record_operation_log
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 
 
 router = APIRouter(prefix="/api/llm-profiles", tags=["llm-profiles"])
@@ -142,9 +143,14 @@ async def preview_llm_profile_models(
 @router.post("/preview/test", response_model=LLMProfileTestResult)
 async def preview_llm_profile_test(
     payload: LLMProfileCreate,
+    session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfileTestResult:
     profile = LLMProfile(**payload.model_dump())
-    result = await probe_llm_profile(profile)
+    thinking_extra_body = await ensure_thinking_adaptation(session, profile)
+    result = await probe_llm_profile(
+        profile,
+        thinking_extra_body=thinking_extra_body,
+    )
     return LLMProfileTestResult(
         ok=result.ok,
         message=result.message,
@@ -209,7 +215,12 @@ async def test_llm_profile(
     session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfileTestResult:
     profile = await _get_profile(session, profile_id)
-    result = await probe_llm_profile(profile, session=session)
+    thinking_extra_body = await ensure_thinking_adaptation(session, profile)
+    result = await probe_llm_profile(
+        profile,
+        session=session,
+        thinking_extra_body=thinking_extra_body,
+    )
     await _record_llm_profile_log(
         session,
         profile,
@@ -306,5 +317,3 @@ def _strip_url_list_query_and_fragment(urls: list[str]) -> list[str]:
         for url in urls
         if (sanitized := _strip_url_query_and_fragment(url)) is not None
     ]
-
-

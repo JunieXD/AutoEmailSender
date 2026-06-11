@@ -43,6 +43,7 @@ from app.services.outreach_templates import (
 )
 from app.services.rich_text import normalize_email_html, text_to_email_html
 from app.services.runtime_settings import get_runtime_settings
+from app.services.thinking_adaptation import ensure_thinking_adaptation
 
 
 async def build_test_compose_thread(
@@ -106,6 +107,7 @@ async def generate_test_compose_draft(
         ensure_material_extracted_text(primary_material)
         pseudo_professor = _build_self_recipient_professor(identity)
         runtime_settings = await get_runtime_settings(session)
+        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
             draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
@@ -127,6 +129,7 @@ async def generate_test_compose_draft(
             current_match=None,
             max_tokens=runtime_settings.draft_max_tokens,
             rewrite_preferences=rewrite_preferences,
+            thinking_extra_body=thinking_extra_body,
         )
         compose_session.subject = generation.result.subject
         compose_session.body_text = generation.result.body_text
@@ -493,5 +496,4 @@ def _synchronize_selected_material_ids(
     compose_session.selected_material_ids = filtered_ids
     compose_session.updated_at = utc_now()
     return True
-
 
