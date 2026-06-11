@@ -110,3 +110,10 @@ class RichTextRenderingTest(unittest.TestCase):
         )
         self.assertIn('style="font-family:SimSun"', result.html)
         self.assertIn("老师您好", result.text)
+
+    def test_html_to_text_keeps_inline_font_spans_in_same_sentence(self) -> None:
+        result = normalize_email_html(
+            '<p style="font-family:宋体">我是<span style="font-family:黑体">【江西财经大学计算机与人工智能学院】</span>的学生。</p>'
+        )
+
+        self.assertEqual(result.text, "我是【江西财经大学计算机与人工智能学院】的学生。")

@@ -227,6 +227,26 @@ describe("EmailTemplateEditor", () => {
     expect(editor.innerHTML).toContain("font-size: 10pt");
   });
 
+  it("uses Word CJK font family as editable typography for Chinese text", () => {
+    const preparedHtml = prepareTemplateEditorHtml(
+      '<p style="font-family:\'Times New Roman\';mso-fareast-font-family:宋体;font-size:12pt">我是学生。</p>',
+    );
+
+    expect(preparedHtml).toContain("font-family:宋体");
+    expect(preparedHtml).toContain("font-size:12pt");
+    expect(preparedHtml).not.toContain("mso-fareast-font-family");
+    expect(preparedHtml).not.toContain("Times New Roman");
+
+    render(
+      <EmailTemplateEditor label="邮件正文" html={preparedHtml} onChange={vi.fn()} />,
+    );
+
+    const editor = screen.getByRole("textbox", { name: "邮件正文" });
+    expect(editor.innerHTML).toContain("font-family");
+    expect(editor.innerHTML).toContain("宋体");
+    expect(editor.innerHTML).not.toContain("Times New Roman");
+  });
+
   it("inserts placeholder chips and emits template tokens", () => {
     const handleChange = vi.fn();
     render(

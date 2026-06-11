@@ -31,6 +31,13 @@ CJK_FONT_HINTS = (
     "Hiragino Sans GB",
     "Microsoft YaHei",
 )
+FONT_FAMILY_STYLE_KEYS = {
+    "font-family",
+    "mso-fareast-font-family",
+    "mso-ascii-font-family",
+    "mso-hansi-font-family",
+    "mso-bidi-font-family",
+}
 
 
 @dataclass(slots=True)
@@ -43,6 +50,20 @@ class DraftRewriteFontStyle:
 class DraftRewriteStyleSpan:
     text: str
     marks: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DraftRewriteLocalStyleSpan:
+    text: str
+    marks: list[str] = field(default_factory=list)
+    font_family: str | None = None
+    font_size: str | None = None
+
+
+@dataclass(slots=True)
+class DraftRewriteSegmentStyle:
+    base_style: DraftRewriteFontStyle
+    local_spans: list[DraftRewriteLocalStyleSpan] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -221,9 +242,15 @@ def apply_draft_rewrite_replacements(
         if block is None or element is None or block.type == "table" or block.locked:
             continue
 
-        fragment_html = "".join(_render_draft_run(run) for run in runs if isinstance(run, dict))
+        segment_style = _resolve_segment_style(element)
+        fragment_html = "".join(
+            _render_draft_run(run, segment_style.local_spans)
+            for run in runs
+            if isinstance(run, dict)
+        )
         fragment = BeautifulSoup(f"<div>{fragment_html}</div>", "html.parser")
         element.clear()
+        _apply_segment_base_font_style(element, segment_style.base_style)
         for child in list(fragment.div.contents if fragment.div else []):
             element.append(child)
         applied_count += 1
@@ -231,7 +258,6 @@ def apply_draft_rewrite_replacements(
     if applied_count == 0:
         raise ValueError("模型未返回可用改写内容")
 
-    dominant_style = select_dominant_font_and_size(document.html)
     for block, element in zip(document.blocks, elements):
         if block.type != "table" and not block.locked:
             continue
@@ -241,9 +267,6 @@ def apply_draft_rewrite_replacements(
         original_root = next((node for node in original_fragment.contents if isinstance(node, Tag)), None)
         if original_root is not None:
             element.replace_with(original_root)
-
-    if dominant_style.font_family or dominant_style.font_size:
-        _apply_dominant_font_style(soup, dominant_style)
 
     return normalize_email_html(str(soup))
 
@@ -268,39 +291,264 @@ def _render_template_text(text: str, context: dict[str, str]) -> str:
     return PLACEHOLDER_PATTERN.sub(replace, text)
 
 
-def _render_draft_run(run: dict[str, object]) -> str:
-    text = escape(str(run.get("text", "")))
+def _render_draft_run(
+    run: dict[str, object],
+    local_spans: list[DraftRewriteLocalStyleSpan] | None = None,
+) -> str:
+    raw_text = str(run.get("text", ""))
     raw_marks = run.get("marks")
     marks = raw_marks if isinstance(raw_marks, list) else []
-    for mark in marks:
+    local_spans = [
+        span
+        for span in (local_spans or [])
+        if span.font_family or span.font_size or any(mark not in marks for mark in span.marks)
+    ]
+    if local_spans:
+        return "".join(
+            _render_text_piece(text, marks, local_style)
+            for text, local_style in _split_text_by_local_styles(raw_text, local_spans)
+        )
+    return _render_text_piece(raw_text, marks, None)
+
+
+def _render_text_piece(
+    text: str,
+    marks: list[object],
+    local_style: DraftRewriteLocalStyleSpan | None,
+) -> str:
+    rendered = escape(text)
+    merged_marks = _merge_marks(marks, local_style.marks if local_style else [])
+    for mark in merged_marks:
         if mark == "strong":
-            text = f"<strong>{text}</strong>"
+            rendered = f"<strong>{rendered}</strong>"
         elif mark == "underline":
-            text = f"<u>{text}</u>"
+            rendered = f"<u>{rendered}</u>"
         elif mark == "emphasis":
-            text = f"<em>{text}</em>"
-    return text
+            rendered = f"<em>{rendered}</em>"
+
+    if local_style and (local_style.font_family or local_style.font_size):
+        style = _merge_font_style(
+            "",
+            DraftRewriteFontStyle(
+                font_family=local_style.font_family,
+                font_size=local_style.font_size,
+            ),
+        )
+        if style:
+            rendered = f'<span style="{escape(style, quote=True)}">{rendered}</span>'
+
+    return rendered
 
 
-def _apply_dominant_font_style(soup: BeautifulSoup, style: DraftRewriteFontStyle) -> None:
-    for tag in soup.find_all(True):
-        if _is_within_table(tag):
+def _merge_marks(primary: list[object], secondary: list[str]) -> list[str]:
+    merged: list[str] = []
+    for mark in [*primary, *secondary]:
+        if mark in {"strong", "underline", "emphasis"} and mark not in merged:
+            merged.append(str(mark))
+    return merged
+
+
+def _split_text_by_local_styles(
+    text: str,
+    local_spans: list[DraftRewriteLocalStyleSpan],
+) -> list[tuple[str, DraftRewriteLocalStyleSpan | None]]:
+    usable_spans = [
+        span
+        for span in sorted(local_spans, key=lambda item: len(item.text), reverse=True)
+        if span.text
+    ]
+    if not usable_spans:
+        return [(text, None)]
+
+    pieces: list[tuple[str, DraftRewriteLocalStyleSpan | None]] = []
+    cursor = 0
+    while cursor < len(text):
+        next_index: int | None = None
+        next_span: DraftRewriteLocalStyleSpan | None = None
+        for span in usable_spans:
+            index = text.find(span.text, cursor)
+            if index < 0:
+                continue
+            if (
+                next_index is None
+                or index < next_index
+                or (index == next_index and len(span.text) > len(next_span.text if next_span else ""))
+            ):
+                next_index = index
+                next_span = span
+
+        if next_index is None or next_span is None:
+            pieces.append((text[cursor:], None))
+            break
+
+        if next_index > cursor:
+            pieces.append((text[cursor:next_index], None))
+        pieces.append((text[next_index : next_index + len(next_span.text)], next_span))
+        cursor = next_index + len(next_span.text)
+
+    if not pieces:
+        return [(text, None)]
+    return pieces
+
+
+def _resolve_segment_style(element: Tag) -> DraftRewriteSegmentStyle:
+    base_style = _resolve_declared_block_font_style(element)
+    if base_style.font_family is None and base_style.font_size is None:
+        base_style = _infer_segment_base_font_style(element)
+    return DraftRewriteSegmentStyle(
+        base_style=base_style,
+        local_spans=_collect_local_style_spans(element, base_style),
+    )
+
+
+def _resolve_declared_block_font_style(element: Tag) -> DraftRewriteFontStyle:
+    family: str | None = None
+    size: str | None = None
+    text = element.get_text("", strip=True)
+
+    for tag in _iter_segment_style_scope(element):
+        if family is None:
+            families = _extract_font_family_candidates(tag)
+            if families:
+                family = _choose_font_family_for_text(text, families)
+        if size is None:
+            size = _extract_font_size(tag)
+        if family is not None and size is not None:
+            break
+
+    return DraftRewriteFontStyle(font_family=family, font_size=size)
+
+
+def _iter_segment_style_scope(element: Tag) -> list[Tag]:
+    tags = [element]
+    for parent in element.parents:
+        if not isinstance(parent, Tag):
             continue
-        current_style = str(tag.get("style", ""))
-        updated_style = _merge_font_style(current_style, style)
-        if updated_style:
-            tag["style"] = updated_style
-        elif "style" in tag.attrs:
-            del tag.attrs["style"]
+        if parent.name == "table":
+            break
+        tags.append(parent)
+    return tags
 
 
-def _is_within_table(tag: Tag) -> bool:
-    if tag.name == "table":
-        return True
-    for parent in tag.parents:
-        if isinstance(parent, Tag) and parent.name == "table":
-            return True
-    return False
+def _infer_segment_base_font_style(element: Tag) -> DraftRewriteFontStyle:
+    spans = _collect_text_style_spans(element)
+    styled_spans = [
+        span
+        for span in spans
+        if span.font_family is not None or span.font_size is not None
+    ]
+    if not styled_spans:
+        return DraftRewriteFontStyle(font_family=None, font_size=None)
+
+    first_span = styled_spans[0]
+    last_span = styled_spans[-1]
+    if first_span.font_family and first_span.font_family == last_span.font_family:
+        return DraftRewriteFontStyle(
+            font_family=first_span.font_family,
+            font_size=(
+                first_span.font_size
+                if first_span.font_size == last_span.font_size
+                else _select_dominant_size_for_family(styled_spans, first_span.font_family)
+            ),
+        )
+
+    return _select_dominant_font_style_from_spans(styled_spans)
+
+
+def _select_dominant_size_for_family(
+    spans: list[DraftRewriteLocalStyleSpan],
+    font_family: str,
+) -> str | None:
+    counts: dict[str, int] = {}
+    first_seen: dict[str, int] = {}
+    for index, span in enumerate(spans):
+        if span.font_family != font_family or not span.font_size:
+            continue
+        counts[span.font_size] = counts.get(span.font_size, 0) + len(span.text.strip())
+        first_seen.setdefault(span.font_size, index)
+    if not counts:
+        return None
+    return max(counts, key=lambda key: (counts[key], -first_seen[key]))
+
+
+def _select_dominant_font_style_from_spans(
+    spans: list[DraftRewriteLocalStyleSpan],
+) -> DraftRewriteFontStyle:
+    counts: dict[tuple[str | None, str | None], int] = {}
+    first_seen: dict[tuple[str | None, str | None], int] = {}
+    for index, span in enumerate(spans):
+        key = (span.font_family, span.font_size)
+        if key == (None, None):
+            continue
+        counts[key] = counts.get(key, 0) + len(span.text.strip())
+        first_seen.setdefault(key, index)
+
+    if not counts:
+        return DraftRewriteFontStyle(font_family=None, font_size=None)
+
+    winner = max(counts, key=lambda key: (counts[key], -first_seen[key]))
+    return DraftRewriteFontStyle(font_family=winner[0], font_size=winner[1])
+
+
+def _collect_local_style_spans(
+    element: Tag,
+    base_style: DraftRewriteFontStyle,
+) -> list[DraftRewriteLocalStyleSpan]:
+    local_spans: list[DraftRewriteLocalStyleSpan] = []
+    for span in _collect_text_style_spans(element):
+        text = span.text.strip()
+        if not text:
+            continue
+
+        local_family = span.font_family if span.font_family != base_style.font_family else None
+        local_size = span.font_size if span.font_size != base_style.font_size else None
+        if not span.marks and local_family is None and local_size is None:
+            continue
+
+        local_spans.append(
+            DraftRewriteLocalStyleSpan(
+                text=text,
+                marks=span.marks,
+                font_family=local_family,
+                font_size=local_size,
+            ),
+        )
+
+    return local_spans
+
+
+def _collect_text_style_spans(element: Tag) -> list[DraftRewriteLocalStyleSpan]:
+    spans: list[DraftRewriteLocalStyleSpan] = []
+    for text_node in list(element.find_all(string=True, recursive=True)):
+        if not isinstance(text_node, NavigableString):
+            continue
+        text = str(text_node)
+        if not text.strip():
+            continue
+        spans.append(
+            DraftRewriteLocalStyleSpan(
+                text=text,
+                marks=_collect_marks(text_node, element),
+                font_family=_resolve_effective_font_family(text_node),
+                font_size=_resolve_effective_font_size(text_node),
+            ),
+        )
+    return spans
+
+
+def _apply_segment_base_font_style(element: Tag, style: DraftRewriteFontStyle) -> None:
+    if style.font_family is None and style.font_size is None:
+        return
+    current_style = str(element.get("style", ""))
+    updated_style = _merge_font_style(current_style, style)
+    if updated_style:
+        element["style"] = updated_style
+    elif "style" in element.attrs:
+        del element.attrs["style"]
+
+
+def _is_font_family_style_key(key: str) -> bool:
+    return key in FONT_FAMILY_STYLE_KEYS
 
 
 def _merge_font_style(style: str, dominant: DraftRewriteFontStyle) -> str:
@@ -313,7 +561,7 @@ def _merge_font_style(style: str, dominant: DraftRewriteFontStyle) -> str:
         normalized_value = value.strip()
         if not normalized_key or not normalized_value:
             continue
-        if normalized_key in {"font-family", "font-size"}:
+        if _is_font_family_style_key(normalized_key) or normalized_key == "font-size":
             continue
         declarations.append((normalized_key, normalized_value))
 
@@ -354,15 +602,29 @@ def _extract_font_family_candidates(tag: Tag) -> list[str]:
             candidates.extend(_split_font_family_stack(face))
 
     style = str(tag.get("style", ""))
-    match = re.search(r"font-family\s*:\s*([^;]+)", style, re.I)
-    if match:
-        candidates.extend(_split_font_family_stack(match.group(1)))
+    for key, value in _iter_style_declarations(style):
+        if key in FONT_FAMILY_STYLE_KEYS:
+            candidates.extend(_split_font_family_stack(value))
 
     deduped: list[str] = []
     for candidate in candidates:
         if candidate and candidate not in deduped:
             deduped.append(candidate)
     return deduped
+
+
+def _iter_style_declarations(style: str) -> list[tuple[str, str]]:
+    declarations: list[tuple[str, str]] = []
+    for item in style.split(";"):
+        if ":" not in item:
+            continue
+        key, value = item.split(":", 1)
+        normalized_key = key.strip().lower()
+        normalized_value = value.strip()
+        if normalized_key and normalized_value:
+            declarations.append((normalized_key, normalized_value))
+    return declarations
+
 
 def _split_font_family_stack(value: str) -> list[str]:
     families: list[str] = []
@@ -397,9 +659,7 @@ def _extract_font_size(tag: Tag) -> str | None:
             return size
 
     style = str(tag.get("style", ""))
-    match = re.search(r"font-size\s*:\s*([^;]+)", style, re.I)
-    if match:
-        size = match.group(1).strip()
-        if size:
-            return size
+    for key, value in _iter_style_declarations(style):
+        if key == "font-size":
+            return value
     return None

@@ -131,7 +131,7 @@ def html_to_text(value: str) -> str:
     for element in soup.find_all(["p", "li", "td", "th"]):
         if element.name in {"td", "th"} and element.find(["p", "li"]):
             continue
-        text = element.get_text(" ", strip=True)
+        text = element.get_text("", strip=True)
         if not text:
             continue
         if element.name == "li":

@@ -53,6 +53,59 @@ export const getTemplatePlaceholder = (key: string | null | undefined) =>
 const createTemplateTokenPattern = () =>
   /\{\{\s*(name|email|title|university|school|department|research_direction|sender_name|sender_email|year|month|day)\s*\}\}/g;
 
+const CJK_TEXT_PATTERN = /[\u4e00-\u9fff]/;
+
+const parseStyleDeclarations = (styleValue: string | null | undefined) =>
+  (styleValue ?? "")
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .map((declaration) => {
+      const separatorIndex = declaration.indexOf(":");
+      if (separatorIndex < 0) {
+        return null;
+      }
+      const property = declaration.slice(0, separatorIndex).trim();
+      const value = declaration.slice(separatorIndex + 1).trim();
+      return property && value ? { property, value } : null;
+    })
+    .filter((declaration): declaration is { property: string; value: string } =>
+      Boolean(declaration),
+    );
+
+const normalizeWordCjkFontFamilyStyle = (element: HTMLElement, styleValue: string) => {
+  if (!CJK_TEXT_PATTERN.test(element.textContent ?? "")) {
+    return styleValue;
+  }
+
+  const declarations = parseStyleDeclarations(styleValue);
+  const fareastFont = declarations.find(
+    (declaration) => declaration.property.toLowerCase() === "mso-fareast-font-family",
+  )?.value;
+  if (!fareastFont) {
+    return styleValue;
+  }
+
+  let usedFareastFont = false;
+  const normalized = declarations
+    .filter((declaration) => !declaration.property.toLowerCase().startsWith("mso-"))
+    .map((declaration) => {
+      if (declaration.property.toLowerCase() !== "font-family") {
+        return declaration;
+      }
+      usedFareastFont = true;
+      return { property: "font-family", value: fareastFont };
+    });
+
+  if (!usedFareastFont) {
+    normalized.unshift({ property: "font-family", value: fareastFont });
+  }
+
+  return normalized.length > 0
+    ? `${normalized.map(({ property, value }) => `${property}:${value}`).join(";")};`
+    : null;
+};
+
 export const parseTemplatePlaceholderText = (text: string) => {
   const segments: TemplatePlaceholderSegment[] = [];
   const tokenPattern = createTemplateTokenPattern();
@@ -134,7 +187,10 @@ const convertFontTagsToSpanStyles = (html: string) => {
   container.querySelectorAll<HTMLElement>("[style]").forEach((element) => {
     const normalizedStyle = normalizeFontSizeStyle(element.getAttribute("style"));
     if (normalizedStyle) {
-      element.setAttribute("style", normalizedStyle);
+      element.setAttribute(
+        "style",
+        normalizeWordCjkFontFamilyStyle(element, normalizedStyle) ?? normalizedStyle,
+      );
     }
   });
 
