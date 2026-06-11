@@ -30,6 +30,8 @@ class BackendBuildScriptTest(unittest.TestCase):
 
         self.assertNotIn("--collect-all patchright", content)
         self.assertIn("--exclude-module patchright", content)
+        self.assertIn('$PackagedPatchrightDir = Join-Path $BackendDistDir "_internal\\patchright"', content)
+        self.assertIn("Remove-Item -Recurse -Force $PackagedPatchrightDir", content)
 
     def test_playwright_install_helper_does_not_install_patchright(self) -> None:
         script = (

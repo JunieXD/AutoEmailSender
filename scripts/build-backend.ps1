@@ -8,6 +8,7 @@ $BackendDir = Join-Path $RepoRoot "backend"
 $AlembicIni = Join-Path $BackendDir "alembic.ini"
 $AlembicDir = Join-Path $BackendDir "alembic"
 $PlaywrightBrowsersDir = Join-Path $BackendDir "ms-playwright"
+$BackendDistDir = Join-Path $BackendDir "dist\backend"
 
 Push-Location $BackendDir
 try {
@@ -36,6 +37,11 @@ try {
     --add-data "$AlembicIni;." `
     --add-data "$AlembicDir;alembic" `
     desktop_entry.py
+
+  $PackagedPatchrightDir = Join-Path $BackendDistDir "_internal\patchright"
+  if (Test-Path $PackagedPatchrightDir) {
+    Remove-Item -Recurse -Force $PackagedPatchrightDir
+  }
 } finally {
   Pop-Location
 }
