@@ -178,9 +178,9 @@ async def create_batch_task(
     if primary_material_id is not None:
         primary_material = material_map.get(primary_material_id)
         if primary_material is None:
-            raise HTTPException(status_code=400, detail="默认材料不属于当前身份")
+            raise HTTPException(status_code=400, detail="AI 写信参考材料不属于当前身份")
         if not material_can_be_primary(primary_material):
-            raise HTTPException(status_code=400, detail="当前材料不支持作为默认材料")
+            raise HTTPException(status_code=400, detail="当前材料不支持作为 AI 写信参考材料")
 
     selected_material_ids = payload.selected_material_ids or None
     if selected_material_ids:
@@ -711,7 +711,7 @@ async def retry_batch_task_item_draft(
     if batch_item_uses_llm_generation(item):
         await session.refresh(item, attribute_names=["professor", "primary_material"])
         if item.primary_material is None:
-            raise HTTPException(status_code=400, detail="请先选择用于匹配的默认材料")
+            raise HTTPException(status_code=400, detail="请选择 AI 写信参考材料后再重新生成草稿")
         if not (item.professor.research_direction or "").strip():
             raise HTTPException(status_code=400, detail="请先补充导师研究方向，再使用 AI 生成草稿")
 
@@ -959,5 +959,3 @@ def _normalize_nullable_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
-
-

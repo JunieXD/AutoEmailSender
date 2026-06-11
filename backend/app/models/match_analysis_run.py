@@ -11,6 +11,7 @@ from app.models.types import UTCDateTime
 
 if TYPE_CHECKING:
     from app.models.email_task import EmailTask
+    from app.models.identity_material import IdentityMaterial
     from app.models.identity_profile import IdentityProfile
     from app.models.llm_profile import LLMProfile
     from app.models.professor import Professor
@@ -48,6 +49,11 @@ class MatchAnalysisRun(Base):
         index=True,
         nullable=False,
     )
+    primary_material_id: Mapped[int | None] = mapped_column(
+        ForeignKey("identity_materials.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'failed'"))
     success: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
     match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -75,3 +81,4 @@ class MatchAnalysisRun(Base):
     professor: Mapped["Professor"] = relationship()
     identity: Mapped["IdentityProfile"] = relationship()
     llm_profile: Mapped["LLMProfile"] = relationship()
+    primary_material: Mapped["IdentityMaterial | None"] = relationship()

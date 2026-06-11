@@ -1296,7 +1296,7 @@ const OutreachTemplateModal = ({
             <div className="rounded-2xl border border-dashed border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
               {form.outreach_generation_mode === "template"
                 ? "作为新任务默认值；已创建任务不受后续修改影响。"
-                : "AI 只在模板基础上调整称呼、匹配理由和主题。"}
+                : "AI 只在模板基础上调整称呼、个性化理由和主题。"}
             </div>
           </div>
         </div>

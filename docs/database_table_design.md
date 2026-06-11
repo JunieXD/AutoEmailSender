@@ -22,8 +22,8 @@
 - `is_default`
 
 说明：
-- 身份默认材料只决定“默认用于匹配和草稿生成的材料”
-- 具体任务使用哪份材料，以 `email_tasks.primary_material_id` 为准
+- 身份默认材料是匹配分析唯一使用的材料来源
+- 草稿生成使用任务上的 AI 写信参考材料，即 `email_tasks.primary_material_id`
 
 ## 3. `identity_materials`
 身份下的统一材料库。
@@ -44,7 +44,7 @@
 
 说明：
 - 上传阶段只保存文件和元数据，不同步解析文本
-- 只有在工作区手动执行匹配 / 生成草稿时，系统才会通过 MarkItDown 按需补齐 `extracted_text`
+- 只有在执行匹配分析或生成草稿时，系统才会通过 MarkItDown 按需补齐 `extracted_text`
 - 同一份材料既可以是默认材料，也可以同时被选为随信材料
 
 ## 4. `llm_profiles`
@@ -142,6 +142,30 @@ LLM 配置表。
 - `email_task_id` 复用或创建对应导师任务，用于把匹配结果写回现有任务流
 - `match_analysis_run_id` 关联实际模型调用审计，便于任务中心与 token 记录中心互相追踪
 
+## 8.1. `match_analysis_runs`
+匹配分析单次模型调用审计表。
+
+关键字段：
+- `email_task_id`
+- `professor_id`
+- `identity_id`
+- `llm_profile_id`
+- `primary_material_id`
+- `status`
+- `success`
+- `match_score`
+- `prompt_tokens` / `completion_tokens` / `total_tokens` / `cached_tokens`
+- `duration_ms`
+- `endpoint_kind` / `status_code`
+- `prompt_hash` / `stable_prefix_hash`
+- `error_kind` / `error_message`
+- `started_at` / `finished_at`
+
+说明：
+- `primary_material_id` 记录本次匹配分析实际使用的个人页默认材料。
+- 历史记录可能为 `NULL`，表示旧版本没有可靠记录。
+- 匹配结果仍写回 `email_tasks.match_score` 等字段，供首页、工作区排序和展示。
+
 ## 9. `email_tasks`
 单导师执行单元。
 
@@ -171,8 +195,8 @@ LLM 配置表。
 - `source` 用于区分任务来源；当前实现包含 `manual` 和 `batch`
 - `parent_task_id` 用于串联“继续联系”或 follow-up 创建出来的手动子任务；同一个父任务最多只允许一个手动子任务
 - 同一 `identity_id + professor_id` 允许存在多条 `email_tasks`
-- `primary_material_id` 是任务级快照；之后即使身份默认材料变了，旧任务也不会被动跟随
-- 如果 `primary_material_id` 为空，任务仍可手动写信并发送，只是不能执行匹配和草稿生成
+- `primary_material_id` 是 AI 写信参考主材料；之后即使身份默认材料变了，旧任务也不会被动跟随
+- 如果 `primary_material_id` 为空，任务仍可手动写信、发送和计算匹配，只是不能执行 AI 草稿生成或改写
 - `cancellation_reason` 目前用于记录明确取消原因；批量停止时会把未完成子任务置为 `canceled`，并写入 `batch_stopped`
 - 执行状态主链为 `discovered -> matched -> review_required -> approved -> scheduled -> sent -> reply_detected`
 - `send_failed` 是发送阶段的失败分支，不会继续流转到 `reply_detected`

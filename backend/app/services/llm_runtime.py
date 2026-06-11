@@ -143,7 +143,7 @@ SYSTEM_DRAFT_PROMPT = dedent(
     额外要求：
     - 只能输出一个 JSON 对象。
     - 默认应保留模板的整体结构、段落顺序和主要话术风格；具体改写幅度以用户消息中的“草稿改写偏好”和“任务要求”为准。
-    - 只允许改动：称呼、匹配理由、个性化一段、结尾、主题。
+    - 只允许改动：称呼、个性化理由、个性化一段、结尾、主题。
     - 必须围绕导师研究方向进行个性化改写，不能只写泛泛的“我关注您的研究”。
     - 导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。
     - 不要从零重写整封邮件；即使偏好要求更强改写，也必须基于模板、导师信息和可见材料。
@@ -387,11 +387,11 @@ DRAFT_REWRITE_FORMALITY_TEXT = {
 DRAFT_REWRITE_LENGTH_TEXT = {
     "shorter": "更短，压缩冗余表达，避免过长段落。",
     "default": "默认，保持接近模板长度。",
-    "more_detailed": "更详细，允许补充更具体的匹配理由，但不堆砌。",
+    "more_detailed": "更详细，允许补充更具体的个性化理由，但不堆砌。",
 }
 
 DRAFT_REWRITE_SPECIFICITY_TEXT = {
-    "concise": "概括，匹配理由更简洁。",
+    "concise": "概括，个性化理由更简洁。",
     "balanced": "平衡，兼顾简洁和具体。",
     "detailed": "细节更足，更强调导师方向、论文和材料经历的具体连接。",
 }
@@ -1162,18 +1162,8 @@ def build_draft_prompt(
     custom_body_html: str | None = None,
     rewrite_preferences: DraftRewritePreferences | None = None,
 ) -> str:
-    match_context = ""
-    if current_match is not None:
-        match_context = dedent(
-            f"""
-            当前已知匹配信息：
-            - match_score: {current_match.match_score}
-            - match_reason: {current_match.match_reason}
-            - fit_points: {current_match.fit_points}
-            - risk_points: {current_match.risk_points}
-            - keywords: {current_match.keywords}
-            """
-        ).strip()
+    # Deprecated compatibility parameter: draft prompts must ignore match results.
+    _ = current_match
     rewrite_preferences = rewrite_preferences or DraftRewritePreferences()
     rewrite_preferences_block = build_draft_rewrite_preferences(rewrite_preferences)
     rewrite_constraints_block = build_draft_rewrite_constraints(rewrite_preferences)
@@ -1187,25 +1177,21 @@ def build_draft_prompt(
         custom_body=custom_body,
         custom_body_html=custom_body_html,
         extra_requirements=f"""
-        {match_context or "当前还没有单独计算过匹配，请你自己综合判断邮件内容。"}
-
         {rewrite_preferences_block}
 
         {rewrite_constraints_block}
 
         任务要求：
         1. 必须以提供的套磁信模板为基础润色，不要从零重写。
-        2. 只允许改动：称呼、匹配理由、个性化一段、结尾、主题。
+        2. 只允许改动：称呼、个性化理由、个性化一段、结尾、主题。
         3. 遵循上面的模板结构要求，不要突破模板骨架和原始沟通目的。
-        4. 只生成邮件草稿，不要输出 match_score 等匹配字段。
-        5. 用中文生成专业、克制、具体的套磁邮件。
-        6. rich_body 必须是可渲染为邮件正文的受控富文本 JSON。
-        7. 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
-        8. 围绕导师研究方向做一次自然个性化，不要反复堆砌同一个方向词。
-        9. 按上面的改写幅度要求控制改动大小，同时尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
-        10. 如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。
+        4. 用中文生成专业、克制、具体的套磁邮件。
+        5. rich_body 必须是可渲染为邮件正文的受控富文本 JSON。
+        6. 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
+        7. 围绕导师研究方向做一次自然个性化，不要反复堆砌同一个方向词。
+        8. 按上面的改写幅度要求控制改动大小，同时尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
+        9. 如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。
         """,
-        current_match=current_match,
     )
 
 
@@ -1219,7 +1205,6 @@ def _build_base_generation_prompt(
     custom_body: str | None,
     custom_body_html: str | None,
     extra_requirements: str,
-    current_match: MatchEvaluationResult | None,
 ) -> str:
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
@@ -1231,8 +1216,7 @@ def _build_base_generation_prompt(
             "只返回 JSON 对象。",
             "不要输出解释、Markdown 代码块或多余文字。",
             "你要基于提供的套磁信模板生成邮件草稿，不要从零重写。",
-            "只生成邮件草稿，不要输出 match_score 等匹配字段。",
-            "只允许改动：称呼、匹配理由、个性化一段、结尾、主题。",
+            "只允许改动：称呼、个性化理由、个性化一段、结尾、主题。",
             "尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。",
             "如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。",
             "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
@@ -1265,14 +1249,6 @@ def _build_base_generation_prompt(
             ],
         },
     }
-    if current_match is not None:
-        payload["input"]["当前匹配"] = {
-            "match_score": current_match.match_score,
-            "match_reason": current_match.match_reason,
-            "fit_points": current_match.fit_points,
-            "risk_points": current_match.risk_points,
-            "keywords": current_match.keywords,
-        }
     payload["input"]["导师信息"] = _build_draft_rewrite_professor_context(professor)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -1311,6 +1287,8 @@ def build_draft_rewrite_prompt_parts(
     rewrite_preferences: DraftRewritePreferences | None,
     llm_profile: LLMProfile | None = None,
 ) -> DraftRewritePromptParts:
+    # Deprecated compatibility parameter: draft rewrite prompts must ignore match results.
+    _ = current_match
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
@@ -1376,14 +1354,6 @@ def build_draft_rewrite_prompt_parts(
     stable_prefix = json.dumps(payload, ensure_ascii=False, indent=2)
 
     if isinstance(prompt_input, dict):
-        if current_match is not None:
-            prompt_input["current_match"] = {
-                "match_score": current_match.match_score,
-                "match_reason": current_match.match_reason,
-                "fit_points": current_match.fit_points,
-                "risk_points": current_match.risk_points,
-                "keywords": current_match.keywords,
-            }
         prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
 
     prompt = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -1952,6 +1922,3 @@ def _coerce_token_count(value: object) -> int | None:
     if isinstance(value, float):
         return int(value)
     return None
-
-
-

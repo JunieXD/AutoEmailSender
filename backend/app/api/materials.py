@@ -7,7 +7,7 @@ from app.core.time import utc_now
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +21,7 @@ from app.models import (
     IdentityMaterial,
     IdentityMaterialType,
     IdentityProfile,
+    MatchAnalysisRun,
     TestComposeSession,
 )
 from app.schemas.identity import IdentityMaterialRead
@@ -218,6 +219,17 @@ async def delete_material(
         if _detach_material_from_batch_task(batch_task, material.id):
             detached_batch_task_ids.append(batch_task.id)
 
+    detached_match_run_result = await session.execute(
+        update(MatchAnalysisRun)
+        .where(
+            MatchAnalysisRun.identity_id == material.identity_id,
+            MatchAnalysisRun.primary_material_id == material.id,
+        )
+        .values(primary_material_id=None)
+        .execution_options(synchronize_session=False),
+    )
+    detached_match_run_count = detached_match_run_result.rowcount or 0
+
     if is_current_primary:
         identity.current_primary_material_id = None
         identity.updated_at = utc_now()
@@ -234,6 +246,7 @@ async def delete_material(
             "reset_draft_task_ids": reset_draft_task_ids,
             "detached_test_compose_session_ids": detached_test_compose_session_ids,
             "detached_batch_task_ids": detached_batch_task_ids,
+            "detached_match_analysis_run_count": detached_match_run_count,
         },
     )
     await session.delete(material)
@@ -477,5 +490,4 @@ async def _record_material_log(
         entity_id=str(material.id),
         metadata=base_metadata,
     )
-
 

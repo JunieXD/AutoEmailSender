@@ -131,8 +131,7 @@ describe("WorkspaceComposerDock copy", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "分析匹配度" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "生成草稿" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "写信" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "先看匹配" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "生成新草稿" })).not.toBeInTheDocument();
   });
@@ -219,9 +218,9 @@ describe("WorkspaceComposerDock copy", () => {
 
     expect(screen.getByRole("textbox", { name: "邮件正文" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "邮件主题" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "AI 辅助写信" })).toBeInTheDocument();
+    expect(screen.getByText("AI 辅助")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "分析匹配度" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "生成草稿" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 改写" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "立即发送" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "定时发送" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -233,7 +232,7 @@ describe("WorkspaceComposerDock copy", () => {
     render(
       <WorkspaceComposerDock
         {...baseProps}
-        draftReady={true}
+        draftReady={false}
         subject="测试主题"
         content="老师您好"
         contentHtml="<p>老师您好</p>"
@@ -253,6 +252,39 @@ describe("WorkspaceComposerDock copy", () => {
     );
 
     expect(screen.getByText("04/22 10:00")).toBeInTheDocument();
+  });
+
+  it("describes task material as the AI writing reference when rewriting is blocked", () => {
+    render(
+      <WorkspaceComposerDock
+        {...baseProps}
+        currentTask={{
+          ...currentTask,
+          primary_material_id: null,
+          primary_material: null,
+        }}
+        draftReady={true}
+        subject="测试主题"
+        content="老师您好"
+        contentHtml="<p>老师您好</p>"
+        selectedMaterialIds={[]}
+        scheduledAt=""
+        acting={false}
+        canChangeMode={true}
+        canCalculateMatch={true}
+        canGenerateDraft={false}
+        canContinueManually={false}
+        canStartFollowUp={false}
+        canSubmitDraft={true}
+        hasDraftBody={true}
+        composerExpanded={false}
+        nextStepTitle="选择 AI 写信参考材料"
+        nextStepDescription="检查主题、正文和附件后发送。"
+      />,
+    );
+
+    expect(screen.getByText("请选择 AI 写信参考材料。")).toBeInTheDocument();
+    expect(screen.queryByText("请选择用于匹配的材料。")).not.toBeInTheDocument();
   });
 
   it("shows scheduled summaries in local time when the API omits a timezone suffix", () => {

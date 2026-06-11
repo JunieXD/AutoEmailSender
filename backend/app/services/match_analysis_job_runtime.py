@@ -56,7 +56,7 @@ async def create_match_analysis_job(
         if identity is None:
             raise ValueError("身份不存在")
         if identity.current_primary_material_id is None:
-            raise ValueError("请先设置默认材料")
+            raise ValueError("请到个人页设置默认材料")
 
         llm_profile = await session.get(LLMProfile, llm_profile_id)
         if llm_profile is None:
@@ -324,8 +324,6 @@ async def _ensure_match_email_task(
         .limit(1),
     )
     if existing_task is not None:
-        if existing_task.primary_material_id is None:
-            existing_task.primary_material_id = identity.current_primary_material_id
         return existing_task
 
     task = EmailTask(
@@ -334,7 +332,6 @@ async def _ensure_match_email_task(
         llm_profile_id=llm_profile.id,
         source=EmailTaskSource.MANUAL.value,
         status=EmailTaskStatus.DISCOVERED.value,
-        primary_material_id=identity.current_primary_material_id,
         selected_material_ids=[],
     )
     session.add(task)

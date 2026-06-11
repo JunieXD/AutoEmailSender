@@ -2661,6 +2661,38 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(self._get_task_material_references(discovered_task_id)[0])
         self.assertIsNone(self._get_task_material_references(matched_task_id)[0])
 
+    def test_delete_material_detaches_match_analysis_run_primary_material_reference(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research background is in information extraction.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="run-material-delete@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=material_id,
+            match_score=82,
+            match_reason="方向匹配",
+        )
+        run_id = self._insert_match_analysis_run(
+            task_id=task_id,
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            primary_material_id=material_id,
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        self.assertIsNone(self._get_match_analysis_run_primary_material_id(run_id))
+
     def test_delete_material_resets_review_required_primary_material_draft(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -5204,6 +5236,78 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "缺少研究方向或近期论文，暂不能分析匹配度")
 
+    def test_calculate_match_uses_identity_primary_material_when_task_material_is_empty(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My background covers information extraction and agents.",
+            material_type="resume",
+        )
+        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+
+        professor_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "任务材料为空导师",
+                "email": "empty-task-material-match@example.edu",
+                "title": "Professor",
+                "university": "Example University",
+                "school": "School of AI",
+                "department": "Computer Science",
+                "research_direction": "Information extraction agents",
+                "recent_papers": [],
+                "profile_url": None,
+                "source_url": None,
+            },
+        )
+        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        professor_id = professor_response.json()["id"]
+
+        ensure_response = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(ensure_response.status_code, 200, msg=ensure_response.text)
+        task_id = ensure_response.json()["current_task"]["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE email_tasks SET primary_material_id = NULL WHERE id = ?",
+                (task_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        async def fake_generate_match_evaluation(**kwargs):
+            self.assertEqual(kwargs["primary_material"].id, material_id)
+            return self._build_match_evaluation_result(match_score=86)
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            AsyncMock(side_effect=fake_generate_match_evaluation),
+        ):
+            response = self.client.post(f"/api/email-tasks/{task_id}/calculate-match")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["thread"]["current_task"]
+        self.assertEqual(current_task["match_score"], 86)
+        self.assertIsNone(current_task["primary_material_id"])
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            run_material_id = connection.execute(
+                "SELECT primary_material_id FROM match_analysis_runs WHERE email_task_id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(run_material_id, material_id)
+
     def test_calculate_match_returns_409_when_run_is_already_running(self) -> None:
         from app.services.task_runtime import MatchAnalysisAlreadyRunningError
 
@@ -6539,7 +6643,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         regenerate_response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
         self.assertEqual(regenerate_response.status_code, 400)
-        self.assertEqual(regenerate_response.json()["detail"], "请先选择用于匹配的默认材料")
+        self.assertEqual(regenerate_response.json()["detail"], "请选择 AI 写信参考材料后再生成草稿")
 
         with patch(
             "app.services.task_runtime.mail_runtime.send_email",
@@ -8925,6 +9029,43 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         selected_material_ids = json.loads(row[1]) if row[1] is not None else None
         return row[0], selected_material_ids
+
+    def _insert_match_analysis_run(
+        self,
+        *,
+        task_id: int,
+        identity_id: int,
+        llm_id: int,
+        professor_id: int,
+        primary_material_id: int | None,
+    ) -> int:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            run_id = connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    primary_material_id, status, success, match_score
+                )
+                VALUES (?, ?, ?, ?, ?, 'succeeded', 1, 82)
+                RETURNING id
+                """,
+                (task_id, professor_id, identity_id, llm_id, primary_material_id),
+            ).fetchone()[0]
+            connection.commit()
+        finally:
+            connection.close()
+        return run_id
+
+    def _get_match_analysis_run_primary_material_id(self, run_id: int) -> int | None:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            return connection.execute(
+                "SELECT primary_material_id FROM match_analysis_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
 
     def _get_email_task_llm_profile_id(self, task_id: int) -> int:
         connection = sqlite3.connect(self.db_path)

@@ -102,7 +102,7 @@ async def generate_test_compose_draft(
     else:
         primary_material = identity.current_primary_material
         if primary_material is None:
-            raise ValueError("请先选择用于匹配的默认材料")
+            raise ValueError("请到个人页设置默认材料后再生成测试草稿")
         ensure_material_extracted_text(primary_material)
         pseudo_professor = _build_self_recipient_professor(identity)
         runtime_settings = await get_runtime_settings(session)
@@ -493,6 +493,5 @@ def _synchronize_selected_material_ids(
     compose_session.selected_material_ids = filtered_ids
     compose_session.updated_at = utc_now()
     return True
-
 
 

@@ -165,6 +165,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "professor_id",
                 "identity_id",
                 "llm_profile_id",
+                "primary_material_id",
                 "success",
                 "match_score",
                 "prompt_tokens",
@@ -252,6 +253,7 @@ class DatabaseSchemaTests(unittest.TestCase):
             {
                 "ix_match_analysis_runs_email_task_id",
                 "ix_match_analysis_runs_professor_id",
+                "ix_match_analysis_runs_primary_material_id",
                 "ix_match_analysis_runs_created_at",
                 "uq_match_analysis_runs_running_per_task",
             }.issubset(match_run_indexes),
@@ -360,6 +362,387 @@ class DatabaseSchemaTests(unittest.TestCase):
             self._get_columns("app_metadata"),
             {"key", "value"},
         )
+
+    def test_migration_backfills_match_run_primary_material_id(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_match_run_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="run-material@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="运行记录模型")
+            professor_id = self._insert_professor_into(connection, "run-material@example.edu")
+            material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                original_filename="resume.txt",
+                extracted_text="resume",
+            )
+            task_id = self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=material_id,
+            )
+            connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    status, success, match_score
+                )
+                VALUES (?, ?, ?, ?, 'succeeded', 1, 88)
+                """,
+                (task_id, professor_id, identity_id, llm_profile_id),
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            run_material_id = upgraded.execute(
+                "SELECT primary_material_id FROM match_analysis_runs",
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertEqual(run_material_id, material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_leaves_match_run_primary_material_null_when_task_material_is_missing(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_missing_run_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = OFF")
+            identity_id = self._insert_identity_into(connection, email_address="missing-run-material@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="缺失材料模型")
+            professor_id = self._insert_professor_into(connection, "missing-run-material@example.edu")
+            task_id = self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=999999,
+            )
+            connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    status, success, match_score
+                )
+                VALUES (?, ?, ?, ?, 'succeeded', 1, 88)
+                """,
+                (task_id, professor_id, identity_id, llm_profile_id),
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            run_material_id = upgraded.execute(
+                "SELECT primary_material_id FROM match_analysis_runs",
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertIsNone(run_material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_leaves_match_run_primary_material_null_for_cross_identity_task_material(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_cross_identity_run_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="run-owner@example.com")
+            other_identity_id = self._insert_identity_into(connection, email_address="material-owner@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="跨身份材料模型")
+            professor_id = self._insert_professor_into(connection, "cross-identity-run@example.edu")
+            other_material_id = self._insert_identity_material_into(
+                connection,
+                other_identity_id,
+                original_filename="other-resume.txt",
+                extracted_text="other",
+            )
+            connection.execute("PRAGMA foreign_keys = OFF")
+            task_id = self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=other_material_id,
+            )
+            connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    status, success, match_score
+                )
+                VALUES (?, ?, ?, ?, 'succeeded', 1, 88)
+                """,
+                (task_id, professor_id, identity_id, llm_profile_id),
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            run_material_id = upgraded.execute(
+                "SELECT primary_material_id FROM match_analysis_runs",
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertIsNone(run_material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_leaves_match_run_primary_material_null_for_non_primary_material_file(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_non_primary_run_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="run-image-material@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="不可匹配材料模型")
+            professor_id = self._insert_professor_into(connection, "run-image-material@example.edu")
+            material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="作品集图片",
+                original_filename="portfolio.png",
+                extracted_text="image metadata",
+                material_type="portfolio",
+            )
+            task_id = self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=material_id,
+            )
+            connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    status, success, match_score
+                )
+                VALUES (?, ?, ?, ?, 'succeeded', 1, 88)
+                """,
+                (task_id, professor_id, identity_id, llm_profile_id),
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            run_material_id = upgraded.execute(
+                "SELECT primary_material_id FROM match_analysis_runs",
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertIsNone(run_material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_recovers_identity_current_primary_material_from_recent_task(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_identity_primary_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="recover-primary@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="默认材料恢复模型")
+            old_professor_id = self._insert_professor_into(connection, "recover-old-primary@example.edu")
+            recent_professor_id = self._insert_professor_into(connection, "recover-recent-primary@example.edu")
+            old_material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="旧材料",
+                original_filename="old-resume.txt",
+                extracted_text="old",
+            )
+            recent_material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="最近材料",
+                original_filename="recent-resume.txt",
+                extracted_text="recent",
+            )
+            self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                old_professor_id,
+                primary_material_id=old_material_id,
+                updated_at="2026-06-01 08:00:00",
+            )
+            self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                recent_professor_id,
+                primary_material_id=recent_material_id,
+                updated_at="2026-06-02 08:00:00",
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            current_primary_material_id = upgraded.execute(
+                "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
+                (identity_id,),
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertEqual(current_primary_material_id, recent_material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_recovers_identity_current_primary_material_from_transcript_pdf_task(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_transcript_primary_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="recover-transcript@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="成绩单默认材料模型")
+            professor_id = self._insert_professor_into(connection, "recover-transcript@example.edu")
+            material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="成绩单",
+                original_filename="transcript.pdf",
+                extracted_text="transcript",
+                material_type="transcript",
+            )
+            self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=material_id,
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            current_primary_material_id = upgraded.execute(
+                "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
+                (identity_id,),
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertEqual(current_primary_material_id, material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_recovers_identity_current_primary_material_from_only_material(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_only_identity_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="only-primary@example.com")
+            material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="唯一材料",
+                original_filename="only-resume.txt",
+                extracted_text="only",
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            current_primary_material_id = upgraded.execute(
+                "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
+                (identity_id,),
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertEqual(current_primary_material_id, material_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_migration_leaves_ambiguous_identity_current_primary_material_empty(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_ambiguous_identity_material.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="ambiguous-primary@example.com")
+            self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="材料 A",
+                original_filename="a-resume.txt",
+                extracted_text="a",
+            )
+            self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="材料 B",
+                original_filename="b-resume.txt",
+                extracted_text="b",
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            current_primary_material_id = upgraded.execute(
+                "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
+                (identity_id,),
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertIsNone(current_primary_material_id)
+        finally:
+            legacy_dir.cleanup()
 
 
     def test_old_revision_can_upgrade_to_head(self) -> None:
@@ -1602,6 +1985,78 @@ class DatabaseSchemaTests(unittest.TestCase):
             VALUES ('manual', ?, ?, ?, 'discovered', ?)
             """,
             (identity_id, llm_profile_id, professor_id, json.dumps([])),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _insert_identity_material_into(
+        connection: sqlite3.Connection,
+        identity_id: int,
+        *,
+        display_name: str = "简历",
+        original_filename: str = "resume.txt",
+        extracted_text: str = "resume",
+        material_type: str = "resume",
+    ) -> int:
+        cursor = connection.execute(
+            """
+            INSERT INTO identity_materials (
+                identity_id,
+                display_name,
+                original_filename,
+                file_path,
+                material_type,
+                sha256,
+                extracted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                identity_id,
+                display_name,
+                original_filename,
+                f"data/materials/{original_filename}",
+                material_type,
+                "a" * 64,
+                extracted_text,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _insert_email_task_with_material_into(
+        connection: sqlite3.Connection,
+        identity_id: int,
+        llm_profile_id: int,
+        professor_id: int,
+        *,
+        primary_material_id: int | None,
+        updated_at: str = "2026-06-01 08:00:00",
+    ) -> int:
+        cursor = connection.execute(
+            """
+            INSERT INTO email_tasks (
+                source,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id,
+                status,
+                selected_material_ids,
+                created_at,
+                updated_at
+            )
+            VALUES ('manual', ?, ?, ?, ?, 'matched', ?, ?, ?)
+            """,
+            (
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id,
+                json.dumps([]),
+                updated_at,
+                updated_at,
+            ),
         )
         return int(cursor.lastrowid)
 
