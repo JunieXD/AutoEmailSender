@@ -104,7 +104,7 @@ def get_settings() -> Settings:
             "CRAWLER_PROFILE_FETCH_MAX_RETRIES",
             2,
         ),
-        llm_request_timeout_seconds=_get_int_env("LLM_REQUEST_TIMEOUT_SECONDS", 90),
+        llm_request_timeout_seconds=_get_int_env("LLM_REQUEST_TIMEOUT_SECONDS", 120),
         smtp_send_timeout_seconds=_get_int_env("SMTP_SEND_TIMEOUT_SECONDS", 30),
         imap_lookback_hours=_get_int_env("IMAP_LOOKBACK_HOURS", 72),
         operation_log_retention_days=_get_int_env("OPERATION_LOG_RETENTION_DAYS", 30),
