@@ -4,9 +4,10 @@ import re
 import uuid
 from contextvars import ContextVar
 
-from starlette.responses import PlainTextResponse
-from app.core.backend_error_logging import write_backend_error_log
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.core.backend_error_logging import write_backend_error_log
 
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -70,12 +71,14 @@ class RequestContextMiddleware:
                 path=str(scope.get("path", "")),
                 exc=exc,
             )
-            response = PlainTextResponse(
-                "Internal Server Error",
+            response = JSONResponse(
+                {
+                    "detail": str(exc).strip() or "Internal Server Error",
+                    "request_id": request_id,
+                },
                 status_code=500,
                 headers={REQUEST_ID_HEADER: request_id},
             )
             await response(scope, receive, send)
-            raise
         finally:
             _request_id_var.reset(token)

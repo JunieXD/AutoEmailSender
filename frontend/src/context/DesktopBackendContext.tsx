@@ -38,9 +38,9 @@ export const DesktopBackendProvider = ({ children }: PropsWithChildren) => {
   useEffect(() => {
     const unsubscribe = window.autoEmailSender?.onBackendStatus?.((nextStatus) => {
       setStatus(nextStatus);
-      if (nextStatus.state === "ready") {
-        updateDesktopBackendBaseUrl(nextStatus.baseUrl);
-      }
+      updateDesktopBackendBaseUrl(
+        nextStatus.state === "ready" ? nextStatus.baseUrl : null,
+      );
 
       try {
         recordDiagnosticEvent({

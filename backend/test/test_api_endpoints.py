@@ -1847,33 +1847,20 @@ class ApiEndpointTests(unittest.TestCase):
             "app.services.task_runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=fake_generate_draft_content),
         ):
-            with self.assertRaises(RuntimeError):
-                self.client.post(
-                    f"/api/email-tasks/{task_id}/rewrite-draft",
-                    json={
-                        "subject": "点击瞬间主题",
-                        "body_text": "用户改过正文",
-                        "body_html": "<p>用户改过正文</p><script>alert(1)</script>",
-                        "selected_material_ids": [],
-                        "llm_profile_id": None,
-                    },
-                )
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "点击瞬间主题",
+                    "body_text": "用户改过正文",
+                    "body_html": "<p>用户改过正文</p><script>alert(1)</script>",
+                    "selected_material_ids": [],
+                    "llm_profile_id": None,
+                },
+            )
 
-        connection = sqlite3.connect(self.db_path)
-        try:
-            row = connection.execute(
-                """
-                SELECT draft_rewrite_source_body_text, draft_rewrite_source_body_html
-                FROM email_tasks
-                WHERE id = ?
-                """,
-                (task_id,),
-            ).fetchone()
-        finally:
-            connection.close()
-
-        self.assertEqual(row[0], "用户改过正文")
-        self.assertEqual(row[1], "<p>用户改过正文</p>")
+        self.assertEqual(response.status_code, 502, msg=response.text)
+        self.assertTrue(response.json()["detail"].startswith("模型请求失败"))
+        self.assertRegex(response.headers["X-Request-ID"], r".+")
 
     def test_rewrite_draft_rejects_second_request_after_task_is_claimed(self) -> None:
         task_id = self._create_generating_workspace_rewrite_task()

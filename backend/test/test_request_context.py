@@ -83,6 +83,7 @@ class RequestContextTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.headers["X-Request-ID"], request_id)
+        self.assertEqual(response.json(), {"detail": "boom", "request_id": request_id})
         self.assertIsNone(get_request_id())
 
     def test_unhandled_exception_is_written_to_backend_error_log(self) -> None:
@@ -105,10 +106,11 @@ class RequestContextTests(unittest.TestCase):
         self.assertIn("RuntimeError: boom", content)
         self.assertIn("Traceback", content)
 
-    def test_unhandled_exception_still_propagates_and_resets_context(self) -> None:
-        with self.assertRaises(RuntimeError):
-            self.client.get("/test/request-id-error", headers={"X-Request-ID": "service.error-2"})
+    def test_unhandled_exception_returns_json_and_resets_context(self) -> None:
+        response = self.client.get("/test/request-id-error", headers={"X-Request-ID": "service.error-2"})
 
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json(), {"detail": "boom", "request_id": "service.error-2"})
         self.assertIsNone(get_request_id())
 
 

@@ -45,86 +45,115 @@ export const apiFetch = async <T>(
   options?: RequestInit,
   params?: Record<string, string | number | null | undefined>,
 ): Promise<T> => {
+  const startedAt = now();
+  const method = (options?.method ?? "GET").toUpperCase();
   const apiPath = await buildApiPathForFetch(path, params);
   const diagnosticData = {
-    method: (options?.method ?? "GET").toUpperCase(),
+    method,
     path: stripQueryAndHash(apiPath),
   };
-  const startedAt = now();
+  let lastError: unknown;
 
   try {
-    const response = await fetch(apiPath, {
-      ...options,
-      headers: {
-        ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-        ...(options?.headers ?? {}),
-      },
-    });
-
-    if (response.status === 204) {
-      recordApiDiagnosticEvent({
-        level: "info",
-        eventName: "api.request_succeeded",
-        data: {
-          ...diagnosticData,
-          status: response.status,
-          durationMs: elapsedMs(startedAt),
-        },
-      });
-      return undefined as T;
-    }
-
-    const text = await response.text();
-    let data: unknown = null;
-    if (text) {
+    return await executeApiFetchOnce<T>(apiPath, options, startedAt, method);
+  } catch (error) {
+    lastError = error;
+    if (shouldRetryDesktopNetworkError(error)) {
+      updateDesktopBackendBaseUrl(null);
       try {
-        data = JSON.parse(text);
-      } catch {
-        data = text;
+        await waitForDesktopBackendBaseUrl();
+        return await executeApiFetchOnce<T>(
+          await buildApiPathForFetch(path, params),
+          options,
+          startedAt,
+          method,
+        );
+      } catch (retryError) {
+        lastError = retryError;
       }
     }
-
-    if (!response.ok) {
-      const message = getApiErrorMessage(data);
-      recordApiDiagnosticEvent({
-        level: "error",
-        eventName: "api.request_failed",
-        data: {
-          ...diagnosticData,
-          status: response.status,
-          durationMs: elapsedMs(startedAt),
-          message: sanitizeDiagnosticMessage(message),
-        },
-      });
-      throw new ApiError(response.status, message);
-    }
-
-    recordApiDiagnosticEvent({
-      level: "info",
-      eventName: "api.request_succeeded",
-      data: {
-        ...diagnosticData,
-        status: response.status,
-        durationMs: elapsedMs(startedAt),
-      },
-    });
-    return data as T;
-  } catch (error) {
-    if (!(error instanceof ApiError)) {
+    if (!(lastError instanceof ApiError)) {
       recordApiDiagnosticEvent({
         level: "error",
         eventName: "api.request_errored",
         data: {
           ...diagnosticData,
           durationMs: elapsedMs(startedAt),
-          errorType: getThrownErrorType(error),
-          error: sanitizeDiagnosticMessage(getThrownErrorMessage(error)),
+          errorType: getThrownErrorType(lastError),
+          error: sanitizeDiagnosticMessage(getThrownErrorMessage(lastError)),
         },
       });
     }
-    throw error;
+    throw lastError;
   }
 };
+
+async function executeApiFetchOnce<T>(
+  apiPath: string,
+  options?: RequestInit,
+  startedAt?: number,
+  method?: string,
+): Promise<T> {
+  const response = await fetch(apiPath, {
+    ...options,
+    headers: {
+      ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(options?.headers ?? {}),
+    },
+  });
+
+  if (response.status === 204) {
+    recordApiDiagnosticEvent({
+      level: "info",
+      eventName: "api.request_succeeded",
+      data: {
+        method: method ?? (options?.method ?? "GET").toUpperCase(),
+        path: stripQueryAndHash(apiPath),
+        status: response.status,
+        durationMs: elapsedMs(startedAt ?? now()),
+      },
+    });
+    return undefined as T;
+  }
+
+  const text = await response.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    const message = getApiErrorMessage(data);
+    recordApiDiagnosticEvent({
+      level: "error",
+      eventName: "api.request_failed",
+      data: {
+        method: method ?? (options?.method ?? "GET").toUpperCase(),
+        path: stripQueryAndHash(apiPath),
+        status: response.status,
+        durationMs: elapsedMs(startedAt ?? now()),
+        message: sanitizeDiagnosticMessage(message),
+      },
+    });
+    throw new ApiError(response.status, message);
+  }
+
+  recordApiDiagnosticEvent({
+    level: "info",
+    eventName: "api.request_succeeded",
+    data: {
+      method: method ?? (options?.method ?? "GET").toUpperCase(),
+      path: stripQueryAndHash(apiPath),
+      status: response.status,
+      durationMs: elapsedMs(startedAt ?? now()),
+    },
+  });
+  return data as T;
+}
 
 function getApiErrorMessage(data: unknown): string {
   if (typeof data === "object" && data !== null && "detail" in data) {
@@ -207,6 +236,20 @@ function getThrownErrorType(error: unknown): string {
   }
 
   return typeof error;
+}
+
+function shouldRetryDesktopNetworkError(error: unknown): boolean {
+  if (!window.autoEmailSender) {
+    return false;
+  }
+
+  const message = getThrownErrorMessage(error).toLowerCase();
+  return (
+    error instanceof TypeError &&
+    (message.includes("failed to fetch") ||
+      message.includes("networkerror") ||
+      message.includes("load failed"))
+  );
 }
 
 function sanitizeDiagnosticMessage(message: string): string {

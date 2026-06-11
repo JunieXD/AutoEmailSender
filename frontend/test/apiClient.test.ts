@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch, buildApiPath, buildApiUrl } from "@/lib/api/client";
+import {
+  ApiError,
+  apiFetch,
+  buildApiPath,
+  buildApiUrl,
+  updateDesktopBackendBaseUrl,
+} from "@/lib/api/client";
 import { clearDiagnosticEvents, getDiagnosticEvents } from "@/lib/diagnostics";
+import type { DesktopBackendStatus } from "@/types/desktop";
 
 describe("api client", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    updateDesktopBackendBaseUrl(null);
     clearDiagnosticEvents();
   });
 
@@ -175,6 +183,60 @@ describe("api client", () => {
     expect(diagnosticData).not.toContain("?token=");
     expect(diagnosticData).not.toContain("#debug");
     expect(diagnosticData).not.toContain("hunter2");
+  });
+
+  it("retries a desktop fetch once after a transient backend reconnect", async () => {
+    let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
+    let backendBaseUrl = "http://127.0.0.1:48120";
+    window.autoEmailSender = {
+      backendBaseUrl,
+      getBackendBaseUrl: () => backendBaseUrl,
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onBackendStatus: (callback) => {
+        backendStatusCallback = callback;
+        return () => undefined;
+      },
+      onUpdateStatus: () => () => undefined,
+    };
+    updateDesktopBackendBaseUrl("http://127.0.0.1:48120");
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const request = apiFetch<{ status: string }>("/api/ping");
+    await Promise.resolve();
+
+    backendBaseUrl = "http://127.0.0.1:48121";
+    backendStatusCallback?.({
+      state: "ready",
+      baseUrl: backendBaseUrl,
+      phase: "ready",
+      message: "系统已准备就绪",
+      elapsedSeconds: 1,
+    });
+
+    await expect(request).resolves.toEqual({ status: "ok" });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:48120/api/ping",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:48121/api/ping",
+      expect.any(Object),
+    );
   });
 
   it("uses readable FastAPI validation detail messages", async () => {

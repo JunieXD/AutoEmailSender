@@ -2161,6 +2161,13 @@ export const ProfilePage = () => {
     if (!editingLLM) {
       return;
     }
+    if (!desktopBackendReady) {
+      notifyError(
+        "系统正在准备本地数据",
+        desktopDisableReason ?? "请等待系统准备完成后再测试模型。",
+      );
+      return;
+    }
 
     setTestingLLMConnection(true);
     setLlmProbeResult(null);
@@ -2191,6 +2198,13 @@ export const ProfilePage = () => {
 
   const runLlmModelsFetch = async () => {
     if (!editingLLM) {
+      return;
+    }
+    if (!desktopBackendReady) {
+      notifyError(
+        "系统正在准备本地数据",
+        desktopDisableReason ?? "请等待系统准备完成后再获取模型列表。",
+      );
       return;
     }
 
@@ -3001,10 +3015,10 @@ export const ProfilePage = () => {
                   <button
                     type="button"
                     onClick={() => void runLlmModelsFetch()}
-                    disabled={fetchingLLMModels}
+                    disabled={fetchingLLMModels || !desktopBackendReady}
                     className={getActionButtonClassName(
                       llmModelsActionState,
-                      fetchingLLMModels,
+                      fetchingLLMModels || !desktopBackendReady,
                     )}
                   >
                     {fetchingLLMModels ? (
@@ -3019,10 +3033,10 @@ export const ProfilePage = () => {
                   <button
                     type="button"
                     onClick={() => void runLlmConnectionTest()}
-                    disabled={testingLLMConnection}
+                    disabled={testingLLMConnection || !desktopBackendReady}
                     className={getActionButtonClassName(
                       llmProbeActionState,
-                      testingLLMConnection,
+                      testingLLMConnection || !desktopBackendReady,
                     )}
                   >
                     {testingLLMConnection ? (

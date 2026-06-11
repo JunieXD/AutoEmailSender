@@ -11,9 +11,10 @@ if (document.documentElement) {
   window.addEventListener("DOMContentLoaded", markDesktopRuntime, { once: true });
 }
 
-let backendBaseUrl = process.argv
-  .find((value) => value.startsWith("--backend-base-url="))
-  ?.replace("--backend-base-url=", "");
+let backendBaseUrl: string | null =
+  process.argv
+    .find((value) => value.startsWith("--backend-base-url="))
+    ?.replace("--backend-base-url=", "") ?? null;
 let currentBackendStatus: BackendStatus = {
   state: "starting",
   phase: "starting",
@@ -28,6 +29,8 @@ ipcRenderer.on("backend:status", (_event: IpcRendererEvent, status: BackendStatu
   currentBackendStatus = status;
   if (status.state === "ready") {
     backendBaseUrl = status.baseUrl;
+  } else {
+    backendBaseUrl = null;
   }
   backendStatusCallbacks.forEach((callback) => callback(status));
 });
@@ -70,4 +73,3 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
     };
   },
 });
-
