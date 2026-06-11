@@ -9,7 +9,6 @@ try {
   uv sync --dev
   $env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir
   uv run python -m playwright install --only-shell chromium
-  uv run python -m patchright install --only-shell chromium
 } finally {
   Pop-Location
 }

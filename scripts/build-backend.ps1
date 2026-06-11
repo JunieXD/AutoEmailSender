@@ -18,7 +18,6 @@ try {
   uv sync --dev
   $env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir
   uv run python -m playwright install --only-shell chromium
-  uv run python -m patchright install --only-shell chromium
   uv run pyinstaller `
     --noconfirm `
     --clean `
@@ -33,7 +32,7 @@ try {
     --collect-all pypdf `
     --collect-all crawl4ai `
     --collect-all playwright `
-    --collect-all patchright `
+    --exclude-module patchright `
     --add-data "$AlembicIni;." `
     --add-data "$AlembicDir;alembic" `
     desktop_entry.py

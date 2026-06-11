@@ -28,7 +28,7 @@ cd AutoEmailSender
 .\scripts\install-backend-playwright.ps1
 ```
 
-脚本会执行 `uv sync --dev`，并将 Playwright/Patchright 的 Chromium headless shell 下载到 `backend/ms-playwright/`。该目录已在 `.gitignore` 中忽略，无需提交。
+脚本会执行 `uv sync --dev`，并将 Playwright 的 Chromium headless shell 下载到 `backend/ms-playwright/`。该目录已在 `.gitignore` 中忽略，无需提交。
 
 ## 本地运行 Web 版本
 
