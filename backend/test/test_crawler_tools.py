@@ -966,6 +966,54 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
+    async def test_crawl_page_with_crawl4ai_retries_browser_for_dynamic_teacher_directory(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://software.fudan.edu.cn/zzjs/list.htm",
+            university="复旦大学",
+            school="软件学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        http_snapshot = PageSnapshot(
+            url=ctx.start_url,
+            title="在职教师",
+            text="师资队伍 在职教师 教授",
+            html="""
+            <html><body class="teacher" id="zzjs">
+              <div class="teachers-list">
+                <ul class="teacher_list career_list">
+                  <li><div class="title zc">教授</div><div class="type_info clearfix"></div></li>
+                </ul>
+              </div>
+              <script src="/_upload/tpl/0d/27/3367/template3367/js/search_teacher.js"></script>
+            </body></html>
+            """,
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+        browser_snapshot = PageSnapshot(
+            url=ctx.start_url,
+            title="在职教师",
+            text="在职教师 教授 赵文耘",
+            html="<html><body><a href='/b5/cd/c29336a308685/page.htm'>赵文耘</a></body></html>",
+            links=["https://software.fudan.edu.cn/b5/cd/c29336a308685/page.htm"],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.services.crawler_tools.crawl_page_with_http",
+            new=AsyncMock(return_value=http_snapshot),
+        ), patch(
+            "app.services.crawler_tools.browser_investigate",
+            new=AsyncMock(return_value=browser_snapshot),
+        ) as browser:
+            actual = await crawl_page_with_crawl4ai(ctx, ctx.start_url)
+
+        self.assertEqual(actual, browser_snapshot)
+        browser.assert_awaited_once()
+
     async def test_crawl_page_with_crawl4ai_retries_browser_for_site_error_page(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,

@@ -368,6 +368,75 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(task.direct_status, "failed")
             self.assertIsNotNone(task.fallback_reason)
 
+    async def test_dynamic_webplus_teacher_directory_uses_browser_fallback(self) -> None:
+        job_id, task_id = await self._seed_page_task(
+            original_url="https://software.fudan.edu.cn/zzjs/list.htm",
+        )
+        direct_html = """
+        <html>
+          <head><title>在职教师</title></head>
+          <body class="teacher" id="zzjs">
+            <div class="teachers-list">
+              <ul class="teacher_list career_list">
+                <li class="career_1">
+                  <div class="career_name clearfix"><div class="title zc">教授</div></div>
+                  <div class="type_info clearfix"></div>
+                </li>
+              </ul>
+            </div>
+            <img src="/_visitcount?siteId=619&type=2&columnId=29336" />
+            <script src="/_upload/tpl/0d/27/3367/template3367/js/search_teacher.js"></script>
+          </body>
+        </html>
+        """
+        direct = PageSnapshot(
+            url="https://software.fudan.edu.cn/zzjs/list.htm",
+            title="在职教师",
+            text="师资队伍 在职教师 教授",
+            html=direct_html,
+            links=["https://software.fudan.edu.cn/_upload/tpl/0d/27/3367/template3367/js/search_teacher.js"],
+            fetch_method="http",
+            status="succeeded",
+        )
+        browser = PageSnapshot(
+            url="https://software.fudan.edu.cn/zzjs/list.htm",
+            title="在职教师",
+            text="在职教师 教授 赵文耘",
+            html="""
+            <html><body>
+              <div class="teachers-list">
+                <ul class="teacher_list career_list">
+                  <li class="career_1">
+                    <div class="type_info clearfix">
+                      <li><span class="news_title"><a href="/b5/cd/c29336a308685/page.htm">赵文耘</a></span></li>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </body></html>
+            """,
+            links=["https://software.fudan.edu.cn/b5/cd/c29336a308685/page.htm"],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock:
+            processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        browser_mock.assert_awaited_once()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)))
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertEqual(task.fetch_mode, "browser")
+        self.assertTrue(
+            any("[赵文耘](https://software.fudan.edu.cn/b5/cd/c29336a308685/page.htm)" in chunk.content for chunk in chunks),
+            "browser-rendered teacher links should be chunked for candidate extraction",
+        )
+
     async def test_same_job_same_domain_uses_browser_after_prior_direct_fallback(self) -> None:
         job_id, task_id = await self._seed_page_task(original_url="https://example.edu/faculty/page2")
         async with self.session_factory() as session:

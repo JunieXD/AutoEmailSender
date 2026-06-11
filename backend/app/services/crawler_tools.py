@@ -54,6 +54,11 @@ INVALID_PROFILE_PAGE_MARKERS = (
     "FineCMS error",
     "SQL syntax",
 )
+DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
+    "search_teacher.js",
+    "_wp3services/generalquery?queryobj=articles",
+    "queryobj=articles",
+)
 JS_RENDER_TIMEOUT_MS = 30000
 CRAWL4AI_BROWSER_WAIT_TIMEOUT_MS = 15000
 CRAWL4AI_BROWSER_DELAY_SECONDS = 1.5
@@ -1452,6 +1457,9 @@ def _should_use_crawl4ai_fallback(snapshot: PageSnapshot) -> bool:
     if snapshot.suspicious_empty:
         return True
 
+    if looks_like_unrendered_dynamic_teacher_directory(snapshot):
+        return True
+
     if _looks_like_unrendered_or_error_profile_page(snapshot):
         return True
 
@@ -1498,6 +1506,23 @@ def _should_use_crawl4ai_fallback(snapshot: PageSnapshot) -> bool:
 def _looks_like_unrendered_or_error_profile_page(snapshot: PageSnapshot) -> bool:
     haystack = f"{snapshot.title or ''}\n{snapshot.text}\n{snapshot.html[:2000]}"
     return any(marker in haystack for marker in INVALID_PROFILE_PAGE_MARKERS)
+
+
+def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> bool:
+    html = snapshot.html or ""
+    if not html:
+        return False
+    lowered = html.lower()
+    if "teacher" not in lowered or "type_info" not in lowered:
+        return False
+    if not any(marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS):
+        return False
+
+    soup = BeautifulSoup(html, "html.parser")
+    containers = soup.select(".teachers-list .type_info, .teacher_list .type_info, .type_info")
+    if not containers:
+        return False
+    return not any(container.get_text(" ", strip=True) or container.find("a", href=True) for container in containers)
 
 
 def _is_http_blocked_snapshot(snapshot: PageSnapshot) -> bool:
