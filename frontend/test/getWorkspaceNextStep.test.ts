@@ -13,7 +13,7 @@ describe("getWorkspaceNextStep", () => {
         canWriteFollowUp: false,
       }),
     ).toEqual({
-      title: "选择分析材料",
+      title: "选择 AI 写信参考材料",
     });
   });
 
@@ -88,7 +88,7 @@ describe("getWorkspaceNextStep", () => {
         canWriteFollowUp: false,
       }),
     ).toEqual({
-      title: "选择分析材料",
+      title: "选择 AI 写信参考材料",
     });
   });
 

@@ -104,6 +104,7 @@ describe("TestComposePage", () => {
     );
 
     const editor = await screen.findByRole("textbox", { name: "邮件正文" });
+    fireEvent.focus(editor);
     editor.innerHTML = "<p>更新后的正文</p>";
     fireEvent.input(editor);
     fireEvent.click(await screen.findByRole("button", { name: "保存草稿" }));

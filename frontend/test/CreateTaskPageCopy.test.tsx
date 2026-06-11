@@ -3,7 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateTaskPage } from "@/pages/CreateTaskPage";
 import { clearDiagnosticEvents, getDiagnosticEvents } from "@/lib/diagnostics";
-import type { IdentityDTO, LLMProfileDTO, ProfessorDashboardItemDTO } from "@/types";
+import type {
+  IdentityDTO,
+  IdentityMaterialDTO,
+  LLMProfileDTO,
+  ProfessorDashboardItemDTO,
+} from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedListProfessors = vi.hoisted(() => vi.fn());
@@ -38,6 +43,17 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   createBatchTask: mockedCreateBatchTask,
 }));
 
+const primaryMaterial: IdentityMaterialDTO = {
+  id: 11,
+  display_name: "默认简历",
+  original_filename: "resume.pdf",
+  mime_type: "application/pdf",
+  size_bytes: 1024,
+  material_type: "resume",
+  is_primary: true,
+  created_at: "2026-04-22T00:00:00Z",
+};
+
 const selectedIdentity: IdentityDTO = {
   id: 1,
   name: "测试身份",
@@ -57,15 +73,15 @@ const selectedIdentity: IdentityDTO = {
   outreach_template_subject: "测试主题",
   outreach_template_body_text: "测试正文",
   outreach_template_body_html: null,
-  current_primary_material_id: null,
-  current_primary_material: null,
+  current_primary_material_id: primaryMaterial.id,
+  current_primary_material: primaryMaterial,
   match_threshold: null,
   daily_send_limit: null,
   send_interval_min: null,
   send_interval_max: null,
   same_domain_cooldown_minutes: null,
   is_default: true,
-  materials: [],
+  materials: [primaryMaterial],
   created_at: "2026-04-22T00:00:00Z",
   updated_at: "2026-04-22T00:00:00Z",
 };
