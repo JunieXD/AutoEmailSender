@@ -154,6 +154,82 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(runs[0].started_at)
         self.assertIsNotNone(runs[0].finished_at)
 
+    def test_calculate_match_uses_identity_current_primary_material(self) -> None:
+        alt_material_id = self._run_async(self._switch_identity_default_material())
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=89,
+                match_reason="当前默认材料更匹配",
+                fit_points=["智能体"],
+                risk_points=[],
+                keywords=["agent"],
+            ),
+            usage=None,
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ) as mocked_generate:
+            result = self._run_async(
+                calculate_task_match_once(
+                    self.session_factory,
+                    self.email_task_id,
+                ),
+            )
+
+        self.assertIsNotNone(result.run_id)
+        used_material = mocked_generate.await_args.kwargs["primary_material"]
+        self.assertEqual(used_material.id, alt_material_id)
+        runs = self._run_async(self._list_runs())
+        self.assertEqual(runs[0].primary_material_id, alt_material_id)
+
+    def test_calculate_match_succeeds_when_task_material_cleared(self) -> None:
+        current_material_id = self._run_async(self._clear_task_primary_material())
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=87,
+                match_reason="使用个人页默认材料",
+                fit_points=["信息抽取"],
+                risk_points=[],
+                keywords=["IE"],
+            ),
+            usage=None,
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ) as mocked_generate:
+            result = self._run_async(
+                calculate_task_match_once(
+                    self.session_factory,
+                    self.email_task_id,
+                ),
+            )
+
+        self.assertIsNotNone(result.run_id)
+        used_material = mocked_generate.await_args.kwargs["primary_material"]
+        self.assertEqual(used_material.id, current_material_id)
+        runs = self._run_async(self._list_runs())
+        self.assertEqual(runs[0].primary_material_id, current_material_id)
+
+    def test_calculate_match_rejects_when_identity_has_no_default_material(self) -> None:
+        self._run_async(self._clear_identity_primary_material())
+
+        with (
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                new=AsyncMock(),
+            ) as mocked_generate,
+            self.assertRaisesRegex(ValueError, "请到个人页设置默认材料"),
+        ):
+            self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+
+        mocked_generate.assert_not_awaited()
+        runs = self._run_async(self._list_runs())
+        self.assertEqual(runs, [])
+
     def test_calculate_match_persists_failed_token_audit(self) -> None:
         with patch(
             "app.services.task_runtime.llm_runtime.generate_match_evaluation",
@@ -239,6 +315,48 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             material.original_filename = "resume.pdf"
             material.file_path = "data/materials/resume.pdf"
             material.extracted_text = None
+            await session.commit()
+
+    async def _switch_identity_default_material(self) -> int:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            material = IdentityMaterial(
+                identity_id=task.identity_id,
+                display_name="新默认材料",
+                file_path="data/materials/new-resume.txt",
+                original_filename="new-resume.txt",
+                material_type="resume",
+                sha256="b" * 64,
+                extracted_text="我做过智能体规划与工具调用。",
+            )
+            session.add(material)
+            await session.flush()
+            identity = await session.get(IdentityProfile, task.identity_id)
+            assert identity is not None
+            identity.current_primary_material_id = material.id
+            await session.commit()
+            return material.id
+
+    async def _clear_task_primary_material(self) -> int:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            identity = await session.get(IdentityProfile, task.identity_id)
+            assert identity is not None
+            assert identity.current_primary_material_id is not None
+            current_material_id = identity.current_primary_material_id
+            task.primary_material_id = None
+            await session.commit()
+            return current_material_id
+
+    async def _clear_identity_primary_material(self) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            identity = await session.get(IdentityProfile, task.identity_id)
+            assert identity is not None
+            identity.current_primary_material_id = None
             await session.commit()
 
     async def _insert_running_run(self) -> None:

@@ -247,7 +247,7 @@ export const WorkspaceComposerDock = ({
     !hasDraftBody
       ? '先写入正文或配置默认模板后再使用 AI 改写。'
       : !currentTask.primary_material_id
-        ? '请选择用于匹配的材料。'
+        ? '请选择 AI 写信参考材料。'
         : !hasProfessorResearchDirection
           ? '请先补充导师研究方向，再使用 AI 改写。'
           : null;

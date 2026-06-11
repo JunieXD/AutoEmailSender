@@ -583,7 +583,7 @@ async def generate_task_draft(
             else:
                 if task.primary_material is None:
                     if force:
-                        raise ValueError("请先选择用于匹配的默认材料")
+                        raise ValueError("请选择 AI 写信参考材料后再生成草稿")
                     return task.professor_id, task.identity_id, task.llm_profile_id
                 if not _has_professor_research_direction(task.professor):
                     raise ValueError("请先补充导师研究方向，再使用 AI 生成草稿")
@@ -604,7 +604,6 @@ async def generate_task_draft(
 
                 runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
                 task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
-                current_match = _build_match_result_from_task(task)
                 runtime_settings = await get_runtime_settings(session)
                 rewrite_preferences = llm_runtime.DraftRewritePreferences(
                     draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
@@ -624,7 +623,6 @@ async def generate_task_draft(
                     custom_subject=template_subject,
                     custom_body=template_body,
                     custom_body_html=template_body_html,
-                    current_match=current_match,
                     max_tokens=runtime_settings.draft_max_tokens,
                     rewrite_preferences=rewrite_preferences,
                 )
@@ -767,11 +765,13 @@ async def calculate_task_match(
             and not ignore_batch_status
         ):
             return _match_action_result(task)
-        if task.primary_material is None:
+        try:
+            match_material = await _resolve_match_primary_material(session, task)
+        except ValueError:
             if force:
-                raise ValueError("请先选择用于匹配的默认材料")
+                raise
             return _match_action_result(task)
-        ensure_material_extracted_text(task.primary_material)
+        ensure_material_extracted_text(match_material)
         if not _has_professor_match_evidence(task.professor):
             raise ValueError("缺少研究方向或近期论文，暂不能分析匹配度")
         if not force and task.status in {
@@ -785,12 +785,12 @@ async def calculate_task_match(
             return _match_action_result(task)
 
         task.llm_profile_id = runtime_llm_profile.id
-        run = await _create_running_match_analysis_run(session, task)
+        run = await _create_running_match_analysis_run(session, task, match_material)
         await session.commit()
         try:
             generation = await llm_runtime.generate_match_evaluation(
                 identity=task.identity,
-                primary_material=task.primary_material,
+                primary_material=match_material,
                 llm_profile=runtime_llm_profile,
                 professor=task.professor,
                 available_materials=list(task.identity.materials),
@@ -923,7 +923,7 @@ async def rewrite_task_draft(
         if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
             raise ValueError("AI 正在改写当前草稿，请稍后刷新")
         if task.primary_material is None:
-            raise ValueError("请选择用于匹配的材料后再使用 AI 改写")
+            raise ValueError("请选择 AI 写信参考材料后再使用 AI 改写")
         if not _has_professor_research_direction(task.professor):
             raise ValueError("请先补充导师研究方向，再使用 AI 改写")
         await _validate_selected_material_ids(session, task.identity_id, payload.selected_material_ids)
@@ -940,7 +940,6 @@ async def rewrite_task_draft(
             draft_template_preservation=runtime_settings.draft_template_preservation,
             draft_custom_instruction=runtime_settings.draft_custom_instruction,
         )
-        current_match = _build_match_result_from_task(task)
         identity = task.identity
         primary_material = task.primary_material
         professor = task.professor
@@ -986,7 +985,6 @@ async def rewrite_task_draft(
                     custom_subject=source_subject,
                     custom_body=source_body_text,
                     custom_body_html=source_body_html or None,
-                    current_match=current_match,
                     max_tokens=runtime_settings.draft_max_tokens,
                     rewrite_preferences=rewrite_preferences,
                 ),
@@ -1085,7 +1083,7 @@ async def preview_task_draft(
         if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
             raise ValueError("模板模式不需要 AI 草稿预览")
         if task.primary_material is None:
-            raise ValueError("请先选择用于匹配的默认材料")
+            raise ValueError("请选择 AI 写信参考材料后再预览草稿")
         if not _has_professor_research_direction(task.professor):
             raise ValueError("请先补充导师研究方向，再使用 AI 生成草稿")
 
@@ -1104,7 +1102,6 @@ async def preview_task_draft(
         if detail:
             raise ValueError(detail)
 
-        current_match = _build_match_result_from_task(task)
         runtime_settings = await get_runtime_settings(session)
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
@@ -1124,7 +1121,6 @@ async def preview_task_draft(
             custom_subject=template_subject,
             custom_body=template_body,
             custom_body_html=template_body_html,
-            current_match=current_match,
             rewrite_preferences=rewrite_preferences,
         )
 
@@ -1160,12 +1156,14 @@ def _match_action_result(
 async def _create_running_match_analysis_run(
     session: AsyncSession,
     task: EmailTask,
+    primary_material: IdentityMaterial,
 ) -> MatchAnalysisRun:
     run = MatchAnalysisRun(
         email_task_id=task.id,
         professor_id=task.professor_id,
         identity_id=task.identity_id,
         llm_profile_id=task.llm_profile_id,
+        primary_material_id=primary_material.id,
         status="running",
         success=False,
         started_at=utc_now(),
@@ -1177,6 +1175,24 @@ async def _create_running_match_analysis_run(
         await session.rollback()
         raise MatchAnalysisAlreadyRunningError("该任务正在分析中") from exc
     return run
+
+
+async def _resolve_match_primary_material(
+    session: AsyncSession,
+    task: EmailTask,
+) -> IdentityMaterial:
+    material = task.identity.current_primary_material
+    if material is None:
+        material_id = task.identity.current_primary_material_id
+        if material_id is not None:
+            material = await session.get(IdentityMaterial, material_id)
+    if material is None:
+        raise ValueError("请到个人页设置默认材料")
+    if material.identity_id != task.identity_id:
+        raise ValueError("个人页默认材料不属于当前身份")
+    if not material_can_be_primary(material):
+        raise ValueError("个人页默认材料不支持匹配分析")
+    return material
 
 
 def _mark_match_analysis_run_failed(
@@ -1227,7 +1243,7 @@ async def update_task_primary_material(
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
         }:
-            raise ValueError("已发送或已回信任务不能再切换默认材料")
+            raise ValueError("已发送或已回信任务不能再切换 AI 写信参考材料")
 
         material = await _validate_primary_material_id(session, task.identity_id, primary_material_id)
         task.primary_material_id = material.id
@@ -2036,9 +2052,9 @@ async def _validate_primary_material_id(
         ),
     )
     if not material:
-        raise ValueError("默认材料不属于当前身份")
+        raise ValueError("AI 写信参考材料不属于当前身份")
     if not material_can_be_primary(material):
-        raise ValueError("当前材料不支持作为默认材料")
+        raise ValueError("当前材料不支持作为 AI 写信参考材料")
     return material
 
 
@@ -2370,11 +2386,7 @@ def _derive_manual_child_status(
     if reuse_existing_draft and _task_has_reusable_draft(task):
         return EmailTaskStatus.REVIEW_REQUIRED.value
 
-    status = (
-        EmailTaskStatus.MATCHED.value
-        if _build_match_result_from_task(task) is not None
-        else EmailTaskStatus.DISCOVERED.value
-    )
+    status = EmailTaskStatus.MATCHED.value if _task_has_match_result(task) else EmailTaskStatus.DISCOVERED.value
     if minimum_status == EmailTaskStatus.MATCHED.value and status == EmailTaskStatus.DISCOVERED.value:
         return EmailTaskStatus.MATCHED.value
     return status
@@ -2449,16 +2461,8 @@ def _task_has_reusable_draft(task: EmailTask) -> bool:
     )
 
 
-def _build_match_result_from_task(task: EmailTask) -> llm_runtime.MatchEvaluationResult | None:
-    if task.match_score is None or not task.match_reason:
-        return None
-    return llm_runtime.MatchEvaluationResult(
-        match_score=task.match_score,
-        match_reason=task.match_reason,
-        fit_points=task.fit_points or [],
-        risk_points=task.risk_points or [],
-        keywords=task.match_keywords or [],
-    )
+def _task_has_match_result(task: EmailTask) -> bool:
+    return task.match_score is not None and bool(task.match_reason)
 
 
 def _ensure_task_allows_legacy_manual_actions(task: EmailTask) -> None:

@@ -402,7 +402,7 @@ export const WorkspacePage = () => {
   const professorId = Number(id);
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
   const { confirm, choose, dialog: confirmDialog } = useConfirmDialog();
-  const { selectedIdentityId, selectedLlmProfileId } = useSelectionContext();
+  const { selectedIdentityId, selectedLlmProfileId, selectedIdentity } = useSelectionContext();
   const { registerWorkspaceDraftGuard } = useWorkspaceDraftGuard();
   const [thread, setThread] = useState<WorkspaceThreadDTO | null>(null);
   const [loading, setLoading] = useState(false);
@@ -632,7 +632,7 @@ export const WorkspacePage = () => {
   const isRewriting = taskGeneratingDraft || draftRewriting;
   const canCalculateMatch =
     Boolean(currentTaskId) &&
-    Boolean(currentTask?.primary_material_id) &&
+    Boolean(selectedIdentity?.current_primary_material_id) &&
     hasProfessorMatchEvidence(thread?.professor) &&
     !blocksDirectDraftActions;
   const preparedBodyText = deriveBodyTextFromDraft({ content, contentHtml });

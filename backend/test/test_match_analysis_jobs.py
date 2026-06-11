@@ -175,6 +175,33 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(items[0].email_task_id, existing_task_id)
         self.assertEqual(task_ids, [existing_task_id])
 
+    def test_match_job_does_not_backfill_task_primary_material(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        existing_task_id = self._run_async(
+            self._create_email_task(
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_id=professor_ids[0],
+            ),
+        )
+
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+                name=None,
+            ),
+        )
+
+        items = self._run_async(self._get_job_items(job.id))
+        task = self._run_async(self._get_email_task(existing_task_id))
+        self.assertEqual(items[0].email_task_id, existing_task_id)
+        self.assertIsNone(task.primary_material_id)
+
     def test_run_queued_job_records_completion_operation_log(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
@@ -447,6 +474,12 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
             job = await session.get(MatchAnalysisJob, job_id)
             assert job is not None
             return job
+
+    async def _get_email_task(self, task_id: int) -> EmailTask:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            return task
 
     async def _get_job_items(self, job_id: int) -> list[MatchAnalysisJobItem]:
         async with self.session_factory() as session:

@@ -8,6 +8,7 @@ from app.models import LLMProfile
 from app.services.llm_runtime import (
     ChatCompletionResult,
     DEFAULT_LLM_MAX_TOKENS,
+    MatchEvaluationResult,
     SYSTEM_DRAFT_REWRITE_PROMPT,
     build_match_prompt_parts,
     build_draft_prompt,
@@ -69,6 +70,23 @@ class _FakeAsyncClient:
 
 
 class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    def assert_draft_prompt_omits_match_context(self, prompt: str) -> None:
+        forbidden_fragments = [
+            "current_match",
+            "当前匹配",
+            "当前已知匹配信息",
+            "单独计算过匹配",
+            "匹配理由",
+            "match_score",
+            "match_reason",
+            "fit_points",
+            "risk_points",
+            "keywords",
+        ]
+        for fragment in forbidden_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, prompt)
+
     def test_default_llm_max_tokens_is_6000(self) -> None:
         self.assertEqual(DEFAULT_LLM_MAX_TOKENS, 6000)
 
@@ -819,7 +837,6 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_build_draft_prompt_requires_template_first_and_limits_changes(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
-        from app.services.llm_runtime import MatchEvaluationResult
 
         identity = IdentityProfile(
             name="张三",
@@ -870,7 +887,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("套磁信模板主题", prompt)
         self.assertIn("套磁信模板正文", prompt)
         self.assertIn("必须以提供的套磁信模板为基础润色", prompt)
-        self.assertIn("只允许改动：称呼、匹配理由、个性化一段、结尾、主题", prompt)
+        self.assertIn("只允许改动：称呼、个性化理由、个性化一段、结尾、主题", prompt)
         self.assertIn("模板结构要求", prompt)
         self.assertIn("保持段落顺序、信息顺序和主要话术", prompt)
         self.assertIn("导师研究方向", prompt)
@@ -881,10 +898,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("保留可表达的富文本标记", prompt)
         self.assertIn("加粗", prompt)
         self.assertIn("链接", prompt)
+        self.assert_draft_prompt_omits_match_context(prompt)
 
     def test_build_draft_prompt_places_stable_batch_context_before_professor(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
-        from app.services.llm_runtime import MatchEvaluationResult
 
         identity = IdentityProfile(
             id=1,
@@ -936,7 +953,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(prompt.index("稳定学生材料"), prompt.index("导师变量"))
         self.assertLess(prompt.index("稳定模板主题"), prompt.index("导师变量"))
         self.assertLess(prompt.index("稳定模板正文"), prompt.index("导师变量"))
-        self.assertLess(prompt.index("匹配变量"), prompt.index("导师变量"))
+        self.assertNotIn("匹配变量", prompt)
+        self.assert_draft_prompt_omits_match_context(prompt)
 
     def test_build_draft_rewrite_prompt_uses_source_blocks_and_style_spans(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
@@ -1071,7 +1089,6 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_build_draft_rewrite_prompt_parts_places_template_blocks_before_dynamic_suffix(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
-        from app.services.llm_runtime import MatchEvaluationResult
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
         identity = IdentityProfile(
@@ -1139,8 +1156,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source_blocks", parts.stable_prefix)
         self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
         self.assertNotIn("方向匹配", parts.stable_prefix)
-        self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("current_match"))
-        self.assertLess(parts.prompt.index("current_match"), parts.prompt.index("professor"))
+        self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("professor"))
+        self.assert_draft_prompt_omits_match_context(parts.prompt)
+        self.assert_draft_prompt_omits_match_context(parts.stable_prefix)
         self.assertEqual(len(parts.prompt_hash), 64)
         self.assertEqual(len(parts.stable_prefix_hash), 64)
         self.assertEqual(parts.prompt_cache_key, "draft-rewrite:v3:1:12:5:7")
@@ -1148,7 +1166,6 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_draft_rewrite_prompt_parts_keep_same_stable_prefix_for_different_professors(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
-        from app.services.llm_runtime import MatchEvaluationResult
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
         identity = IdentityProfile(
@@ -1211,6 +1228,72 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.stable_prefix_hash, second.stable_prefix_hash)
         self.assertEqual(first.stable_prefix, second.stable_prefix)
         self.assertNotEqual(first.prompt_hash, second.prompt_hash)
+        self.assert_draft_prompt_omits_match_context(first.prompt)
+        self.assert_draft_prompt_omits_match_context(second.prompt)
+
+    def test_draft_generation_and_rewrite_prompts_ignore_current_match(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+        from app.services.template_draft_rewrite import build_draft_rewrite_document
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        primary_material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="data/materials/resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="我做过信息抽取与智能体相关研究。",
+        )
+        professor = Professor(
+            id=5,
+            name="李老师",
+            email="prof@example.edu",
+            research_direction="Information Extraction",
+        )
+        current_match = MatchEvaluationResult(
+            match_score=88,
+            match_reason="不应进入草稿 prompt 的匹配理由",
+            fit_points=["不应进入草稿 prompt 的 fit"],
+            risk_points=["不应进入草稿 prompt 的 risk"],
+            keywords=["不应进入草稿 prompt 的 keyword"],
+        )
+
+        draft_prompt = build_draft_prompt(
+            identity=identity,
+            primary_material=primary_material,
+            professor=professor,
+            available_materials=[primary_material],
+            custom_subject="申请与{{name}}老师交流",
+            custom_body="老师您好，我是{{sender_name}}。",
+            current_match=current_match,
+        )
+        rewrite_document = build_draft_rewrite_document("<p>老师您好，我是{{sender_name}}。</p>", {})
+        rewrite_prompt = build_draft_rewrite_prompt(
+            identity=identity,
+            primary_material=primary_material,
+            professor=professor,
+            available_materials=[primary_material],
+            subject_template="申请与{{name}}老师交流",
+            source_blocks=rewrite_document.blocks,
+            current_match=current_match,
+            rewrite_preferences=DraftRewritePreferences(),
+        )
+
+        self.assert_draft_prompt_omits_match_context(draft_prompt)
+        self.assert_draft_prompt_omits_match_context(rewrite_prompt)
+        self.assertNotIn("不应进入草稿 prompt", draft_prompt)
+        self.assertNotIn("不应进入草稿 prompt", rewrite_prompt)
 
 
     def test_draft_rewrite_prompts_preserve_user_written_dates(self) -> None:
@@ -2011,4 +2094,3 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

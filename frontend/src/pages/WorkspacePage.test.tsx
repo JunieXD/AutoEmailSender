@@ -29,6 +29,9 @@ const notificationMocks = vi.hoisted(() => ({
 const selectionMock = vi.hoisted(() => ({
   selectedIdentityId: 1 as number | null,
   selectedLlmProfileId: 2 as number | null,
+  selectedIdentity: {
+    current_primary_material_id: 7,
+  },
 }));
 
 const draftGuardMock = vi.hoisted(() => ({

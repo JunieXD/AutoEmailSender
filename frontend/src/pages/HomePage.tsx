@@ -933,7 +933,7 @@ export const HomePage = () => {
 
   const handleGenerateOne = async (professorId: number) => {
     if (!hasPrimaryMaterial) {
-      notifyWarning("缺少默认材料", "请到个人中心设置默认材料。");
+      notifyWarning("缺少默认材料", "请到个人页设置默认材料。");
       return;
     }
 
@@ -995,7 +995,7 @@ export const HomePage = () => {
     }
 
     if (!hasPrimaryMaterial) {
-      notifyWarning("缺少默认材料", "请到个人中心设置默认材料。");
+      notifyWarning("缺少默认材料", "请到个人页设置默认材料。");
       return;
     }
     if (!selectedIdentityId || !selectedLlmProfileId) {

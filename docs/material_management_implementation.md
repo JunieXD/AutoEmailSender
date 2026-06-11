@@ -35,7 +35,7 @@
   - `original_filename`
   - `size_bytes`
   - `sha256`
-- 上传阶段不主动做文本提取；`extracted_text` 由后续手动匹配时通过 MarkItDown 按需补齐。
+- 上传阶段不主动做文本提取；`extracted_text` 由后续匹配分析或草稿生成时通过 MarkItDown 按需补齐。
 
 ## 3. 后端 DTO
 ### 3.1 `IdentityMaterialDTO`
@@ -83,28 +83,35 @@
   - `attachment_options` 改为 `material_options`
 
 ## 5. 运行时行为
-### 5.1 草稿生成
+### 5.1 匹配分析与草稿生成
+- 匹配分析读取：
+  - `identity.current_primary_material`
+- 草稿生成读取：
+  - `task.primary_material`
+  - `task.identity.materials`
+- 系统会先通过 MarkItDown 对本次使用的材料做一次按需 Markdown 提取；如果文件不可提取或解析失败，则继续按“无可提取文本”处理。
+- `llm_runtime.generate_match_evaluation()` 使用个人页当前默认材料生成匹配结果。
+- `llm_runtime.generate_draft_content()` 使用 AI 写信参考材料生成草稿，不读取匹配结果。
+- 草稿生成不再由后台 worker 自动推进，而是通过 `POST /api/email-tasks/{id}/regenerate-draft` 手动触发。
+- 如果任务没有 AI 写信参考材料，草稿接口返回 400，提示用户选择 AI 写信参考材料。
+
+### 5.2 旧任务写信材料
 - `task_runtime.generate_task_draft()` 读取：
   - `task.primary_material`
   - `task.identity.materials`
-- 在真正调用 `llm_runtime.generate_match_evaluation()` 和 `llm_runtime.generate_draft_content()` 前，系统会先通过 MarkItDown 对当前默认材料做一次按需 Markdown 提取；如果文件不可提取或解析失败，则继续按“无可提取文本”处理。
-- `llm_runtime.generate_match_evaluation()` 负责生成匹配结果，`llm_runtime.generate_draft_content()` 使用默认材料的 Markdown 文本生成草稿。
-- 草稿生成不再由后台 worker 自动推进，而是通过 `POST /api/email-tasks/{id}/regenerate-draft` 手动触发。
-- 如果任务没有默认材料，接口返回 400，提示用户先选择用于匹配的默认材料。
 
-### 5.2 发送
+### 5.3 发送
 - `dispatch_email_task()` 只解析 `selected_material_ids`。
 - 每个材料在发送前会转成 `MailAttachment(file_path, download_name)`。
 
-### 5.3 切换任务默认材料
+### 5.4 切换 AI 写信参考材料
 - `POST /api/email-tasks/{id}/primary-material` 会：
   - 校验材料属于当前身份
-  - 校验材料可作为默认材料
+  - 校验材料可作为 AI 写信参考材料
   - 更新 `email_tasks.primary_material_id`
   - 清空已批准稿和排程
-  - 立即重新生成匹配和草稿
 
-### 5.4 删除身份当前默认材料
+### 5.5 删除身份当前默认材料
 - `DELETE /api/materials/{id}` 如果删除的是身份当前默认材料：
   - 且没有未终态任务引用该材料
   - 后端会把 `identity_profiles.current_primary_material_id` 置空
@@ -118,18 +125,18 @@
 
 ### 6.2 创建任务页
 - 使用 `selectedIdentity.materials` 渲染材料选择。
-- 默认材料单选，随信材料多选。
-- 没有默认材料时仍允许创建任务，只是不执行匹配与草稿生成。
+- AI 写信参考材料单选，随信材料多选。
+- 没有 AI 写信参考材料时仍允许创建任务，只是不执行 AI 草稿生成。
 - 提交 payload 为 `primary_material_id` + `selected_material_ids`。
 
 ### 6.3 工作区
 - 使用 `thread.material_options` 渲染材料列表。
-- 支持切换任务默认材料。
+- 支持切换 AI 写信参考材料。
 - 审批发送 / 审批排程提交 `selected_material_ids`。
 
 ## 7. 验证重点
 - 旧库升级后，历史主简历和附件都能映射到 `identity_materials`
-- 创建批任务时，默认材料和随信材料能正确快照到 `email_tasks`
-- 工作区切默认材料后会重新生成草稿
+- 创建批任务时，AI 写信参考材料和随信材料能正确快照到 `email_tasks`
+- 工作区切换 AI 写信参考材料后可重新生成草稿
 - 没有默认材料时仍可创建任务并手动发送
 - 个人页和工作区都不再展示本地文件路径

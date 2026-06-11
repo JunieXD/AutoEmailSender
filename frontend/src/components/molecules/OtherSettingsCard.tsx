@@ -151,7 +151,7 @@ const preferenceFields: Array<{
   {
     key: "draft_rewrite_specificity",
     label: "具体性",
-    hint: "控制匹配理由的细节密度。",
+    hint: "控制个性化理由的细节密度。",
     options: [
       { value: "concise", label: "概括" },
       { value: "balanced", label: "平衡" },
@@ -699,7 +699,7 @@ const previewOptions = {
       intent: "我希望",
     },
     strong: {
-      summary: "更主动：明显重写表达，让动机和匹配理由更突出。",
+      summary: "更主动：明显重写表达，让动机和个性化理由更突出。",
       intent: "我很希望主动",
     },
   },
@@ -769,7 +769,7 @@ const previewOptions = {
       closer: "如果方便，我希望进一步了解是否有合适的交流或申请机会。",
     },
     content_first: {
-      summary: "优先重组内容：围绕匹配理由重新安排模板信息。",
+      summary: "优先重组内容：围绕个性化理由重新安排模板信息。",
       closer: "如果这些方向与课题组近期计划契合，我希望后续能进一步交流。",
     },
   },

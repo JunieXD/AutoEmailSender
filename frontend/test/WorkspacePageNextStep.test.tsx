@@ -21,6 +21,9 @@ const mockedContinueManually = vi.hoisted(() => vi.fn());
 const mockedGenerateDraft = vi.hoisted(() => vi.fn());
 const mockedStartFollowUp = vi.hoisted(() => vi.fn());
 const mockedConfirm = vi.hoisted(() => vi.fn());
+const selectedIdentity = vi.hoisted(() => ({
+  current_primary_material_id: 11 as number | null,
+}));
 const mockedNotificationApi = vi.hoisted(() => ({
   notifyError: vi.fn(),
   notifyFormErrors: vi.fn(),
@@ -53,7 +56,7 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
   calculateMatch: vi.fn(),
   cancelScheduledTask: vi.fn(),
   continueManually: mockedContinueManually,
-  generateDraft: mockedGenerateDraft,
+  rewriteDraft: mockedGenerateDraft,
   startFollowUp: mockedStartFollowUp,
   updateTaskOutreachConfig: vi.fn(),
   updateTaskPrimaryMaterial: vi.fn(),
@@ -168,6 +171,8 @@ const primaryMaterial: IdentityMaterialDTO = {
   created_at: "2026-04-22T00:00:00Z",
 };
 
+const stripHtml = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
 const buildThread = ({
   status = "matched",
   primaryMaterialId = primaryMaterial.id,
@@ -184,6 +189,8 @@ const buildThread = ({
   lastDraftPromptTokens = null,
   lastDraftCompletionTokens = null,
   lastDraftTotalTokens = null,
+  draftSendable = undefined,
+  draftEditable = true,
 }: {
   status?: WorkspaceTaskStatus;
   primaryMaterialId?: number | null;
@@ -200,7 +207,20 @@ const buildThread = ({
   lastDraftPromptTokens?: number | null;
   lastDraftCompletionTokens?: number | null;
   lastDraftTotalTokens?: number | null;
-} = {}): WorkspaceThreadDTO => ({
+  draftSendable?: boolean;
+  draftEditable?: boolean;
+} = {}): WorkspaceThreadDTO => {
+  const hasGeneratedDraft =
+    generatedSubject !== null ||
+    generatedContentText !== null ||
+    generatedContentHtml !== null;
+  const draftSubject = hasGeneratedDraft ? generatedSubject : "测试主题";
+  const draftBodyText = hasGeneratedDraft
+    ? generatedContentText ?? (generatedContentHtml ? stripHtml(generatedContentHtml) : "")
+    : "测试正文";
+  const draftBodyHtml = hasGeneratedDraft ? generatedContentHtml : null;
+
+  return ({
   professor: {
     id: 101,
     name: "王教授",
@@ -269,9 +289,18 @@ const buildThread = ({
     last_draft_prompt_tokens: lastDraftPromptTokens,
     last_draft_completion_tokens: lastDraftCompletionTokens,
     last_draft_total_tokens: lastDraftTotalTokens,
+    draft: {
+      subject: draftSubject,
+      body_text: draftBodyText,
+      body_html: draftBodyHtml,
+      source: hasGeneratedDraft ? "ai_rewrite" : "template",
+      sendable: draftSendable ?? Boolean(hasGeneratedDraft && (draftBodyText.trim() || draftBodyHtml?.trim())),
+      editable: draftEditable,
+    },
   },
   messages,
-});
+  });
+};
 
 const buildWorkspaceMessage = (
   overrides: Partial<WorkspaceMessageDTO> = {},
@@ -372,9 +401,18 @@ describe("WorkspacePage next-step", () => {
       }),
     );
     mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentity],
+      llmProfiles: [],
       selectedIdentityId: 1,
       selectedLlmProfileId: 1,
+      selectedIdentity,
+      selectedLlmProfile: null,
+      loading: false,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
     });
+    selectedIdentity.current_primary_material_id = primaryMaterial.id;
   });
 
   it("refreshes the current workspace once a minute without replacing the thread with a loading screen", async () => {
@@ -668,13 +706,14 @@ describe("WorkspacePage next-step", () => {
 
     expect(await screen.findByText("draft-subject:测试主题")).toBeInTheDocument();
     expect(screen.getByText("draft-content:测试正文")).toBeInTheDocument();
-    expect(screen.getByText("draft-empty")).toBeInTheDocument();
+    expect(screen.getByText("draft-ready")).toBeInTheDocument();
   });
 
   it("treats a template-mode configured template as sendable before generating a draft", async () => {
     mockedGetWorkspaceThread.mockResolvedValue(
       buildThread({
         outreachGenerationMode: "template",
+        draftSendable: true,
       }),
     );
 
@@ -684,11 +723,10 @@ describe("WorkspacePage next-step", () => {
     expect(screen.getByText("draft-content:测试正文")).toBeInTheDocument();
     expect(screen.getByText("draft-ready")).toBeInTheDocument();
     expect(latestComposerDockProps()).toEqual(
-      expect.objectContaining({
-        currentTaskMode: "template",
-        draftReady: true,
-        canSubmitDraft: true,
-      }),
+        expect.objectContaining({
+          draftReady: true,
+          canSubmitDraft: true,
+        }),
     );
     expect(screen.getByRole("button", { name: "mock-send-now" })).toBeInTheDocument();
   });
@@ -702,7 +740,14 @@ describe("WorkspacePage next-step", () => {
     fireEvent.click(screen.getByRole("button", { name: "mock-generate-draft" }));
 
     await waitFor(() => {
-      expect(mockedGenerateDraft).toHaveBeenCalledWith(301, 1);
+      expect(mockedGenerateDraft).toHaveBeenCalledWith(
+        301,
+        expect.objectContaining({
+          llm_profile_id: 1,
+          subject: "测试主题",
+          body_text: "测试正文",
+        }),
+      );
     });
 
     await waitFor(() => {
@@ -733,16 +778,59 @@ describe("WorkspacePage next-step", () => {
 
     await waitFor(() => {
       expect(mockedNotificationApi.notifySuccess).toHaveBeenCalledWith(
-        "AI 草稿已生成",
+        "AI 改写已完成",
         expect.stringMatching(/^输入 6,114 \/ 输出 1,363 \/ 总计 7,477 token，耗时 \d+\.\d 秒$/),
       );
     });
   });
 
-  it("prompts to select material first when no primary material is set", async () => {
+  it("keeps match analysis separate when no task writing material is set", async () => {
     mockedGetWorkspaceThread.mockResolvedValue(
       buildThread({
         primaryMaterialId: null,
+        draftSendable: false,
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(latestComposerDockProps()).toEqual(
+        expect.objectContaining({
+          canCalculateMatch: true,
+          canGenerateDraft: false,
+          draftReady: true,
+        }),
+      );
+    });
+    expect(screen.getByText("draft-ready")).toBeInTheDocument();
+  });
+
+  it("keeps match analysis available when only the task writing material is empty", async () => {
+    mockedGetWorkspaceThread.mockResolvedValue(
+      buildThread({
+        primaryMaterialId: null,
+        professorRecentPapers: ["Coordination in multi-agent systems"],
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(latestComposerDockProps()).toEqual(
+        expect.objectContaining({
+          canCalculateMatch: true,
+          canGenerateDraft: false,
+        }),
+      );
+    });
+  });
+
+  it("disables match analysis when the identity has no current default material", async () => {
+    selectedIdentity.current_primary_material_id = null;
+    mockedGetWorkspaceThread.mockResolvedValue(
+      buildThread({
+        professorRecentPapers: ["Coordination in multi-agent systems"],
       }),
     );
 
@@ -752,12 +840,9 @@ describe("WorkspacePage next-step", () => {
       expect(latestComposerDockProps()).toEqual(
         expect.objectContaining({
           canCalculateMatch: false,
-          canGenerateDraft: false,
-          draftReady: false,
         }),
       );
     });
-    expect(screen.getByText("draft-empty")).toBeInTheDocument();
   });
 
   it("disables match analysis in the workspace when professor research evidence is missing", async () => {
@@ -816,6 +901,8 @@ describe("WorkspacePage next-step", () => {
         cancellationReason: "batch_stopped",
         canContinueManually: true,
         generatedContentHtml: "<p>旧草稿不应继续发送</p>",
+        draftSendable: false,
+        draftEditable: false,
       }),
     );
 
