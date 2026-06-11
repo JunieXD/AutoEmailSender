@@ -5,8 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const setContent = vi.fn();
 const setEditable = vi.fn();
 let currentEditorHtml = "";
-let latestEditorOptions: { onUpdate?: (payload: { editor: typeof editor }) => void } | null =
-  null;
+let latestEditorOptions: {
+  onUpdate?: (payload: {
+    editor: typeof editor;
+    transaction?: { getMeta: (key: string) => unknown };
+  }) => void;
+} | null = null;
 
 const editor = {
   commands: {
@@ -16,6 +20,7 @@ const editor = {
   getAttributes: vi.fn(() => ({})),
   getHTML: vi.fn(() => currentEditorHtml),
   isActive: vi.fn(() => false),
+  isFocused: true,
   chain: vi.fn(() => ({
     focus: vi.fn().mockReturnThis(),
     toggleBold: vi.fn().mockReturnThis(),
@@ -31,7 +36,12 @@ const editor = {
 };
 
 vi.mock("@tiptap/react", () => ({
-  useEditor: (options: { onUpdate?: (payload: { editor: typeof editor }) => void }) => {
+  useEditor: (options: {
+    onUpdate?: (payload: {
+      editor: typeof editor;
+      transaction?: { getMeta: (key: string) => unknown };
+    }) => void;
+  }) => {
     latestEditorOptions = options;
     return editor;
   },
@@ -66,7 +76,10 @@ describe("EmailTemplateEditor local sync", () => {
 
     currentEditorHtml = '<p><span style="font-size: 12pt">老师您好A</span></p>';
     await act(async () => {
-      latestEditorOptions?.onUpdate?.({ editor });
+      latestEditorOptions?.onUpdate?.({
+        editor,
+        transaction: { getMeta: () => "input" },
+      });
     });
 
     expect(setContent).not.toHaveBeenCalled();

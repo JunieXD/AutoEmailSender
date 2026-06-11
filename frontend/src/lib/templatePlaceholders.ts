@@ -156,6 +156,143 @@ const normalizeTemplatePlaceholderTokens = (html: string) =>
     return option?.token ?? `{{${key}}}`;
   });
 
+const normalizeColorValue = (value: string) => {
+  const trimmed = value.trim();
+  const hexMatch = trimmed.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!hexMatch) {
+    return trimmed.replace(/\s*,\s*/g, ",").replace(/\s+/g, " ");
+  }
+
+  const hex = hexMatch[1].length === 3
+    ? hexMatch[1].split("").map((item) => `${item}${item}`).join("")
+    : hexMatch[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgb(${red},${green},${blue})`;
+};
+
+const normalizeCssValue = (property: string, value: string) => {
+  const normalizedWhitespace = value.trim().replace(/\s+/g, " ");
+
+  if (property === "font-size") {
+    return normalizeFontSizeValue(normalizedWhitespace) ?? normalizedWhitespace;
+  }
+
+  if (property === "font-family") {
+    return normalizedWhitespace
+      .split(",")
+      .map((family) => family.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean)
+      .join(",");
+  }
+
+  if (property === "color" || property.endsWith("-color")) {
+    return normalizeColorValue(normalizedWhitespace);
+  }
+
+  return normalizedWhitespace
+    .replace(/\s*,\s*/g, ",")
+    .replace(/\s*:\s*/g, ":")
+    .replace(/\s*;\s*/g, ";");
+};
+
+const normalizeInlineStyleForCompare = (styleValue: string) => {
+  const declarations = styleValue
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .map((declaration) => {
+      const separatorIndex = declaration.indexOf(":");
+      if (separatorIndex < 0) {
+        return null;
+      }
+
+      const property = declaration.slice(0, separatorIndex).trim().toLowerCase();
+      const value = declaration.slice(separatorIndex + 1).trim();
+      if (!property || !value) {
+        return null;
+      }
+
+      return {
+        property,
+        value: normalizeCssValue(property, value),
+      };
+    })
+    .filter((declaration): declaration is { property: string; value: string } =>
+      Boolean(declaration),
+    )
+    .sort((left, right) =>
+      left.property === right.property
+        ? left.value.localeCompare(right.value)
+        : left.property.localeCompare(right.property),
+    );
+
+  return declarations.map(({ property, value }) => `${property}:${value}`).join(";");
+};
+
+const parseHtmlAttributes = (attributeSource: string) => {
+  const attributes: Array<{ name: string; value: string | null }> = [];
+  const attributePattern = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = attributePattern.exec(attributeSource)) !== null) {
+    const [, rawName, doubleQuotedValue, singleQuotedValue, unquotedValue] = match;
+    const name = rawName.toLowerCase();
+    const rawValue = doubleQuotedValue ?? singleQuotedValue ?? unquotedValue ?? null;
+    const value = name === "style" && rawValue != null
+      ? normalizeInlineStyleForCompare(rawValue)
+      : rawValue?.trim().replace(/\s+/g, " ") ?? null;
+
+    if (value === "") {
+      continue;
+    }
+
+    attributes.push({ name, value });
+  }
+
+  return attributes.sort((left, right) =>
+    left.name === right.name
+      ? String(left.value ?? "").localeCompare(String(right.value ?? ""))
+      : left.name.localeCompare(right.name),
+  );
+};
+
+const canonicalizeHtmlTagForCompare = (tag: string) => {
+  if (tag.startsWith("<!--")) {
+    return "";
+  }
+
+  const endTagMatch = tag.match(/^<\s*\/\s*([^\s>]+)\s*>$/);
+  if (endTagMatch) {
+    return `</${endTagMatch[1].toLowerCase()}>`;
+  }
+
+  const startTagMatch = tag.match(/^<\s*([^\s/>]+)([\s\S]*?)(\/?)\s*>$/);
+  if (!startTagMatch) {
+    return tag.trim();
+  }
+
+  const [, rawTagName, attributeSource, selfClosing] = startTagMatch;
+  const tagName = rawTagName.toLowerCase();
+  const attributes = parseHtmlAttributes(attributeSource);
+  const serializedAttributes = attributes
+    .map(({ name, value }) => (value == null ? name : `${name}="${value}"`))
+    .join(" ");
+
+  const suffix = selfClosing ? " /" : "";
+  return serializedAttributes
+    ? `<${tagName} ${serializedAttributes}${suffix}>`
+    : `<${tagName}${suffix}>`;
+};
+
+export const normalizeTemplatePlaceholderHtmlForCompare = (html: string) =>
+  normalizeTemplatePlaceholderTokens(serializeTemplatePlaceholderHtml(html))
+    .trim()
+    .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^>]*>/g, canonicalizeHtmlTagForCompare)
+    .replace(/>\s+</g, "><")
+    .replace(/\s+/g, " ");
+
 export const areTemplatePlaceholderHtmlEquivalent = (leftHtml: string, rightHtml: string) =>
-  normalizeTemplatePlaceholderTokens(serializeTemplatePlaceholderHtml(leftHtml)) ===
-  normalizeTemplatePlaceholderTokens(serializeTemplatePlaceholderHtml(rightHtml));
+  normalizeTemplatePlaceholderHtmlForCompare(leftHtml) ===
+  normalizeTemplatePlaceholderHtmlForCompare(rightHtml);

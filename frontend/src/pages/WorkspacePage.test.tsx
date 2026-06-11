@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
 import type { WorkspaceThreadDTO } from "@/types";
 import { WorkspacePage } from "./WorkspacePage";
 
@@ -48,6 +49,11 @@ const draftGuardMock = vi.hoisted(() => ({
   }),
 }));
 
+const editorMockState = vi.hoisted(() => ({
+  emitInitialChange: false,
+  initialHtmlOverride: null as string | null,
+}));
+
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionMock,
 }));
@@ -88,19 +94,31 @@ vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
     html: string;
     disabled?: boolean;
     onChange: (value: { html: string; text: string }) => void;
-  }) => (
-    <textarea
-      aria-label={label}
-      value={html}
-      disabled={disabled}
-      onChange={(event) =>
-        onChange({
-          html: event.currentTarget.value,
-          text: event.currentTarget.value.replace(/<[^>]+>/g, ""),
-        })
+  }) => {
+    useEffect(() => {
+      if (!editorMockState.emitInitialChange || disabled) {
+        return;
       }
-    />
-  ),
+      onChange({
+        html: editorMockState.initialHtmlOverride ?? html,
+        text: (editorMockState.initialHtmlOverride ?? html).replace(/<[^>]+>/g, ""),
+      });
+    }, [disabled, html, onChange]);
+
+    return (
+      <textarea
+        aria-label={label}
+        value={html}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange({
+            html: event.currentTarget.value,
+            text: event.currentTarget.value.replace(/<[^>]+>/g, ""),
+          })
+        }
+      />
+    );
+  },
 }));
 
 vi.mock("@/components/molecules/SubjectTemplateInput", () => ({
@@ -223,6 +241,8 @@ const renderWorkspace = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   draftGuardMock.guard = null;
+  editorMockState.emitInitialChange = false;
+  editorMockState.initialHtmlOverride = null;
   selectionMock.selectedIdentityId = 1;
   selectionMock.selectedLlmProfileId = 2;
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
@@ -448,6 +468,70 @@ describe("WorkspacePage draft saving", () => {
     await waitFor(() => {
       expect(screen.getByText("首页")).toBeInTheDocument();
     });
+  });
+
+  it("does not prompt when the editor reports equivalent normalized initial draft content", async () => {
+    editorMockState.emitInitialChange = true;
+    editorMockState.initialHtmlOverride = '<p><span style="font-family:宋体;">模板正文</span></p>';
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          draft: {
+            subject: "模板主题",
+            body_text: "模板 正文",
+            body_html: '<p><font face="宋体">模板正文</font></p>',
+            source: "template",
+            sendable: true,
+            editable: true,
+          },
+        },
+      }),
+    );
+    renderWorkspace();
+
+    await screen.findByText("继续写信");
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(screen.getByRole("link", { name: "返回首页" }));
+
+    expect(screen.queryByText("保存草稿修改？")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("首页")).toBeInTheDocument();
+    });
+    expect(apiMocks.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not prompt after expanding the composer when the editor only normalizes style formatting", async () => {
+    editorMockState.emitInitialChange = true;
+    editorMockState.initialHtmlOverride =
+      '<p style="font-size:12pt;font-family:宋体;text-indent:0px;line-height:1.5;text-align:left;">模板正文</p>';
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          draft: {
+            subject: "模板主题",
+            body_text: "模板正文",
+            body_html:
+              '<p style="text-align: left; line-height: 1.5; text-indent: 0px; font-family: 宋体; font-size: 12pt;">模板正文</p>',
+            source: "template",
+            sendable: true,
+            editable: true,
+          },
+        },
+      }),
+    );
+    renderWorkspace();
+
+    await screen.findByText("继续写信");
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(screen.getByRole("link", { name: "返回首页" }));
+
+    expect(screen.queryByText("保存草稿修改？")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("首页")).toBeInTheDocument();
+    });
+    expect(apiMocks.saveDraft).not.toHaveBeenCalled();
   });
 
   it("keeps the last draft visible while generation is in progress", async () => {

@@ -185,7 +185,13 @@ export const EmailTemplateEditor = ({
 }: EmailTemplateEditorProps) => {
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
   const lastLocalHtmlRef = useRef<string | null>(null);
+  const latestHtmlRef = useRef(html);
+  const userEditPendingRef = useRef(false);
   const onFileDropRef = useRef<typeof onFileDrop>(onFileDrop);
+
+  useEffect(() => {
+    latestHtmlRef.current = html;
+  }, [html]);
 
   useEffect(() => {
     onFileDropRef.current = onFileDrop;
@@ -268,11 +274,20 @@ export const EmailTemplateEditor = ({
         },
       },
     },
-    onUpdate: ({ editor: currentEditor }) => {
+    onUpdate: ({ editor: currentEditor, transaction }) => {
       if (disabled) {
         return;
       }
       const nextHtml = serializeTemplatePlaceholderHtml(currentEditor.getHTML());
+      if (areTemplatePlaceholderHtmlEquivalent(nextHtml, prepareTemplateEditorHtml(latestHtmlRef.current))) {
+        lastLocalHtmlRef.current = nextHtml;
+        return;
+      }
+      const hasUiEvent = Boolean(transaction?.getMeta?.("uiEvent"));
+      if (!userEditPendingRef.current && !currentEditor.isFocused && !hasUiEvent) {
+        lastLocalHtmlRef.current = nextHtml;
+        return;
+      }
       lastLocalHtmlRef.current = nextHtml;
       onChange({
         html: nextHtml,
@@ -313,6 +328,13 @@ export const EmailTemplateEditor = ({
   const isEditorEmpty = editor.isEmpty;
   const tableActive =
     editor.isActive("table") || editor.isActive("tableCell") || editor.isActive("tableHeader");
+  const runUserEditorCommand = (command: () => void) => {
+    userEditPendingRef.current = true;
+    command();
+    window.setTimeout(() => {
+      userEditPendingRef.current = false;
+    }, 0);
+  };
 
   return (
     <div className="block">
@@ -331,11 +353,13 @@ export const EmailTemplateEditor = ({
             selectedValue={null}
             onSelect={(value) => {
               if (!disabled) {
-                editor
-                  .chain()
-                  .focus()
-                  .insertTemplatePlaceholder(value as TemplatePlaceholderKey)
-                  .run();
+                runUserEditorCommand(() => {
+                  editor
+                    .chain()
+                    .focus()
+                    .insertTemplatePlaceholder(value as TemplatePlaceholderKey)
+                    .run();
+                });
               }
             }}
             onToggle={() => {
@@ -354,7 +378,9 @@ export const EmailTemplateEditor = ({
             selectedValue={textStyleAttributes.fontFamily}
             onSelect={(value) => {
               if (!disabled) {
-                editor.chain().focus().setMark("textStyle", { fontFamily: value }).run();
+                runUserEditorCommand(() => {
+                  editor.chain().focus().setMark("textStyle", { fontFamily: value }).run();
+                });
               }
             }}
             onToggle={() => {
@@ -373,7 +399,9 @@ export const EmailTemplateEditor = ({
             selectedValue={textStyleAttributes.fontSize}
             onSelect={(value) => {
               if (!disabled) {
-                editor.chain().focus().setMark("textStyle", { fontSize: value }).run();
+                runUserEditorCommand(() => {
+                  editor.chain().focus().setMark("textStyle", { fontSize: value }).run();
+                });
               }
             }}
             onToggle={() => {
@@ -392,7 +420,9 @@ export const EmailTemplateEditor = ({
             selectedValue={paragraphAttributes.lineHeight}
             onSelect={(value) => {
               if (!disabled) {
-                editor.chain().focus().updateAttributes("paragraph", { lineHeight: value }).run();
+                runUserEditorCommand(() => {
+                  editor.chain().focus().updateAttributes("paragraph", { lineHeight: value }).run();
+                });
               }
             }}
             onToggle={() => {
@@ -417,13 +447,15 @@ export const EmailTemplateEditor = ({
             selectedValue={paragraphAttributes.firstLineIndent ?? "0"}
             onSelect={(value) => {
               if (!disabled) {
-                editor
-                  .chain()
-                  .focus()
-                  .updateAttributes("paragraph", {
-                    firstLineIndent: value === "0" ? null : value,
-                  })
-                  .run();
+                runUserEditorCommand(() => {
+                  editor
+                    .chain()
+                    .focus()
+                    .updateAttributes("paragraph", {
+                      firstLineIndent: value === "0" ? null : value,
+                    })
+                    .run();
+                });
               }
             }}
             onToggle={() => {
@@ -441,7 +473,7 @@ export const EmailTemplateEditor = ({
           type="button"
           aria-label="加粗"
           disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBold().run()}
+          onClick={() => runUserEditorCommand(() => editor.chain().focus().toggleBold().run())}
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Bold className="h-4 w-4" />
@@ -450,7 +482,7 @@ export const EmailTemplateEditor = ({
           type="button"
           aria-label="斜体"
           disabled={disabled}
-          onClick={() => editor.chain().focus().toggleItalic().run()}
+          onClick={() => runUserEditorCommand(() => editor.chain().focus().toggleItalic().run())}
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Italic className="h-4 w-4" />
@@ -459,7 +491,7 @@ export const EmailTemplateEditor = ({
           type="button"
           aria-label="下划线"
           disabled={disabled}
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
+          onClick={() => runUserEditorCommand(() => editor.chain().focus().toggleUnderline().run())}
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <UnderlineIcon className="h-4 w-4" />
@@ -468,7 +500,7 @@ export const EmailTemplateEditor = ({
           type="button"
           aria-label="无序列表"
           disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          onClick={() => runUserEditorCommand(() => editor.chain().focus().toggleBulletList().run())}
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <List className="h-4 w-4" />
@@ -477,7 +509,7 @@ export const EmailTemplateEditor = ({
           type="button"
           aria-label="有序列表"
           disabled={disabled}
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          onClick={() => runUserEditorCommand(() => editor.chain().focus().toggleOrderedList().run())}
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <ListOrdered className="h-4 w-4" />
@@ -487,11 +519,13 @@ export const EmailTemplateEditor = ({
           aria-label="插入链接"
           disabled={disabled}
           onClick={() =>
-            editor
-              .chain()
-              .focus()
-              .setLink({ href: "https://example.com" })
-              .run()
+            runUserEditorCommand(() => {
+              editor
+                .chain()
+                .focus()
+                .setLink({ href: "https://example.com" })
+                .run();
+            })
           }
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
@@ -502,11 +536,13 @@ export const EmailTemplateEditor = ({
           aria-label="插入表格"
           disabled={disabled}
           onClick={() =>
-            editor
-              .chain()
-              .focus()
-              .insertTable({ rows: 2, cols: 2, withHeaderRow: false })
-              .run()
+            runUserEditorCommand(() => {
+              editor
+                .chain()
+                .focus()
+                .insertTable({ rows: 2, cols: 2, withHeaderRow: false })
+                .run();
+            })
           }
           className="rounded-xl p-2 text-stone-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
         >
@@ -524,7 +560,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="上方插入行"
             disabled={disabled}
-            onClick={() => editor.chain().focus().addRowBefore().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().addRowBefore().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             上方插入行
@@ -533,7 +569,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="下方插入行"
             disabled={disabled}
-            onClick={() => editor.chain().focus().addRowAfter().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().addRowAfter().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             下方插入行
@@ -542,7 +578,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="左侧插入列"
             disabled={disabled}
-            onClick={() => editor.chain().focus().addColumnBefore().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().addColumnBefore().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             左侧插入列
@@ -551,7 +587,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="右侧插入列"
             disabled={disabled}
-            onClick={() => editor.chain().focus().addColumnAfter().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().addColumnAfter().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             右侧插入列
@@ -560,7 +596,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="删除行"
             disabled={disabled}
-            onClick={() => editor.chain().focus().deleteRow().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().deleteRow().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             删除行
@@ -569,7 +605,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="删除列"
             disabled={disabled}
-            onClick={() => editor.chain().focus().deleteColumn().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().deleteColumn().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             删除列
@@ -578,7 +614,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="合并单元格"
             disabled={disabled}
-            onClick={() => editor.chain().focus().mergeCells().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().mergeCells().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             合并单元格
@@ -587,7 +623,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="拆分单元格"
             disabled={disabled}
-            onClick={() => editor.chain().focus().splitCell().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().splitCell().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-stone-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             拆分单元格
@@ -596,7 +632,7 @@ export const EmailTemplateEditor = ({
             type="button"
             aria-label="删除表格"
             disabled={disabled}
-            onClick={() => editor.chain().focus().deleteTable().run()}
+            onClick={() => runUserEditorCommand(() => editor.chain().focus().deleteTable().run())}
             className="rounded-xl px-3 py-2 text-xs font-medium text-primary hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             删除表格

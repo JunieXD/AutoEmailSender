@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { EmailTemplateEditor } from "./EmailTemplateEditor";
 
@@ -58,4 +58,29 @@ describe("EmailTemplateEditor", () => {
 
     expect(screen.queryByText("可将套磁信docx拖到此处导入")).not.toBeInTheDocument();
   });
+
+  it("does not report external html synchronization as a user edit", async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <EmailTemplateEditor
+        label="默认模板正文"
+        html="<p>初始正文</p>"
+        onChange={onChange}
+      />,
+    );
+
+    rerender(
+      <EmailTemplateEditor
+        label="默认模板正文"
+        html={'<p><font face="宋体">模板正文</font></p>'}
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "默认模板正文" })).toHaveTextContent("模板正文");
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
 });

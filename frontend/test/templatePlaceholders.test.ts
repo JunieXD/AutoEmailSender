@@ -62,6 +62,15 @@ describe("templatePlaceholders", () => {
     ).toBe(true);
   });
 
+  it("treats browser-normalized style formatting as equivalent html", () => {
+    expect(
+      areTemplatePlaceholderHtmlEquivalent(
+        '<p style="text-align: left; line-height: 1.5; text-indent: 0px; font-family: 宋体; font-size: 12pt;">模板正文</p>',
+        '<p style="font-size:12pt;font-family:宋体;text-indent:0px;line-height:1.5;text-align:left;">模板正文</p>',
+      ),
+    ).toBe(true);
+  });
+
   it("keeps placeholder chips inheriting font weight so surrounding bold text still shows", () => {
     const css = readFileSync(join(process.cwd(), "src/index.css"), "utf8");
     const chipRule = css.match(/\.email-placeholder-chip\s*\{([\s\S]*?)\}/)?.[1] ?? "";

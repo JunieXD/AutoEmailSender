@@ -27,6 +27,10 @@ import {
 import { parseApiDateTime } from '@/lib/dateTime';
 import { extractPlainTextFromHtml } from '@/lib/htmlPreview';
 import { textToEmailHtml } from '@/lib/richEmail';
+import {
+  normalizeTemplatePlaceholderHtmlForCompare,
+  prepareTemplateEditorHtml,
+} from '@/lib/templatePlaceholders';
 import { useConfirmDialog } from '@/lib/useConfirmDialog';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
 import {
@@ -215,6 +219,67 @@ const hasMeaningfulBody = ({
   contentHtml: string | null;
 }) => Boolean(deriveBodyTextFromDraft({ content, contentHtml }).trim());
 
+type ComposerDraftSnapshot = {
+  subject: string;
+  body: {
+    kind: 'html' | 'text';
+    value: string;
+  };
+  selectedMaterialIds: number[];
+};
+
+const normalizeDraftHtmlForCompare = (value: string) =>
+  normalizeTemplatePlaceholderHtmlForCompare(prepareTemplateEditorHtml(value));
+
+const normalizeSelectedMaterialIds = (ids: number[]) => [...ids].sort((left, right) => left - right);
+
+const buildComposerDraftSnapshot = ({
+  subject,
+  content,
+  contentHtml,
+  selectedMaterialIds,
+}: {
+  subject: string;
+  content: string;
+  contentHtml: string | null;
+  selectedMaterialIds: number[];
+}): ComposerDraftSnapshot => {
+  const bodyText = deriveBodyTextFromDraft({ content, contentHtml });
+  const displayHtml = contentHtml?.trim() || (bodyText ? textToEmailHtml(bodyText) : '');
+  const normalizedHtml = displayHtml ? normalizeDraftHtmlForCompare(displayHtml) : '';
+
+  return {
+    subject,
+    body: normalizedHtml
+      ? {
+          kind: 'html',
+          value: normalizedHtml,
+        }
+      : {
+          kind: 'text',
+          value: bodyText,
+        },
+    selectedMaterialIds: normalizeSelectedMaterialIds(selectedMaterialIds),
+  };
+};
+
+const areComposerDraftSnapshotsEqual = (
+  left: ComposerDraftSnapshot | null,
+  right: ComposerDraftSnapshot,
+) => {
+  if (!left) {
+    return false;
+  }
+
+  return (
+    left.subject === right.subject &&
+    left.body.kind === right.body.kind &&
+    left.body.value === right.body.value &&
+    left.selectedMaterialIds.length === right.selectedMaterialIds.length &&
+    left.selectedMaterialIds.every((id, index) => id === right.selectedMaterialIds[index])
+  );
+};
+
 const ScheduleSendDialog = ({
   open,
   professorEmail,
@@ -354,7 +419,6 @@ export const WorkspacePage = () => {
   const [threadRefreshing, setThreadRefreshing] = useState(false);
   const [lastThreadCheckedAt, setLastThreadCheckedAt] = useState<Date | null>(null);
   const [newReceivedCount, setNewReceivedCount] = useState(0);
-  const [composerDirty, setComposerDirty] = useState(false);
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftRewriting, setDraftRewriting] = useState(false);
   const [savingBeforeNavigate, setSavingBeforeNavigate] = useState(false);
@@ -368,6 +432,7 @@ export const WorkspacePage = () => {
   const latestDraftSaveRequestIdRef = useRef(0);
   const knownReceivedMessageIdsRef = useRef<Set<number>>(new Set());
   const composerDirtyRef = useRef(false);
+  const composerBaselineRef = useRef<ComposerDraftSnapshot | null>(null);
   const workspaceRequestKey =
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
       ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}`
@@ -395,6 +460,12 @@ export const WorkspacePage = () => {
     setContent(nextContentText);
     setContentHtml(nextContentHtml);
     setSelectedMaterialIds(hiddenDraftContent ? [] : currentTask?.selected_material_ids ?? []);
+    composerBaselineRef.current = buildComposerDraftSnapshot({
+      subject: nextSubject,
+      content: nextContentText,
+      contentHtml: nextContentHtml,
+      selectedMaterialIds: hiddenDraftContent ? [] : currentTask?.selected_material_ids ?? [],
+    });
     setScheduledAt(
       !hiddenDraftContent && currentTask?.scheduled_at
         ? (() => {
@@ -407,7 +478,6 @@ export const WorkspacePage = () => {
         : getDefaultScheduledAtValue(),
     );
     composerDirtyRef.current = false;
-    setComposerDirty(false);
   }, []);
 
   const loadThread = useCallback(async (options: { refreshReplies?: boolean; silent?: boolean } = {}) => {
@@ -423,8 +493,8 @@ export const WorkspacePage = () => {
       setThreadRefreshing(false);
       setLastThreadCheckedAt(null);
       setNewReceivedCount(0);
+      composerBaselineRef.current = null;
       composerDirtyRef.current = false;
-      setComposerDirty(false);
       return;
     }
 
@@ -546,8 +616,8 @@ export const WorkspacePage = () => {
     setNewReceivedCount(0);
     setDraftSaving(false);
     setDraftRewriting(false);
+    composerBaselineRef.current = null;
     composerDirtyRef.current = false;
-    setComposerDirty(false);
   }, [workspaceRequestKey]);
 
   useEffect(() => {
@@ -606,6 +676,35 @@ export const WorkspacePage = () => {
     }),
     [contentHtml, preparedBodyText, selectedMaterialIds, subject],
   );
+  const updateComposerDirtyFromSnapshot = useCallback((snapshot: ComposerDraftSnapshot) => {
+    composerDirtyRef.current = !areComposerDraftSnapshotsEqual(
+      composerBaselineRef.current,
+      snapshot,
+    );
+  }, []);
+  const getCurrentComposerSnapshot = useCallback(
+    () =>
+      buildComposerDraftSnapshot({
+        subject,
+        content,
+        contentHtml,
+        selectedMaterialIds,
+      }),
+    [content, contentHtml, selectedMaterialIds, subject],
+  );
+  const hasUnsavedComposerChanges = useCallback(
+    () =>
+      !areComposerDraftSnapshotsEqual(
+        composerBaselineRef.current,
+        getCurrentComposerSnapshot(),
+      ),
+    [getCurrentComposerSnapshot],
+  );
+  const syncComposerDirtyState = useCallback(() => {
+    const isDirty = hasUnsavedComposerChanges();
+    composerDirtyRef.current = isDirty;
+    return isDirty;
+  }, [hasUnsavedComposerChanges]);
   const nextStep = currentTask
     ? getWorkspaceNextStep({
         status: currentTask.status ?? 'discovered',
@@ -702,23 +801,41 @@ export const WorkspacePage = () => {
   }, [notifySuccess, runAction, saveCurrentDraft]);
 
   const handleSubjectChange = useCallback((value: string) => {
-    composerDirtyRef.current = true;
-    setComposerDirty(true);
     setSubject(value);
-  }, []);
+    updateComposerDirtyFromSnapshot(
+      buildComposerDraftSnapshot({
+        subject: value,
+        content,
+        contentHtml,
+        selectedMaterialIds,
+      }),
+    );
+  }, [content, contentHtml, selectedMaterialIds, updateComposerDirtyFromSnapshot]);
 
   const handleContentChange = useCallback((value: { html: string; text: string }) => {
-    composerDirtyRef.current = true;
-    setComposerDirty(true);
     setContent(value.text);
     setContentHtml(value.html);
-  }, []);
+    updateComposerDirtyFromSnapshot(
+      buildComposerDraftSnapshot({
+        subject,
+        content: value.text,
+        contentHtml: value.html,
+        selectedMaterialIds,
+      }),
+    );
+  }, [selectedMaterialIds, subject, updateComposerDirtyFromSnapshot]);
 
   const handleSelectedMaterialIdsChange = useCallback((ids: number[]) => {
-    composerDirtyRef.current = true;
-    setComposerDirty(true);
     setSelectedMaterialIds(ids);
-  }, []);
+    updateComposerDirtyFromSnapshot(
+      buildComposerDraftSnapshot({
+        subject,
+        content,
+        contentHtml,
+        selectedMaterialIds: ids,
+      }),
+    );
+  }, [content, contentHtml, subject, updateComposerDirtyFromSnapshot]);
 
   const handleSendNow = useCallback(() => {
     if (!currentTaskId) {
@@ -909,33 +1026,32 @@ export const WorkspacePage = () => {
 
     if (action === 'secondary') {
       composerDirtyRef.current = false;
-      setComposerDirty(false);
       return true;
     }
 
     await saveCurrentDraft();
     composerDirtyRef.current = false;
-    setComposerDirty(false);
     notifySuccess('草稿已保存', '工作区草稿已更新。');
     return true;
   }, [choose, notifySuccess, saveCurrentDraft]);
 
-  const hasDirtyDraft = Boolean(composerDirty && currentTaskId);
-  const shouldBlockNavigation = hasDirtyDraft && !isRewriting;
   const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    shouldBlockNavigation && currentLocation.pathname !== nextLocation.pathname,
+    Boolean(currentTaskId) &&
+    !isRewriting &&
+    currentLocation.pathname !== nextLocation.pathname &&
+    hasUnsavedComposerChanges(),
   );
 
   useBeforeUnload(
     useCallback(
       (event) => {
-        if (!shouldBlockNavigation) {
+        if (!currentTaskId || isRewriting || !hasUnsavedComposerChanges()) {
           return;
         }
         event.preventDefault();
         event.returnValue = '';
       },
-      [shouldBlockNavigation],
+      [currentTaskId, hasUnsavedComposerChanges, isRewriting],
     ),
   );
 
@@ -983,7 +1099,7 @@ export const WorkspacePage = () => {
 
   useEffect(() => {
     return registerWorkspaceDraftGuard(async () => {
-      if (!composerDirtyRef.current || !currentTaskId) {
+      if (!currentTaskId || !syncComposerDirtyState()) {
         return true;
       }
       if (isRewriting) {
@@ -1002,7 +1118,7 @@ export const WorkspacePage = () => {
         return false;
       }
     });
-  }, [acting, confirmDirtyDraftExit, currentTaskId, draftSaving, isRewriting, notifyError, registerWorkspaceDraftGuard]);
+  }, [acting, confirmDirtyDraftExit, currentTaskId, draftSaving, isRewriting, notifyError, registerWorkspaceDraftGuard, syncComposerDirtyState]);
 
   if (!Number.isFinite(professorId)) {
     return <Navigate to="/404" replace />;
