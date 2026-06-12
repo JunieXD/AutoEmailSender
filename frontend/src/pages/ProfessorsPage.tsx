@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useCallback,
@@ -608,6 +609,19 @@ export const ProfessorsPage = () => {
     emptyCrawlerJobForm(),
   );
   const [creatingCrawlJob, setCreatingCrawlJob] = useState(false);
+  const crawlerUrlInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const [crawlerUrlFocusIndex, setCrawlerUrlFocusIndex] = useState<
+    number | null
+  >(null);
+  useEffect(() => {
+    if (crawlerUrlFocusIndex === null) {
+      return;
+    }
+
+    crawlerUrlInputRefs.current[crawlerUrlFocusIndex]?.focus();
+    setCrawlerUrlFocusIndex(null);
+  }, [crawlerUrlFocusIndex, crawlerFormState.start_urls.length]);
+
   useEffect(() => {
     if (!linkedKeyword) {
       return;
@@ -1417,6 +1431,30 @@ export const ProfessorsPage = () => {
       ...previous,
       start_urls: nextUrls,
     }));
+  };
+
+  const handleCrawlerUrlKeyDown = (
+    event: ReactKeyboardEvent<HTMLInputElement>,
+    index: number,
+  ) => {
+    if (
+      event.key !== "Enter" ||
+      event.nativeEvent.isComposing ||
+      !crawlerFormState.start_urls[index]?.trim()
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    setCrawlerFormState((previous) => ({
+      ...previous,
+      start_urls: [
+        ...previous.start_urls.slice(0, index + 1),
+        "",
+        ...previous.start_urls.slice(index + 1),
+      ],
+    }));
+    setCrawlerUrlFocusIndex(index + 1);
   };
 
   if (!hasLoadedProfessors && loading) {
@@ -2482,6 +2520,9 @@ export const ProfessorsPage = () => {
               <div key={index} className="flex items-center gap-2">
                 <input
                   aria-label="页面 URL"
+                  ref={(element) => {
+                    crawlerUrlInputRefs.current[index] = element;
+                  }}
                   value={url}
                   onChange={(event) => {
                     const nextValue = event.target.value;
@@ -2492,6 +2533,7 @@ export const ProfessorsPage = () => {
                       ),
                     }));
                   }}
+                  onKeyDown={(event) => handleCrawlerUrlKeyDown(event, index)}
                   onPaste={(event) => handleCrawlerUrlPaste(event, index)}
                   className={inputClassName}
                   placeholder={
