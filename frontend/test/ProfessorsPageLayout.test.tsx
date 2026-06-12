@@ -271,6 +271,13 @@ describe("ProfessorsPage layout", () => {
         screen.queryByRole("button", { name: "编辑李教授的个人备注" }),
       ).not.toBeInTheDocument();
     });
+    const row = screen.getByText("李教授").closest("article");
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getByText(
+        formatApiDateTime("2026-04-24T00:00:00Z"),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("saves personal notes from the full professor edit form", async () => {

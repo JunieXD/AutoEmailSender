@@ -1010,7 +1010,11 @@ export const ProfessorsPage = () => {
       setProfessors((previous) =>
         previous.map((professor) =>
           professor.id === updated.id
-            ? { ...professor, personal_note: updated.personal_note }
+            ? {
+                ...professor,
+                personal_note: updated.personal_note,
+                updated_at: updated.updated_at,
+              }
             : professor,
         ),
       );
