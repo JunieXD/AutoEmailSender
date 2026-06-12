@@ -23,6 +23,7 @@ try {
     --noconfirm `
     --clean `
     --onedir `
+    --debug noarchive `
     --name backend `
     --specpath build `
     --hidden-import main `
