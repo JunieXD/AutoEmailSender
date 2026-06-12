@@ -67,6 +67,27 @@ router = APIRouter(prefix="/api/crawl-jobs", tags=["crawl-jobs"])
 CrawlJobListLimit = Annotated[int, Query(ge=1, le=50)]
 
 
+def _iter_unique_start_urls_for_page_tasks(job: CrawlJob) -> list[tuple[str, str]]:
+    urls = job.start_urls or [job.start_url]
+    unique: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for url in urls:
+        if not isinstance(url, str):
+            continue
+        stripped = url.strip()
+        if not stripped:
+            continue
+        normalized_url = normalize_url(stripped)
+        if normalized_url in seen:
+            continue
+        seen.add(normalized_url)
+        unique.append((stripped, normalized_url))
+    if unique:
+        return unique
+    fallback_url = job.start_url.strip()
+    return [(fallback_url, normalize_url(fallback_url))]
+
+
 @router.post("", response_model=CrawlJobRead, status_code=status.HTTP_201_CREATED)
 async def create_crawl_job(
     payload: CrawlJobCreatePayload,
@@ -86,11 +107,11 @@ async def create_crawl_job(
     )
     session.add(job)
     await session.flush()
-    for start_url in job.start_urls or [job.start_url]:
+    for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
         session.add(
             CrawlPageTask(
                 job_id=job.id,
-                normalized_url=normalize_url(start_url),
+                normalized_url=normalized_url,
                 original_url=start_url,
                 status=CrawlPageTaskStatus.PENDING.value,
             )
@@ -867,11 +888,11 @@ async def retry_crawl_job(
         )
 
     if job.runtime_version == "v2":
-        for start_url in job.start_urls or [job.start_url]:
+        for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
             session.add(
                 CrawlPageTask(
                     job_id=job.id,
-                    normalized_url=normalize_url(start_url),
+                    normalized_url=normalized_url,
                     original_url=start_url,
                     status=CrawlPageTaskStatus.PENDING.value,
                 )
@@ -1036,4 +1057,3 @@ def _latest_event_message(agent_trace: object) -> str | None:
     if isinstance(message, str) and message.strip():
         return message.strip()
     return None
-

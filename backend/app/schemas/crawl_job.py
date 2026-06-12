@@ -10,6 +10,7 @@ from app.services.crawler_tools import (
     UNSAFE_CRAWL_URL_MESSAGE,
     validate_safe_public_crawl_url,
 )
+from app.services.crawler_v2_url_utils import normalize_url
 from app.services.professor_field_normalization import normalize_recent_papers
 
 
@@ -85,9 +86,10 @@ class CrawlJobCreatePayload(BaseModel):
                 validate_safe_public_crawl_url(url)
             except ValueError as exc:
                 raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
-            if url in seen:
+            dedupe_key = normalize_url(url)
+            if dedupe_key in seen:
                 continue
-            seen.add(url)
+            seen.add(dedupe_key)
             normalized.append(url)
         if not normalized:
             raise ValueError("页面 URL 不能为空")
@@ -259,4 +261,3 @@ class CrawlJobEnrichResult(ApiSchema):
     failed_count: int
     skipped_count: int = 0
     message: str
-

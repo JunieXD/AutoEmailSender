@@ -118,6 +118,31 @@ class CrawlJobsApiTests(unittest.TestCase):
             ],
         )
 
+    def test_create_crawl_job_deduplicates_start_urls_by_normalized_url(self) -> None:
+        try:
+            response = self.client.post(
+                "/api/crawl-jobs",
+                json={
+                    "university": "示例大学",
+                    "school": "计算机学院",
+                    "start_url": "https://example.edu/faculty?utm_source=first",
+                    "start_urls": [
+                        "https://example.edu/faculty?utm_source=first",
+                        "https://example.edu/faculty?utm_source=second",
+                    ],
+                    "llm_profile_id": None,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - keeps the red test as an assertion failure.
+            self.fail(f"create crawl job raised {exc!r}")
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        job_id = response.json()["id"]
+        self.assertEqual(
+            self._list_page_task_statuses(job_id),
+            [("https://example.edu/faculty", "pending")],
+        )
+
     def test_list_crawl_jobs_allows_limit_for_diagnostics_selector(self) -> None:
         for index in range(3):
             response = self.client.post(
@@ -867,6 +892,42 @@ class CrawlJobsApiTests(unittest.TestCase):
                 ("https://example.edu/faculty", "pending"),
                 ("https://example.edu/faculty?page=2", "pending"),
             ],
+        )
+
+    def test_retry_v2_crawl_job_deduplicates_historical_start_urls_by_normalized_url(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_start_urls(
+            job_id,
+            [
+                "https://example.edu/faculty?utm_source=old",
+                "https://example.edu/faculty?utm_source=older",
+            ],
+        )
+        self._mark_page_tasks_succeeded(job_id)
+        self._set_job_status(job_id, "failed")
+
+        try:
+            response = self.client.post(
+                f"/api/crawl-jobs/{job_id}/retry",
+                json={"clear_existing_data": True},
+            )
+        except Exception as exc:  # pragma: no cover - keeps the red test as an assertion failure.
+            self.fail(f"retry crawl job raised {exc!r}")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            self._list_page_task_statuses(job_id),
+            [("https://example.edu/faculty", "pending")],
         )
 
     def test_retry_crawl_job_clear_existing_data_removes_page_chunks(self) -> None:
@@ -1778,6 +1839,20 @@ class CrawlJobsApiTests(unittest.TestCase):
                 await session.commit()
 
         asyncio.run(_set_status())
+
+    def _set_job_start_urls(self, job_id: int, start_urls: list[str]) -> None:
+        async def _set_start_urls() -> None:
+            from app.core.database import get_session_factory
+            from app.models import CrawlJob
+
+            async with get_session_factory()() as session:
+                job = await session.get(CrawlJob, job_id)
+                self.assertIsNotNone(job)
+                job.start_url = start_urls[0]
+                job.start_urls = start_urls
+                await session.commit()
+
+        asyncio.run(_set_start_urls())
 
     def _seed_default_llm_profile(self) -> None:
         async def _seed_profile() -> None:

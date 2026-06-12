@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageFetchState
 from app.models.base import Base
-from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
+from app.services.crawler_chunking import ChunkingConfig, PageChunkDraft, build_page_chunks
 from app.services.crawler_chunk_runtime import claim_next_page_chunk, create_chunks_for_page, submit_page_chunk_candidates
 from app.services.crawler_tools import CrawlToolContext
 
@@ -17,7 +17,7 @@ async def _session_factory() -> async_sessionmaker[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, expire_on_commit=False)
+    return async_sessionmaker(engine, autoflush=False, expire_on_commit=False)
 
 
 class CrawlerChunkRuntimeTests(unittest.TestCase):
@@ -41,6 +41,44 @@ class CrawlerChunkRuntimeTests(unittest.TestCase):
                 self.assertEqual(row.status, CrawlPageChunkStatus.PROCESSING.value)
         asyncio.run(run())
 
+    def test_create_chunks_for_page_skips_duplicate_drafts_before_commit(self) -> None:
+        async def run() -> None:
+            session_factory = await _session_factory()
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu", status=CrawlJobStatus.RUNNING.value)
+                page = CrawlPage(job=job, url="https://cs.example.edu/faculty", fetch_method="http", status="succeeded")
+                session.add_all([job, page])
+                await session.commit()
+                await session.refresh(job)
+                await session.refresh(page)
+            draft = PageChunkDraft(
+                chunk_id="duplicate-chunk",
+                source_url="https://cs.example.edu/faculty",
+                page_fingerprint="fp",
+                chunk_index=0,
+                chunk_hash="hash",
+                content="张三",
+                token_estimate=1,
+                text_start_offset=0,
+                text_end_offset=2,
+                overlap_prefix=False,
+                overlap_suffix=False,
+            )
+
+            created = await create_chunks_for_page(
+                session_factory,
+                job_id=job.id,
+                page_id=page.id,
+                drafts=[draft, draft],
+            )
+
+            async with session_factory() as session:
+                chunks = list(await session.scalars(select(CrawlPageChunk)))
+            self.assertEqual(created, 1)
+            self.assertEqual(len(chunks), 1)
+            self.assertEqual(chunks[0].chunk_id, "duplicate-chunk")
+
+        asyncio.run(run())
 
     def test_claim_next_page_chunk_returns_processing_chunk_before_pending(self) -> None:
         async def run() -> None:

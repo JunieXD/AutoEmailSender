@@ -56,7 +56,11 @@ async def create_chunks_for_page(
 ) -> int:
     async with session_factory() as session:
         created = 0
+        seen_chunk_ids: set[str] = set()
         for draft in drafts:
+            if draft.chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(draft.chunk_id)
             exists = await session.scalar(
                 select(CrawlPageChunk.id).where(
                     CrawlPageChunk.job_id == job_id,
@@ -340,7 +344,11 @@ async def _split_chunk_in_session(
     chunk.status = CrawlPageChunkStatus.SUPERSEDED.value
     chunk.split_reason = reason
     created = 0
+    seen_chunk_ids: set[str] = set()
     for draft in drafts:
+        if draft.chunk_id in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(draft.chunk_id)
         exists = await session.scalar(
             select(CrawlPageChunk.id).where(
                 CrawlPageChunk.job_id == job_id,
