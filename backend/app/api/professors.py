@@ -517,7 +517,8 @@ async def update_professor(
     professor.recent_papers = professor_data["recent_papers"]
     professor.profile_url = professor_data["profile_url"]
     professor.source_url = professor_data["source_url"]
-    professor.personal_note = professor_data["personal_note"]
+    if "personal_note" in payload.model_fields_set:
+        professor.personal_note = professor_data["personal_note"]
     await _sync_professor_tags(session, professor, payload.tag_ids)
     professor.updated_at = utc_now()
 

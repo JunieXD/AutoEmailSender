@@ -585,6 +585,56 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "未找到导师")
 
+    def test_update_professor_without_personal_note_preserves_existing_note(self) -> None:
+        create_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "保留备注导师",
+                "email": "preserve-note@example.edu",
+                "title": "教授",
+                "university": "原大学",
+                "school": "原学院",
+                "department": "原系",
+                "research_direction": "原方向",
+                "recent_papers": ["Legacy Paper"],
+                "profile_url": "https://example.edu/original",
+                "source_url": None,
+                "personal_note": "已有备注",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        professor_id = create_response.json()["id"]
+
+        update_response = self.client.patch(
+            f"/api/professors/{professor_id}",
+            json={
+                "name": "保留备注导师",
+                "email": "preserve-note@example.edu",
+                "title": "副教授",
+                "university": "新大学",
+                "school": "新学院",
+                "department": "新系",
+                "research_direction": "新方向",
+                "recent_papers": ["Updated Paper"],
+                "profile_url": "https://example.edu/updated",
+                "source_url": "https://example.edu/source",
+            },
+        )
+        self.assertEqual(update_response.status_code, 200, msg=update_response.text)
+        self.assertEqual(update_response.json()["title"], "副教授")
+        self.assertEqual(update_response.json()["personal_note"], "已有备注")
+
+        detail_response = self.client.get(f"/api/professors/{professor_id}")
+        self.assertEqual(detail_response.status_code, 200, msg=detail_response.text)
+        self.assertEqual(detail_response.json()["personal_note"], "已有备注")
+
+        management_response = self.client.get("/api/professors/management")
+        self.assertEqual(management_response.status_code, 200, msg=management_response.text)
+        management_professor = next(
+            item for item in management_response.json() if item["id"] == professor_id
+        )
+        self.assertEqual(management_professor["personal_note"], "已有备注")
+
     def test_professor_dashboard_returns_contact_state_labels(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
