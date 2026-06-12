@@ -58,6 +58,7 @@ const WORKSPACE_STATUS_LABELS: Record<WorkspaceTaskStatusLabelKey, string> = {
 };
 
 const WORKSPACE_THREAD_REFRESH_INTERVAL_MS = 60_000;
+const WORKSPACE_REWRITE_REFRESH_INTERVAL_MS = 3_000;
 
 const formatTokenValue = (value: number | null | undefined) =>
   value == null ? '未返回' : value.toLocaleString('zh-CN');
@@ -280,6 +281,14 @@ const areComposerDraftSnapshotsEqual = (
   );
 };
 
+const buildTaskDraftSnapshot = (task: WorkspaceTaskSummaryDTO): ComposerDraftSnapshot =>
+  buildComposerDraftSnapshot({
+    subject: task.draft.subject ?? '',
+    content: task.draft.body_text ?? '',
+    contentHtml: task.draft.body_html ?? null,
+    selectedMaterialIds: task.selected_material_ids ?? [],
+  });
+
 const ScheduleSendDialog = ({
   open,
   professorEmail,
@@ -433,10 +442,20 @@ export const WorkspacePage = () => {
   const knownReceivedMessageIdsRef = useRef<Set<number>>(new Set());
   const composerDirtyRef = useRef(false);
   const composerBaselineRef = useRef<ComposerDraftSnapshot | null>(null);
+  const draftRewritingRef = useRef(false);
+  const activeRewriteTaskIdRef = useRef<number | null>(null);
+  const activeRewriteObservedGeneratingRef = useRef(false);
+  const activeRewritePreviousDraftRef = useRef<ComposerDraftSnapshot | null>(null);
+  const activeRewriteActionRequestIdRef = useRef<number | null>(null);
+  const captureNextRewriteActionRequestRef = useRef(false);
   const workspaceRequestKey =
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
       ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}`
       : null;
+  const currentTask = getCurrentTaskOrNull(thread);
+  const currentTaskId = currentTask?.id ?? null;
+  const taskGeneratingDraft = currentTask?.status === 'generating_draft';
+  const isRewriting = taskGeneratingDraft || draftRewriting;
 
   useEffect(() => {
     return () => {
@@ -478,6 +497,16 @@ export const WorkspacePage = () => {
         : getDefaultScheduledAtValue(),
     );
     composerDirtyRef.current = false;
+  }, []);
+
+  const resetActiveRewriteTracking = useCallback(() => {
+    draftRewritingRef.current = false;
+    activeRewriteTaskIdRef.current = null;
+    activeRewriteObservedGeneratingRef.current = false;
+    activeRewritePreviousDraftRef.current = null;
+    activeRewriteActionRequestIdRef.current = null;
+    captureNextRewriteActionRequestRef.current = false;
+    setDraftRewriting(false);
   }, []);
 
   const loadThread = useCallback(async (options: { refreshReplies?: boolean; silent?: boolean } = {}) => {
@@ -525,6 +554,36 @@ export const WorkspacePage = () => {
         return;
       }
       const hadLoadedThread = loadedThreadKeyRef.current === workspaceRequestKey;
+      const refreshedTask = getCurrentTaskOrNull(workspaceData);
+      let rewriteCompletedByRefresh = false;
+      if (
+        silent &&
+        draftRewritingRef.current &&
+        activeRewriteTaskIdRef.current != null &&
+        refreshedTask?.id === activeRewriteTaskIdRef.current
+      ) {
+        if (refreshedTask.status === 'generating_draft') {
+          activeRewriteObservedGeneratingRef.current = true;
+        } else {
+          const refreshedDraft = buildTaskDraftSnapshot(refreshedTask);
+          const previousDraft = activeRewritePreviousDraftRef.current;
+          const stillLooksLikePreRewriteDraft =
+            previousDraft !== null && areComposerDraftSnapshotsEqual(previousDraft, refreshedDraft);
+          rewriteCompletedByRefresh =
+            activeRewriteObservedGeneratingRef.current || !stillLooksLikePreRewriteDraft;
+          if (rewriteCompletedByRefresh) {
+            const rewriteActionRequestId = activeRewriteActionRequestIdRef.current;
+            if (
+              rewriteActionRequestId !== null &&
+              latestActionRequestIdRef.current === rewriteActionRequestId
+            ) {
+              latestActionRequestIdRef.current += 1;
+            }
+            setActing(false);
+            resetActiveRewriteTracking();
+          }
+        }
+      }
       const receivedMessages = getReceivedMessages(workspaceData.messages);
       const newReceivedMessages = hadLoadedThread
         ? receivedMessages.filter(
@@ -545,7 +604,7 @@ export const WorkspacePage = () => {
           buildNewReplyNotificationDescription(workspaceData.professor.name, latestReceived),
         );
       }
-      syncComposer(workspaceData, { preserveDirty: silent });
+      syncComposer(workspaceData, { preserveDirty: silent && !rewriteCompletedByRefresh });
       loadedThreadKeyRef.current = workspaceRequestKey;
     } catch (loadError) {
       if (
@@ -576,7 +635,7 @@ export const WorkspacePage = () => {
         }
       }
     }
-  }, [notifyError, notifySuccess, professorId, selectedIdentityId, selectedLlmProfileId, syncComposer, workspaceRequestKey]);
+  }, [notifyError, notifySuccess, professorId, resetActiveRewriteTracking, selectedIdentityId, selectedLlmProfileId, syncComposer, workspaceRequestKey]);
 
   useEffect(() => {
     void loadThread();
@@ -589,7 +648,7 @@ export const WorkspacePage = () => {
 
     const intervalId = window.setInterval(() => {
       void loadThread({ silent: true });
-    }, WORKSPACE_THREAD_REFRESH_INTERVAL_MS);
+    }, isRewriting ? WORKSPACE_REWRITE_REFRESH_INTERVAL_MS : WORKSPACE_THREAD_REFRESH_INTERVAL_MS);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -603,7 +662,7 @@ export const WorkspacePage = () => {
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [loadThread, workspaceRequestKey]);
+  }, [isRewriting, loadThread, workspaceRequestKey]);
 
   useEffect(() => {
     currentWorkspaceRequestKeyRef.current = workspaceRequestKey;
@@ -615,21 +674,17 @@ export const WorkspacePage = () => {
     setLastThreadCheckedAt(null);
     setNewReceivedCount(0);
     setDraftSaving(false);
-    setDraftRewriting(false);
+    resetActiveRewriteTracking();
     composerBaselineRef.current = null;
     composerDirtyRef.current = false;
-  }, [workspaceRequestKey]);
+  }, [resetActiveRewriteTracking, workspaceRequestKey]);
 
   useEffect(() => {
     setComposerExpanded(false);
   }, [professorId, selectedIdentityId, selectedLlmProfileId]);
 
-  const currentTask = getCurrentTaskOrNull(thread);
-  const currentTaskId = currentTask?.id ?? null;
   const statusLabel = getStatusLabel(currentTask, thread?.messages ?? []);
   const blocksDirectDraftActions = shouldBlockDirectDraftActions(currentTask);
-  const taskGeneratingDraft = currentTask?.status === 'generating_draft';
-  const isRewriting = taskGeneratingDraft || draftRewriting;
   const canCalculateMatch =
     Boolean(currentTaskId) &&
     Boolean(selectedIdentity?.current_primary_material_id) &&
@@ -729,6 +784,10 @@ export const WorkspacePage = () => {
       const actionTaskId = currentTaskId;
       const actionRequestId = latestActionRequestIdRef.current + 1;
       latestActionRequestIdRef.current = actionRequestId;
+      if (captureNextRewriteActionRequestRef.current) {
+        activeRewriteActionRequestIdRef.current = actionRequestId;
+        captureNextRewriteActionRequestRef.current = false;
+      }
       setActing(true);
       try {
         const data = await action();
@@ -971,12 +1030,17 @@ export const WorkspacePage = () => {
   }, [currentTaskId, runAction, selectedLlmProfileId]);
 
   const handleGenerateDraft = useCallback(() => {
-    if (!currentTaskId) {
+    if (!currentTaskId || !currentTask) {
       return;
     }
 
     const startedAt = Date.now();
+    draftRewritingRef.current = true;
+    activeRewriteTaskIdRef.current = currentTaskId;
+    activeRewriteObservedGeneratingRef.current = currentTask.status === 'generating_draft';
+    activeRewritePreviousDraftRef.current = buildTaskDraftSnapshot(currentTask);
     setDraftRewriting(true);
+    captureNextRewriteActionRequestRef.current = true;
     void runAction(
       () =>
         rewriteDraft(currentTaskId, {
@@ -997,14 +1061,16 @@ export const WorkspacePage = () => {
       },
     ).finally(() => {
       if (mountedRef.current) {
-        setDraftRewriting(false);
+        resetActiveRewriteTracking();
       }
     });
   }, [
     contentHtml,
+    currentTask,
     currentTaskId,
     notifySuccess,
     preparedBodyText,
+    resetActiveRewriteTracking,
     runAction,
     selectedLlmProfileId,
     selectedMaterialIds,

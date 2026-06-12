@@ -105,7 +105,9 @@ vi.mock("@/components/organisms/WorkspaceComposerDock", () => ({
     contentHtml: string;
     onSubjectChange: (value: string) => void;
     onContentChange: (value: { html: string; text: string }) => void;
+    acting: boolean;
     canCalculateMatch: boolean;
+    isRewriting: boolean;
     onGenerateDraft: () => void;
     onSendNow: () => void;
     onScheduleSend: () => void;
@@ -121,7 +123,9 @@ vi.mock("@/components/organisms/WorkspaceComposerDock", () => ({
         <div>{props.subject ? `draft-subject:${props.subject}` : "draft-subject-empty"}</div>
         <div>{props.content ? `draft-content:${props.content}` : "draft-content-empty"}</div>
         <div>{props.contentHtml ? `draft-html:${props.contentHtml}` : "draft-html-empty"}</div>
+        <div>{props.acting ? "action-busy" : "action-idle"}</div>
         <div>{props.canCalculateMatch ? "can-calculate-match" : "cannot-calculate-match"}</div>
+        <div>{props.isRewriting ? "rewrite-active" : "rewrite-idle"}</div>
         <button type="button" onClick={props.onGenerateDraft}>
           mock-generate-draft
         </button>
@@ -337,7 +341,9 @@ type MockComposerDockProps = {
   canSubmitDraft: boolean;
   content: string;
   contentHtml: string;
+  acting: boolean;
   canCalculateMatch: boolean;
+  isRewriting: boolean;
   canGenerateDraft: boolean;
   canContinueManually: boolean;
   canStartFollowUp: boolean;
@@ -572,6 +578,50 @@ describe("WorkspacePage next-step", () => {
     expect(screen.getByText("draft-subject:用户编辑主题")).toBeInTheDocument();
     expect(screen.getByText("draft-content:用户编辑正文")).toBeInTheDocument();
     expect(screen.queryByText("draft-subject:服务器旧主题")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("applies a completed rewrite returned by background refresh while the original request is still pending", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockedGetWorkspaceThread
+      .mockResolvedValueOnce(
+        buildThread({
+          generatedSubject: "改写前主题",
+          generatedContentText: "改写前正文",
+          generatedContentHtml: "<p>改写前正文</p>",
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildThread({
+          status: "review_required",
+          generatedSubject: "后台完成主题",
+          generatedContentText: "后台完成正文",
+          generatedContentHtml: "<p>后台完成正文</p>",
+        }),
+      );
+    mockedGenerateDraft.mockReturnValueOnce(new Promise(() => undefined));
+
+    renderPage();
+
+    expect(await screen.findByText("draft-subject:改写前主题")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "mock-edit-subject" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock-edit-content" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock-generate-draft" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("rewrite-active")).toBeInTheDocument();
+    });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    await waitFor(() => {
+      expect(mockedGetWorkspaceThread).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("action-idle")).toBeInTheDocument();
+      expect(screen.getByText("rewrite-idle")).toBeInTheDocument();
+      expect(screen.getByText("draft-subject:后台完成主题")).toBeInTheDocument();
+      expect(screen.getByText("draft-content:后台完成正文")).toBeInTheDocument();
+    });
 
     vi.useRealTimers();
   });
