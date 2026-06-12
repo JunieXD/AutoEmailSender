@@ -558,4 +558,19 @@ describe("ProfilePage onboarding", () => {
       "match_threshold",
     );
   });
+
+  it("explains placeholder insertion through the template editors", async () => {
+    renderPage();
+    openSetupSection("材料与模板");
+    openSetupSection("测试写信");
+
+    fireEvent.click(screen.getByRole("button", { name: "打开默认值编辑" }));
+
+    expect(
+      await screen.findByText(
+        "可在主题或正文编辑器中通过“占位符”按钮插入个性化信息，例如插入“导师姓名”后，发送时会替换为对应导师的姓名。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("{{name}} 导师姓名")).not.toBeInTheDocument();
+  });
 });

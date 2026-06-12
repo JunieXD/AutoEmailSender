@@ -130,21 +130,6 @@ const DEFAULT_LLM_TEMPERATURE = 0.2;
 const DEFAULT_LLM_MAX_TOKENS = 6000;
 const PRIMARY_MATERIAL_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt", ".md"];
 const TEMPLATE_FILE_ACCEPT = ".docx,.html,.htm,.txt,.md";
-const TEMPLATE_PLACEHOLDERS = [
-  ["{{name}}", "导师姓名"],
-  ["{{email}}", "导师邮箱"],
-  ["{{title}}", "导师职称"],
-  ["{{university}}", "导师学校"],
-  ["{{school}}", "导师学院"],
-  ["{{department}}", "导师院系"],
-  ["{{research_direction}}", "导师研究方向"],
-  ["{{sender_name}}", "你的发件人姓名"],
-  ["{{sender_email}}", "你的发件邮箱"],
-  ["{{year}}", "本地发送年份"],
-  ["{{month}}", "本地发送月份"],
-  ["{{day}}", "本地发送日期"],
-] as const;
-
 const PROFILE_SETUP_STAGES = [
   {
     id: "identity",
@@ -1261,15 +1246,8 @@ const OutreachTemplateModal = ({
               })}
             </div>
 
-            <div className="flex flex-wrap gap-2 text-xs text-stone-500">
-              {TEMPLATE_PLACEHOLDERS.map(([token, label]) => (
-                <span
-                  key={token}
-                  className="rounded-full border border-stone-200 bg-white px-3 py-1"
-                >
-                  {token} {label}
-                </span>
-              ))}
+            <div className="rounded-2xl border border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
+              可在主题或正文编辑器中通过“占位符”按钮插入个性化信息，例如插入“导师姓名”后，发送时会替换为对应导师的姓名。
             </div>
 
             <div className="grid gap-4">
