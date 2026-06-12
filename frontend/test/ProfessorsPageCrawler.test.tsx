@@ -203,6 +203,33 @@ describe("ProfessorsPage crawler job entry", () => {
     expect(within(dialog).getAllByLabelText("页面 URL")).toHaveLength(1);
   });
 
+  it("adds and focuses the next crawler url row when Enter is pressed on a filled row", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+
+    const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
+    const firstUrlInput = within(dialog).getByLabelText("页面 URL");
+    fireEvent.change(firstUrlInput, {
+      target: { value: "https://example.edu/faculty" },
+    });
+    fireEvent.keyDown(firstUrlInput, { key: "Enter" });
+
+    let urlInputs = within(dialog).getAllByLabelText("页面 URL");
+    expect(urlInputs).toHaveLength(2);
+    expect(urlInputs[0]).toHaveValue("https://example.edu/faculty");
+    expect(urlInputs[1]).toHaveValue("");
+    expect(urlInputs[1]).toHaveFocus();
+
+    fireEvent.keyDown(urlInputs[1], { key: "Enter" });
+    urlInputs = within(dialog).getAllByLabelText("页面 URL");
+    expect(urlInputs).toHaveLength(2);
+  });
+
   it("creates a profile crawl job when profile entry type is selected", async () => {
     renderPage();
 
