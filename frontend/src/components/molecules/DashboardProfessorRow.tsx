@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { Loader2, Sparkles } from "lucide-react";
+import { ProfessorNoteButton } from "@/components/molecules/ProfessorNoteButton";
 import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { ProfessorDashboardItemDTO } from "@/types";
@@ -18,6 +19,7 @@ type DashboardProfessorRowProps = {
   onToggleSelection: () => void;
   onCalculateMatch: () => void;
   onOpenWorkspace: () => void;
+  onEditNote?: () => void;
   onAddTag?: () => void;
 };
 
@@ -58,6 +60,7 @@ export const DashboardProfessorRow = ({
   onToggleSelection,
   onCalculateMatch,
   onOpenWorkspace,
+  onEditNote,
   onAddTag,
 }: DashboardProfessorRowProps) => (
   <article
@@ -81,6 +84,11 @@ export const DashboardProfessorRow = ({
           <div className="min-w-0 truncate text-base font-semibold text-stone-900">
             {professor.name}
           </div>
+          <ProfessorNoteButton
+            professorName={professor.name}
+            personalNote={professor.personal_note}
+            onEdit={onEditNote ?? (() => undefined)}
+          />
           <ProfessorTagChips
             tags={professor.tags}
             maxVisible={2}

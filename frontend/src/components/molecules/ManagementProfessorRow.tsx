@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import { Archive, PencilLine, RotateCcw } from "lucide-react";
+import { ProfessorNoteButton } from "@/components/molecules/ProfessorNoteButton";
 import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { formatApiDateTime } from "@/lib/dateTime";
@@ -16,6 +17,7 @@ type ManagementProfessorRowProps = {
   onEdit: () => void;
   onArchive: () => void;
   onRestore: () => void;
+  onEditNote?: () => void;
   onPrimaryTagSelect?: (tagId: number) => void;
   onAddTag?: () => void;
 };
@@ -44,6 +46,7 @@ export const ManagementProfessorRow = ({
   onEdit,
   onArchive,
   onRestore,
+  onEditNote,
   onPrimaryTagSelect,
   onAddTag,
 }: ManagementProfessorRowProps) => {
@@ -76,6 +79,11 @@ export const ManagementProfessorRow = ({
             <div className="min-w-0 truncate text-base font-semibold text-stone-900 lg:text-center">
               {professor.name}
             </div>
+            <ProfessorNoteButton
+              professorName={professor.name}
+              personalNote={professor.personal_note}
+              onEdit={onEditNote ?? (() => undefined)}
+            />
             <ProfessorTagChips
               tags={professor.tags}
               maxVisible={1}

@@ -9,6 +9,7 @@ import type {
   ProfessorImportFileResultDTO,
   ProfessorImportResultDTO,
   ProfessorManagementItemDTO,
+  ProfessorNoteUpdateDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
   ProfessorTagUsageDTO,
@@ -69,6 +70,12 @@ export const updateProfessorTags = (professorId: number, tagIds: number[]) =>
   apiFetch<ProfessorManagementItemDTO>(`/api/professors/${professorId}/tags`, {
     method: 'PATCH',
     body: JSON.stringify({ tag_ids: tagIds }),
+  });
+
+export const updateProfessorNote = (professorId: number, personalNote: string | null) =>
+  apiFetch<ProfessorNoteUpdateDTO>(`/api/professors/${professorId}/note`, {
+    method: 'PATCH',
+    body: JSON.stringify({ personal_note: personalNote }),
   });
 
 export const archiveProfessor = (professorId: number) =>

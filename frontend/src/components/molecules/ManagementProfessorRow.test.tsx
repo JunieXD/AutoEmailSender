@@ -12,6 +12,7 @@ const professor: ProfessorManagementItemDTO = {
   school: "计算机学院",
   department: "人工智能系",
   research_direction: "大语言模型",
+  personal_note: null,
   recent_papers: [],
   profile_url: null,
   source_url: null,
@@ -111,6 +112,32 @@ describe("ManagementProfessorRow", () => {
     fireEvent.click(within(nameLine).getByRole("button", { name: "给导师添加标签" }));
 
     expect(handleAddTag).toHaveBeenCalled();
+  });
+
+  it("shows the personal note button in the name line and edits it", () => {
+    const handleEditNote = vi.fn();
+
+    render(
+      <ManagementProfessorRow
+        professor={{ ...professor, personal_note: "关注工程落地项目" }}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onEditNote={handleEditNote}
+      />,
+    );
+
+    const nameLine = screen.getByTestId("management-professor-name-line");
+    const noteButton = within(nameLine).getByRole("button", {
+      name: "编辑李伟的个人备注",
+    });
+    fireEvent.click(noteButton);
+
+    expect(handleEditNote).toHaveBeenCalledTimes(1);
   });
 
   it("hides empty tag placeholder while keeping add button", () => {

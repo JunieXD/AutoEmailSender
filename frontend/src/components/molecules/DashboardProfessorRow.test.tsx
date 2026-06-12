@@ -12,6 +12,7 @@ const professor: ProfessorDashboardItemDTO = {
   school: "计算机学院",
   department: "人工智能系",
   research_direction: "大语言模型",
+  personal_note: null,
   recent_papers: [],
   match_score: null,
   sent_count: 0,
@@ -95,6 +96,35 @@ describe("DashboardProfessorRow", () => {
     fireEvent.click(screen.getByRole("button", { name: "给导师添加标签" }));
 
     expect(handleAddTag).toHaveBeenCalled();
+  });
+
+  it("shows the personal note button in the name line and edits it", () => {
+    const handleEditNote = vi.fn();
+
+    render(
+      <DashboardProfessorRow
+        professor={{ ...professor, personal_note: "面聊时提过偏应用方向" }}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+        onEditNote={handleEditNote}
+      />,
+    );
+
+    const nameLine = screen.getByTestId("dashboard-professor-name-line");
+    const noteButton = within(nameLine).getByRole("button", {
+      name: "编辑张明远的个人备注",
+    });
+    fireEvent.click(noteButton);
+
+    expect(handleEditNote).toHaveBeenCalledTimes(1);
   });
 
   it("renders homepage overflow tags as non-draggable display chips", () => {
