@@ -35,6 +35,7 @@ import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchSc
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
 import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
 import { useNotification } from "@/context/NotificationContext";
@@ -64,6 +65,7 @@ import {
   listProfessorsForManagement,
   restoreProfessor,
   updateProfessor,
+  updateProfessorNote,
   updateProfessorTags,
 } from "@/lib/api/professorsApi";
 import type {
@@ -108,6 +110,7 @@ type ProfessorFormState = {
   department: string;
   research_direction: string;
   recent_papers_text: string;
+  personal_note: string;
   profile_url: string;
   source_url: string;
   tag_ids: number[];
@@ -246,6 +249,7 @@ const emptyProfessorForm = (): ProfessorFormState => ({
   department: "",
   research_direction: "",
   recent_papers_text: "",
+  personal_note: "",
   profile_url: "",
   source_url: "",
   tag_ids: [],
@@ -306,6 +310,7 @@ const toProfessorForm = (
   department: professor.department ?? "",
   research_direction: professor.research_direction ?? "",
   recent_papers_text: professor.recent_papers.join("\n"),
+  personal_note: professor.personal_note ?? "",
   profile_url: professor.profile_url ?? "",
   source_url: professor.source_url ?? "",
   tag_ids: professor.tags.map((tag) => tag.id),
@@ -325,6 +330,7 @@ const toProfessorPayload = (
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean),
+  personal_note: form.personal_note.trim() || null,
   profile_url: form.profile_url.trim() || null,
   source_url: form.source_url.trim() || null,
   tag_ids: form.tag_ids,
@@ -566,8 +572,11 @@ export const ProfessorsPage = () => {
   const [professorTags, setProfessorTags] = useState<ProfessorTagDTO[]>([]);
   const [tagEditorProfessor, setTagEditorProfessor] =
     useState<ProfessorManagementItemDTO | null>(null);
+  const [noteEditorProfessor, setNoteEditorProfessor] =
+    useState<ProfessorManagementItemDTO | null>(null);
   const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
   const [savingProfessorTags, setSavingProfessorTags] = useState(false);
+  const [savingProfessorNote, setSavingProfessorNote] = useState(false);
   const [creatingAssignmentTag, setCreatingAssignmentTag] = useState(false);
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
   const [savingBulkTags, setSavingBulkTags] = useState(false);
@@ -974,6 +983,32 @@ export const ProfessorsPage = () => {
       );
     } finally {
       setSavingProfessorTags(false);
+    }
+  };
+
+  const saveProfessorNote = async (note: string) => {
+    if (!noteEditorProfessor) {
+      return;
+    }
+    setSavingProfessorNote(true);
+    try {
+      const updated = await updateProfessorNote(noteEditorProfessor.id, note);
+      setProfessors((previous) =>
+        previous.map((professor) =>
+          professor.id === updated.id
+            ? { ...professor, personal_note: updated.personal_note }
+            : professor,
+        ),
+      );
+      setNoteEditorProfessor(null);
+      notifySuccess("备注已更新", `已更新“${noteEditorProfessor.name}”的个人备注。`);
+    } catch (saveError) {
+      notifyError(
+        "保存备注失败",
+        getActionErrorMessage(saveError, "保存备注失败"),
+      );
+    } finally {
+      setSavingProfessorNote(false);
     }
   };
 
@@ -1913,6 +1948,7 @@ export const ProfessorsPage = () => {
                   onEdit={() => openEditModal(professor)}
                   onArchive={() => void handleArchiveProfessor(professor)}
                   onRestore={() => void handleRestoreProfessor(professor)}
+                  onEditNote={() => setNoteEditorProfessor(professor)}
                   onPrimaryTagSelect={(tagId) =>
                     void handlePrimaryTagSelect(professor, tagId)
                   }
@@ -2149,6 +2185,21 @@ export const ProfessorsPage = () => {
               }
             />
           </label>
+          <label className="block md:col-span-2">
+            {renderFieldLabel("个人备注")}
+            <textarea
+              aria-label="个人备注"
+              value={formState.personal_note}
+              onChange={(event) =>
+                setFormState((previous) => ({
+                  ...previous,
+                  personal_note: event.target.value,
+                }))
+              }
+              className="min-h-28 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
+              placeholder="只对自己可见的沟通偏好、判断依据或跟进提醒。"
+            />
+          </label>
           <label className="block">
             {renderFieldLabel("主页链接")}
             <input
@@ -2365,6 +2416,7 @@ export const ProfessorsPage = () => {
             <li>导出范围：全部正常导师，不包含回收站导师。</li>
             <li>当前搜索、筛选、分页和勾选状态不会影响导出结果。</li>
             <li>字段顺序与导入模板一致，未修改即可重新导入系统。</li>
+            <li>导出文件包含个人备注，请谨慎分享。</li>
             <li>空值会保留为空单元格，CSV 使用 UTF-8 编码。</li>
           </ul>
         </div>
@@ -2558,6 +2610,19 @@ export const ProfessorsPage = () => {
         onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
         onSave={() => void saveTagEditor()}
         onClose={closeTagEditor}
+      />
+
+      <ProfessorNoteDialog
+        open={Boolean(noteEditorProfessor)}
+        professor={noteEditorProfessor}
+        initialNote={noteEditorProfessor?.personal_note ?? null}
+        saving={savingProfessorNote}
+        onSave={(note) => void saveProfessorNote(note)}
+        onClose={() => {
+          if (!savingProfessorNote) {
+            setNoteEditorProfessor(null);
+          }
+        }}
       />
 
       <BulkProfessorTagDialog

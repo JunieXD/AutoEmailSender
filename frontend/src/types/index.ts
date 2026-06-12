@@ -210,7 +210,7 @@ export interface ProfessorDashboardItemDTO {
   school: string | null;
   department: string | null;
   research_direction: string | null;
-  personal_note?: string | null;
+  personal_note: string | null;
   recent_papers: string[];
   match_score: number | null;
   sent_count: number;
@@ -237,7 +237,7 @@ export interface ProfessorDTO {
   school: string | null;
   department: string | null;
   research_direction: string | null;
-  personal_note?: string | null;
+  personal_note: string | null;
   recent_papers: string[] | null;
   profile_url: string | null;
   source_url: string | null;
@@ -290,7 +290,7 @@ export interface ProfessorManagementItemDTO {
   school: string | null;
   department: string | null;
   research_direction: string | null;
-  personal_note?: string | null;
+  personal_note: string | null;
   recent_papers: string[];
   profile_url: string | null;
   source_url: string | null;
@@ -310,7 +310,7 @@ export interface ProfessorUpsertPayloadDTO {
   school: string | null;
   department: string | null;
   research_direction: string | null;
-  personal_note?: string | null;
+  personal_note: string | null;
   recent_papers: string[];
   profile_url: string | null;
   source_url: string | null;

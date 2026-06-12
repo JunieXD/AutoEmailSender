@@ -82,6 +82,7 @@ const selectedProfessor: ProfessorDashboardItemDTO = {
   school: "计算机学院",
   department: "人工智能系",
   research_direction: "自然语言处理",
+  personal_note: null,
   recent_papers: [],
   match_score: null,
   sent_count: 0,

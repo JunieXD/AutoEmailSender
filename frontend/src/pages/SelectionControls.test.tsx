@@ -127,6 +127,7 @@ const createDashboardProfessor = (
   school: id % 2 === 0 ? "计算机学院" : "软件学院",
   department: "人工智能系",
   research_direction: "自然语言处理",
+  personal_note: null,
   recent_papers: [`Paper ${id}`],
   match_score: null,
   sent_count: 0,

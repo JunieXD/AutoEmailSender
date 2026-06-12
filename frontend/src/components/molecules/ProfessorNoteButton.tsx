@@ -42,7 +42,7 @@ export const ProfessorNoteButton = ({
         <span
           role="dialog"
           aria-label={`${professorName}的个人备注`}
-          className="absolute left-0 top-[calc(100%+0.35rem)] z-50 max-h-60 w-[min(22.5rem,80vw)] overflow-y-auto whitespace-pre-wrap rounded-2xl border border-amber-100 bg-white p-3 text-left text-sm leading-6 text-stone-700 shadow-[0_18px_42px_-24px_rgba(41,37,36,0.45)]"
+          className="absolute left-0 top-[calc(100%+0.35rem)] z-50 max-h-60 w-[min(22.5rem,80vw)] overflow-y-auto whitespace-pre-wrap break-words rounded-2xl border border-amber-100 bg-white p-3 text-left text-sm leading-6 text-stone-700 shadow-[0_18px_42px_-24px_rgba(41,37,36,0.45)]"
         >
           {trimmedNote}
         </span>

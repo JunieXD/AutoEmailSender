@@ -22,6 +22,7 @@ import {
   DashboardProfessorRow,
   type DashboardProfessorRowTimeHighlight,
 } from "@/components/molecules/DashboardProfessorRow";
+import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
 import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
@@ -72,6 +73,7 @@ import {
   getProfessorTagUsage,
   listProfessorTags,
   listProfessors,
+  updateProfessorNote,
   updateProfessorTags as updateProfessorTagsRequest,
 } from "@/lib/api/professorsApi";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
@@ -346,8 +348,11 @@ export const HomePage = () => {
   const [professorTags, setProfessorTags] = useState<ProfessorTagDTO[]>([]);
   const [tagEditorProfessor, setTagEditorProfessor] =
     useState<ProfessorDashboardItemDTO | null>(null);
+  const [noteEditorProfessor, setNoteEditorProfessor] =
+    useState<ProfessorDashboardItemDTO | null>(null);
   const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
   const [savingProfessorTags, setSavingProfessorTags] = useState(false);
+  const [savingProfessorNote, setSavingProfessorNote] = useState(false);
   const [creatingProfessorTag, setCreatingProfessorTag] = useState(false);
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
   const [savingBulkTags, setSavingBulkTags] = useState(false);
@@ -512,6 +517,31 @@ export const HomePage = () => {
       return false;
     } finally {
       setSavingProfessorTags(false);
+    }
+  };
+
+  const saveProfessorNote = async (note: string) => {
+    if (!noteEditorProfessor) {
+      return;
+    }
+    setSavingProfessorNote(true);
+    try {
+      const updated = await updateProfessorNote(noteEditorProfessor.id, note);
+      setProfessors((previous) =>
+        previous.map((professor) =>
+          professor.id === updated.id
+            ? { ...professor, personal_note: updated.personal_note }
+            : professor,
+        ),
+      );
+      setNoteEditorProfessor(null);
+      notifySuccess("备注已更新", `已更新“${noteEditorProfessor.name}”的个人备注。`);
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "保存备注失败";
+      notifyError("保存备注失败", message);
+    } finally {
+      setSavingProfessorNote(false);
     }
   };
 
@@ -1461,6 +1491,7 @@ export const HomePage = () => {
                   onToggleSelection={() => toggleSelection(professor.id)}
                   onCalculateMatch={() => void handleGenerateOne(professor.id)}
                   onOpenWorkspace={() => navigate(`/workspace/${professor.id}`)}
+                  onEditNote={() => setNoteEditorProfessor(professor)}
                   onAddTag={() => openTagEditor(professor)}
                 />
               ))}
@@ -1563,6 +1594,18 @@ export const HomePage = () => {
         onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
         onSave={() => void saveTagEditor()}
         onClose={closeTagEditor}
+      />
+      <ProfessorNoteDialog
+        open={Boolean(noteEditorProfessor)}
+        professor={noteEditorProfessor}
+        initialNote={noteEditorProfessor?.personal_note ?? null}
+        saving={savingProfessorNote}
+        onSave={(note) => void saveProfessorNote(note)}
+        onClose={() => {
+          if (!savingProfessorNote) {
+            setNoteEditorProfessor(null);
+          }
+        }}
       />
       <BulkProfessorTagDialog
         open={bulkTagDialogOpen}

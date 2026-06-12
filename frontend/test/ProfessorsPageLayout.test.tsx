@@ -9,6 +9,8 @@ import type { ProfessorManagementItemDTO } from "@/types";
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const listProfessorsForManagement = vi.hoisted(() => vi.fn());
 const getProfessorExportDownloadUrl = vi.hoisted(() => vi.fn());
+const updateProfessor = vi.hoisted(() => vi.fn());
+const updateProfessorNote = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
@@ -24,7 +26,8 @@ vi.mock("@/lib/api/professorsApi", () => ({
   importProfessorsFromFile: vi.fn(),
   restoreProfessor: vi.fn(),
   triggerCrawler: vi.fn(),
-  updateProfessor: vi.fn(),
+  updateProfessor,
+  updateProfessorNote,
 }));
 
 const professor: ProfessorManagementItemDTO = {
@@ -36,6 +39,7 @@ const professor: ProfessorManagementItemDTO = {
   school: "计算机学院",
   department: "人工智能系",
   research_direction: "机器学习与人机协作",
+  personal_note: "已有备注",
   recent_papers: ["Paper A"],
   profile_url: "https://example.edu/li",
   source_url: null,
@@ -44,6 +48,7 @@ const professor: ProfessorManagementItemDTO = {
   archived_at: null,
   created_at: "2026-04-22T00:00:00Z",
   updated_at: "2026-04-23T00:00:00Z",
+  tags: [],
 };
 
 const anotherProfessor: ProfessorManagementItemDTO = {
@@ -55,6 +60,7 @@ const anotherProfessor: ProfessorManagementItemDTO = {
   school: "生命科学学院",
   department: "生物信息系",
   research_direction: "计算生物学",
+  personal_note: null,
   recent_papers: ["Paper B"],
   profile_url: "https://example.edu/wang",
   source_url: null,
@@ -63,6 +69,7 @@ const anotherProfessor: ProfessorManagementItemDTO = {
   archived_at: null,
   created_at: "2026-04-22T00:00:00Z",
   updated_at: "2026-04-24T00:00:00Z",
+  tags: [],
 };
 
 const buildProfessor = (id: number): ProfessorManagementItemDTO => ({
@@ -110,6 +117,13 @@ describe("ProfessorsPage layout", () => {
     getProfessorExportDownloadUrl.mockImplementation(
       (format: "xlsx" | "csv") => `/exports/professors.${format}`,
     );
+    updateProfessor.mockReset();
+    updateProfessor.mockResolvedValue(professor);
+    updateProfessorNote.mockReset();
+    updateProfessorNote.mockResolvedValue({
+      id: professor.id,
+      personal_note: null,
+    });
   });
 
   it("omits the low-value summary cards from the workbench header", async () => {
@@ -231,6 +245,56 @@ describe("ProfessorsPage layout", () => {
     expect(editButton).toHaveClass("justify-center", "whitespace-nowrap");
     expect(archiveButton).toHaveClass("justify-center", "whitespace-nowrap");
     expect(record.queryByRole("button", { name: "移入回收站" })).not.toBeInTheDocument();
+  });
+
+  it("clears a professor personal note from the management row", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "编辑李教授的个人备注" }),
+    );
+    fireEvent.change(screen.getByLabelText("个人备注"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存备注" }));
+
+    await waitFor(() => {
+      expect(updateProfessorNote).toHaveBeenCalledWith(professor.id, "");
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "编辑李教授的个人备注" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("saves personal notes from the full professor edit form", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    const noteInput = screen.getByLabelText("个人备注");
+
+    expect(noteInput).toHaveValue("已有备注");
+
+    fireEvent.change(noteInput, { target: { value: "更新后的备注" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存导师" }));
+
+    await waitFor(() => {
+      expect(updateProfessor).toHaveBeenCalledWith(
+        professor.id,
+        expect.objectContaining({
+          personal_note: "更新后的备注",
+        }),
+      );
+    });
   });
 
   it("guides empty professor lists with three intake cards", async () => {
@@ -425,6 +489,7 @@ describe("ProfessorsPage layout", () => {
       screen.getByText("当前搜索、筛选、分页和勾选状态不会影响导出结果。"),
     ).toBeInTheDocument();
     expect(screen.getByText("字段顺序与导入模板一致，未修改即可重新导入系统。")).toBeInTheDocument();
+    expect(screen.getByText("导出文件包含个人备注，请谨慎分享。")).toBeInTheDocument();
 
     const link = document.createElement("a");
     const click = vi.spyOn(link, "click").mockImplementation(() => undefined);
@@ -442,8 +507,4 @@ describe("ProfessorsPage layout", () => {
     click.mockRestore();
   });
 });
-
-
-
-
 

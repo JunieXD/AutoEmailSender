@@ -24,6 +24,7 @@ const buildProfessor = (
   school: null,
   department: null,
   research_direction: null,
+  personal_note: null,
   recent_papers: [],
   match_score: null,
   sent_count: 0,
