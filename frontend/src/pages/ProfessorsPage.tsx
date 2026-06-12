@@ -1,5 +1,6 @@
 import {
   type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -268,6 +269,30 @@ const normalizeCrawlerStartUrls = (urls: string[]) => {
       seen.add(url);
       return true;
     });
+};
+
+const buildCrawlerStartUrlsAfterMultilinePaste = (
+  urls: string[],
+  targetIndex: number,
+  pastedText: string,
+) => {
+  if (!/[\r\n]/.test(pastedText)) {
+    return null;
+  }
+
+  const pastedUrls = normalizeCrawlerStartUrls(
+    pastedText.split(/\r\n|\r|\n/),
+  );
+  if (pastedUrls.length < 2) {
+    return null;
+  }
+
+  const nextUrls = normalizeCrawlerStartUrls([
+    ...urls.slice(0, targetIndex),
+    ...pastedUrls,
+    ...urls.slice(targetIndex + 1),
+  ]);
+  return nextUrls.length > 0 ? nextUrls : [""];
 };
 
 const toProfessorForm = (
@@ -1374,6 +1399,26 @@ export const ProfessorsPage = () => {
     !crawlerFormState.school.trim() ||
     normalizeCrawlerStartUrls(crawlerFormState.start_urls).length === 0;
 
+  const handleCrawlerUrlPaste = (
+    event: ReactClipboardEvent<HTMLInputElement>,
+    index: number,
+  ) => {
+    const nextUrls = buildCrawlerStartUrlsAfterMultilinePaste(
+      crawlerFormState.start_urls,
+      index,
+      event.clipboardData.getData("text/plain"),
+    );
+    if (!nextUrls) {
+      return;
+    }
+
+    event.preventDefault();
+    setCrawlerFormState((previous) => ({
+      ...previous,
+      start_urls: nextUrls,
+    }));
+  };
+
   if (!hasLoadedProfessors && loading) {
     return <ProfessorsPageLoadingSkeleton />;
   }
@@ -2447,6 +2492,7 @@ export const ProfessorsPage = () => {
                       ),
                     }));
                   }}
+                  onPaste={(event) => handleCrawlerUrlPaste(event, index)}
                   className={inputClassName}
                   placeholder={
                     crawlerFormState.entry_type === "profile"

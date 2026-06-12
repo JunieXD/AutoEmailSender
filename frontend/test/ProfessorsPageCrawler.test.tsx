@@ -135,6 +135,57 @@ describe("ProfessorsPage crawler job entry", () => {
     expect(await screen.findByText("任务中心会继续后台抓取，请到任务中心的教师抓取页签查看进度。")).toBeInTheDocument();
   });
 
+  it("expands pasted multiline crawler urls into separate rows", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+
+    const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
+    fireEvent.change(within(dialog).getByLabelText("学校"), {
+      target: { value: "示例大学" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("学院"), {
+      target: { value: "计算机学院" },
+    });
+
+    fireEvent.paste(within(dialog).getByLabelText("页面 URL"), {
+      clipboardData: {
+        getData: () =>
+          [
+            " https://example.edu/faculty ",
+            "",
+            "https://example.edu/faculty/page/2",
+            "https://example.edu/faculty",
+          ].join("\n"),
+      },
+    });
+
+    const urlInputs = within(dialog).getAllByLabelText("页面 URL");
+    expect(urlInputs).toHaveLength(2);
+    expect(urlInputs[0]).toHaveValue("https://example.edu/faculty");
+    expect(urlInputs[1]).toHaveValue("https://example.edu/faculty/page/2");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "开始抓取" }));
+
+    await waitFor(() => {
+      expect(createCrawlJob).toHaveBeenCalledWith({
+        university: "示例大学",
+        school: "计算机学院",
+        start_url: "https://example.edu/faculty",
+        start_urls: [
+          "https://example.edu/faculty",
+          "https://example.edu/faculty/page/2",
+        ],
+        entry_type: "list",
+        llm_profile_id: 7,
+      });
+    });
+  });
+
   it("removes an added crawler url row", async () => {
     renderPage();
 
