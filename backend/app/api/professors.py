@@ -28,6 +28,8 @@ from app.schemas.professor import (
     ProfessorImportFileResult,
     ProfessorImportResult,
     ProfessorManagementItemRead,
+    ProfessorNoteUpdatePayload,
+    ProfessorNoteUpdateRead,
     ProfessorRead,
     ProfessorTagPayload,
     ProfessorTagRead,
@@ -127,6 +129,7 @@ async def list_professors(
                 status=contact_status.status if contact_status else "not_contacted",
                 last_sent_at=contact_status.last_sent_at if contact_status else None,
                 last_replied_at=contact_status.last_replied_at if contact_status else None,
+                personal_note=professor.personal_note,
                 tags=_serialize_professor_tags(professor),
             )
         )
@@ -210,6 +213,10 @@ async def import_professors_from_file(
     inserted_count = 0
     updated_count = 0
     created_tag_count = 0
+    personal_note_column_present = any(
+        bool(payload.get("has_personal_note_column"))
+        for payload in parsed.data.values()
+    )
     if parsed.data:
         existing_professors = {
             professor.email.lower(): professor
@@ -225,7 +232,9 @@ async def import_professors_from_file(
             professor = existing_professors.get(email)
             if professor is None:
                 professor_data = {
-                    key: value for key, value in payload.items() if key != "tag_names"
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"tag_names", "has_personal_note_column"}
                 }
                 professor = Professor(**professor_data)
                 session.add(professor)
@@ -248,6 +257,8 @@ async def import_professors_from_file(
             professor.recent_papers = payload["recent_papers"]
             professor.profile_url = payload["profile_url"]
             professor.source_url = payload["source_url"]
+            if payload.get("has_personal_note_column"):
+                professor.personal_note = payload["personal_note"]
             if payload["tag_names"]:
                 created_tag_count += await _sync_professor_tags_by_names(
                     session,
@@ -270,6 +281,7 @@ async def import_professors_from_file(
             "created_tag_count": created_tag_count,
             "failed_count": parsed.failed_count,
             "row_count": len(parsed.data),
+            "personal_note_column_present": personal_note_column_present,
         },
     )
     await session.commit()
@@ -461,6 +473,7 @@ async def get_professor(
         source_url=professor.source_url,
         crawl_status=professor.crawl_status,
         skip_reason=professor.skip_reason,
+        personal_note=professor.personal_note,
         archived_at=professor.archived_at,
         created_at=professor.created_at,
         updated_at=professor.updated_at,
@@ -504,6 +517,7 @@ async def update_professor(
     professor.recent_papers = professor_data["recent_papers"]
     professor.profile_url = professor_data["profile_url"]
     professor.source_url = professor_data["source_url"]
+    professor.personal_note = professor_data["personal_note"]
     await _sync_professor_tags(session, professor, payload.tag_ids)
     professor.updated_at = utc_now()
 
@@ -511,6 +525,33 @@ async def update_professor(
     await session.commit()
     return _serialize_management_professor(
         await _get_professor_with_tags_or_404(session, professor.id),
+    )
+
+
+@router.patch("/{professor_id}/note", response_model=ProfessorNoteUpdateRead)
+async def update_professor_personal_note(
+    professor_id: int,
+    payload: ProfessorNoteUpdatePayload,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorNoteUpdateRead:
+    professor = await session.get(Professor, professor_id)
+    if not professor:
+        raise HTTPException(status_code=404, detail="未找到导师")
+
+    professor.personal_note = payload.personal_note
+    professor.updated_at = utc_now()
+    await _record_professor_log(
+        session,
+        professor,
+        "professor.personal_note_updated",
+        metadata=_build_personal_note_log_metadata(professor.personal_note),
+    )
+    await session.commit()
+    await session.refresh(professor)
+    return ProfessorNoteUpdateRead(
+        id=professor.id,
+        personal_note=professor.personal_note,
+        updated_at=professor.updated_at,
     )
 
 
@@ -825,6 +866,7 @@ def _serialize_management_professor(professor: Professor) -> ProfessorManagement
         source_url=professor.source_url,
         crawl_status=professor.crawl_status,
         skip_reason=professor.skip_reason,
+        personal_note=professor.personal_note,
         archived_at=professor.archived_at,
         created_at=professor.created_at,
         updated_at=professor.updated_at,
@@ -843,6 +885,13 @@ def _serialize_tag(tag: ProfessorTag) -> ProfessorTagRead:
 
 def _serialize_professor_tags(professor: Professor) -> list[ProfessorTagRead]:
     return [_serialize_tag(tag) for tag in professor.tags]
+
+
+def _build_personal_note_log_metadata(personal_note: str | None) -> dict[str, object]:
+    return {
+        "has_personal_note": personal_note is not None,
+        "personal_note_length": len(personal_note or ""),
+    }
 
 
 async def _get_professor_with_tags_or_404(

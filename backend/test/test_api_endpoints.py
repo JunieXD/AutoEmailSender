@@ -507,6 +507,84 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(len(restored_dashboard.json()), 1)
         self.assertEqual(restored_dashboard.json()[0]["name"], "张教授")
 
+    def test_professor_personal_note_create_list_update_and_clear(self) -> None:
+        create_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "备注导师",
+                "email": "note@example.edu",
+                "title": "教授",
+                "university": "备注大学",
+                "school": "计算机学院",
+                "department": "人工智能系",
+                "research_direction": "智能体",
+                "recent_papers": ["Paper A"],
+                "profile_url": None,
+                "source_url": None,
+                "personal_note": "  6 月 20 日上午 Zoom 面试  ",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        created = create_response.json()
+        professor_id = created["id"]
+        self.assertEqual(created["personal_note"], "6 月 20 日上午 Zoom 面试")
+
+        dashboard_list = self.client.get("/api/professors")
+        self.assertEqual(dashboard_list.status_code, 200, msg=dashboard_list.text)
+        dashboard_professor = next(item for item in dashboard_list.json() if item["id"] == professor_id)
+        self.assertEqual(dashboard_professor["personal_note"], "6 月 20 日上午 Zoom 面试")
+
+        management_list = self.client.get("/api/professors/management")
+        self.assertEqual(management_list.status_code, 200, msg=management_list.text)
+        management_professor = next(item for item in management_list.json() if item["id"] == professor_id)
+        self.assertEqual(management_professor["personal_note"], "6 月 20 日上午 Zoom 面试")
+
+        detail_response = self.client.get(f"/api/professors/{professor_id}")
+        self.assertEqual(detail_response.status_code, 200, msg=detail_response.text)
+        self.assertEqual(detail_response.json()["personal_note"], "6 月 20 日上午 Zoom 面试")
+
+        update_response = self.client.patch(
+            f"/api/professors/{professor_id}/note",
+            json={"personal_note": "  新备注  "},
+        )
+        self.assertEqual(update_response.status_code, 200, msg=update_response.text)
+        self.assertEqual(update_response.json()["id"], professor_id)
+        self.assertEqual(update_response.json()["personal_note"], "新备注")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT metadata
+                FROM operation_logs
+                WHERE event_name = 'professor.personal_note_updated'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertIsNotNone(row)
+        note_metadata = json.loads(row[0])
+        self.assertEqual(note_metadata["has_personal_note"], True)
+        self.assertEqual(note_metadata["personal_note_length"], 3)
+        self.assertNotIn("新备注", json.dumps(note_metadata, ensure_ascii=False))
+
+        clear_response = self.client.patch(
+            f"/api/professors/{professor_id}/note",
+            json={"personal_note": "   "},
+        )
+        self.assertEqual(clear_response.status_code, 200, msg=clear_response.text)
+        self.assertIsNone(clear_response.json()["personal_note"])
+
+    def test_update_professor_personal_note_returns_404_for_missing_professor(self) -> None:
+        response = self.client.patch(
+            "/api/professors/999999/note",
+            json={"personal_note": "备注"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "未找到导师")
+
     def test_professor_dashboard_returns_contact_state_labels(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -951,8 +1029,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("# research_direction：研究方向，多个方向用中文分号 ； 分隔。示例：大语言模型；智能体；信息抽取", csv_template.text)
         self.assertIn("# recent_papers：近期论文，多篇用 | 分隔；最多保留前 8 篇。示例：Paper A|Paper B", csv_template.text)
         self.assertIn("# tags：导师标签，多个标签用中文分号", csv_template.text)
+        self.assertIn("# personal_note：个人备注", csv_template.text)
         self.assertIn("name,email,title", csv_template.text)
-        self.assertIn("source_url,tags", csv_template.text)
+        self.assertIn("tags,personal_note", csv_template.text)
         self.assertIn("示例：张明远,zhang@example.edu,教授,示例大学,人工智能学院,计算机科学系,大语言模型；智能体；信息抽取", csv_template.text)
         self.assertEqual(xlsx_template.status_code, 200)
         self.assertIn("professors_import_template.xlsx", xlsx_template.headers["content-disposition"])
@@ -991,6 +1070,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "recent_papers": ["Legacy Paper"],
                 "profile_url": None,
                 "source_url": None,
+                "personal_note": "原备注保留",
             },
         ).json()
         professor_id = created_professor["id"]
@@ -1024,6 +1104,24 @@ class ApiEndpointTests(unittest.TestCase):
             ["Paper 1", "Paper 2", "Paper 3", "Paper 4", "Paper 5", "Paper 6", "Paper 7", "Paper 8"],
         )
         self.assertIsNone(li_professor["archived_at"])
+        self.assertEqual(li_professor["personal_note"], "原备注保留")
+
+        new_template_content = (
+            ",".join(PROFESSOR_TEMPLATE_COLUMNS)
+            + "\n"
+            + "李教授,li@example.edu,副教授,New University,School of AI,AI,Updated direction,Paper 1,https://example.edu/li,https://example.edu/faculty,,新备注\n"
+        ).encode("utf-8-sig")
+        new_template_import = self.client.post(
+            "/api/professors/import-file",
+            files={"file": ("professors.csv", io.BytesIO(new_template_content), "text/csv")},
+        )
+        self.assertEqual(new_template_import.status_code, 200, msg=new_template_import.text)
+        refreshed_after_note = self.client.get(
+            "/api/professors/management",
+            params={"archived": "active"},
+        ).json()
+        li_after_note = next(item for item in refreshed_after_note if item["email"] == "li@example.edu")
+        self.assertEqual(li_after_note["personal_note"], "新备注")
 
         workbook = Workbook()
         sheet = workbook.active
@@ -1108,6 +1206,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "recent_papers": ["Paper A", "Paper B"],
                 "profile_url": "https://example.edu/export",
                 "source_url": None,
+                "personal_note": "导出备注",
             },
         )
         self.assertEqual(active.status_code, 201, msg=active.text)
@@ -1124,8 +1223,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("text/csv", csv_export.headers["content-type"])
         self.assertIn("professors_export.csv", csv_export.headers["content-disposition"])
         decoded = csv_export.content.decode("utf-8-sig")
+        self.assertIn("tags,personal_note", decoded)
         self.assertIn("export@example.edu", decoded)
         self.assertIn("Paper A|Paper B", decoded)
+        self.assertIn("导出备注", decoded)
         self.assertNotIn("archived-export@example.edu", decoded)
 
         csv_reimport = self.client.post(
@@ -1136,14 +1237,18 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(csv_reimport.json()["inserted_count"], 0)
         self.assertEqual(csv_reimport.json()["updated_count"], 1)
         self.assertEqual(csv_reimport.json()["failed_count"], 0)
+        after_csv_reimport = self.client.get("/api/professors/management").json()
+        csv_reimported = next(item for item in after_csv_reimport if item["email"] == "export@example.edu")
+        self.assertEqual(csv_reimported["personal_note"], "导出备注")
 
         xlsx_export = self.client.get("/api/professors/export", params={"format": "xlsx"})
         self.assertEqual(xlsx_export.status_code, 200, msg=xlsx_export.text)
         self.assertIn("professors_export.xlsx", xlsx_export.headers["content-disposition"])
         workbook = load_workbook(io.BytesIO(xlsx_export.content), read_only=True, data_only=True)
         rows = list(workbook.active.iter_rows(values_only=True))
-        self.assertEqual(rows[0][0], "name")
+        self.assertEqual(list(rows[0]), PROFESSOR_TEMPLATE_COLUMNS)
         self.assertEqual(rows[1][1], "export@example.edu")
+        self.assertEqual(rows[1][11], "导出备注")
 
         xlsx_reimport = self.client.post(
             "/api/professors/import-file",
@@ -1159,6 +1264,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(xlsx_reimport.json()["inserted_count"], 0)
         self.assertEqual(xlsx_reimport.json()["updated_count"], 1)
         self.assertEqual(xlsx_reimport.json()["failed_count"], 0)
+        after_xlsx_reimport = self.client.get("/api/professors/management").json()
+        xlsx_reimported = next(item for item in after_xlsx_reimport if item["email"] == "export@example.edu")
+        self.assertEqual(xlsx_reimported["personal_note"], "导出备注")
 
         bad_format = self.client.get("/api/professors/export", params={"format": "json"})
         self.assertEqual(bad_format.status_code, 400)

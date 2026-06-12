@@ -78,6 +78,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
             recent_papers=" Paper A | Paper B ",
             profile_url=" https://example.edu/zhang ",
             source_url=" https://example.edu/faculty ",
+            personal_note="  6 月 20 日上午 Zoom 面试  ",
         )
 
         self.assertEqual(
@@ -93,8 +94,20 @@ class ProfessorManagementServiceTests(unittest.TestCase):
                 "recent_papers": ["Paper A", "Paper B"],
                 "profile_url": "https://example.edu/zhang",
                 "source_url": "https://example.edu/faculty",
+                "personal_note": "6 月 20 日上午 Zoom 面试",
             },
         )
+
+    def test_normalize_professor_payload_clears_blank_personal_note(self) -> None:
+        payload = ProfessorUpsertPayload(
+            name="张明远",
+            email="zhang@example.edu",
+            personal_note="   ",
+        )
+
+        normalized = normalize_professor_payload(payload)
+
+        self.assertIsNone(normalized["personal_note"])
 
     def test_professor_payload_rejects_blank_name_or_email_before_service_validation(self) -> None:
         for field_name, payload in [
@@ -134,6 +147,8 @@ class ProfessorManagementServiceTests(unittest.TestCase):
                 "profile_url": "https://example.edu/new",
                 "source_url": "https://example.edu/faculty",
                 "tag_names": [],
+                "personal_note": None,
+                "has_personal_note_column": True,
             },
         )
 
@@ -185,7 +200,11 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         )
 
     def test_parse_csv_import_accepts_legacy_template_without_tags_column(self) -> None:
-        legacy_columns = [column for column in PROFESSOR_TEMPLATE_COLUMNS if column != "tags"]
+        legacy_columns = [
+            column
+            for column in PROFESSOR_TEMPLATE_COLUMNS
+            if column not in {"tags", "personal_note"}
+        ]
         csv_content = (
             ",".join(legacy_columns)
             + "\n"
@@ -196,6 +215,39 @@ class ProfessorManagementServiceTests(unittest.TestCase):
 
         self.assertEqual(parsed.failed_count, 0)
         self.assertEqual(parsed.data["zhang@example.edu"]["tag_names"], [])
+        self.assertFalse(parsed.data["zhang@example.edu"]["has_personal_note_column"])
+
+    def test_parse_csv_import_reads_personal_note_when_column_exists(self) -> None:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        writer.writerow(
+            [
+                "张三",
+                "zhang@example.edu",
+                "教授",
+                "示例大学",
+                "人工智能学院",
+                "计算机科学系",
+                "大语言模型",
+                "",
+                "",
+                "",
+                "高意愿",
+                "  6 月 20 日上午 Zoom 面试  ",
+            ],
+        )
+
+        parsed = parse_professor_import_file(
+            "professors.csv",
+            buffer.getvalue().encode("utf-8-sig"),
+        )
+
+        self.assertEqual(
+            parsed.data["zhang@example.edu"]["personal_note"],
+            "6 月 20 日上午 Zoom 面试",
+        )
+        self.assertTrue(parsed.data["zhang@example.edu"]["has_personal_note_column"])
 
     def test_parse_xlsx_import_finds_header_after_help_rows_and_reads_sparse_rows(self) -> None:
         workbook = Workbook()
@@ -235,6 +287,8 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertTrue(csv_content.startswith(b"\xef\xbb\xbf"))
         self.assertIn("name,email,title", csv_content.decode("utf-8-sig"))
         self.assertIn("tags", csv_content.decode("utf-8-sig").splitlines()[-2])
+        self.assertIn("tags,personal_note", csv_content.decode("utf-8-sig"))
+        self.assertIn("# personal_note：个人备注", csv_content.decode("utf-8-sig"))
 
         self.assertEqual(
             xlsx_media_type,
@@ -245,6 +299,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         workbook = load_workbook(io.BytesIO(xlsx_content), read_only=True, data_only=True)
         rows = list(workbook.active.iter_rows(values_only=True))
         self.assertIn("tags", rows[-2])
+        self.assertIn("personal_note", rows[-2])
 
         with self.assertRaisesRegex(ValueError, "仅支持 csv 或 xlsx 模板"):
             build_professor_template("json")
@@ -261,6 +316,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
             recent_papers=["Paper A", "Paper B"],
             profile_url="https://example.edu/li",
             source_url=None,
+            personal_note="导出备注",
         )
 
         content, media_type, filename = build_professor_export([professor], "csv")
@@ -271,6 +327,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         decoded = content.decode("utf-8-sig")
         self.assertIn(",".join(PROFESSOR_TEMPLATE_COLUMNS), decoded)
         self.assertIn("Paper A|Paper B", decoded)
+        self.assertIn("导出备注", decoded)
         self.assertNotIn("None", decoded)
         self.assertNotIn("null", decoded)
 
@@ -278,6 +335,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(parsed.failed_count, 0)
         self.assertEqual(parsed.data["li@example.edu"]["name"], "李伟")
         self.assertEqual(parsed.data["li@example.edu"]["recent_papers"], ["Paper A", "Paper B"])
+        self.assertEqual(parsed.data["li@example.edu"]["personal_note"], "导出备注")
 
     def test_build_professor_export_xlsx_can_be_imported_without_changes(self) -> None:
         professor = Professor(
@@ -291,6 +349,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
             recent_papers=["Paper C"],
             profile_url=None,
             source_url="https://example.edu/faculty",
+            personal_note="XLSX 备注",
         )
 
         content, media_type, filename = build_professor_export([professor], "xlsx")
@@ -306,10 +365,12 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(rows[1][0], "王芳")
         self.assertEqual(rows[1][7], "Paper C")
         self.assertIsNone(rows[1][8])
+        self.assertEqual(rows[1][11], "XLSX 备注")
 
         parsed = parse_professor_import_file(filename, content)
         self.assertEqual(parsed.failed_count, 0)
         self.assertEqual(parsed.data["wang@example.edu"]["source_url"], "https://example.edu/faculty")
+        self.assertEqual(parsed.data["wang@example.edu"]["personal_note"], "XLSX 备注")
 
     def test_build_professor_export_empty_file_and_unknown_format(self) -> None:
         csv_content, _, csv_filename = build_professor_export([], "csv")
@@ -337,6 +398,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
             recent_papers=["=Paper A", "+Paper B", "Normal Paper"],
             profile_url="https://example.edu/formula",
             source_url=None,
+            personal_note="=private note",
         )
 
         csv_content, _, _ = build_professor_export([professor], "csv")
@@ -347,6 +409,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(csv_rows[1][4], "'@人工智能学院")
         self.assertEqual(csv_rows[1][5], "'=计算机科学系")
         self.assertEqual(csv_rows[1][7], "'=Paper A|'+Paper B|Normal Paper")
+        self.assertEqual(csv_rows[1][11], "'=private note")
 
         xlsx_content, _, _ = build_professor_export([professor], "xlsx")
         workbook = load_workbook(io.BytesIO(xlsx_content), read_only=True, data_only=True)
@@ -357,6 +420,7 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(rows[1][4], "'@人工智能学院")
         self.assertEqual(rows[1][5], "'=计算机科学系")
         self.assertEqual(rows[1][7], "'=Paper A|'+Paper B|Normal Paper")
+        self.assertEqual(rows[1][11], "'=private note")
 
     def test_build_professor_export_includes_tags_column_for_round_trip_import(self) -> None:
         tag = type(

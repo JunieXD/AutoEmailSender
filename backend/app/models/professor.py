@@ -36,6 +36,7 @@ class Professor(Base):
         server_default=text("'discovered'"),
     )
     skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    personal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,

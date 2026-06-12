@@ -29,9 +29,12 @@ PROFESSOR_TEMPLATE_COLUMNS = [
     "profile_url",
     "source_url",
     "tags",
+    "personal_note",
 ]
 PROFESSOR_LEGACY_TEMPLATE_COLUMNS = [
-    column for column in PROFESSOR_TEMPLATE_COLUMNS if column != "tags"
+    column
+    for column in PROFESSOR_TEMPLATE_COLUMNS
+    if column not in {"tags", "personal_note"}
 ]
 PROFESSOR_EXPORT_COLUMNS = PROFESSOR_TEMPLATE_COLUMNS
 
@@ -50,6 +53,7 @@ PROFESSOR_TEMPLATE_HELP_LINES = [
     "# profile_url：导师主页链接。示例：https://example.edu/zhang",
     "# source_url：数据来源链接。示例：https://example.edu/faculty",
     "# tags：导师标签，多个标签用中文分号 ； 分隔；也兼容英文分号 ;、竖线 |、逗号 ,。示例：高意愿；羊导",
+    "# personal_note：个人备注，仅供自己记录；导出文件会包含该字段，请谨慎分享。",
 ]
 
 PROFESSOR_TEMPLATE_EXAMPLE_ROW = [
@@ -64,6 +68,7 @@ PROFESSOR_TEMPLATE_EXAMPLE_ROW = [
     "https://example.edu/zhang",
     "https://example.edu/faculty",
     "高意愿；羊导",
+    "6 月 20 日上午 Zoom 面试",
 ]
 
 SUPPORTED_IMPORT_EXTENSIONS = {".csv", ".xlsx"}
@@ -205,6 +210,7 @@ def normalize_professor_payload(payload: ProfessorUpsertPayload) -> dict[str, An
         "recent_papers": payload.recent_papers,
         "profile_url": payload.profile_url,
         "source_url": payload.source_url,
+        "personal_note": payload.personal_note,
     }
 
 
@@ -318,6 +324,7 @@ def _professor_to_export_row(professor: Any) -> list[str]:
             for tag in tags
             if (exported := _export_cell(getattr(tag, "name", None)))
         ),
+        _export_cell(getattr(professor, "personal_note", None)),
     ]
 
 
@@ -426,6 +433,7 @@ def _validate_columns(columns: list[str] | tuple[str, ...] | None) -> None:
 
 def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
     raw_values = {key: _clean_cell_value(row.get(key)) for key in PROFESSOR_TEMPLATE_COLUMNS}
+    has_personal_note_column = "personal_note" in row
     if not any(raw_values.values()):
         return None
 
@@ -446,6 +454,8 @@ def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "profile_url": raw_values["profile_url"],
         "source_url": raw_values["source_url"],
         "tag_names": _parse_tag_names(raw_values["tags"]),
+        "personal_note": raw_values["personal_note"],
+        "has_personal_note_column": has_personal_note_column,
     }
 
 

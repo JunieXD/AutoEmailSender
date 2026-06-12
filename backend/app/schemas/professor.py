@@ -17,6 +17,7 @@ ProfessorDashboardStatus = Literal[
     "replied",
     "failed",
 ]
+MAX_PERSONAL_NOTE_LENGTH = 10_000
 
 
 class ProfessorTagRead(ApiSchema):
@@ -64,6 +65,7 @@ class ProfessorRead(ApiSchema):
     source_url: str | None
     crawl_status: str
     skip_reason: str | None
+    personal_note: str | None
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -85,6 +87,7 @@ class ProfessorDashboardItemRead(ApiSchema):
     status: ProfessorDashboardStatus
     last_sent_at: datetime | None = None
     last_replied_at: datetime | None = None
+    personal_note: str | None = None
     tags: list[ProfessorTagRead] = Field(default_factory=list)
 
 
@@ -109,6 +112,7 @@ class ProfessorManagementItemRead(ApiSchema):
     source_url: str | None
     crawl_status: str
     skip_reason: str | None
+    personal_note: str | None
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -126,6 +130,7 @@ class ProfessorUpsertPayload(BaseModel):
     recent_papers: list[str] = Field(default_factory=list)
     profile_url: str | None = None
     source_url: str | None = None
+    personal_note: str | None = Field(default=None, max_length=MAX_PERSONAL_NOTE_LENGTH)
     tag_ids: list[int] = Field(default_factory=list)
 
     @field_validator(
@@ -138,6 +143,7 @@ class ProfessorUpsertPayload(BaseModel):
         "research_direction",
         "profile_url",
         "source_url",
+        "personal_note",
         mode="before",
     )
     @classmethod
@@ -165,6 +171,24 @@ class ProfessorUpsertPayload(BaseModel):
     @classmethod
     def _normalize_recent_papers(cls, value: object) -> list[str]:
         return normalize_recent_papers(value)
+
+
+class ProfessorNoteUpdatePayload(BaseModel):
+    personal_note: str | None = Field(default=None, max_length=MAX_PERSONAL_NOTE_LENGTH)
+
+    @field_validator("personal_note", mode="before")
+    @classmethod
+    def _strip_personal_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class ProfessorNoteUpdateRead(ApiSchema):
+    id: int
+    personal_note: str | None
+    updated_at: datetime
 
 
 class ProfessorImportFileResult(ApiSchema):
