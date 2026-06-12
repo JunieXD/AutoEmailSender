@@ -937,7 +937,6 @@ async def rewrite_task_draft(
         runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, payload.llm_profile_id)
         thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
         runtime_settings = await get_runtime_settings(session)
-        thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
             draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
@@ -1111,6 +1110,7 @@ async def preview_task_draft(
             raise ValueError(detail)
 
         runtime_settings = await get_runtime_settings(session)
+        thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
             draft_rewrite_tone=runtime_settings.draft_rewrite_tone,

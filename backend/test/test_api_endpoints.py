@@ -44,8 +44,20 @@ class ApiEndpointTests(unittest.TestCase):
         get_settings.cache_clear()
 
         self.client = TestClient(create_app())
+        self._task_thinking_adaptation_patch = patch(
+            "app.services.task_runtime.ensure_thinking_adaptation",
+            new=AsyncMock(return_value=None),
+        )
+        self._test_compose_thinking_adaptation_patch = patch(
+            "app.services.test_compose_runtime.ensure_thinking_adaptation",
+            new=AsyncMock(return_value=None),
+        )
+        self._task_thinking_adaptation_patch.start()
+        self._test_compose_thinking_adaptation_patch.start()
 
     def tearDown(self) -> None:
+        self._test_compose_thinking_adaptation_patch.stop()
+        self._task_thinking_adaptation_patch.stop()
         self.client.close()
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
@@ -1743,9 +1755,15 @@ class ApiEndpointTests(unittest.TestCase):
                 completion_tokens=8,
             )
 
-        with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
-            AsyncMock(side_effect=fake_generate_draft_content),
+        with (
+            patch(
+                "app.services.task_runtime.ensure_thinking_adaptation",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                AsyncMock(side_effect=fake_generate_draft_content),
+            ),
         ):
             response = self.client.post(
                 f"/api/email-tasks/{task_id}/rewrite-draft",
@@ -1763,6 +1781,45 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["draft"]["source"], "ai_rewrite")
         self.assertEqual(current_task["draft"]["subject"], "AI 改写主题")
         self.assertEqual(current_task["draft"]["body_text"], "AI 改写正文")
+
+    def test_rewrite_draft_resolves_thinking_adaptation_once(self) -> None:
+        task_id = self._create_rewrite_ready_task()
+        extra_body = {"thinking": {"type": "disabled"}}
+
+        async def fake_generate_draft_content(**kwargs):
+            self.assertEqual(kwargs["thinking_extra_body"], extra_body)
+            return self._build_draft_generation_result(
+                subject="AI 改写主题",
+                body_text="AI 改写正文",
+                body_html="<p>AI 改写正文</p>",
+                prompt_tokens=12,
+                completion_tokens=8,
+            )
+
+        with (
+            patch(
+                "app.services.task_runtime.ensure_thinking_adaptation",
+                AsyncMock(return_value=extra_body),
+            ) as thinking_mock,
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                AsyncMock(side_effect=fake_generate_draft_content),
+            ) as generate_mock,
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "用户改过主题",
+                    "body_text": "用户改过正文",
+                    "body_html": "<p>用户改过正文</p>",
+                    "selected_material_ids": [],
+                    "llm_profile_id": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        thinking_mock.assert_awaited_once()
+        generate_mock.assert_awaited_once()
 
     def test_rewrite_draft_rejects_empty_body_without_calling_llm(self) -> None:
         task_id = self._create_rewrite_ready_task()
@@ -1818,9 +1875,15 @@ class ApiEndpointTests(unittest.TestCase):
                 body_html="<p>AI 改写正文</p>",
             )
 
-        with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
-            AsyncMock(side_effect=fake_generate_draft_content),
+        with (
+            patch(
+                "app.services.task_runtime.ensure_thinking_adaptation",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                AsyncMock(side_effect=fake_generate_draft_content),
+            ),
         ):
             response = self.client.post(
                 f"/api/email-tasks/{task_id}/rewrite-draft",
@@ -1836,16 +1899,24 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
 
     def test_rewrite_draft_normalizes_source_html_before_persisting(self) -> None:
+        from app.services import llm_runtime
+
         task_id = self._create_rewrite_ready_task()
 
         async def fake_generate_draft_content(**kwargs):
             self.assertEqual(kwargs["custom_body"], "用户改过正文")
             self.assertEqual(kwargs["custom_body_html"], "<p>用户改过正文</p>")
-            raise RuntimeError("停止在源草稿持久化之后")
+            raise llm_runtime.LLMRuntimeError("模型请求失败: 停止在源草稿持久化之后")
 
-        with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
-            AsyncMock(side_effect=fake_generate_draft_content),
+        with (
+            patch(
+                "app.services.task_runtime.ensure_thinking_adaptation",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                AsyncMock(side_effect=fake_generate_draft_content),
+            ),
         ):
             response = self.client.post(
                 f"/api/email-tasks/{task_id}/rewrite-draft",

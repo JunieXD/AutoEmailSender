@@ -20,7 +20,11 @@ def _make_test_session_factory() -> tuple[async_sessionmaker, Path]:
     db_path = Path(tmp.name)
     create_migrated_sqlite_database(db_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        engine,
+        autoflush=False,
+        expire_on_commit=False,
+    )
     return session_factory, db_path
 
 
@@ -255,6 +259,43 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertTrue(hit)
         self.assertEqual(value, {"enable_thinking": False})
+
+    async def test_record_twice_before_commit_updates_single_pending_row(self) -> None:
+        from app.models import ThinkingAdaptationCache
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            record_thinking_adaptation,
+        )
+        from sqlalchemy import func, select
+
+        async with self.session_factory() as session:
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-v1",
+                learned_extra_body=None,
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-v1",
+                learned_extra_body={"thinking": {"type": "disabled"}},
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-v1",
+            )
+            row_count = await session.scalar(
+                select(func.count()).select_from(ThinkingAdaptationCache)
+            )
+
+        self.assertTrue(hit)
+        self.assertEqual(value, {"thinking": {"type": "disabled"}})
+        self.assertEqual(row_count, 1)
 
 
 class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):

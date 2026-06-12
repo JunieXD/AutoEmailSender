@@ -137,21 +137,21 @@ async def record_thinking_adaptation(
     )
     now = utc_now()
     if row is None:
-        session.add(
-            ThinkingAdaptationCache(
-                api_base_url=api_base_url,
-                model_name=model_name,
-                learned_extra_body=(
-                    dict(learned_extra_body) if learned_extra_body else None
-                ),
-                probed_at=now,
-            )
+        row = ThinkingAdaptationCache(
+            api_base_url=api_base_url,
+            model_name=model_name,
+            learned_extra_body=(
+                dict(learned_extra_body) if learned_extra_body else None
+            ),
+            probed_at=now,
         )
+        session.add(row)
     else:
         row.learned_extra_body = (
             dict(learned_extra_body) if learned_extra_body else None
         )
         row.probed_at = now
+    await session.flush([row])
 
 
 class ThinkingAdaptationFailed(RuntimeError):
