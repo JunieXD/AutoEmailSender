@@ -241,9 +241,9 @@ describe("DesktopUpdateButton", () => {
       mode: "differential",
     });
 
-    expect(await screen.findByText(/增量包：总计 20.0 MB/)).toBeInTheDocument();
-    expect(screen.getByText(/增量包：已下载 10.0 MB/)).toBeInTheDocument();
-    expect(screen.getByText(/增量包：剩余 10.0 MB/)).toBeInTheDocument();
+    expect(await screen.findByText(/差量包：总计 20.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/差量包：已下载 10.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/差量包：剩余 10.0 MB/)).toBeInTheDocument();
     expect(screen.getByText(/512.0 KB\/s/)).toBeInTheDocument();
     expect(screen.getByText(/预计 20 秒/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

@@ -440,7 +440,7 @@ function DesktopUpdateStatusBar({
   }
 
   if (status.state === "downloading" || status.state === "slow_download_offered") {
-    const modeLabel = status.mode === "full" ? "全量包" : "增量包";
+    const modeLabel = status.mode === "full" ? "全量包" : "差量包";
 
     return (
       <span
