@@ -249,6 +249,35 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         )
         self.assertTrue(parsed.data["zhang@example.edu"]["has_personal_note_column"])
 
+    def test_parse_csv_import_rejects_personal_note_over_limit(self) -> None:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        writer.writerow(
+            [
+                "张三",
+                "zhang@example.edu",
+                "教授",
+                "示例大学",
+                "人工智能学院",
+                "计算机科学系",
+                "大语言模型",
+                "",
+                "",
+                "",
+                "高意愿",
+                "x" * 10_001,
+            ],
+        )
+
+        parsed = parse_professor_import_file(
+            "professors.csv",
+            buffer.getvalue().encode("utf-8-sig"),
+        )
+
+        self.assertEqual(parsed.failed_count, 1)
+        self.assertEqual(parsed.data, {})
+
     def test_parse_xlsx_import_finds_header_after_help_rows_and_reads_sparse_rows(self) -> None:
         workbook = Workbook()
         sheet = workbook.active

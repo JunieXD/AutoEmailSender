@@ -165,6 +165,28 @@ describe("filterDashboardProfessors", () => {
     expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
   });
 
+  it("does not match keyword against personal notes", () => {
+    const noteOnlyProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Alice",
+        university: "MIT",
+        school: "Engineering",
+        research_direction: "Robotics",
+        personal_note: "独有备注关键词",
+      }),
+      buildProfessor({
+        id: 5,
+        name: "Bob",
+        personal_note: null,
+      }),
+    ];
+
+    expect(
+      namesFor(noteOnlyProfessors, { keyword: "独有备注关键词" }),
+    ).toEqual([]);
+  });
+
   it("limits dashboard keyword matching to selected tag scope", () => {
     const taggedProfessors = [
       buildProfessor({

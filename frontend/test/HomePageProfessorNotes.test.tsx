@@ -96,7 +96,11 @@ describe("HomePage professor notes", () => {
     vi.clearAllMocks();
     listProfessors.mockResolvedValue([professor]);
     listProfessorTags.mockResolvedValue([]);
-    updateProfessorNote.mockResolvedValue({ id: 101, personal_note: null });
+    updateProfessorNote.mockResolvedValue({
+      id: 101,
+      personal_note: null,
+      updated_at: "2026-04-24T00:00:00Z",
+    });
   });
 
   it("clears a professor personal note from the dashboard row", async () => {

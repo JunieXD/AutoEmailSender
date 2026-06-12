@@ -320,6 +320,7 @@ export interface ProfessorUpsertPayloadDTO {
 export interface ProfessorNoteUpdateDTO {
   id: number;
   personal_note: string | null;
+  updated_at: string;
 }
 
 export interface ProfessorImportFileResultDTO {

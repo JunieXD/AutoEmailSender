@@ -123,6 +123,7 @@ describe("ProfessorsPage layout", () => {
     updateProfessorNote.mockResolvedValue({
       id: professor.id,
       personal_note: null,
+      updated_at: "2026-04-24T00:00:00Z",
     });
   });
 
@@ -283,6 +284,7 @@ describe("ProfessorsPage layout", () => {
     const noteInput = screen.getByLabelText("个人备注");
 
     expect(noteInput).toHaveValue("已有备注");
+    expect(noteInput).toHaveAttribute("maxLength", "10000");
 
     fireEvent.change(noteInput, { target: { value: "更新后的备注" } });
     fireEvent.click(screen.getByRole("button", { name: "保存导师" }));
@@ -507,4 +509,3 @@ describe("ProfessorsPage layout", () => {
     click.mockRestore();
   });
 });
-

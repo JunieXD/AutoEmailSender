@@ -13,7 +13,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils.exceptions import InvalidFileException
 
-from app.schemas.professor import ProfessorUpsertPayload
+from app.schemas.professor import MAX_PERSONAL_NOTE_LENGTH, ProfessorUpsertPayload
 from app.services.professor_field_normalization import normalize_recent_papers
 
 
@@ -441,6 +441,9 @@ def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
     email = normalize_professor_email(raw_values["email"]) or ""
     if not name or not email or not is_valid_professor_email(email):
         return None
+    personal_note = raw_values["personal_note"]
+    if personal_note and len(personal_note) > MAX_PERSONAL_NOTE_LENGTH:
+        return None
 
     return {
         "name": name,
@@ -454,7 +457,7 @@ def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "profile_url": raw_values["profile_url"],
         "source_url": raw_values["source_url"],
         "tag_names": _parse_tag_names(raw_values["tags"]),
-        "personal_note": raw_values["personal_note"],
+        "personal_note": personal_note,
         "has_personal_note_column": has_personal_note_column,
     }
 

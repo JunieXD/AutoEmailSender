@@ -172,6 +172,30 @@ describe("filterManagementProfessors", () => {
     expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
   });
 
+  it("does not match keyword against personal notes", () => {
+    const noteOnlyProfessors = [
+      buildProfessor({
+        id: 4,
+        name: "Alice",
+        email: "alice@example.edu",
+        university: "MIT",
+        school: "Engineering",
+        research_direction: "Robotics",
+        personal_note: "隐私备注关键词",
+      }),
+      buildProfessor({
+        id: 5,
+        name: "Bob",
+        email: "bob@example.edu",
+        personal_note: null,
+      }),
+    ];
+
+    expect(
+      namesFor(noteOnlyProfessors, { keyword: "隐私备注关键词" }),
+    ).toEqual([]);
+  });
+
   it("limits management keyword matching to selected tag scope", () => {
     const taggedProfessors = [
       buildProfessor({

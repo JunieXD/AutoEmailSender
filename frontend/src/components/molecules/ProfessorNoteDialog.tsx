@@ -114,6 +114,7 @@ export const ProfessorNoteDialog = ({
             aria-label="个人备注"
             value={note}
             onChange={(event) => setNote(event.target.value)}
+            maxLength={10000}
             disabled={saving}
             className="min-h-40 w-full resize-y rounded-2xl border border-stone-200 bg-stone-50/60 px-4 py-3 text-sm leading-6 text-stone-800 outline-none transition placeholder:text-stone-400 focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-70"
             placeholder="记录只对自己有用的判断、沟通偏好或跟进线索。"

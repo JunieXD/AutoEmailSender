@@ -48,6 +48,21 @@ describe("ProfessorNoteDialog", () => {
     expect(handleSave).toHaveBeenCalledWith("新备注");
   });
 
+  it("limits note input to the backend note length", () => {
+    render(
+      <ProfessorNoteDialog
+        open
+        professor={professor}
+        initialNote="已有备注"
+        saving={false}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("个人备注")).toHaveAttribute("maxLength", "10000");
+  });
+
   it("renders nothing while closed", () => {
     render(
       <ProfessorNoteDialog

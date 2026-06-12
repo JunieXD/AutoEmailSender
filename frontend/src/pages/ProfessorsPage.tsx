@@ -2234,6 +2234,7 @@ export const ProfessorsPage = () => {
                   personal_note: event.target.value,
                 }))
               }
+              maxLength={10000}
               className="min-h-28 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
               placeholder="只对自己可见的沟通偏好、判断依据或跟进提醒。"
             />
