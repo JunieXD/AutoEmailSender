@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import types
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,7 +23,7 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     extract_first_email_from_text,
     normalize_obfuscated_email_tokens,
-    crawl_page_with_crawl4ai,
+    crawl_page_with_browser_fallback,
     crawl_page_with_http,
     is_allowed_crawl_url,
     is_safe_public_crawl_url,
@@ -37,7 +36,7 @@ from app.services.crawler_tools import (
     save_candidate_payloads_shared,
     save_candidate_batch_fingerprint,
     save_candidates,
-    _crawl_page_with_crawl4ai_browser,
+    _crawl_page_with_browser,
     _resolve_safe_public_crawl_url,
 )
 from app.services import crawler_tools
@@ -276,27 +275,41 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(ctx.save_failure_budget.total_save_failures, 1)
         self.assertIsNone(ctx.save_failure_budget.last_save_failure_summary)
 
-    def test_browser_run_config_for_profile_uses_load_and_waits_for_body(self) -> None:
-        config = crawler_tools._browser_run_config_for_intent("profile")
+    def test_browser_fetch_options_for_profile_uses_load_and_waits_for_body(self) -> None:
+        options = crawler_tools._browser_fetch_options_for_intent("profile")
 
-        self.assertEqual(config.wait_for, "css:body")
-        self.assertEqual(config.wait_until, "load")
+        self.assertEqual(options.wait_for, "css:body")
+        self.assertEqual(options.wait_until, "load")
+        self.assertEqual(options.wait_for_timeout_ms, 15000)
+        self.assertEqual(options.page_timeout_ms, 30000)
+        self.assertEqual(options.delay_before_return_html_seconds, 1.5)
+        self.assertIn("Chrome/124.0.0.0", options.user_agent)
 
-    def test_browser_run_config_for_generic_and_directory_use_load_and_wait_for_body(self) -> None:
-        generic_config = crawler_tools._browser_run_config_for_intent("generic")
-        directory_config = crawler_tools._browser_run_config_for_intent("directory")
+    def test_browser_fetch_options_for_generic_and_directory_use_load_and_wait_for_body(self) -> None:
+        generic_options = crawler_tools._browser_fetch_options_for_intent("generic")
+        directory_options = crawler_tools._browser_fetch_options_for_intent("directory")
 
-        self.assertEqual(generic_config.wait_for, "css:body")
-        self.assertEqual(directory_config.wait_for, "css:body")
-        self.assertEqual(generic_config.wait_until, "load")
-        self.assertEqual(directory_config.wait_until, "load")
+        self.assertEqual(generic_options.wait_for, "css:body")
+        self.assertEqual(directory_options.wait_for, "css:body")
+        self.assertEqual(generic_options.wait_until, "load")
+        self.assertEqual(directory_options.wait_until, "load")
 
-    def test_browser_config_disables_chromium_https_upgrades(self) -> None:
-        config = crawler_tools._browser_config_for_crawl4ai()
+    def test_playwright_launch_options_disable_chromium_https_upgrades_and_automation_controlled(self) -> None:
+        options = crawler_tools._playwright_launch_options()
 
-        self.assertIn("--disable-features=HttpsUpgrades", config.extra_args)
-        self.assertEqual(config.channel, "")
-        self.assertEqual(config.chrome_channel, "")
+        args = options["args"]
+        self.assertIn("--disable-features=HttpsUpgrades", args)
+        self.assertIn("--disable-blink-features=AutomationControlled", args)
+        self.assertTrue(options["headless"])
+        self.assertNotIn("channel", options)
+
+    def test_crawler_runtime_code_no_longer_mentions_legacy_fetch_backend(self) -> None:
+        source = Path(crawler_tools.__file__).read_text(encoding="utf-8")
+        legacy_name = "crawl" + "4ai"
+        legacy_display_name = "Crawl" + "4AI"
+
+        self.assertNotIn(legacy_name, source.lower())
+        self.assertNotIn(legacy_display_name, source)
 
     def test_is_allowed_crawl_url_allows_same_host(self) -> None:
         with patch(
@@ -653,15 +666,15 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             new=AsyncMock(return_value=snapshot),
         ) as crawl_http:
-            first = await crawl_page_with_crawl4ai(ctx, "https://example.edu/faculty")
-            second = await crawl_page_with_crawl4ai(ctx, "https://example.edu/faculty")
+            first = await crawl_page_with_browser_fallback(ctx, "https://example.edu/faculty")
+            second = await crawl_page_with_browser_fallback(ctx, "https://example.edu/faculty")
 
         self.assertEqual(first, snapshot)
         self.assertEqual(second, snapshot)
         self.assertEqual(crawl_http.await_count, 1)
 
 
-    async def test_crawl_page_with_crawl4ai_skips_terminal_failed_url_without_network(self) -> None:
+    async def test_crawl_page_with_browser_fallback_skips_terminal_failed_url_without_network(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:
             job_id = await harness.create_job()
             async with harness.session_factory() as session:
@@ -686,9 +699,9 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch("app.services.crawler_tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
-                "app.services.crawler_tools._crawl_page_with_crawl4ai_browser", AsyncMock()
+                "app.services.crawler_tools._crawl_page_with_browser", AsyncMock()
             ) as browser_mock:
-                snapshot = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/faculty#ignored")
+                snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/faculty#ignored")
 
         self.assertEqual(snapshot.status, "failed")
         self.assertEqual(snapshot.fetch_method, "ledger")
@@ -697,7 +710,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         browser_mock.assert_not_awaited()
 
 
-    async def test_crawl_page_with_crawl4ai_skips_terminal_failed_url_with_new_context(self) -> None:
+    async def test_crawl_page_with_browser_fallback_skips_terminal_failed_url_with_new_context(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:
             job_id = await harness.create_job()
             async with harness.session_factory() as session:
@@ -729,17 +742,17 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch("app.services.crawler_tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
-                "app.services.crawler_tools._crawl_page_with_crawl4ai_browser", AsyncMock()
+                "app.services.crawler_tools._crawl_page_with_browser", AsyncMock()
             ) as browser_mock:
-                first = await crawl_page_with_crawl4ai(first_ctx, "https://cs.example.edu/faculty")
-                second = await crawl_page_with_crawl4ai(restarted_ctx, "https://cs.example.edu/faculty")
+                first = await crawl_page_with_browser_fallback(first_ctx, "https://cs.example.edu/faculty")
+                second = await crawl_page_with_browser_fallback(restarted_ctx, "https://cs.example.edu/faculty")
 
         self.assertEqual(first.fetch_method, "ledger")
         self.assertEqual(second.fetch_method, "ledger")
         http_mock.assert_not_awaited()
         browser_mock.assert_not_awaited()
 
-    async def test_crawl_page_with_crawl4ai_skips_previously_denied_url(self) -> None:
+    async def test_crawl_page_with_browser_fallback_skips_previously_denied_url(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://cs.example.edu/faculty/index.htm",
@@ -752,7 +765,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.crawler_tools.crawl_page_with_http") as mocked_http, patch(
             "app.services.crawler_tools.browser_investigate"
         ) as mocked_browser:
-            snapshot = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/news/a.htm")
+            snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/news/a.htm")
 
         mocked_http.assert_not_called()
         mocked_browser.assert_not_called()
@@ -760,7 +773,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.links, [])
         self.assertIn("已在本轮抓取中判定为无关页面", snapshot.error_message or "")
 
-    async def test_crawl_page_with_crawl4ai_returns_succeeded_page_for_agent_classification(self) -> None:
+    async def test_crawl_page_with_browser_fallback_returns_succeeded_page_for_agent_classification(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://cs.example.edu/faculty/index.htm",
@@ -782,14 +795,14 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             return_value=http_snapshot,
         ):
-            snapshot = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/news/a.htm")
+            snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/news/a.htm")
 
         self.assertEqual(snapshot.status, "succeeded")
         self.assertEqual(snapshot.links, ["https://cs.example.edu/news/b.htm"])
         self.assertFalse(ctx.is_denied_url("https://cs.example.edu/news/a.htm"))
         self.assertIsNone(snapshot.error_message)
 
-    async def test_crawl_page_with_crawl4ai_keeps_faculty_directory_and_profile_pages_allowed(self) -> None:
+    async def test_crawl_page_with_browser_fallback_keeps_faculty_directory_and_profile_pages_allowed(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://cs.example.edu/faculty/index.htm",
@@ -820,8 +833,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             side_effect=[directory_snapshot, profile_snapshot],
         ):
-            directory = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/faculty/index.htm")
-            profile = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/faculty/zhang.htm")
+            directory = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/faculty/index.htm")
+            profile = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/faculty/zhang.htm")
 
         self.assertEqual(directory.status, "succeeded")
         self.assertEqual(profile.status, "succeeded")
@@ -850,13 +863,13 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             return_value=redirected_snapshot,
         ):
-            snapshot = await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/go-news")
+            snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/go-news")
 
         self.assertEqual(snapshot.status, "succeeded")
         self.assertFalse(ctx.is_denied_url("https://cs.example.edu/go-news"))
         self.assertFalse(ctx.is_denied_url("https://cs.example.edu/news/a.htm"))
 
-    async def test_crawl_page_with_crawl4ai_skips_direct_after_same_domain_browser_fallback(self) -> None:
+    async def test_crawl_page_with_browser_fallback_skips_direct_after_same_domain_browser_fallback(self) -> None:
         async with _RealCrawlerSessionHarness() as harness:
             job_id = await harness.create_job()
             async with harness.session_factory() as session:
@@ -909,7 +922,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 "app.services.crawler_tools.browser_investigate",
                 new=AsyncMock(return_value=browser_snapshot),
             ) as browser:
-                actual = await crawl_page_with_crawl4ai(ctx, "https://teacher.example.edu/li", intent="profile")
+                actual = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/li", intent="profile")
 
             self.assertEqual(actual.fetch_method, "browser")
             http_fetch.assert_not_awaited()
@@ -927,7 +940,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state.fallback_reason, "same_domain_previously_required_browser")
             self.assertEqual(state.browser_status, "succeeded")
 
-    async def test_crawl_page_with_crawl4ai_retries_browser_for_template_placeholders(self) -> None:
+    async def test_crawl_page_with_browser_fallback_retries_browser_for_template_placeholders(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="http://cta.jxufe.edu.cn/home/teacherInfo/detail?fid=1",
@@ -961,12 +974,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
-            actual = await crawl_page_with_crawl4ai(ctx, ctx.start_url, intent="profile")
+            actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
 
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
-    async def test_crawl_page_with_crawl4ai_retries_browser_for_dynamic_teacher_directory(self) -> None:
+    async def test_crawl_page_with_browser_fallback_retries_browser_for_dynamic_teacher_directory(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://software.fudan.edu.cn/zzjs/list.htm",
@@ -1009,12 +1022,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
-            actual = await crawl_page_with_crawl4ai(ctx, ctx.start_url)
+            actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url)
 
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
-    async def test_crawl_page_with_crawl4ai_retries_browser_for_site_error_page(self) -> None:
+    async def test_crawl_page_with_browser_fallback_retries_browser_for_site_error_page(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="http://sim.jxufe.edu.cn/#/staff/detail/5",
@@ -1048,12 +1061,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
-            actual = await crawl_page_with_crawl4ai(ctx, ctx.start_url, intent="profile")
+            actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
 
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
-    async def test_crawl_page_with_crawl4ai_does_not_use_site_specific_profile_api(self) -> None:
+    async def test_crawl_page_with_browser_fallback_does_not_use_site_specific_profile_api(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="http://sim.jxufe.edu.cn/#/staff/detail/5",
@@ -1121,7 +1134,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ) as browser:
-            actual = await crawl_page_with_crawl4ai(ctx, ctx.start_url, intent="profile")
+            actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
 
         self.assertEqual(requested_urls, [])
         self.assertEqual(actual.fetch_method, "browser")
@@ -1129,7 +1142,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         http_fetch.assert_awaited_once()
         browser.assert_awaited_once()
 
-    async def test_crawl4ai_browser_fetch_offloads_to_thread_on_windows_selector_loop(self) -> None:
+    async def test_playwright_browser_fetch_offloads_to_thread_on_windows_selector_loop(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://example.edu/faculty",
@@ -1157,7 +1170,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=expected),
             ) as to_thread,
         ):
-            actual = await _crawl_page_with_crawl4ai_browser(
+            actual = await _crawl_page_with_browser(
                 ctx,
                 "https://example.edu/faculty",
                 "提取导师信息",
@@ -1166,7 +1179,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(to_thread.await_count, 1)
 
-    async def test_crawl4ai_browser_fetch_runs_inline_without_thread_on_supported_loop(self) -> None:
+    async def test_playwright_browser_fetch_runs_inline_without_thread_on_supported_loop(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://example.edu/faculty",
@@ -1196,12 +1209,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return_value=False,
             ),
             patch(
-                "app.services.crawler_tools._crawl_page_with_crawl4ai_browser_direct",
+                "app.services.crawler_tools._fetch_page_with_playwright_direct",
                 new=fake_direct,
             ),
             patch("app.services.crawler_tools.asyncio.to_thread", new=AsyncMock()) as to_thread,
         ):
-            actual = await _crawl_page_with_crawl4ai_browser(
+            actual = await _crawl_page_with_browser(
                 ctx,
                 "https://example.edu/faculty",
                 "提取导师信息",
@@ -1708,7 +1721,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.save_failure_budget.same_batch_save_failures, 0)
             self.assertEqual(await harness.count_rows(CrawlCandidate), 0)
 
-    async def test_crawl_page_with_crawl4ai_raises_when_job_is_canceled_before_fetch(self) -> None:
+    async def test_crawl_page_with_browser_fallback_raises_when_job_is_canceled_before_fetch(self) -> None:
         session_factory = _FakeSessionFactory(job_status="canceled")
         ctx = CrawlToolContext(
             job_id=1,
@@ -1735,7 +1748,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=snapshot),
         ) as mocked_browser:
             with self.assertRaises(CrawlJobCanceled):
-                await crawl_page_with_crawl4ai(ctx, "https://cs.example.edu/faculty")
+                await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/faculty")
 
         mocked_http.assert_not_called()
         mocked_browser.assert_not_called()
@@ -1760,7 +1773,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             new=AsyncMock(return_value=snapshot),
         ) as mocked_browser:
             with self.assertRaises(CrawlJobCanceled):
@@ -2242,7 +2255,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"GET /faculty HTTP/1.1", request_bytes)
         self.assertIn(b"Host: faculty.example.edu", request_bytes)
 
-    async def test_crawl_page_with_crawl4ai_delegates_to_safe_http_path(self) -> None:
+    async def test_crawl_page_with_browser_fallback_delegates_to_safe_http_path(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
             job_id=1,
@@ -2251,24 +2264,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             school="计算机学院",
             session_factory=session_factory,  # type: ignore[arg-type]
         )
-        direct_calls: list[str] = []
         expected_snapshot = PageSnapshot(
             url="https://faculty.example.edu/faculty",
             text="Faculty page",
             fetch_method="http",
             status="succeeded",
         )
-
-        class _UnsafeCrawler:
-            async def __aenter__(self) -> "_UnsafeCrawler":
-                return self
-
-            async def __aexit__(self, *args: object) -> None:
-                return None
-
-            async def arun(self, *, url: str) -> object:
-                direct_calls.append(url)
-                return types.SimpleNamespace(success=True, url=url, html="<html></html>")
 
         async def safe_http_path(
             delegated_ctx: CrawlToolContext,
@@ -2278,23 +2279,21 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(delegated_url, "https://faculty.example.edu/faculty")
             return expected_snapshot
 
-        crawl4ai_module = types.SimpleNamespace(AsyncWebCrawler=_UnsafeCrawler)
         with patch(
             "app.services.crawler_tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
-        ), patch.dict("sys.modules", {"crawl4ai": crawl4ai_module}), patch(
+        ), patch(
             "app.services.crawler_tools.crawl_page_with_http",
             side_effect=safe_http_path,
         ) as http_path:
-            snapshot = await crawl_page_with_crawl4ai(ctx, "https://faculty.example.edu/faculty")
+            snapshot = await crawl_page_with_browser_fallback(ctx, "https://faculty.example.edu/faculty")
 
         self.assertIs(snapshot, expected_snapshot)
         self.assertEqual(http_path.call_count, 1)
-        self.assertEqual(direct_calls, [])
 
-    async def test_crawl_page_with_crawl4ai_falls_back_to_browser_on_empty_content(self) -> None:
+    async def test_crawl_page_with_browser_fallback_falls_back_to_browser_on_empty_content(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
             job_id=1,
@@ -2323,16 +2322,16 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             return_value=empty_http_snapshot,
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
-            snapshot = await crawl_page_with_crawl4ai(ctx, "https://faculty.example.edu/faculty")
+            snapshot = await crawl_page_with_browser_fallback(ctx, "https://faculty.example.edu/faculty")
 
         self.assertIs(snapshot, browser_snapshot)
         self.assertEqual(http_path.call_count, 1)
         self.assertEqual(browser_path.call_count, 1)
 
-    async def test_crawl_page_with_crawl4ai_falls_back_to_browser_on_blocked_http_status(self) -> None:
+    async def test_crawl_page_with_browser_fallback_falls_back_to_browser_on_blocked_http_status(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
             job_id=1,
@@ -2362,16 +2361,16 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             return_value=blocked_http_snapshot,
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
-            snapshot = await crawl_page_with_crawl4ai(ctx, "https://faculty.example.edu/faculty")
+            snapshot = await crawl_page_with_browser_fallback(ctx, "https://faculty.example.edu/faculty")
 
         self.assertIs(snapshot, browser_snapshot)
         self.assertEqual(http_path.call_count, 1)
         self.assertEqual(browser_path.call_count, 1)
 
-    async def test_crawl_page_with_crawl4ai_skips_http_for_host_after_blocked_status(self) -> None:
+    async def test_crawl_page_with_browser_fallback_skips_http_for_host_after_blocked_status(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
             job_id=1,
@@ -2408,18 +2407,18 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             return_value=blocked_http_snapshot,
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             side_effect=[first_browser_snapshot, second_browser_snapshot],
         ) as browser_path:
-            first = await crawl_page_with_crawl4ai(ctx, "https://teacher.example.edu/a")
-            second = await crawl_page_with_crawl4ai(ctx, "https://teacher.example.edu/b")
+            first = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/a")
+            second = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/b")
 
         self.assertIs(first, first_browser_snapshot)
         self.assertIs(second, second_browser_snapshot)
         self.assertEqual(http_path.call_count, 1)
         self.assertEqual(browser_path.call_count, 2)
 
-    async def test_crawl_page_with_crawl4ai_keeps_blocked_hosts_scoped_by_host(self) -> None:
+    async def test_crawl_page_with_browser_fallback_keeps_blocked_hosts_scoped_by_host(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
             job_id=1,
@@ -2456,18 +2455,18 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawler_tools.crawl_page_with_http",
             side_effect=[blocked_http_snapshot, other_http_snapshot],
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
-            first = await crawl_page_with_crawl4ai(ctx, "https://teacher.example.edu/a")
-            second = await crawl_page_with_crawl4ai(ctx, "https://profile.example.edu/b")
+            first = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/a")
+            second = await crawl_page_with_browser_fallback(ctx, "https://profile.example.edu/b")
 
         self.assertIs(first, browser_snapshot)
         self.assertIs(second, other_http_snapshot)
         self.assertEqual(http_path.call_count, 2)
         self.assertEqual(browser_path.call_count, 1)
 
-    async def test_browser_investigate_uses_crawl4ai_browser(self) -> None:
+    async def test_browser_investigate_uses_playwright_browser(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
             job_id=1,
@@ -2485,7 +2484,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
             snapshot = await crawler_tools.browser_investigate(
@@ -2507,7 +2506,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
         ctx.mark_denied_url("https://cs.example.edu/news/a.htm", "无关新闻页")
 
-        with patch("app.services.crawler_tools._crawl_page_with_crawl4ai_browser") as mocked_browser:
+        with patch("app.services.crawler_tools._crawl_page_with_browser") as mocked_browser:
             snapshot = await crawler_tools.browser_investigate(
                 ctx,
                 "https://cs.example.edu/news/a.htm",
@@ -2538,7 +2537,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._crawl_page_with_crawl4ai_browser",
+            "app.services.crawler_tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ):
             snapshot = await crawler_tools.browser_investigate(
@@ -2641,148 +2640,286 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             assert saved is not None
             self.assertIsNone(saved.profile_url)
 
-    async def test_crawl4ai_browser_fetch_disables_chromium_https_upgrades(self) -> None:
-        crawler_kwargs: list[dict[str, object]] = []
+    async def test_playwright_browser_fetch_disables_chromium_https_upgrades_and_automation_controlled(self) -> None:
+        launches: list[dict[str, object]] = []
+        context_kwargs: list[dict[str, object]] = []
 
-        class _BrowserConfig:
-            def __init__(self, **kwargs: object) -> None:
-                self.extra_args = kwargs.get("extra_args", [])
+        class _Page:
+            url = "http://teacher.example.edu/zhoufeng"
 
-        class _Crawler:
-            def __init__(self, *args: object, **kwargs: object) -> None:
-                crawler_kwargs.append(kwargs)
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                self.url = url
+                self.wait_until = wait_until
+                self.timeout = timeout
 
-            async def __aenter__(self) -> "_Crawler":
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                self.selector = selector
+                self.selector_timeout = timeout
+
+            async def wait_for_timeout(self, timeout: float) -> None:
+                self.delay = timeout
+
+            async def content(self) -> str:
+                return "<html><body>周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>"
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                context_kwargs.append(kwargs)
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                launches.append(kwargs)
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
                 return self
 
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-            async def arun(self, url: str, *, config: object) -> list[object]:
-                return [
-                    types.SimpleNamespace(
-                        success=True,
-                        url=url,
-                        error_message="",
-                        html="<html><body>周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>",
-                        redirected_url=url,
-                    )
-                ]
-
-        crawl4ai_module = types.SimpleNamespace(
-            AsyncWebCrawler=_Crawler,
-            BrowserConfig=_BrowserConfig,
-            CrawlerRunConfig=crawler_tools._browser_run_config_for_intent("profile").__class__,
-        )
-
-        with patch.dict("sys.modules", {"crawl4ai": crawl4ai_module}):
-            snapshot = await crawler_tools._crawl_page_with_crawl4ai_browser_direct(
+        with patch(
+            "app.services.crawler_tools.async_playwright",
+            return_value=_Playwright(),
+        ):
+            snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "http://teacher.example.edu/zhoufeng",
                 "",
                 "profile",
             )
 
         self.assertEqual(snapshot.status, "succeeded")
-        browser_config = crawler_kwargs[0]["config"]
-        self.assertIn(
-            "--disable-features=HttpsUpgrades",
-            getattr(browser_config, "extra_args", []),
-        )
+        self.assertIn("--disable-features=HttpsUpgrades", launches[0]["args"])
+        self.assertIn("--disable-blink-features=AutomationControlled", launches[0]["args"])
+        self.assertIn("Chrome/124.0.0.0", context_kwargs[0]["user_agent"])
+        self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
 
-    async def test_crawl4ai_browser_fetch_retries_without_wait_selector_after_wait_failure(self) -> None:
-        calls: list[object] = []
+    async def test_playwright_browser_fetch_retries_without_wait_selector_after_wait_failure(self) -> None:
+        calls: list[str | None] = []
 
-        class _WaitFailureCrawler:
-            def __init__(self, *args: object, **kwargs: object) -> None:
-                pass
+        class _Page:
+            url = "https://teacher.example.edu/zhoufeng"
 
-            async def __aenter__(self) -> "_WaitFailureCrawler":
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                self.url = url
+
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                calls.append(selector)
+                if len(calls) == 1:
+                    raise TimeoutError("Wait condition failed: Timeout after 15000ms waiting for selector 'body'")
+
+            async def wait_for_timeout(self, timeout: float) -> None:
+                return None
+
+            async def content(self) -> str:
+                return "<html><body>周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>"
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
                 return self
 
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-            async def arun(self, url: str, *, config: object) -> list[object]:
-                calls.append(getattr(config, "wait_for", None))
-                if len(calls) == 1:
-                    return [
-                        types.SimpleNamespace(
-                            success=False,
-                            url=url,
-                            error_message=(
-                                "Wait condition failed: Timeout after 15000ms "
-                                "waiting for selector 'body'"
-                            ),
-                            html="",
-                            redirected_url="",
-                        )
-                    ]
-                return [
-                    types.SimpleNamespace(
-                        success=True,
-                        url=url,
-                        error_message="",
-                        html="<html><body>周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>",
-                        redirected_url=url,
-                    )
-                ]
-
-        crawl4ai_module = types.SimpleNamespace(
-            AsyncWebCrawler=_WaitFailureCrawler,
-            BrowserConfig=types.SimpleNamespace,
-            CrawlerRunConfig=crawler_tools._browser_run_config_for_intent("profile").__class__,
-        )
-
-        with patch.dict("sys.modules", {"crawl4ai": crawl4ai_module}):
-            snapshot = await crawler_tools._crawl_page_with_crawl4ai_browser_direct(
+        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+            snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "https://teacher.example.edu/zhoufeng",
                 "",
                 "profile",
             )
 
         self.assertEqual(snapshot.status, "succeeded")
-        self.assertEqual(calls, ["css:body", None])
+        self.assertEqual(calls, ["body"])
         self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
 
-    async def test_crawl4ai_browser_fetch_uses_load_without_networkidle_retry(self) -> None:
-        calls: list[str] = []
+    async def test_playwright_browser_fetch_retries_without_wait_selector_after_playwright_selector_timeout(self) -> None:
+        calls: list[str | None] = []
 
-        class _NavigationTimeoutCrawler:
-            def __init__(self, *args: object, **kwargs: object) -> None:
-                pass
+        class _Page:
+            url = "https://teacher.example.edu/zhoufeng"
 
-            async def __aenter__(self) -> "_NavigationTimeoutCrawler":
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                self.url = url
+
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                calls.append(selector)
+                if len(calls) == 1:
+                    raise TimeoutError("Page.wait_for_selector: Timeout 50ms exceeded.")
+
+            async def wait_for_timeout(self, timeout: float) -> None:
+                return None
+
+            async def content(self) -> str:
+                return "<html><body>周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>"
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
                 return self
 
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-            async def arun(self, url: str, *, config: object) -> list[object]:
-                wait_until = getattr(config, "wait_until", "")
+        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+            snapshot = await crawler_tools._fetch_page_with_playwright_direct(
+                "https://teacher.example.edu/zhoufeng",
+                "",
+                "profile",
+            )
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertEqual(calls, ["body"])
+        self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
+
+    async def test_playwright_browser_fetch_retries_transient_browser_failure(self) -> None:
+        attempts = 0
+
+        class _Page:
+            url = "https://teacher.example.edu/zhoufeng"
+
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                nonlocal attempts
+                attempts += 1
+                self.url = url
+                if attempts == 1:
+                    raise TimeoutError("Page.goto: Timeout 50ms exceeded.")
+
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                return None
+
+            async def wait_for_timeout(self, timeout: float) -> None:
+                return None
+
+            async def content(self) -> str:
+                return "<html><body>周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>"
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+            snapshot = await crawler_tools._fetch_page_with_playwright_direct(
+                "https://teacher.example.edu/zhoufeng",
+                "",
+                "profile",
+            )
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertEqual(attempts, 2)
+        self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
+
+    async def test_playwright_browser_fetch_uses_load_without_networkidle_retry(self) -> None:
+        calls: list[str] = []
+
+        class _Page:
+            url = "https://scs.bupt.edu.cn/szjs1/jsyl.htm"
+
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
                 calls.append(wait_until)
                 if wait_until == "networkidle":
                     raise TimeoutError(
                         'Page.goto: Timeout 30000ms exceeded.\n'
                         'Call log:\n  - navigating to "https://scs.bupt.edu.cn/szjs1/jsyl.htm", waiting until "networkidle"'
                     )
-                return [
-                    types.SimpleNamespace(
-                        success=True,
-                        url=url,
-                        error_message="",
-                        html="<html><body>教师一览 周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>",
-                        redirected_url=url,
-                    )
-                ]
 
-        crawl4ai_module = types.SimpleNamespace(
-            AsyncWebCrawler=_NavigationTimeoutCrawler,
-            BrowserConfig=types.SimpleNamespace,
-            CrawlerRunConfig=crawler_tools._browser_run_config_for_intent("profile").__class__,
-        )
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                return None
 
-        with patch.dict("sys.modules", {"crawl4ai": crawl4ai_module}):
-            snapshot = await crawler_tools._crawl_page_with_crawl4ai_browser_direct(
+            async def wait_for_timeout(self, timeout: float) -> None:
+                return None
+
+            async def content(self) -> str:
+                return "<html><body>教师一览 周锋 电子邮箱：zfeng@bupt.edu.cn</body></html>"
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+            snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "https://scs.bupt.edu.cn/szjs1/jsyl.htm",
                 "",
                 "profile",

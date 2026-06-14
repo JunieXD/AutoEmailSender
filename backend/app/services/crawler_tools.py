@@ -40,13 +40,18 @@ from app.services.professor_management import (
     normalize_professor_title,
 )
 
+try:
+    from playwright.async_api import async_playwright
+except Exception:  # pragma: no cover - dependency errors become fetch errors later
+    async_playwright = None  # type: ignore[assignment]
+
 
 MAX_TEXT_CHARS = 12000
 MAX_LINKS = 200
 MAX_HTTP_REDIRECTS = 5
 MAX_RETRIES_FOR_BROWSER_RENDER = 2
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
-CRAWL4AI_BROWSER_FALLBACK_STATUS = {403, 412, 429}
+BROWSER_FALLBACK_STATUS = {403, 412, 429}
 INVALID_PROFILE_PAGE_MARKERS = (
     "{{name}}",
     "{{email}}",
@@ -60,10 +65,18 @@ DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
     "queryobj=articles",
 )
 JS_RENDER_TIMEOUT_MS = 30000
-CRAWL4AI_BROWSER_WAIT_TIMEOUT_MS = 15000
-CRAWL4AI_BROWSER_DELAY_SECONDS = 1.5
-CRAWL4AI_BROWSER_WAIT_SELECTOR = "css:body"
-CRAWL4AI_BROWSER_EXTRA_ARGS = ("--disable-features=HttpsUpgrades",)
+BROWSER_WAIT_TIMEOUT_MS = 15000
+BROWSER_DELAY_SECONDS = 1.5
+BROWSER_WAIT_SELECTOR = "css:body"
+BROWSER_EXTRA_ARGS = (
+    "--disable-features=HttpsUpgrades",
+    "--disable-blink-features=AutomationControlled",
+)
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 UNSAFE_CRAWL_URL_MESSAGE = "URL 不允许指向本机、内网或不可解析地址"
 MULTI_LABEL_PUBLIC_SUFFIXES = ("ac.cn", "com.cn", "edu.cn", "gov.cn", "net.cn", "org.cn")
 SAVE_SAME_BATCH_FAILURE_LIMIT = 2
@@ -76,6 +89,17 @@ TOTAL_SAVE_FAILURE_REASON = (
 )
 CrawlPageIntent = Literal["generic", "directory", "profile"]
 _DEFAULT_BROWSER_WAIT_FOR = object()
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserFetchOptions:
+    wait_until: str = "load"
+    wait_for: str | None = BROWSER_WAIT_SELECTOR
+    wait_for_timeout_ms: int = BROWSER_WAIT_TIMEOUT_MS
+    delay_before_return_html_seconds: float = BROWSER_DELAY_SECONDS
+    page_timeout_ms: int = JS_RENDER_TIMEOUT_MS
+    max_retries: int = MAX_RETRIES_FOR_BROWSER_RENDER
+    user_agent: str = BROWSER_USER_AGENT
 
 
 class PageSnapshot(BaseModel):
@@ -1143,7 +1167,7 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
                     headers={"User-Agent": "AutoEmailSenderCrawler/0.1"},
                 )
             if not getattr(response, "is_redirect", False):
-                if response.status_code in CRAWL4AI_BROWSER_FALLBACK_STATUS:
+                if response.status_code in BROWSER_FALLBACK_STATUS:
                     snapshot = html_to_snapshot(str(response.url), response.text, "http")
                     snapshot.status = "failed"
                     snapshot.error_message = (
@@ -1240,7 +1264,7 @@ def _snapshot_from_page_fetch_decision(url: str, decision: PageFetchDecision) ->
     return None
 
 
-async def crawl_page_with_crawl4ai(
+async def crawl_page_with_browser_fallback(
     ctx: CrawlToolContext,
     url: str,
     *,
@@ -1292,7 +1316,7 @@ async def crawl_page_with_crawl4ai(
 
     http_snapshot = await crawl_page_with_http(ctx, url)
     await _ensure_crawl_job_can_continue_for_context(ctx)
-    if _should_use_crawl4ai_fallback(http_snapshot):
+    if _should_use_browser_fallback(http_snapshot):
         if _is_http_blocked_snapshot(http_snapshot):
             ctx.mark_http_blocked(http_snapshot.url or absolute_url)
         browser_snapshot = await browser_investigate(
@@ -1409,7 +1433,7 @@ async def browser_investigate(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return snapshot
 
-    snapshot = await _crawl_page_with_crawl4ai_browser(ctx, absolute_url, goal, intent)
+    snapshot = await _crawl_page_with_browser(ctx, absolute_url, goal, intent)
     processed_snapshot = _apply_runtime_url_denylist_after_fetch(
         ctx,
         requested_url=absolute_url,
@@ -1450,7 +1474,7 @@ def _should_remember_page_snapshot(snapshot: PageSnapshot) -> bool:
     )
 
 
-def _should_use_crawl4ai_fallback(snapshot: PageSnapshot) -> bool:
+def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     if snapshot.fetch_method != "http":
         return False
 
@@ -1465,7 +1489,7 @@ def _should_use_crawl4ai_fallback(snapshot: PageSnapshot) -> bool:
 
     if snapshot.status == "failed":
         error_message = (snapshot.error_message or "").lower()
-        if any(str(marker) in error_message for marker in CRAWL4AI_BROWSER_FALLBACK_STATUS):
+        if any(str(marker) in error_message for marker in BROWSER_FALLBACK_STATUS):
             return True
         if "cf-" in error_message:
             return True
@@ -1529,66 +1553,47 @@ def _is_http_blocked_snapshot(snapshot: PageSnapshot) -> bool:
     if snapshot.fetch_method != "http":
         return False
     error_message = (snapshot.error_message or "").lower()
-    return any(str(status) in error_message for status in CRAWL4AI_BROWSER_FALLBACK_STATUS)
+    return any(str(status) in error_message for status in BROWSER_FALLBACK_STATUS)
 
 
 def _browser_wait_selector_for_intent(intent: CrawlPageIntent) -> str:
     _ = intent
-    return CRAWL4AI_BROWSER_WAIT_SELECTOR
+    return BROWSER_WAIT_SELECTOR
 
 
-def _browser_run_config_for_intent(
+def _browser_fetch_options_for_intent(
     intent: CrawlPageIntent,
     *,
     wait_for: str | None | object = _DEFAULT_BROWSER_WAIT_FOR,
     wait_until: str = "load",
-) -> "CrawlerRunConfig":
-    from crawl4ai import CrawlerRunConfig
-
+) -> BrowserFetchOptions:
     selected_wait_for = (
         _browser_wait_selector_for_intent(intent)
         if wait_for is _DEFAULT_BROWSER_WAIT_FOR
         else wait_for
     )
-    return CrawlerRunConfig(
-        process_in_browser=True,
-        wait_until=wait_until,
-        wait_for=selected_wait_for,
-        wait_for_timeout=CRAWL4AI_BROWSER_WAIT_TIMEOUT_MS,
-        delay_before_return_html=CRAWL4AI_BROWSER_DELAY_SECONDS,
-        page_timeout=JS_RENDER_TIMEOUT_MS,
-        max_retries=MAX_RETRIES_FOR_BROWSER_RENDER,
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        verbose=False,
-    )
+    return BrowserFetchOptions(wait_until=wait_until, wait_for=selected_wait_for)
 
 
-def _browser_run_config_for_goal(goal: str) -> "CrawlerRunConfig":
+def _browser_fetch_options_for_goal(goal: str) -> BrowserFetchOptions:
     _ = goal
-    return _browser_run_config_for_intent("generic")
+    return _browser_fetch_options_for_intent("generic")
 
 
-def _browser_config_for_crawl4ai() -> "BrowserConfig":
-    from crawl4ai import BrowserConfig
-
-    config = BrowserConfig(extra_args=list(CRAWL4AI_BROWSER_EXTRA_ARGS))
-    # 保持只使用 playwright 的 headless shell，避免回退到完整 Chromium。
-    config.channel = ""
-    config.chrome_channel = ""
-    return config
+def _playwright_launch_options() -> dict[str, object]:
+    return {
+        "headless": True,
+        "args": list(BROWSER_EXTRA_ARGS),
+    }
 
 
-async def _crawl_page_with_crawl4ai_browser(
+async def _crawl_page_with_browser(
     ctx: CrawlToolContext,
     absolute_url: str,
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
-    _ = ctx, intent
+    _ = ctx
     if _should_offload_browser_fetch_to_thread():
         return await asyncio.to_thread(
             _run_browser_fetch_with_proactor_loop,
@@ -1597,96 +1602,119 @@ async def _crawl_page_with_crawl4ai_browser(
             intent,
         )
 
-    return await _crawl_page_with_crawl4ai_browser_direct(absolute_url, goal, intent)
+    return await _fetch_page_with_playwright_direct(absolute_url, goal, intent)
 
 
-async def _crawl_page_with_crawl4ai_browser_direct(
+async def _fetch_page_with_playwright_direct(
     absolute_url: str,
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
     _ = goal
-    try:
-        from crawl4ai import AsyncWebCrawler
-    except Exception as exc:
+    first_result = await _try_playwright_browser_fetch(
+        absolute_url,
+        _browser_fetch_options_for_intent(intent),
+    )
+    if first_result.status == "succeeded":
+        return first_result
+
+    if _is_wait_condition_failure(first_result.error_message):
+        return await _try_playwright_browser_fetch(
+            absolute_url,
+            _browser_fetch_options_for_intent(intent, wait_for=None),
+        )
+
+    return first_result
+
+
+async def _try_playwright_browser_fetch(
+    absolute_url: str,
+    options: BrowserFetchOptions,
+) -> PageSnapshot:
+    last_result: PageSnapshot | None = None
+    for _attempt in range(max(0, options.max_retries) + 1):
+        last_result = await _try_playwright_browser_fetch_once(absolute_url, options)
+        if last_result.status == "succeeded" or _is_wait_condition_failure(last_result.error_message):
+            return last_result
+    return last_result or _failed_snapshot(
+        url=absolute_url,
+        fetch_method="browser",
+        error_message="Playwright browser fetch failed",
+    )
+
+
+async def _try_playwright_browser_fetch_once(
+    absolute_url: str,
+    options: BrowserFetchOptions,
+) -> PageSnapshot:
+    if async_playwright is None:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
-            error_message=_format_exception_for_snapshot(exc, "Failed to load Crawl4AI"),
+            error_message="Playwright browser fetch unavailable: failed to import playwright",
         )
 
-    first_failure = await _try_crawl4ai_browser_config(
-        absolute_url,
-        _browser_run_config_for_intent(intent),
-    )
-    if first_failure.status == "succeeded":
-        return first_failure
-
-    if _is_wait_condition_failure(first_failure.error_message):
-        retry_failure = await _try_crawl4ai_browser_config(
-            absolute_url,
-            _browser_run_config_for_intent(intent, wait_for=None),
-        )
-        return retry_failure
-
-
-    return first_failure
-
-
-
-
-async def _try_crawl4ai_browser_config(
-    absolute_url: str,
-    config: Any,
-) -> PageSnapshot:
-    from crawl4ai import AsyncWebCrawler
-
+    browser = None
     try:
-        async with AsyncWebCrawler(
-            config=_browser_config_for_crawl4ai(),
-            verbose=False,
-        ) as crawler:
-            crawl_result = await crawler.arun(absolute_url, config=config)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(**_playwright_launch_options())
+            context = await browser.new_context(user_agent=options.user_agent)
+            page = await context.new_page()
+            await page.goto(
+                absolute_url,
+                wait_until=options.wait_until,
+                timeout=options.page_timeout_ms,
+            )
+            if options.wait_for:
+                selector = options.wait_for
+                if selector.startswith("css:"):
+                    selector = selector[4:]
+                await page.wait_for_selector(
+                    selector,
+                    timeout=options.wait_for_timeout_ms,
+                )
+            if options.delay_before_return_html_seconds > 0:
+                await page.wait_for_timeout(options.delay_before_return_html_seconds * 1000)
+            html = await page.content()
+            final_url = str(getattr(page, "url", "") or absolute_url)
     except Exception as exc:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
             error_message=_format_exception_for_snapshot(
                 exc,
-                "Crawl4AI browser fetch failed",
+                "Playwright browser fetch failed",
             ),
         )
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
-    return _snapshot_from_crawl4ai_result(crawl_result, absolute_url)
+    return _snapshot_from_browser_html(html=html, final_url=final_url, absolute_url=absolute_url)
 
 def _is_wait_condition_failure(message: str | None) -> bool:
-    return "wait condition failed" in (message or "").lower()
+    normalized_message = (message or "").lower()
+    return "wait condition failed" in normalized_message or (
+        "wait_for_selector" in normalized_message
+        and "timeout" in normalized_message
+        and "exceeded" in normalized_message
+    )
 
 
 
 
-def _snapshot_from_crawl4ai_result(crawl_result: Any, absolute_url: str) -> PageSnapshot:
-    if not crawl_result:
+def _snapshot_from_browser_html(*, html: str, final_url: str, absolute_url: str) -> PageSnapshot:
+    if not html:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
-            error_message="Crawl4AI browser returned no result",
+            error_message="Playwright browser fetch returned empty HTML",
         )
 
-    crawl_item = crawl_result[0]
-    if not getattr(crawl_item, "success", False):
-        return _failed_snapshot(
-            url=str(getattr(crawl_item, "url", absolute_url) or absolute_url),
-            fetch_method="browser",
-            error_message=_format_message_with_fallback(
-                str(getattr(crawl_item, "error_message", "") or ""),
-                "browser tool reported unsuccessful result",
-            ),
-        )
-
-    content = str(getattr(crawl_item, "html", "") or "")
-    final_url = str(getattr(crawl_item, "redirected_url", "") or absolute_url)
-    snapshot = html_to_snapshot(final_url, content, "browser")
+    snapshot = html_to_snapshot(final_url or absolute_url, html, "browser")
     if not snapshot.text.strip():
         snapshot.suspicious_empty = True
     return snapshot
@@ -1700,7 +1728,7 @@ def _run_browser_fetch_with_proactor_loop(
     from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 
     ensure_windows_proactor_event_loop_policy()
-    return asyncio.run(_crawl_page_with_crawl4ai_browser_direct(absolute_url, goal, intent))
+    return asyncio.run(_fetch_page_with_playwright_direct(absolute_url, goal, intent))
 
 
 def _should_offload_browser_fetch_to_thread() -> bool:

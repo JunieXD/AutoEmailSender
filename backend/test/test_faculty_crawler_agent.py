@@ -495,7 +495,7 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             with (
                 patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
                 patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
-                patch("app.services.crawler_tools._crawl_page_with_crawl4ai_browser", AsyncMock(return_value=snapshot)) as browser_mock,
+                patch("app.services.crawler_tools._crawl_page_with_browser", AsyncMock(return_value=snapshot)) as browser_mock,
                 patch("app.services.crawler_tools._ensure_crawl_job_can_continue_for_context", AsyncMock()),
                 patch("app.services.crawler_tools.record_page_snapshot", AsyncMock()),
                 patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
@@ -603,7 +603,7 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
 
             with (
                 patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value="completed")),
-                patch("app.agents.faculty_crawler_agent.crawl_page_with_crawl4ai", AsyncMock()) as crawl_page_mock,
+                patch("app.agents.faculty_crawler_agent.crawl_page_with_browser_fallback", AsyncMock()) as crawl_page_mock,
                 patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
                 patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
             ):

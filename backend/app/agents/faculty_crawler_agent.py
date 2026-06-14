@@ -28,7 +28,7 @@ from app.services.crawler_tools import (
     CrawlToolContext,
     ProfessorCandidatePayload,
     browser_investigate,
-    crawl_page_with_crawl4ai,
+    crawl_page_with_browser_fallback,
     ensure_crawl_job_can_continue,
 )
 from app.services.llm_runtime import (
@@ -323,7 +323,7 @@ def create_faculty_crawler_agent(
                 "url": absolute_url,
                 "message": "该页面已有待处理片段，请调用 claim_next_page_chunk；不要重复抓取或重新生成页面内容。",
             }
-        snapshot = await crawl_page_with_crawl4ai(ctx, url)
+        snapshot = await crawl_page_with_browser_fallback(ctx, url)
         if snapshot.status == "succeeded":
             created_chunks = await create_chunks_for_successful_page_snapshot(
                 ctx.session_factory,

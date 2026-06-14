@@ -44,7 +44,7 @@ from app.services.crawler_tools import (
     PageSnapshot,
     build_candidate_enrichment_prompt,
     build_profile_candidate_prompt,
-    crawl_page_with_crawl4ai,
+    crawl_page_with_browser_fallback,
     ensure_crawl_job_can_continue,
     save_candidates,
 )
@@ -274,6 +274,7 @@ async def run_queued_crawl_jobs_once(
             school=job.school,
             session_factory=session_factory,
             thinking_extra_body=thinking_extra_body,
+            entry_type=job.entry_type,
         )
 
     async def trace_callback(event: Any) -> None:
@@ -638,7 +639,7 @@ async def _run_profile_crawl_job(
             "raw": {"url": ctx.start_url},
         },
     )
-    snapshot = await crawl_page_with_crawl4ai(ctx, ctx.start_url, intent="profile")
+    snapshot = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
     if snapshot.status != "succeeded" or not snapshot.text.strip():
         raise ValueError(snapshot.error_message or "详情页抓取失败")
 
@@ -705,6 +706,7 @@ async def enrich_selected_crawl_candidates(
             university=job.university,
             school=job.school,
             session_factory=session_factory,
+            entry_type=job.entry_type,
         )
 
     return await _enrich_selected_candidates_concurrent(
@@ -1043,7 +1045,7 @@ async def _crawl_candidate_profile_with_retries(
     retry_count = 0
     for attempt in range(max_retries + 1):
         try:
-            snapshot = await crawl_page_with_crawl4ai(
+            snapshot = await crawl_page_with_browser_fallback(
                 ctx,
                 item.profile_url,
                 intent="profile",
@@ -1499,5 +1501,4 @@ def _stringify_trace_payload(event: dict[str, object]) -> str:
     if raw is not None:
         parts.append(str(raw))
     return "\n".join(parts)
-
 

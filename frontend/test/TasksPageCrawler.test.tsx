@@ -355,7 +355,7 @@ describe("TasksPage crawler jobs tab", () => {
           profile_url: "https://example.edu/faculty/zhang",
           status: "failed",
           error_message:
-            "Crawl4AI browser fetch failed: FileNotFoundError: [WinError 2] 系统找不到指定的文件。",
+            "Playwright browser fetch failed: FileNotFoundError: [WinError 2] 系统找不到指定的文件。",
         },
       },
     ]);
@@ -388,7 +388,7 @@ describe("TasksPage crawler jobs tab", () => {
           profile_url: "https://example.edu/faculty/zhang",
           status: "failed",
           error_message:
-            "Crawl4AI browser fetch failed: FileNotFoundError: [WinError 2] 系统找不到指定的文件。",
+            "Playwright browser fetch failed: FileNotFoundError: [WinError 2] 系统找不到指定的文件。",
         },
       },
     ]);

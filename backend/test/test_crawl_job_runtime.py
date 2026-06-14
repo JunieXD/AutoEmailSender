@@ -533,7 +533,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await session.commit()
             return {}
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -555,8 +555,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.run_faculty_crawler_agent",
             new=fake_run,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -627,7 +627,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         calls: list[tuple[str, str]] = []
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -662,8 +662,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.extract_profile_candidate_with_llm",
             new=fake_extract_profile_candidate_with_llm,
@@ -717,7 +717,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 _ = prompt
                 return FakeLLMMessage()
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -735,8 +735,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.build_faculty_crawler_model",
             return_value=FakeModel(),
@@ -896,7 +896,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             entry_type="profile",
         )
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -915,8 +915,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ):
             await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -930,7 +930,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             entry_type="profile",
         )
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -956,8 +956,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("未能从详情页识别导师信息")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.extract_profile_candidate_with_llm",
             new=fake_extract_profile_candidate_with_llm,
@@ -1077,7 +1077,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         fetch_method="browser",
                         page_type="list",
                         status="failed",
-                        error_message="Crawl4AI browser fetch failed: NotImplementedError",
+                        error_message="Playwright browser fetch failed: NotImplementedError",
                     )
                 )
                 await session.commit()
@@ -1094,7 +1094,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
         self.assertEqual(
             job.error_message,
-            "Crawl4AI browser fetch failed: NotImplementedError",
+            "Playwright browser fetch failed: NotImplementedError",
         )
         self.assertEqual(await self._count_candidates(job_id), 0)
 
@@ -1191,7 +1191,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             return {}
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1226,8 +1226,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.run_faculty_crawler_agent",
             new=fake_run,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1283,7 +1283,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         llm_profile = await self._get_default_llm_profile()
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1310,8 +1310,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(email="wang5@example.edu")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1338,7 +1338,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         active = 0
         max_active = 0
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1389,8 +1389,11 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.get_settings",
             return_value=settings_stub,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.get_runtime_settings",
+            new=AsyncMock(return_value=settings_stub),
+        ), patch(
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1412,7 +1415,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         host_active = 0
         max_host_active = 0
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1462,8 +1465,11 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.get_settings",
             return_value=settings_stub,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.get_runtime_settings",
+            new=AsyncMock(return_value=settings_stub),
+        ), patch(
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1484,7 +1490,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         llm_profile = await self._get_default_llm_profile()
         attempts: dict[str, int] = {}
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1543,8 +1549,11 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.get_settings",
             return_value=settings_stub,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.get_runtime_settings",
+            new=AsyncMock(return_value=settings_stub),
+        ), patch(
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1600,7 +1609,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             return {}
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1630,8 +1639,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.run_faculty_crawler_agent",
             new=fake_run,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1674,7 +1683,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         async def trace_callback(event: dict[str, object]) -> None:
             trace_events.append(event)
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1693,8 +1702,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ):
             enriched_count = await _enrich_saved_candidates(
                 self.session_factory,
@@ -1737,7 +1746,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         llm_profile = await self._get_default_llm_profile()
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1764,8 +1773,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload()
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1805,7 +1814,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             selected_id = candidates[0].id
             unselected_id = candidates[1].id
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1832,8 +1841,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(email="selected@example.edu")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
@@ -1876,7 +1885,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         crawled_urls: list[str] = []
         enriched_candidate_ids: list[int] = []
 
-        async def fake_crawl_page_with_crawl4ai(
+        async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
             url: str,
             *,
@@ -1905,8 +1914,8 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(research_direction="强化学习")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_crawl4ai",
-            new=fake_crawl_page_with_crawl4ai,
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
         ), patch(
             "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,

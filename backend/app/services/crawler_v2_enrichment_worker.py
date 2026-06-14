@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlWorkerKind, LLMProfile
-from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_crawl4ai
+from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_browser_fallback
 from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
@@ -218,7 +218,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
 
 
 async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
-    snapshot: PageSnapshot = await crawl_page_with_crawl4ai(ctx, profile_url, intent="profile")
+    snapshot: PageSnapshot = await crawl_page_with_browser_fallback(ctx, profile_url, intent="profile")
     if snapshot.status != "succeeded":
         raise ValueError(snapshot.error_message or "详情页抓取失败")
     return snapshot.text or snapshot.html
