@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceThreadDTO } from "@/types";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
+
+afterEach(() => {
+  window.autoEmailSender = undefined;
+});
 
 const buildThread = (
   overrides: Partial<WorkspaceThreadDTO["current_task"]> = {},
@@ -16,6 +20,7 @@ const buildThread = (
     school: "计算机学院",
     research_direction: "自然语言处理",
     recent_papers: [],
+    profile_url: null,
   },
   identity: {
     id: 1,
@@ -100,6 +105,114 @@ describe("WorkspaceSidebar", () => {
     expect(screen.getAllByText("缺少近期论文互动")).toHaveLength(2);
     expect(screen.getAllByText("NLP")).toHaveLength(2);
     expect(screen.getAllByText("信息抽取")).toHaveLength(2);
+  });
+
+  it("shows the professor homepage link when profile url is available", () => {
+    const thread = buildThread();
+
+    render(
+      <WorkspaceSidebar
+        thread={{
+          ...thread,
+          professor: {
+            ...thread.professor,
+            profile_url: "https://example.edu/faculty/zhang",
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("主页")).toHaveLength(2);
+    const links = screen.getAllByRole("link", {
+      name: "https://example.edu/faculty/zhang",
+    });
+    expect(links).toHaveLength(2);
+    links.forEach((link) => {
+      expect(link).toHaveAttribute("href", "https://example.edu/faculty/zhang");
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noreferrer");
+    });
+  });
+
+  it("hides the professor homepage card when profile url is missing", () => {
+    render(<WorkspaceSidebar thread={buildThread()} />);
+
+    expect(screen.queryByText("主页")).not.toBeInTheDocument();
+  });
+
+  it("opens the professor homepage with the desktop default browser when available", () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    const thread = buildThread();
+
+    render(
+      <WorkspaceSidebar
+        thread={{
+          ...thread,
+          professor: {
+            ...thread.professor,
+            profile_url: "https://example.edu/faculty/zhang",
+          },
+        }}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("link", {
+        name: "https://example.edu/faculty/zhang",
+      })[0],
+    );
+
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.edu/faculty/zhang");
+  });
+
+  it("falls back to the Electron window handler when desktop default browser opening fails", async () => {
+    const openExternalUrl = vi.fn().mockRejectedValue(new Error("xdg-open missing"));
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    const thread = buildThread();
+
+    render(
+      <WorkspaceSidebar
+        thread={{
+          ...thread,
+          professor: {
+            ...thread.professor,
+            profile_url: "https://example.edu/faculty/zhang",
+          },
+        }}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("link", {
+        name: "https://example.edu/faculty/zhang",
+      })[0],
+    );
+
+    await vi.waitFor(() => {
+      expect(openWindow).toHaveBeenCalledWith(
+        "https://example.edu/faculty/zhang",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
   });
 
   it("shows an empty state before match analysis is available", () => {

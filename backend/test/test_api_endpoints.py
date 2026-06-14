@@ -5545,7 +5545,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "该任务正在分析中")
 
-    def test_workspace_thread_includes_professor_recent_papers(self) -> None:
+    def test_workspace_thread_includes_professor_profile_enrichment_fields(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -5560,7 +5560,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "department": "Computer Science",
                 "research_direction": None,
                 "recent_papers": ["Paper Evidence"],
-                "profile_url": None,
+                "profile_url": "https://example.edu/faculty/paper-only",
                 "source_url": None,
             },
         )
@@ -5574,6 +5574,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["professor"]["recent_papers"], ["Paper Evidence"])
+        self.assertEqual(
+            response.json()["professor"]["profile_url"],
+            "https://example.edu/faculty/paper-only",
+        )
 
     def test_stop_batch_task_marks_pending_items_as_canceled(self) -> None:
         identity_id = self._create_identity(with_imap=False)

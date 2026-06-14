@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
     } | null>,
   openMaterial: (request: { materialId: number }) =>
     ipcRenderer.invoke("materials:open", request) as Promise<MaterialOpenResult>,
+  openExternalUrl: (url: string) => ipcRenderer.invoke("external-url:open", url) as Promise<void>,
   getStartupAtLoginStatus: () =>
     ipcRenderer.invoke("startup:get-status") as Promise<StartupAtLoginStatus>,
   setStartupAtLoginEnabled: (enabled: boolean) =>

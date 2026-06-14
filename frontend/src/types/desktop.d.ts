@@ -105,6 +105,7 @@ declare global {
         data: ArrayBuffer;
       } | null>;
       openMaterial?: (request: { materialId: number }) => Promise<DesktopMaterialOpenResult>;
+      openExternalUrl?: (url: string) => Promise<void>;
       getStartupAtLoginStatus?: () => Promise<DesktopStartupAtLoginStatus>;
       setStartupAtLoginEnabled?: (enabled: boolean) => Promise<DesktopStartupAtLoginStatus>;
       checkForUpdate: () => Promise<DesktopUpdateStatus>;
@@ -116,4 +117,3 @@ declare global {
     };
   }
 }
-

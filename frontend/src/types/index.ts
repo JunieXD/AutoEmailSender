@@ -722,6 +722,7 @@ export interface WorkspaceProfessorDTO {
   school: string | null;
   research_direction: string | null;
   recent_papers: string[];
+  profile_url: string | null;
 }
 
 export interface WorkspaceIdentityDTO {

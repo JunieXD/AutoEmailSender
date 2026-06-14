@@ -162,6 +162,7 @@ async def _build_workspace_thread_read(
             school=professor.school,
             research_direction=professor.research_direction,
             recent_papers=professor.recent_papers or [],
+            profile_url=professor.profile_url,
         ),
         identity=WorkspaceIdentityRead(
             id=identity.id,

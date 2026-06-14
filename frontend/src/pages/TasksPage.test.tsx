@@ -533,6 +533,7 @@ const buildWorkspaceThread = (
     school: "School of Computing",
     research_direction: "Human-centered AI",
     recent_papers: ["Recent AI paper"],
+    profile_url: null,
   },
   identity: {
     id: 1,

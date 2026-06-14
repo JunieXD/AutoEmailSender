@@ -17,6 +17,7 @@ class WorkspaceProfessorRead(ApiSchema):
     school: str | None
     research_direction: str | None
     recent_papers: list[str]
+    profile_url: str | None
 
 
 class WorkspaceIdentityRead(ApiSchema):

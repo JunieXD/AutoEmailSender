@@ -1,4 +1,4 @@
-import { AtSign, GraduationCap, Microscope, Sparkles } from "lucide-react";
+import { AtSign, ExternalLink, GraduationCap, Microscope, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { normalizeProfessorTitleDisplay } from "@/lib/professorTitle";
 import type { WorkspaceThreadDTO } from "@/types";
@@ -17,7 +17,7 @@ const ArchiveField = ({
 }: {
   icon: ReactNode;
   label: string;
-  value: string;
+  value: ReactNode;
 }) => (
   <div className={fieldClassName}>
     <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
@@ -36,6 +36,17 @@ const ArchiveCard = ({ thread }: WorkspaceSidebarProps) => {
   const organization =
     [professor.university, professor.school].filter(Boolean).join(" / ") ||
     "未填写学校信息";
+  const profileUrl = professor.profile_url?.trim();
+  const openProfileUrl = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!window.autoEmailSender?.openExternalUrl || !profileUrl) {
+      return;
+    }
+
+    event.preventDefault();
+    void window.autoEmailSender.openExternalUrl(profileUrl).catch(() => {
+      window.open(profileUrl, "_blank", "noopener,noreferrer");
+    });
+  };
 
   return (
     <div className="space-y-3">
@@ -75,6 +86,23 @@ const ArchiveCard = ({ thread }: WorkspaceSidebarProps) => {
             label="邮箱"
             value={professor.email || "暂无邮箱"}
           />
+          {profileUrl ? (
+            <ArchiveField
+              icon={<ExternalLink className="h-4 w-4" />}
+              label="主页"
+              value={
+                <a
+                  href={profileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={openProfileUrl}
+                  className="inline-flex max-w-full items-center gap-1.5 text-primary underline-offset-4 hover:underline"
+                >
+                  <span className="truncate">{profileUrl}</span>
+                </a>
+              }
+            />
+          ) : null}
         </div>
       </section>
     </div>

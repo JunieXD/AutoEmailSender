@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, type MenuItemConstruct
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
+import { registerExternalUrlIpc } from "./externalUrlService.js";
 import { registerFileSelectionIpc } from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
 import { getStartupAtLoginStatus, setStartupAtLoginEnabled } from "./startup.js";
@@ -165,6 +166,14 @@ async function createWindow(): Promise<void> {
     },
   });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const parsedUrl = parseWebUrl(url);
+    if (parsedUrl === null) {
+      return { action: "deny" };
+    }
+
+    return { action: "allow" };
+  });
   mainWindow.webContents.on("did-finish-load", () => {
     mainWindow?.webContents.send("backend:status", currentBackendStatus);
   });
@@ -196,6 +205,18 @@ async function createWindow(): Promise<void> {
     repoRoot,
   });
   await mainWindow.loadURL(pathToFileURL(indexPath).toString());
+}
+
+function parseWebUrl(value: string): string | null {
+  try {
+    const parsedUrl = new URL(value);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return null;
+    }
+    return parsedUrl.toString();
+  } catch {
+    return null;
+  }
 }
 
 async function startDesktopBackend(): Promise<BackendController> {
@@ -302,6 +323,7 @@ ipcMain.handle("startup:set-enabled", async (_event, enabled: unknown) => {
 });
 registerUpdateIpc(() => mainWindow);
 registerFileSelectionIpc();
+registerExternalUrlIpc();
 registerMaterialOpenIpc({
   getBackendBaseUrl: () => (currentBackendStatus.state === "ready" ? currentBackendStatus.baseUrl : null),
   userDataPath: app.getPath("userData"),

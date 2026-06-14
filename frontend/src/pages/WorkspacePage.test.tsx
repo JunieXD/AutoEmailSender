@@ -157,6 +157,7 @@ const buildWorkspaceThread = (
     school: "School of Computing",
     research_direction: "Agents",
     recent_papers: [],
+    profile_url: null,
   },
   identity: {
     id: 1,
