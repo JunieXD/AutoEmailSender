@@ -1584,6 +1584,52 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(second_payload["messages"], [])
 
+    def test_workspace_ensure_task_backfills_existing_task_from_identity_primary_material(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="workspace-default-resume.txt",
+            content=b"My research focuses on agents and information extraction.",
+            material_type="resume",
+        )
+        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+
+        professor_id = self._create_professor(email="workspace-backfill-material@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=None,
+            selected_material_ids=[],
+            match_score=82,
+            match_reason="方向匹配",
+            outreach_generation_mode="llm",
+        )
+
+        response = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        current_task = response.json()["current_task"]
+        self.assertEqual(current_task["id"], task_id)
+        self.assertEqual(current_task["primary_material_id"], material_id)
+        self.assertEqual(current_task["primary_material"]["id"], material_id)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            stored_material_id = connection.execute(
+                "SELECT primary_material_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(stored_material_id, material_id)
+
     def test_workspace_ensure_task_creates_new_manual_task_after_schedule_expired_history(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -5521,16 +5567,21 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         current_task = response.json()["thread"]["current_task"]
         self.assertEqual(current_task["match_score"], 86)
-        self.assertIsNone(current_task["primary_material_id"])
+        self.assertEqual(current_task["primary_material_id"], material_id)
 
         connection = sqlite3.connect(self.db_path)
         try:
+            stored_task_material_id = connection.execute(
+                "SELECT primary_material_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
             run_material_id = connection.execute(
                 "SELECT primary_material_id FROM match_analysis_runs WHERE email_task_id = ?",
                 (task_id,),
             ).fetchone()[0]
         finally:
             connection.close()
+        self.assertEqual(stored_task_material_id, material_id)
         self.assertEqual(run_material_id, material_id)
 
     def test_calculate_match_returns_409_when_run_is_already_running(self) -> None:

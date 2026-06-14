@@ -703,6 +703,53 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
+    def test_migration_backfills_empty_task_primary_material_from_identity_current_primary_material(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_task_primary_material_backfill.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = self._insert_identity_into(connection, email_address="task-backfill@example.com")
+            llm_profile_id = self._insert_llm_profile_into(connection, name="任务材料回填模型")
+            professor_id = self._insert_professor_into(connection, "task-backfill@example.edu")
+            material_id = self._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="默认简历",
+                original_filename="default-resume.txt",
+                extracted_text="resume",
+            )
+            connection.execute(
+                "UPDATE identity_profiles SET current_primary_material_id = ? WHERE id = ?",
+                (material_id, identity_id),
+            )
+            task_id = self._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=None,
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            task_primary_material_id = upgraded.execute(
+                "SELECT primary_material_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertEqual(task_primary_material_id, material_id)
+        finally:
+            legacy_dir.cleanup()
+
     def test_migration_leaves_ambiguous_identity_current_primary_material_empty(self) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:

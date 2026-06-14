@@ -34,6 +34,7 @@ from app.schemas.workspace import (
 )
 from app.services import llm_runtime
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
+from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
@@ -56,7 +57,9 @@ async def build_workspace_thread(
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     current_task = await _get_latest_email_task(session, professor_id, identity_id)
-    if _recover_legacy_sent_task_status(current_task):
+    task_updated = _recover_legacy_sent_task_status(current_task)
+    task_updated = _backfill_task_primary_material_from_identity(current_task, identity) or task_updated
+    if task_updated:
         await session.commit()
         await session.refresh(current_task)
     match_task = (
@@ -255,7 +258,9 @@ async def build_workspace_thread_for_task(
     professor = await _get_professor(session, current_task.professor_id)
     identity = await _get_identity(session, current_task.identity_id)
     llm_profile = await _get_llm_profile(session, current_task.llm_profile_id)
-    if _recover_legacy_sent_task_status(current_task):
+    task_updated = _recover_legacy_sent_task_status(current_task)
+    task_updated = _backfill_task_primary_material_from_identity(current_task, identity) or task_updated
+    if task_updated:
         await session.commit()
         await session.refresh(current_task)
     match_task = (
@@ -295,6 +300,7 @@ async def ensure_workspace_task(
     if current_task is not None:
         if _should_resume_workspace_task(current_task):
             return await _create_workspace_resume_task(session, current_task)
+        task_updated = _backfill_task_primary_material_from_identity(current_task, identity)
         if not _task_has_match_result(current_task):
             match_task = await _get_latest_identity_match_task(
                 session,
@@ -305,8 +311,10 @@ async def ensure_workspace_task(
             if match_task is not None:
                 _copy_match_snapshot(current_task, match_task)
                 current_task.updated_at = utc_now()
-                await session.commit()
-                await session.refresh(current_task)
+                task_updated = True
+        if task_updated:
+            await session.commit()
+            await session.refresh(current_task)
         return current_task
 
     snapshot = resolve_outreach_template_config(identity)
@@ -522,6 +530,37 @@ def _recover_legacy_sent_task_status(task: EmailTask | None) -> bool:
     task.last_error = None
     task.updated_at = utc_now()
     return True
+
+
+def _backfill_task_primary_material_from_identity(
+    task: EmailTask | None,
+    identity: IdentityProfile,
+) -> bool:
+    if task is None or task.primary_material_id is not None:
+        return False
+    if not _task_allows_primary_material_backfill(task):
+        return False
+    material = identity.current_primary_material
+    if material is None or material.identity_id != task.identity_id:
+        return False
+    if not material_can_be_primary(material):
+        return False
+
+    task.primary_material_id = material.id
+    task.primary_material = material
+    task.last_error = None
+    task.updated_at = utc_now()
+    return True
+
+
+def _task_allows_primary_material_backfill(task: EmailTask) -> bool:
+    return task.status in {
+        EmailTaskStatus.DISCOVERED.value,
+        EmailTaskStatus.MATCHED.value,
+        EmailTaskStatus.DRAFT_FAILED.value,
+        EmailTaskStatus.REVIEW_REQUIRED.value,
+        EmailTaskStatus.SEND_FAILED.value,
+    }
 
 
 def _extract_usage(provider_payload: dict[str, object] | None) -> dict[str, int | None]:
