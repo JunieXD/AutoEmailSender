@@ -55,11 +55,14 @@ export const TemplatePlaceholder = Node.create({
     return {
       insertTemplatePlaceholder:
         (key) =>
-        ({ commands }) =>
-          commands.insertContent({
+        ({ commands, state }) => {
+          const activeMarks = state.storedMarks ?? state.selection.$from.marks();
+          return commands.insertContent({
             type: this.name,
             attrs: { key },
-          }),
+            marks: activeMarks.map((mark) => mark.toJSON()),
+          });
+        },
     };
   },
 });
