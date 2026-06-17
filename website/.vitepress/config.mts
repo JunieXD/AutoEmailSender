@@ -21,6 +21,7 @@ export default defineConfig({
           text: "开始使用",
           items: [
             { text: "快速开始", link: "/docs/getting-started" },
+            { text: "交流与反馈", link: "/docs/feedback" },
             { text: "安装 Windows 版", link: "/docs/install" },
             { text: "首次配置", link: "/docs/first-run" }
           ]
@@ -41,6 +42,7 @@ export default defineConfig({
         {
           text: "帮助",
           items: [
+            { text: "交流与反馈", link: "/docs/feedback" },
             { text: "更新与常见问题", link: "/docs/faq" }
           ]
         },

@@ -38,6 +38,17 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 - [文档](https://juniexd.github.io/AutoEmailSender/docs/getting-started)
 - [下载 Windows 安装包](https://github.com/JunieXD/AutoEmailSender/releases)
 - [问题反馈](https://github.com/JunieXD/AutoEmailSender/issues)
+- QQ 交流群：`952383261`
+
+## 交流与反馈
+
+欢迎加入 QQ 交流群反馈 Bug、提出功能建议，或和其他同学交流使用经验。
+
+<p>
+  <img src="website/public/qq-group-952383261.jpg" alt="Auto Email Sender QQ 交流群二维码" width="220" />
+</p>
+
+如果需要提交可追踪的问题、复现步骤或截图，也可以前往 [GitHub Issues](https://github.com/JunieXD/AutoEmailSender/issues)。
 
 ## 核心特点
 

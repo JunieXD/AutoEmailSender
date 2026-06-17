@@ -15,6 +15,17 @@
   border-radius: 8px;
 }
 
+.qq-group-panel {
+  margin: 18px 0 20px;
+}
+
+.qq-group-panel img {
+  display: block;
+  width: min(260px, 100%);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
 .home-screenshot-section {
   margin: 12px auto 0;
   max-width: 1120px;

@@ -12,8 +12,11 @@ hero:
       text: 快速开始
       link: /docs/getting-started
     - theme: alt
-      text: 前往 Github 给个 Star 🌟
+      text: 前往 GitHub 给个 Star 🌟
       link: https://github.com/JunieXD/AutoEmailSender
+    - theme: alt
+      text: 加入 QQ 交流群
+      link: /docs/feedback
 ---
 
 <section class="home-screenshot-section">

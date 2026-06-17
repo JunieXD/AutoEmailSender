@@ -2,9 +2,16 @@
 
 Auto Email Sender 的安装、使用和开发说明。
 
+## 交流与反馈
+
+- QQ 交流群：`952383261`
+- [查看二维码和反馈方式](./feedback)
+- [GitHub Issues](https://github.com/JunieXD/AutoEmailSender/issues)
+
 ## 开始使用
 
 - [快速开始](./getting-started)
+- [交流与反馈](./feedback)
 - [安装 Windows 版](./install)
 - [首次配置](./first-run)
 
@@ -21,6 +28,7 @@ Auto Email Sender 的安装、使用和开发说明。
 
 ## 帮助
 
+- [交流与反馈](./feedback)
 - [更新与常见问题](./faq)
 
 ## 开发者
