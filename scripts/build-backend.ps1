@@ -26,6 +26,7 @@ try {
     --name backend `
     --specpath build `
     --hidden-import main `
+    --hidden-import aiosqlite `
     --collect-all markitdown `
     --collect-all mammoth `
     --collect-all pdfminer `

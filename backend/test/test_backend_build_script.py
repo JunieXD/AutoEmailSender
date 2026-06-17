@@ -5,6 +5,18 @@ import unittest
 
 
 class BackendBuildScriptTest(unittest.TestCase):
+    def test_declares_document_extraction_fallback_dependencies(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        content = pyproject.read_text(encoding="utf-8")
+
+        self.assertIn('"pypdf>=', content)
+
+    def test_includes_async_sqlite_driver_for_packaged_runtime(self) -> None:
+        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
+        content = script.resolve().read_text(encoding="utf-8")
+
+        self.assertIn("--hidden-import aiosqlite", content)
+
     def test_installs_only_playwright_browsers_to_packaged_resource_dir(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
         content = script.resolve().read_text(encoding="utf-8")
