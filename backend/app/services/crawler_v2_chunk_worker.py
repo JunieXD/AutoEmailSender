@@ -33,7 +33,7 @@ from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runtime import build_faculty_crawler_model
 from app.services.thinking_adaptation import ensure_thinking_adaptation
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.llm_runtime import parse_structured_result
+from app.services.llm_runtime import format_llm_runtime_error_for_user, parse_structured_result
 
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
@@ -144,27 +144,29 @@ async def run_crawler_v2_chunk_worker_once(
     chunk_id: int,
     worker_id: str,
 ) -> int:
-    async with session_factory() as session:
-        chunk = await session.get(CrawlPageChunk, chunk_id)
-        if chunk is None or chunk.status != CrawlPageChunkStatus.PROCESSING.value or chunk.worker_id != worker_id:
-            return 0
-        if not await ensure_job_active(session, chunk.job_id):
-            return 0
-        job = await session.get(CrawlJob, chunk.job_id)
-        if job is None:
-            return 0
-        llm_profile = await _resolve_llm_profile(session, job)
-        if llm_profile is None:
-            mark_crawler_v2_failed(
-                chunk,
-                message="缺少可用的 LLM Profile",
-                retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
-                terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
-            )
-            await session.commit()
-            return 1
-        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
     try:
+        async with session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            if chunk is None or chunk.status != CrawlPageChunkStatus.PROCESSING.value or chunk.worker_id != worker_id:
+                return 0
+            if not await ensure_job_active(session, chunk.job_id):
+                return 0
+            job = await session.get(CrawlJob, chunk.job_id)
+            if job is None:
+                return 0
+            llm_profile = await _resolve_llm_profile(session, job)
+            if llm_profile is None:
+                mark_crawler_v2_failed(
+                    chunk,
+                    message="缺少可用的 LLM Profile",
+                    retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
+                    terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
+                )
+                await session.commit()
+                return 1
+            thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
+            await session.commit()
+
         chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
             university=job.university,
@@ -239,7 +241,7 @@ async def run_crawler_v2_chunk_worker_once(
             if chunk is not None and chunk.status == CrawlPageChunkStatus.PROCESSING.value and chunk.worker_id == worker_id and not _lease_expired(chunk.lease_expires_at) and await ensure_job_active(session, chunk.job_id):
                 mark_crawler_v2_failed(
                     chunk,
-                    message=str(exc),
+                    message=format_llm_runtime_error_for_user(exc),
                     retryable_status=CrawlPageChunkStatus.FAILED_RETRYABLE.value,
                     terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
                 )

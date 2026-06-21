@@ -209,6 +209,42 @@ def format_llm_client_initialization_error(exc: ImportError | ValueError) -> str
     return f"模型请求初始化失败: {exc}"
 
 
+_LLM_CONNECTION_ERROR_MARKERS = (
+    "all connection attempts failed",
+    "connecterror",
+    "connect error",
+    "connection refused",
+    "connection reset",
+    "failed to establish a new connection",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "getaddrinfo failed",
+    "network is unreachable",
+    "no route to host",
+)
+
+
+def format_llm_runtime_error_for_user(message_or_exc: object) -> str:
+    message = str(message_or_exc).strip()
+    if not message:
+        return "模型请求失败"
+    if "模型服务连接失败" in message:
+        return message
+
+    haystack_parts = [message]
+    haystack_parts.append(type(message_or_exc).__name__)
+    cause = getattr(message_or_exc, "__cause__", None)
+    if cause is not None:
+        haystack_parts.append(type(cause).__name__)
+        haystack_parts.append(str(cause))
+    haystack = " ".join(haystack_parts).lower()
+    if any(marker in haystack for marker in _LLM_CONNECTION_ERROR_MARKERS):
+        return "模型服务连接失败，请检查系统代理或网络后重试。"
+
+    return message
+
+
 class LLMRuntimeError(RuntimeError):
     def __init__(
         self,
@@ -733,7 +769,7 @@ async def _legacy_request_chat_completion(
             ) from exc
         except httpx.HTTPError as exc:
             raise LLMRuntimeError(
-                f"模型请求失败: {exc}",
+                format_llm_runtime_error_for_user(f"模型请求失败: {exc}"),
                 request_url=url,
                 attempted_urls=attempted_urls.copy(),
                 endpoint_kind=endpoint_kind,
@@ -1015,7 +1051,7 @@ async def request_chat_completion(
             ) from exc
         except httpx.HTTPError as exc:
             raise LLMRuntimeError(
-                f"模型请求失败: {exc}",
+                format_llm_runtime_error_for_user(f"模型请求失败: {exc}"),
                 request_url=url,
                 attempted_urls=attempted_urls.copy(),
                 endpoint_kind=endpoint_kind,

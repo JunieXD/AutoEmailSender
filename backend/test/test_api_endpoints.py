@@ -282,6 +282,53 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(probe_mock.await_args.args[0].api_base_url, payload["api_base_url"])
         self.assertEqual(probe_mock.await_args.args[0].model_name, payload["model_name"])
 
+    def test_llm_profile_preview_test_commits_thinking_adaptation_cache(self) -> None:
+        payload = self._build_llm_payload(api_base_url="https://cache-preview.example.com/v1")
+        payload["model_name"] = "cache-preview-model"
+
+        async def record_adaptation(session, profile):
+            from app.services.thinking_adaptation import record_thinking_adaptation
+
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url,
+                model_name=profile.model_name,
+                learned_extra_body={"enable_thinking": False},
+            )
+            return {"enable_thinking": False}
+
+        with (
+            patch(
+                "app.api.llm_profiles.ensure_thinking_adaptation",
+                side_effect=record_adaptation,
+            ),
+            patch(
+                "app.api.llm_profiles.probe_llm_profile",
+                AsyncMock(
+                    return_value=self._build_probe_result(
+                        ok=True,
+                        message="模型可用性测试成功",
+                        resolved_base_url="https://cache-preview.example.com/v1",
+                        response_preview="READY",
+                    )
+                ),
+            ),
+        ):
+            response = self.client.post("/api/llm-profiles/preview/test", json=payload)
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        with sqlite3.connect(self.db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT learned_extra_body
+                FROM thinking_adaptation_cache
+                WHERE api_base_url = ? AND model_name = ?
+                """,
+                ("https://cache-preview.example.com/v1", "cache-preview-model"),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(json.loads(row[0]), {"enable_thinking": False})
+
     def test_identity_template_import_endpoint_supports_unsaved_identity_flow(self) -> None:
         response = self.client.post(
             "/api/identities/template-import",

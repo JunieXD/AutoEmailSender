@@ -22,6 +22,7 @@ from app.models import (
 from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
 from app.services.runtime_settings import get_runtime_settings
 from app.services.crawl_job_runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
+from app.services.llm_runtime import format_llm_runtime_error_for_user
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
@@ -444,7 +445,8 @@ async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -
     )
     if not terminal_errors:
         return None
-    return max(terminal_errors, key=lambda item: item[0].timestamp() if item[0] is not None else 0)[1]
+    message = max(terminal_errors, key=lambda item: item[0].timestamp() if item[0] is not None else 0)[1]
+    return format_llm_runtime_error_for_user(message)
 
 
 async def run_crawler_v2_once(

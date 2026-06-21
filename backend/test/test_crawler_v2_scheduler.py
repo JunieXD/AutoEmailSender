@@ -471,6 +471,35 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.error_message, "No module named 'tiktoken_ext'")
         self.assertEqual(run.error_message, "No module named 'tiktoken_ext'")
 
+    async def test_terminal_connection_error_is_adapted_for_final_job_message(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageChunk(
+                    job_id=job_id,
+                    page_id=None,
+                    source_url="https://example.edu/faculty",
+                    page_fingerprint="p",
+                    chunk_id="c-connect",
+                    chunk_index=0,
+                    chunk_hash="h-connect",
+                    content="张三",
+                    status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
+                    last_error="模型请求失败: All connection attempts failed",
+                )
+            )
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+        self.assertIn("模型服务连接失败", job.error_message or "")
+        self.assertIn("系统代理", job.error_message or "")
+
     async def test_profile_job_with_candidate_enters_needs_review_after_terminal_pages(self) -> None:
         job_id = await self._create_job(entry_type="profile")
         async with self.session_factory() as session:
