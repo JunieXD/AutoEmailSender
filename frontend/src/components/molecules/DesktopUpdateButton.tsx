@@ -441,6 +441,7 @@ function DesktopUpdateStatusBar({
 
   if (status.state === "downloading" || status.state === "slow_download_offered") {
     const modeLabel = status.mode === "full" ? "全量包" : "差量包";
+    const titleLabel = status.fallbackFromDifferential ? "已切换全量包" : modeLabel;
 
     return (
       <span
@@ -448,8 +449,11 @@ function DesktopUpdateStatusBar({
         aria-label="更新下载进度"
       >
         <span className="font-medium text-stone-800">
-          {modeLabel}：总计 {formatBytes(status.totalBytes)}
+          {titleLabel}：总计 {formatBytes(status.totalBytes)}
         </span>
+        {status.fallbackFromDifferential ? (
+          <span className="mt-1 text-amber-700">差量更新不可用，已自动改用全量下载。</span>
+        ) : null}
         <span className="h-1.5 overflow-hidden rounded-full bg-stone-100">
           <span className="block h-full bg-primary" style={{ width: `${status.percent}%` }} />
         </span>

@@ -5,6 +5,7 @@ import {
   estimateRemainingSeconds,
   formatByteSize,
   formatDownloadProgress,
+  isLikelyFullDownloadFallback,
   normalizeReleaseNotes,
   shouldOfferFullDownload,
 } from "../src/updates.js";
@@ -45,6 +46,32 @@ describe("update helpers", () => {
         elapsedSeconds: 40,
         remainingSeconds: 181,
         alreadyOffered: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("detects electron-updater fallback from differential to full download by progress size", () => {
+    expect(
+      isLikelyFullDownloadFallback({
+        requestedMode: "differential",
+        progressTotalBytes: 266_237_904,
+        fullDownloadBytes: 266_237_904,
+      }),
+    ).toBe(true);
+
+    expect(
+      isLikelyFullDownloadFallback({
+        requestedMode: "differential",
+        progressTotalBytes: 1_500_000,
+        fullDownloadBytes: 266_237_904,
+      }),
+    ).toBe(false);
+
+    expect(
+      isLikelyFullDownloadFallback({
+        requestedMode: "full",
+        progressTotalBytes: 266_237_904,
+        fullDownloadBytes: 266_237_904,
       }),
     ).toBe(false);
   });

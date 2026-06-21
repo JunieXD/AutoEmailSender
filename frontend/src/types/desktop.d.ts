@@ -10,6 +10,7 @@ export type DesktopUpdateDownloadProgress = {
   bytesPerSecond: number;
   remainingSeconds: number | null;
   mode: DesktopUpdateDownloadMode;
+  fallbackFromDifferential?: boolean;
 };
 
 export type DesktopUpdateStatus =

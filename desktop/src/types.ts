@@ -98,6 +98,7 @@ export type UpdateDownloadProgress = {
   bytesPerSecond: number;
   remainingSeconds: number | null;
   mode: UpdateDownloadMode;
+  fallbackFromDifferential?: boolean;
 };
 
 export type UpdateStatus =
