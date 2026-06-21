@@ -33,9 +33,15 @@ try {
     --collect-all pdfplumber `
     --collect-all pypdf `
     --collect-all playwright `
+    --collect-all tiktoken `
+    --collect-submodules tiktoken_ext `
+    --hidden-import tiktoken_ext.openai_public `
     --add-data "$AlembicIni;." `
     --add-data "$AlembicDir;alembic" `
     desktop_entry.py
+
+  $PackagedBackendExe = Join-Path $BackendDir "dist\backend\backend.exe"
+  & $PackagedBackendExe --self-check
 } finally {
   Pop-Location
 }

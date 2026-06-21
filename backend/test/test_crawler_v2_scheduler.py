@@ -429,6 +429,48 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
         self.assertEqual(job.error_message, "抓取未发现候选导师")
 
+    async def test_no_candidates_with_terminal_chunk_failure_uses_terminal_error_message(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            run = CrawlJobRun(
+                job_id=job_id,
+                attempt_number=1,
+                status=CrawlJobStatus.RUNNING.value,
+                active_started_at=datetime.now(UTC),
+            )
+            session.add(run)
+            session.add(
+                CrawlPageChunk(
+                    job_id=job_id,
+                    page_id=None,
+                    source_url="https://example.edu/faculty",
+                    page_fingerprint="p",
+                    chunk_id="c1",
+                    chunk_index=0,
+                    chunk_hash="h1",
+                    content="张三",
+                    status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
+                    last_error="No module named 'tiktoken_ext'",
+                )
+            )
+            await session.flush()
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            job.current_run_id = run.id
+            await session.commit()
+            run_id = run.id
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="w1")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            run = await session.get(CrawlJobRun, run_id)
+        assert job is not None and run is not None
+        self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+        self.assertEqual(job.error_message, "No module named 'tiktoken_ext'")
+        self.assertEqual(run.error_message, "No module named 'tiktoken_ext'")
+
     async def test_profile_job_with_candidate_enters_needs_review_after_terminal_pages(self) -> None:
         job_id = await self._create_job(entry_type="profile")
         async with self.session_factory() as session:

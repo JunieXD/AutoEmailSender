@@ -52,6 +52,21 @@ class BackendBuildScriptTest(unittest.TestCase):
         )
         self.assertNotIn(f"_internal\\{legacy_browser_driver}", content)
 
+    def test_collects_llm_tokenizer_namespace_dependencies_for_packaging(self) -> None:
+        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
+        content = script.resolve().read_text(encoding="utf-8")
+
+        self.assertIn("--collect-all tiktoken", content)
+        self.assertIn("--collect-submodules tiktoken_ext", content)
+        self.assertIn("--hidden-import tiktoken_ext.openai_public", content)
+
+    def test_runs_packaged_backend_self_check_after_build(self) -> None:
+        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
+        content = script.resolve().read_text(encoding="utf-8")
+
+        self.assertIn('Join-Path $BackendDir "dist\\backend\\backend.exe"', content)
+        self.assertIn("--self-check", content)
+
     def test_backend_packaging_uses_noarchive_for_smaller_differential_updates(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
         content = script.resolve().read_text(encoding="utf-8")
