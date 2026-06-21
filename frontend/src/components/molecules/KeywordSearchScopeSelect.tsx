@@ -31,6 +31,13 @@ const getSummary = <TValue extends string>(
   return `选择字段：${detail}`;
 };
 
+const areSameValues = <TValue extends string>(
+  previousValues: TValue[],
+  nextValues: TValue[],
+) =>
+  previousValues.length === nextValues.length &&
+  previousValues.every((value, index) => value === nextValues[index]);
+
 export const KeywordSearchScopeSelect = <TValue extends string = string>({
   label,
   options,
@@ -84,10 +91,10 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
     }
   }, [open]);
 
-  // 边界 3：父组件 selectedValues 引用变化（如切换 identity 触发 sessionStorage 重读）时清草稿，
-  // 避免临时态泄漏到新的上下文。用 ref 比较引用，避免父组件每次重渲染都误清草稿。
+  // 边界 3：父组件 selectedValues 内容变化（如切换 identity 触发 sessionStorage 重读）时清草稿，
+  // 避免临时态泄漏到新的上下文；等值新数组不应打断当前草稿。
   useEffect(() => {
-    if (previousSelectedRef.current !== selectedValues) {
+    if (!areSameValues(previousSelectedRef.current, selectedValues)) {
       previousSelectedRef.current = selectedValues;
       setDraftValues(null);
     }

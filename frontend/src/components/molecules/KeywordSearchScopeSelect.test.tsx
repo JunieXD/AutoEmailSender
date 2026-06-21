@@ -228,4 +228,40 @@ describe("KeywordSearchScopeSelect", () => {
     );
     expect(screen.getByText("至少保留一项")).toBeInTheDocument();
   });
+
+  it("keeps the draft when selectedValues rerenders with the same values", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <KeywordSearchScopeSelect
+        label="搜索范围"
+        options={options}
+        selectedValues={["name", "title"]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /搜索范围：选择字段：已选 2 项/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "全部取消" }));
+
+    rerender(
+      <KeywordSearchScopeSelect
+        label="搜索范围"
+        options={options}
+        selectedValues={["name", "title"]}
+        onChange={onChange}
+      />,
+    );
+
+    expect(screen.getByText(/选择一项以应用/)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "姓名" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+
+    fireEvent.click(screen.getByRole("option", { name: "姓名" }));
+
+    expect(onChange).toHaveBeenCalledWith(["name"]);
+  });
 });
