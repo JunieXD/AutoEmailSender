@@ -3380,6 +3380,60 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
+    def test_delete_material_detaches_soft_deleted_stopped_batch_approved_item_reference(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        deleted_material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research background is in information extraction.",
+            material_type="resume",
+        )
+        remaining_material_id = self._upload_material(
+            identity_id,
+            filename="portfolio.pdf",
+            content=b"Portfolio content",
+            material_type="portfolio",
+        )
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="stopped",
+            primary_material_id=deleted_material_id,
+            selected_material_ids=[deleted_material_id, remaining_material_id],
+            deleted=True,
+        )
+        professor_id = self._create_professor(email="soft-deleted-approved-material-delete@example.edu")
+        email_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="approved",
+            primary_material_id=deleted_material_id,
+            selected_material_ids=[deleted_material_id, remaining_material_id],
+            batch_task_id=batch_task_id,
+            source="batch",
+            approved_subject="已批准旧主题",
+            approved_body_text="已批准旧正文",
+            approved_body_html="<p>已批准旧正文</p>",
+        )
+
+        delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
+
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+        task_state = self._get_email_task_delete_state(email_task_id)
+        self.assertEqual(task_state["status"], "canceled")
+        self.assertEqual(task_state["cancellation_reason"], "batch_stopped")
+        self.assertIsNone(task_state["primary_material_id"])
+        self.assertEqual(task_state["selected_material_ids"], [remaining_material_id])
+        self.assertIsNone(task_state["approved_subject"])
+        self.assertIsNone(task_state["approved_body_text"])
+        self.assertIsNone(task_state["approved_body_html"])
+        self.assertIsNone(task_state["approved_at"])
+        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        self.assertIsNone(primary_material_id)
+        self.assertEqual(selected_material_ids, [remaining_material_id])
+
     def test_delete_material_does_not_partially_detach_when_blocked_task_exists(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -9411,7 +9465,7 @@ class ApiEndpointTests(unittest.TestCase):
                 SELECT status, primary_material_id, selected_material_ids,
                        generated_subject, generated_content_text, generated_content_html,
                        approved_subject, approved_body_text, approved_body_html,
-                       approved_at, last_error
+                       approved_at, last_error, cancellation_reason
                 FROM email_tasks
                 WHERE id = ?
                 """,
@@ -9431,6 +9485,7 @@ class ApiEndpointTests(unittest.TestCase):
             "approved_body_html": row[8],
             "approved_at": row[9],
             "last_error": row[10],
+            "cancellation_reason": row[11],
         }
 
     def _insert_batch_task_with_material(
