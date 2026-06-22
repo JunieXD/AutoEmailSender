@@ -260,6 +260,41 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(options["port"], 48123)
         self.assertIs(options["reload"], False)
 
+    def test_desktop_entry_parses_self_check_without_uvicorn_options(self) -> None:
+        from desktop_entry import parse_desktop_args
+
+        args = parse_desktop_args(["--self-check"])
+
+        self.assertTrue(args.self_check)
+
+    def test_packaged_runtime_self_check_imports_dynamic_dependencies(self) -> None:
+        from desktop_entry import run_packaged_runtime_self_check
+
+        result = run_packaged_runtime_self_check()
+
+        self.assertEqual(result, 0)
+
+    def test_packaged_runtime_self_check_covers_high_risk_dynamic_dependencies(self) -> None:
+        from desktop_entry import PACKAGED_RUNTIME_SELF_CHECK_MODULES
+
+        for module_name in [
+            "tiktoken",
+            "tiktoken_ext.openai_public",
+            "socksio",
+            "langchain_openai",
+            "openai",
+            "httpx",
+            "markitdown",
+            "mammoth",
+            "pdfminer",
+            "pdfplumber",
+            "pypdf",
+            "playwright.async_api",
+            "docx",
+            "openpyxl",
+        ]:
+            self.assertIn(module_name, PACKAGED_RUNTIME_SELF_CHECK_MODULES)
+
     def test_dev_entry_uses_port_8010_by_default(self) -> None:
         from dev_entry import build_uvicorn_options
 

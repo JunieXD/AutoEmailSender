@@ -22,6 +22,7 @@ from app.models import (
 from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
 from app.services.runtime_settings import get_runtime_settings
 from app.services.crawl_job_runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
+from app.services.llm_runtime import format_llm_runtime_error_for_user
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
@@ -96,7 +97,7 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
         error_message = None
         if not has_candidates:
             final_status = CrawlJobStatus.FAILED.value
-            error_message = "抓取未发现候选导师"
+            error_message = await _job_terminal_failure_message(session, job_id=job.id) or "抓取未发现候选导师"
         else:
             final_status = CrawlJobStatus.NEEDS_REVIEW.value
         job.status = final_status
@@ -402,6 +403,51 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
 async def _job_has_candidates(session: AsyncSession, *, job_id: int) -> bool:
     candidate = await session.scalar(select(CrawlCandidate.id).where(CrawlCandidate.job_id == job_id).limit(1))
     return candidate is not None
+
+
+async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -> str | None:
+    terminal_errors: list[tuple[datetime | None, str]] = []
+    page_errors = await session.execute(
+        select(CrawlPageTask.updated_at, CrawlPageTask.last_error).where(
+            CrawlPageTask.job_id == job_id,
+            CrawlPageTask.status == CrawlPageTaskStatus.FAILED_TERMINAL.value,
+            CrawlPageTask.last_error.is_not(None),
+        )
+    )
+    terminal_errors.extend(
+        (updated_at, last_error.strip())
+        for updated_at, last_error in page_errors
+        if last_error and last_error.strip()
+    )
+    chunk_errors = await session.execute(
+        select(CrawlPageChunk.updated_at, CrawlPageChunk.last_error).where(
+            CrawlPageChunk.job_id == job_id,
+            CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_TERMINAL.value,
+            CrawlPageChunk.last_error.is_not(None),
+        )
+    )
+    terminal_errors.extend(
+        (updated_at, last_error.strip())
+        for updated_at, last_error in chunk_errors
+        if last_error and last_error.strip()
+    )
+    enrichment_errors = await session.execute(
+        select(CrawlCandidateEnrichmentTask.updated_at, CrawlCandidateEnrichmentTask.last_error).where(
+            CrawlCandidateEnrichmentTask.job_id == job_id,
+            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+            CrawlCandidateEnrichmentTask.last_error.is_not(None),
+        )
+    )
+    terminal_errors.extend(
+        (updated_at, last_error.strip())
+        for updated_at, last_error in enrichment_errors
+        if last_error and last_error.strip()
+    )
+    if not terminal_errors:
+        return None
+    message = max(terminal_errors, key=lambda item: item[0].timestamp() if item[0] is not None else 0)[1]
+    return format_llm_runtime_error_for_user(message)
+
 
 async def run_crawler_v2_once(
     session_factory: async_sessionmaker[AsyncSession],

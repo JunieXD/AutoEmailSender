@@ -151,6 +151,8 @@ async def preview_llm_profile_test(
         profile,
         thinking_extra_body=thinking_extra_body,
     )
+    if result.ok:
+        await session.commit()
     return LLMProfileTestResult(
         ok=result.ok,
         message=result.message,

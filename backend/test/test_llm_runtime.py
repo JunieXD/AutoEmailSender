@@ -4,6 +4,8 @@ import json
 import unittest
 from unittest.mock import patch
 
+import httpx
+
 from app.models import LLMProfile
 from app.services.llm_runtime import (
     ChatCompletionResult,
@@ -1946,6 +1948,43 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.endpoint_kind, "chat_completions")
         self.assertTrue(result.consumes_tokens)
+
+    async def test_probe_llm_profile_reports_connection_error_actionably(self) -> None:
+        profile = LLMProfile(
+            name="ark",
+            provider="openai",
+            api_base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key="test-key",
+            model_name="doubao-seed-2-0-mini-260215",
+        )
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=httpx.ConnectError("All connection attempts failed"),
+        ):
+            result = await probe_llm_profile(profile)
+
+        self.assertFalse(result.ok)
+        self.assertIn("模型服务连接失败", result.message)
+        self.assertIn("系统代理", result.message)
+        self.assertIn("网络", result.message)
+
+    def test_formats_packaged_connect_error_for_crawler_errors(self) -> None:
+        from app.services.llm_runtime import format_llm_runtime_error_for_user
+
+        formatted = format_llm_runtime_error_for_user(
+            "模型请求失败: All connection attempts failed"
+        )
+
+        self.assertIn("模型服务连接失败", formatted)
+        self.assertIn("系统代理", formatted)
+
+        formatted_from_exception = format_llm_runtime_error_for_user(
+            httpx.ConnectError("proxy handshake failed")
+        )
+
+        self.assertIn("模型服务连接失败", formatted_from_exception)
+        self.assertIn("网络", formatted_from_exception)
 
     async def test_request_chat_completion_wraps_client_initialization_error(self) -> None:
         profile = LLMProfile(

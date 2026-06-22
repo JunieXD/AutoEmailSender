@@ -249,6 +249,36 @@ describe("DesktopUpdateButton", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("explains when a differential update falls back to the full installer", async () => {
+    const listeners: Array<(status: DesktopUpdateStatus) => void> = [];
+    window.autoEmailSender = buildDesktopApi({
+      onUpdateStatus: (callback) => {
+        listeners.push(callback);
+        return () => undefined;
+      },
+    });
+
+    render(<DesktopUpdateButton />);
+    listeners[0]?.({
+      state: "downloading",
+      version: "2.3.6",
+      nextVersion: "2.3.7",
+      percent: 37.6,
+      transferredBytes: 100 * 1024 * 1024,
+      totalBytes: 266 * 1024 * 1024,
+      remainingBytes: 166 * 1024 * 1024,
+      bytesPerSecond: 12 * 1024 * 1024,
+      remainingSeconds: 14,
+      mode: "full",
+      fallbackFromDifferential: true,
+    });
+
+    expect(await screen.findByText(/已切换全量包：总计 266.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText("差量更新不可用，已自动改用全量下载。")).toBeInTheDocument();
+    expect(screen.getByText(/全量包：已下载 100.0 MB/)).toBeInTheDocument();
+    expect(screen.queryByText(/差量包：总计 266.0 MB/)).not.toBeInTheDocument();
+  });
+
   it("allows users to start a full download proactively", async () => {
     const downloadUpdate = vi.fn(async () => ({
       state: "downloaded_pending_install" as const,

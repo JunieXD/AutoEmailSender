@@ -693,6 +693,28 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         invoke_mock.assert_awaited_once()
         self.assertEqual(invoke_mock.await_args.kwargs["thinking_extra_body"], extra_body)
 
+    async def test_chunk_worker_records_thinking_adaptation_failure_on_chunk(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        with patch(
+            "app.services.crawler_v2_chunk_worker.ensure_thinking_adaptation",
+            new=AsyncMock(side_effect=RuntimeError("模型服务连接失败，请检查系统代理或网络后重试")),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        self.assertIn("模型服务连接失败", chunk.last_error or "")
+        self.assertIsNone(chunk.worker_id)
+        self.assertIsNone(chunk.claimed_at)
+
     async def test_chunk_worker_records_llm_token_usage(self) -> None:
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
 

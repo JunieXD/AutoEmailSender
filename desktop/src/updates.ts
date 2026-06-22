@@ -13,6 +13,7 @@ let currentStatus: UpdateStatus = { state: "idle", version: "0.0.0" };
 const BYTES_PER_KIB = 1024;
 const SLOW_CHECK_START_SECONDS = 10;
 const SLOW_REMAINING_SECONDS = 180;
+const FULL_DOWNLOAD_FALLBACK_TOLERANCE_BYTES = 1024 * 1024;
 let activeDownloadMode: UpdateDownloadMode = "differential";
 let currentDownloadToken: import("builder-util-runtime").CancellationToken | null = null;
 let currentDownloadStartedAtMs = 0;
@@ -69,6 +70,26 @@ export function shouldOfferFullDownload(input: {
   );
 }
 
+export function isLikelyFullDownloadFallback(input: {
+  requestedMode: UpdateDownloadMode;
+  progressTotalBytes: number;
+  fullDownloadBytes?: number;
+}): boolean {
+  if (
+    input.requestedMode !== "differential" ||
+    typeof input.fullDownloadBytes !== "number" ||
+    input.fullDownloadBytes <= 0 ||
+    input.progressTotalBytes <= 0
+  ) {
+    return false;
+  }
+
+  return (
+    Math.abs(input.progressTotalBytes - input.fullDownloadBytes) <=
+    FULL_DOWNLOAD_FALLBACK_TOLERANCE_BYTES
+  );
+}
+
 export function normalizeReleaseNotes(
   releaseNotes: string | ElectronReleaseNote[] | null | undefined,
 ): string | undefined {
@@ -102,6 +123,11 @@ export function buildProgressStatus(progress: {
   bytesPerSecond: number;
 }): UpdateDownloadProgress {
   const remainingBytes = Math.max(progress.total - progress.transferred, 0);
+  const fallbackFromDifferential = isLikelyFullDownloadFallback({
+    requestedMode: activeDownloadMode,
+    progressTotalBytes: progress.total,
+    fullDownloadBytes: activeFullDownloadBytes,
+  });
   return {
     percent: formatDownloadProgress(progress.percent),
     transferredBytes: progress.transferred,
@@ -109,7 +135,8 @@ export function buildProgressStatus(progress: {
     remainingBytes,
     bytesPerSecond: progress.bytesPerSecond,
     remainingSeconds: estimateRemainingSeconds(remainingBytes, progress.bytesPerSecond),
-    mode: activeDownloadMode,
+    mode: fallbackFromDifferential ? "full" : activeDownloadMode,
+    ...(fallbackFromDifferential ? { fallbackFromDifferential: true } : {}),
   };
 }
 
