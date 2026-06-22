@@ -870,7 +870,31 @@ export const HomePage = () => {
     });
   };
 
+  const prevPageResetDepsRef = useRef<{
+    filters: DashboardFilterState;
+    sortKey: ProfessorDashboardSortKey;
+    direction: ProfessorDashboardSortDirection;
+    requestKey: string | null;
+  } | null>(null);
+
   useEffect(() => {
+    const prev = prevPageResetDepsRef.current;
+    // 仅在依赖值真正变化时才重置页码，避免 Activity 切回时 effect 重建导致误重置。
+    if (
+      prev &&
+      prev.filters === filters &&
+      prev.sortKey === sortKey &&
+      prev.direction === currentTimeSortDirection &&
+      prev.requestKey === professorsRequestKey
+    ) {
+      return;
+    }
+    prevPageResetDepsRef.current = {
+      filters,
+      sortKey,
+      direction: currentTimeSortDirection,
+      requestKey: professorsRequestKey,
+    };
     setCurrentPage(1);
   }, [filters, sortKey, currentTimeSortDirection, professorsRequestKey]);
 
