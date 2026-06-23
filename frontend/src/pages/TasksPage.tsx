@@ -754,6 +754,9 @@ export const TasksPage = () => {
   const batchTasksPreloadedKeyRef = useRef<string | null>(null);
   const matchJobsPreloadedKeyRef = useRef<string | null>(null);
   const activeTasksRequestKeyRef = useRef<string | null>(null);
+  const previousTaskListViewsRef = useRef(taskListViews);
+  const previousSelectedBatchTaskIdRef = useRef(selectedBatchTask?.id);
+  const previousSelectedCrawlJobIdRef = useRef(selectedCrawlJob?.id ?? null);
   const latestTasksRequestIdRef = useRef(0);
   const latestBatchTaskDetailsRequestIdRef = useRef(0);
   const latestBatchReviewRequestIdRef = useRef(0);
@@ -979,16 +982,18 @@ const selectedCrawlJobCanReview =
   }, [activeTab, hasTaskSelection]);
 
   useEffect(() => {
-    setBatchPage(1);
-  }, [taskListViews.batch]);
-
-  useEffect(() => {
-    setCrawlPage(1);
-  }, [taskListViews.crawl]);
-
-  useEffect(() => {
-    setMatchPage(1);
-  }, [taskListViews.match]);
+    const previousTaskListViews = previousTaskListViewsRef.current;
+    previousTaskListViewsRef.current = taskListViews;
+    if (previousTaskListViews.batch !== taskListViews.batch) {
+      setBatchPage(1);
+    }
+    if (previousTaskListViews.crawl !== taskListViews.crawl) {
+      setCrawlPage(1);
+    }
+    if (previousTaskListViews.match !== taskListViews.match) {
+      setMatchPage(1);
+    }
+  }, [taskListViews]);
 
   const loadTasks = useCallback(async () => {
     if (!tasksRequestKey || !selectedIdentityId) {
@@ -1422,6 +1427,10 @@ const selectedCrawlJobCanReview =
   }, [loadBatchTaskDetails, selectedBatchTask]);
 
   useEffect(() => {
+    if (previousSelectedBatchTaskIdRef.current === selectedBatchTask?.id) {
+      return;
+    }
+    previousSelectedBatchTaskIdRef.current = selectedBatchTask?.id;
     setBatchSentItemPage(1);
     setBatchPendingItemPage(1);
   }, [selectedBatchTask?.id]);
@@ -1463,6 +1472,10 @@ const selectedCrawlJobCanReview =
   }, [crawlJobCandidates]);
 
   useEffect(() => {
+    if (previousSelectedCrawlJobIdRef.current === selectedCrawlJobId) {
+      return;
+    }
+    previousSelectedCrawlJobIdRef.current = selectedCrawlJobId;
     setSelectedCrawlCandidateIds([]);
     setCrawlJobApproveLoading(false);
     setCrawlJobEnrichLoading(false);
