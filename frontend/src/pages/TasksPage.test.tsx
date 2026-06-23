@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import { Activity, type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -192,6 +193,14 @@ vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
     />
   ),
 }));
+
+const ActivityHarness = ({
+  mode,
+  children,
+}: {
+  mode: "visible" | "hidden";
+  children: ReactNode;
+}) => <Activity mode={mode}>{children}</Activity>;
 
 const buildCrawlJob = (
   overrides: Partial<CrawlJobSummaryDTO> = {},
@@ -873,6 +882,75 @@ describe("TasksPage batch draft review", () => {
     expect(screen.getByText("已发送导师 20")).toBeInTheDocument();
     expect(screen.queryByText("已发送导师 21")).not.toBeInTheDocument();
     expect(screen.getByText("显示 1-20 / 2000 个任务")).toBeInTheDocument();
+  });
+
+  it("preserves batch list and detail pagination when Activity hides and shows the page again", async () => {
+    const tasks = Array.from({ length: 9 }, (_, index) =>
+      buildBatchTask({
+        id: index + 1,
+        name: `批量邮件任务 ${index + 1}`,
+      }),
+    );
+    const selectedTask = tasks[8];
+    const sentItems = Array.from({ length: 21 }, (_, index) =>
+      buildBatchItem({
+        id: index + 1,
+        professor_id: index + 1,
+        professor_name: `已发送导师 ${index + 1}`,
+        status: "sent",
+        sent_at: "2026-05-08T01:00:00",
+      }),
+    );
+    apiMocks.listBatchTasks.mockResolvedValue(tasks);
+    apiMocks.listBatchTaskItems.mockResolvedValue(sentItems);
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <ActivityHarness mode="visible">
+          <TasksPage />
+        </ActivityHarness>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("批量邮件任务 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    expect(await screen.findByText("批量邮件任务 9")).toBeInTheDocument();
+    expect(screen.getByText("显示 9-9 / 9 个任务")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    const dialog = await screen.findByRole("dialog", { name: "批量任务详情" });
+    expect(within(dialog).getByText(selectedTask.name)).toBeInTheDocument();
+    expect(within(dialog).getByText("已发送导师 1")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一页" }));
+    expect(await within(dialog).findByText("已发送导师 21")).toBeInTheDocument();
+    expect(within(dialog).getByText("显示 21-21 / 21 个任务")).toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <ActivityHarness mode="hidden">
+          <TasksPage />
+        </ActivityHarness>
+      </MemoryRouter>,
+    );
+    rerender(
+      <MemoryRouter>
+        <ActivityHarness mode="visible">
+          <TasksPage />
+        </ActivityHarness>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("批量邮件任务 9")).toBeInTheDocument();
+    expect(screen.getByText("显示 9-9 / 9 个任务")).toBeInTheDocument();
+
+    const restoredDialog = await screen.findByRole("dialog", {
+      name: "批量任务详情",
+    });
+    expect(within(restoredDialog).getByText(selectedTask.name)).toBeInTheDocument();
+    expect(within(restoredDialog).getByText("已发送导师 21")).toBeInTheDocument();
+    expect(within(restoredDialog).getByText("显示 21-21 / 21 个任务")).toBeInTheDocument();
   });
 
   it("opens the generated draft inside the existing batch detail panel", async () => {

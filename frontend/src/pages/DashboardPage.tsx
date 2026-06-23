@@ -746,6 +746,7 @@ export const DashboardPage = () => {
   const mentorSectionRef = useRef<HTMLElement | null>(null);
   const emailSectionRef = useRef<HTMLElement | null>(null);
   const tokenSectionRef = useRef<HTMLElement | null>(null);
+  const previousSelectedIdentityIdRef = useRef(selectedIdentityId);
   const emailDateRange = useMemo(() => getEmailDateRange(emailDatePreset), [emailDatePreset]);
   const dashboardRequestKey =
     selectedIdentityId
@@ -850,6 +851,10 @@ export const DashboardPage = () => {
   }, [overview, updateSectionNavTop]);
 
   useEffect(() => {
+    if (previousSelectedIdentityIdRef.current === selectedIdentityId) {
+      return;
+    }
+    previousSelectedIdentityIdRef.current = selectedIdentityId;
     setSelectedUniversity(null);
     setSelectedSchool(null);
     setEmailUniversity(null);

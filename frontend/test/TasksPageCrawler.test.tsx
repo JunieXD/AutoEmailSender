@@ -187,7 +187,9 @@ describe("TasksPage crawler jobs tab", () => {
 
     const crawlerSummaryCard =
       screen.getAllByText("教师抓取")[0].closest("div")?.parentElement;
-    expect(crawlerSummaryCard).toHaveTextContent("1");
+    await waitFor(() => {
+      expect(crawlerSummaryCard).toHaveTextContent("1");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
 
