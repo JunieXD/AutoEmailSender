@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from 'react-router-dom';
 import { DesktopStartupStatusBanner } from '@/components/organisms/DesktopStartupStatusBanner';
+import { KeepAliveLayout } from '@/components/organisms/KeepAliveLayout';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
@@ -71,16 +72,24 @@ const routes = [
     path: '/',
     element: <AppShell />,
     children: [
-      { index: true, element: <HomePage /> },
-      { path: 'dashboard', element: <DashboardPage /> },
-      { path: 'professors', element: <ProfessorsPage /> },
-      { path: 'tasks', element: <TasksPage /> },
-      { path: 'create-task', element: <CreateTaskPage /> },
-      { path: 'test-compose', element: <TestComposePage /> },
-      { path: 'workspace/:id', element: <WorkspacePage /> },
-      { path: 'profile', element: <ProfilePage /> },
-      { path: '404', element: <NotFoundPage /> },
-      { path: '*', element: <NotFoundPage /> },
+      // 所有路由都挂在 KeepAliveLayout 之下：保活路由进 KeepAlive 缓存，非保活路由旁路渲染。
+      // 关键点：KeepAliveLayout 永不卸载，<KeepAlive> 内部的 useState<CacheNode[]> 因此始终
+      // 存活——这是"非保活页面回到保活页面也不丢 state"的前提。
+      {
+        element: <KeepAliveLayout />,
+        children: [
+          { index: true, element: <HomePage /> },
+          { path: 'dashboard', element: <DashboardPage /> },
+          { path: 'professors', element: <ProfessorsPage /> },
+          { path: 'tasks', element: <TasksPage /> },
+          { path: 'profile', element: <ProfilePage /> },
+          { path: 'create-task', element: <CreateTaskPage /> },
+          { path: 'test-compose', element: <TestComposePage /> },
+          { path: 'workspace/:id', element: <WorkspacePage /> },
+          { path: '404', element: <NotFoundPage /> },
+          { path: '*', element: <NotFoundPage /> },
+        ],
+      },
     ],
   },
 ];

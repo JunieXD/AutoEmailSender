@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Activity, type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -265,6 +266,14 @@ const emitIntersectionEntries = (entries: MockIntersectionObserverEntry[]) => {
     {} as IntersectionObserver,
   );
 };
+
+const ActivityHarness = ({
+  mode,
+  children,
+}: {
+  mode: "visible" | "hidden";
+  children: ReactNode;
+}) => <Activity mode={mode}>{children}</Activity>;
 
 describe("DashboardPage", () => {
   beforeEach(() => {
@@ -553,6 +562,50 @@ describe("DashboardPage", () => {
         endDate: null,
       });
     });
+  });
+
+  it("preserves dashboard filters when Activity hides and shows the page again", async () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <ActivityHarness mode="visible">
+          <DashboardPage />
+        </ActivityHarness>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("邮件触达");
+    chooseNativeSelectOption("学校筛选", "示例大学（2）");
+    chooseNativeSelectOption("学院筛选", "计算机学院（2）");
+    chooseNativeSelectOption("邮件触达学校筛选", "示例大学（2）");
+    chooseNativeSelectOption("邮件触达学院筛选", "计算机学院（2）");
+    chooseNativeSelectOption("邮件触达时间筛选", "最近 30 天");
+
+    expect(screen.getByLabelText("学校筛选")).toHaveTextContent("示例大学（2）");
+    expect(screen.getByLabelText("学院筛选")).toHaveTextContent("计算机学院（2）");
+    expect(screen.getByLabelText("邮件触达学校筛选")).toHaveTextContent("示例大学（2）");
+    expect(screen.getByLabelText("邮件触达学院筛选")).toHaveTextContent("计算机学院（2）");
+    expect(screen.getByLabelText("邮件触达时间筛选")).toHaveTextContent("最近 30 天");
+
+    rerender(
+      <MemoryRouter>
+        <ActivityHarness mode="hidden">
+          <DashboardPage />
+        </ActivityHarness>
+      </MemoryRouter>,
+    );
+    rerender(
+      <MemoryRouter>
+        <ActivityHarness mode="visible">
+          <DashboardPage />
+        </ActivityHarness>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByLabelText("学校筛选")).toHaveTextContent("示例大学（2）");
+    expect(screen.getByLabelText("学院筛选")).toHaveTextContent("计算机学院（2）");
+    expect(screen.getByLabelText("邮件触达学校筛选")).toHaveTextContent("示例大学（2）");
+    expect(screen.getByLabelText("邮件触达学院筛选")).toHaveTextContent("计算机学院（2）");
+    expect(screen.getByLabelText("邮件触达时间筛选")).toHaveTextContent("最近 30 天");
   });
 
   it("smoothly scrolls to each statistics section from the section nav", async () => {

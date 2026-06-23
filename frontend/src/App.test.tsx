@@ -24,6 +24,13 @@ vi.mock("@/components/organisms/RouteScrollRestoration", () => ({
   RouteScrollRestoration: () => null,
 }));
 
+// react-activity-keepalive-kit 自带 useLayoutEffect+startTransition 流程，会让首帧渲染为空 div，
+// 这与本测试关心的"Suspense fallback 同步可见、lazy 模块延迟加载"无关。Mock 为透传组件即可。
+vi.mock("react-activity-keepalive-kit", () => ({
+  __esModule: true,
+  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("@/components/organisms/TopNavBar", () => ({
   TopNavBar: () => <nav>导航栏</nav>,
 }));
