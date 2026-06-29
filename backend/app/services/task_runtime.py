@@ -1886,7 +1886,8 @@ async def sync_identity_incremental_once(
             folder_role=folder_role,
             folder=folder,
         )
-        state.last_seen_uid = max_seen_uid
+        if max_seen_uid is not None:
+            state.last_seen_uid = max(state.last_seen_uid or 0, max_seen_uid)
         state.last_sync_at = utc_now()
         state.last_error = None
         await session.commit()
@@ -2030,7 +2031,7 @@ async def _process_incoming_reply_messages(
                         ingest_source="imap",
                         folder_role=folder_role,
                         folder=folder,
-                        uidvalidity=None,
+                        uidvalidity=fetched.uidvalidity if fetched is not None else None,
                         imap_uid=fetched.uid if fetched is not None else None,
                         provider_payload=None,
                         reply_headers=message.headers,
@@ -2101,38 +2102,48 @@ async def _process_sent_imap_fetched_messages(
     folder: str,
 ) -> int:
     detected = 0
-    for message in messages:
-        recipient_emails = normalize_email_list(
-            [*message.to_emails, *message.cc_emails, *message.bcc_emails],
+    recipients_by_message = {
+        id(message): normalize_email_list([*message.to_emails, *message.cc_emails, *message.bcc_emails])
+        for message in messages
+    }
+    all_recipient_emails = sorted(
+        {
+            email
+            for recipient_emails in recipients_by_message.values()
+            for email in recipient_emails
+        },
+    )
+    if not all_recipient_emails:
+        return 0
+
+    async with session_factory() as session:
+        professors = list(
+            (
+                await session.execute(
+                    select(Professor).where(
+                        Professor.archived_at.is_(None),
+                        func.lower(Professor.email).in_(all_recipient_emails),
+                    ),
+                )
+            ).scalars(),
         )
-        if not recipient_emails:
-            continue
-        async with session_factory() as session:
-            professors = list(
-                (
-                    await session.execute(
-                        select(Professor).where(
-                            Professor.archived_at.is_(None),
-                            Professor.email.is_not(None),
-                        ),
-                    )
-                ).scalars(),
-            )
-            professors_by_email = {
-                normalize_email_address(professor.email): professor
-                for professor in professors
-                if normalize_email_address(professor.email)
-            }
+        professors_by_email = {
+            normalize_email_address(professor.email): professor
+            for professor in professors
+            if normalize_email_address(professor.email)
+        }
+        for message in messages:
             matched_professors = [
                 professors_by_email[email]
-                for email in recipient_emails
+                for email in recipients_by_message[id(message)]
                 if email in professors_by_email
             ]
             for professor in matched_professors:
-                task = await _find_latest_identity_professor_task(
+                task = await _find_sent_message_task_match(
                     session,
                     identity_id=identity_id,
                     professor_id=professor.id,
+                    message_id=message.message_id,
                 )
                 if task is not None:
                     if task.status != EmailTaskStatus.REPLY_DETECTED.value:
@@ -2162,31 +2173,57 @@ async def _process_sent_imap_fetched_messages(
                         ingest_source="imap",
                         folder_role=folder_role,
                         folder=folder,
-                        uidvalidity=None,
+                        uidvalidity=message.uidvalidity,
                         imap_uid=message.uid,
                         provider_payload=None,
                         reply_headers=message.headers,
                     ),
                 )
                 detected += 1
-            await session.commit()
+        await session.commit()
     return detected
 
 
-async def _find_latest_identity_professor_task(
+async def _find_sent_message_task_match(
     session: AsyncSession,
     *,
     identity_id: int,
     professor_id: int,
+    message_id: str | None,
 ) -> EmailTask | None:
-    return await session.scalar(
+    normalized_message_id = (message_id or "").strip().lower()
+    if not normalized_message_id:
+        return None
+
+    task = await session.scalar(
         select(EmailTask)
         .where(
             EmailTask.identity_id == identity_id,
             EmailTask.professor_id == professor_id,
+            func.lower(EmailTask.last_rfc_message_id) == normalized_message_id,
         )
         .order_by(EmailTask.updated_at.desc(), EmailTask.id.desc()),
     )
+    if task is not None:
+        return task
+
+    sent_log = await session.scalar(
+        select(EmailLog)
+        .where(
+            EmailLog.identity_id == identity_id,
+            EmailLog.professor_id == professor_id,
+            EmailLog.direction == EmailDirection.SENT.value,
+            EmailLog.email_task_id.is_not(None),
+            or_(
+                func.lower(EmailLog.rfc_message_id) == normalized_message_id,
+                EmailLog.normalized_message_id == normalized_message_id,
+            ),
+        )
+        .order_by(EmailLog.created_at.desc(), EmailLog.id.desc()),
+    )
+    if sent_log is None:
+        return None
+    return await session.get(EmailTask, sent_log.email_task_id)
 
 
 def _backfill_existing_reply(

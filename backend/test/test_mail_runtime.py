@@ -34,6 +34,7 @@ class _FakeImapClient:
         login_error: Exception | None = None,
         logout_error: Exception | None = None,
         select_status_by_mailbox: dict[str, str] | None = None,
+        select_data: list[bytes] | None = None,
     ) -> None:
         self.select_status = select_status
         self.search_data = search_data
@@ -45,6 +46,7 @@ class _FakeImapClient:
         self.login_error = login_error
         self.logout_error = logout_error
         self.select_status_by_mailbox = select_status_by_mailbox or {}
+        self.select_data = select_data
         self.search_called = False
         self.search_criteria: list[str] = []
         self.commands: list[str] = []
@@ -65,7 +67,7 @@ class _FakeImapClient:
     def select(self, mailbox: str):
         self.commands.append(f"select:{mailbox}")
         status = self.select_status_by_mailbox.get(mailbox, self.select_status)
-        return status, [b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"]
+        return status, self.select_data or [b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"]
 
     def list(self):
         self.commands.append("list")
@@ -370,6 +372,20 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertEqual(messages[0].bcc_emails, ["hidden@example.com"])
         self.assertEqual(messages[0].raw_to, "Teacher <Teacher@Example.com>, other@example.com")
         self.assertEqual(messages[0].headers["bcc"], "Hidden <hidden@example.com>")
+
+    def test_incremental_fetch_records_mailbox_uidvalidity(self) -> None:
+        client = _FakeImapClient(
+            search_data=b"5",
+            select_data=[b"1"],
+        )
+        client.response = lambda code: ("UIDVALIDITY", [b"777"])
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            _, messages = asyncio.run(
+                fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
+            )
+
+        self.assertEqual(messages[0].uidvalidity, 777)
 
     def test_sent_history_searches_to_and_cc_and_deduplicates_uids(self) -> None:
         client = _FakeImapClient(

@@ -35,6 +35,7 @@ class ImapFetchedMessage:
     headers: dict[str, str]
     body_text: str
     body_html: str | None
+    uidvalidity: int | None = None
     to_emails: list[str] = field(default_factory=list)
     cc_emails: list[str] = field(default_factory=list)
     bcc_emails: list[str] = field(default_factory=list)

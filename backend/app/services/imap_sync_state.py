@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 from app.core.time import utc_now
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import IdentityProfile, ImapProfessorHistoricalScanStatus, ImapProfessorSyncState, Professor
@@ -151,6 +151,9 @@ async def _load_existing_professor_rows(
             IdentityProfile.imap_port.is_not(None),
             IdentityProfile.imap_username.is_not(None),
             IdentityProfile.imap_password.is_not(None),
+            func.trim(IdentityProfile.imap_host) != "",
+            func.trim(IdentityProfile.imap_username) != "",
+            func.trim(IdentityProfile.imap_password) != "",
             Professor.email.is_not(None),
             Professor.archived_at.is_(None),
         )

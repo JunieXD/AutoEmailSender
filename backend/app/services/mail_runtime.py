@@ -471,11 +471,13 @@ def _fetch_incremental_mailbox_messages_sync(
     max_seen_uid = last_seen_uid
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
+        uidvalidity = _get_selected_mailbox_uidvalidity(client)
         uids = search_uids_since(client, last_seen_uid)
         for uid in uids:
             max_seen_uid = max(max_seen_uid or 0, uid)
             message = _fetch_message_by_uid_sync(client, uid)
             if message is not None:
+                message.uidvalidity = uidvalidity
                 messages.append(message)
     except MailRuntimeError:
         raise
@@ -503,9 +505,11 @@ def _fetch_professor_history_mailbox_messages_sync(
     messages: list[ImapFetchedMessage] = []
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
+        uidvalidity = _get_selected_mailbox_uidvalidity(client)
         for uid in _search_professor_history_uids(client, professor_email, folder_role=folder_role):
             message = _fetch_message_by_uid_sync(client, uid)
             if message is not None:
+                message.uidvalidity = uidvalidity
                 messages.append(message)
     except MailRuntimeError:
         raise
@@ -568,6 +572,24 @@ def _open_logged_in_imap_client(identity: IdentityProfile, folder: str = DEFAULT
     _send_imap_client_id(client, identity)
     _select_mailbox_or_raise(client, folder)
     return client
+
+
+def _get_selected_mailbox_uidvalidity(client: IMAP4 | IMAP4_SSL) -> int | None:
+    response = getattr(client, "response", None)
+    if not callable(response):
+        return None
+    try:
+        status, payload = response("UIDVALIDITY")
+    except Exception:
+        return None
+    if status not in {"OK", "UIDVALIDITY"} or not payload:
+        return None
+    for item in payload:
+        value = item.decode("utf-8", errors="ignore") if isinstance(item, (bytes, bytearray)) else str(item)
+        value = value.strip()
+        if value.isdigit():
+            return int(value)
+    return None
 
 
 def _fetch_message_by_uid_sync(
