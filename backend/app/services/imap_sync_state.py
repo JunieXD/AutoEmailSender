@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import IdentityProfile, ImapProfessorHistoricalScanStatus, ImapProfessorSyncState, Professor
 
 
+ScanStateKey = tuple[int, int, str, str, str]
+
+
 async def ensure_professor_scan_states(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -19,27 +22,29 @@ async def ensure_professor_scan_states(
     created = 0
     async with session_factory() as session:
         rows = await _load_existing_professor_rows(session, identity_id=identity_id)
-        for identity_id, professor_id, professor_email in rows:
+        desired_keys: list[ScanStateKey] = []
+        for row_identity_id, professor_id, professor_email in rows:
             normalized_email = _normalize_email(professor_email)
             if not normalized_email:
                 continue
-            created += await _ensure_professor_scan_state(
-                session,
-                identity_id=identity_id,
-                professor_id=professor_id,
-                professor_email=normalized_email,
-                folder_role="inbox",
-                folder="INBOX",
-            )
+            desired_keys.append((row_identity_id, professor_id, normalized_email, "inbox", "INBOX"))
             if sent_folder:
-                created += await _ensure_professor_scan_state(
-                    session,
-                    identity_id=identity_id,
+                desired_keys.append((row_identity_id, professor_id, normalized_email, "sent", sent_folder))
+        existing_keys = await _load_existing_scan_state_keys(session, desired_keys)
+        for key in desired_keys:
+            if key in existing_keys:
+                continue
+            row_identity_id, professor_id, professor_email, folder_role, folder = key
+            session.add(
+                ImapProfessorSyncState(
+                    identity_id=row_identity_id,
                     professor_id=professor_id,
-                    professor_email=normalized_email,
-                    folder_role="sent",
-                    folder=sent_folder,
-                )
+                    professor_email=professor_email,
+                    folder_role=folder_role,
+                    folder=folder,
+                ),
+            )
+            created += 1
         await session.commit()
     return created
 
@@ -105,36 +110,38 @@ async def mark_professor_scan_failed(
         await session.commit()
 
 
-async def _ensure_professor_scan_state(
+async def _load_existing_scan_state_keys(
     session: AsyncSession,
-    *,
-    identity_id: int,
-    professor_id: int,
-    professor_email: str,
-    folder_role: str,
-    folder: str,
-) -> int:
-    existing = await session.scalar(
-        select(ImapProfessorSyncState).where(
-            ImapProfessorSyncState.identity_id == identity_id,
-            ImapProfessorSyncState.professor_id == professor_id,
-            ImapProfessorSyncState.professor_email == professor_email,
-            ImapProfessorSyncState.folder_role == folder_role,
-            ImapProfessorSyncState.folder == folder,
-        ),
-    )
-    if existing is not None:
-        return 0
-    session.add(
-        ImapProfessorSyncState(
-            identity_id=identity_id,
-            professor_id=professor_id,
-            professor_email=professor_email,
-            folder_role=folder_role,
-            folder=folder,
-        ),
-    )
-    return 1
+    desired_keys: list[ScanStateKey],
+) -> set[ScanStateKey]:
+    if not desired_keys:
+        return set()
+    identity_ids = {key[0] for key in desired_keys}
+    professor_ids = {key[1] for key in desired_keys}
+    professor_emails = {key[2] for key in desired_keys}
+    folder_roles = {key[3] for key in desired_keys}
+    folders = {key[4] for key in desired_keys}
+    rows = (
+        await session.execute(
+            select(
+                ImapProfessorSyncState.identity_id,
+                ImapProfessorSyncState.professor_id,
+                ImapProfessorSyncState.professor_email,
+                ImapProfessorSyncState.folder_role,
+                ImapProfessorSyncState.folder,
+            ).where(
+                ImapProfessorSyncState.identity_id.in_(identity_ids),
+                ImapProfessorSyncState.professor_id.in_(professor_ids),
+                ImapProfessorSyncState.professor_email.in_(professor_emails),
+                ImapProfessorSyncState.folder_role.in_(folder_roles),
+                ImapProfessorSyncState.folder.in_(folders),
+            ),
+        )
+    ).all()
+    return {
+        (identity_id, professor_id, professor_email, folder_role, folder)
+        for identity_id, professor_id, professor_email, folder_role, folder in rows
+    }
 
 
 async def _load_existing_professor_rows(

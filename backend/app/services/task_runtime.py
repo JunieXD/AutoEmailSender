@@ -1868,7 +1868,8 @@ async def sync_identity_incremental_once(
             "fetch_incremental_mailbox_messages_with_uidvalidity",
             None,
         )
-        if callable(fetch_with_uidvalidity):
+        used_uidvalidity_aware_fetch = callable(fetch_with_uidvalidity)
+        if used_uidvalidity_aware_fetch:
             max_seen_uid, messages, current_uidvalidity = await fetch_with_uidvalidity(
                 identity,
                 folder,
@@ -1907,14 +1908,16 @@ async def sync_identity_incremental_once(
             folder_role=folder_role,
             folder=folder,
         )
-        if (
+        uidvalidity_changed = (
             current_uidvalidity is not None
             and current_uidvalidity != state.uidvalidity
-        ):
+        )
+        if uidvalidity_changed:
             state.last_seen_uid = None
         if current_uidvalidity is not None:
             state.uidvalidity = current_uidvalidity
-        if max_seen_uid is not None:
+        should_apply_max_seen_uid = not (uidvalidity_changed and not used_uidvalidity_aware_fetch)
+        if max_seen_uid is not None and should_apply_max_seen_uid:
             state.last_seen_uid = max(state.last_seen_uid or 0, max_seen_uid)
         state.last_sync_at = utc_now()
         state.last_error = None
@@ -2036,15 +2039,25 @@ async def _process_incoming_reply_messages(
                 message.message_id,
             )
             if existing is not None:
+                was_already_replied = task.is_replied and task.status == EmailTaskStatus.REPLY_DETECTED.value
+                _mark_task_reply_detected(task)
                 changed = _backfill_existing_reply(existing, message, reply_created_at)
                 if changed:
                     session.add(existing)
+                if changed or not was_already_replied:
+                    if not was_already_replied:
+                        await _record_email_task_log(
+                            session,
+                            task,
+                            "email_task.reply_detected",
+                            metadata={"message_id": message.message_id},
+                        )
                     await session.commit()
+                if not was_already_replied:
+                    detected += 1
                 continue
 
-            task.is_replied = True
-            task.status = EmailTaskStatus.REPLY_DETECTED.value
-            task.updated_at = utc_now()
+            _mark_task_reply_detected(task)
             try:
                 await upsert_email_log(
                     session,
@@ -2084,6 +2097,12 @@ async def _process_incoming_reply_messages(
                 continue
             detected += 1
     return detected
+
+
+def _mark_task_reply_detected(task: EmailTask) -> None:
+    task.is_replied = True
+    task.status = EmailTaskStatus.REPLY_DETECTED.value
+    task.updated_at = utc_now()
 
 
 async def _find_existing_received_log_for_reply(
