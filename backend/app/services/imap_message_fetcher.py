@@ -35,6 +35,13 @@ class ImapFetchedMessage:
     headers: dict[str, str]
     body_text: str
     body_html: str | None
+    to_emails: list[str] = field(default_factory=list)
+    cc_emails: list[str] = field(default_factory=list)
+    bcc_emails: list[str] = field(default_factory=list)
+    raw_from: str = ""
+    raw_to: str = ""
+    raw_cc: str = ""
+    raw_bcc: str = ""
     has_attachments: bool = False
     attachment_names: list[str] = field(default_factory=list)
 
@@ -76,7 +83,7 @@ def fetch_message_headers_by_uid(client: object, uid: int) -> bytes:
     status, payload = client.uid(
         "FETCH",
         str(uid),
-        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
     )
     if status != "OK" or not payload:
         return b""
@@ -143,8 +150,28 @@ def search_uids_since(client: object, last_seen_uid: int | None) -> list[int]:
 
 
 def search_uids_from_sender(client: object, from_email: str) -> list[int]:
-    escaped = from_email.replace('"', '\\"')
+    escaped = _escape_imap_search_value(from_email)
     status, payload = client.uid("SEARCH", None, f'(FROM "{escaped}")')
+    return _parse_uid_search_payload(status, payload)
+
+
+def search_uids_to_recipient(client: object, to_email: str) -> list[int]:
+    escaped = _escape_imap_search_value(to_email)
+    status, payload = client.uid("SEARCH", None, f'(TO "{escaped}")')
+    return _parse_uid_search_payload(status, payload)
+
+
+def search_uids_cc_recipient(client: object, cc_email: str) -> list[int]:
+    escaped = _escape_imap_search_value(cc_email)
+    status, payload = client.uid("SEARCH", None, f'(CC "{escaped}")')
+    return _parse_uid_search_payload(status, payload)
+
+
+def _escape_imap_search_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', r"\"")
+
+
+def _parse_uid_search_payload(status: str, payload: object) -> list[int]:
     if status != "OK" or not payload:
         return []
     raw = payload[0] if payload else b""

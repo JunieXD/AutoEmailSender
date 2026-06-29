@@ -25,19 +25,31 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.models import IdentityProfile, Professor
+from app.services.email_addresses import normalize_email_address, normalize_email_list
 from app.services.imap_message_fetcher import (
     ImapFetchedMessage,
     fetch_message_headers_payload_by_uid,
     fetch_text_body_parts_by_uid,
     parse_text_parts_from_message,
+    search_uids_cc_recipient,
     search_uids_from_sender,
     search_uids_since,
+    search_uids_to_recipient,
 )
 
 
 IMAP_CLIENT_ID_NAME = "AutoEmailSender"
 IMAP_CLIENT_ID_VERSION = "3.0.0"
 IMAP_CLIENT_ID_VENDOR = "AutoEmailSender"
+DEFAULT_IMAP_FOLDER = "INBOX"
+SENT_FOLDER_CANDIDATES = (
+    "Sent",
+    "Sent Messages",
+    "Sent Mail",
+    "已发送",
+    "已发送邮件",
+    "发件箱",
+)
 REPLY_QUOTE_TEXT_MARKERS = (
     "---- 回复的原邮件 ----",
     "----- 回复的原邮件 -----",
@@ -253,22 +265,57 @@ async def send_email_to_recipient(
     )
 
 
-async def fetch_incremental_inbox_messages(
+async def discover_sent_folder(identity: IdentityProfile) -> str | None:
+    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+        return None
+    return await asyncio.to_thread(_discover_sent_folder_sync, identity)
+
+
+async def fetch_incremental_mailbox_messages(
     identity: IdentityProfile,
+    folder: str,
     last_seen_uid: int | None,
 ) -> tuple[int | None, list[ImapFetchedMessage]]:
     if not identity.imap_host or not identity.imap_username or not identity.imap_password:
         return last_seen_uid, []
-    return await asyncio.to_thread(_fetch_incremental_inbox_messages_sync, identity, last_seen_uid)
+    return await asyncio.to_thread(_fetch_incremental_mailbox_messages_sync, identity, folder, last_seen_uid)
+
+
+async def fetch_incremental_inbox_messages(
+    identity: IdentityProfile,
+    last_seen_uid: int | None,
+) -> tuple[int | None, list[ImapFetchedMessage]]:
+    return await fetch_incremental_mailbox_messages(identity, DEFAULT_IMAP_FOLDER, last_seen_uid)
+
+
+async def fetch_professor_history_mailbox_messages(
+    identity: IdentityProfile,
+    folder: str,
+    professor_email: str,
+    *,
+    folder_role: str,
+) -> list[ImapFetchedMessage]:
+    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+        return []
+    return await asyncio.to_thread(
+        _fetch_professor_history_mailbox_messages_sync,
+        identity,
+        folder,
+        professor_email,
+        folder_role,
+    )
 
 
 async def fetch_professor_history_inbox_messages(
     identity: IdentityProfile,
     professor_email: str,
 ) -> list[ImapFetchedMessage]:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
-        return []
-    return await asyncio.to_thread(_fetch_professor_history_inbox_messages_sync, identity, professor_email)
+    return await fetch_professor_history_mailbox_messages(
+        identity,
+        DEFAULT_IMAP_FOLDER,
+        professor_email,
+        folder_role="inbox",
+    )
 
 
 async def fetch_inbox_messages_from_sender(
@@ -394,15 +441,35 @@ def format_imap_login_error(identity: IdentityProfile, detail: object) -> str:
     return base
 
 
-def _fetch_incremental_inbox_messages_sync(
+def _discover_sent_folder_sync(identity: IdentityProfile) -> str | None:
+    client: IMAP4 | IMAP4_SSL | None = None
+    try:
+        client = _open_imap_client(identity)
+        client.login(identity.imap_username or "", identity.imap_password or "")
+        _send_imap_client_id(client, identity)
+        special_use_folder = _find_special_use_sent_folder(client)
+        if special_use_folder and _try_select_mailbox(client, special_use_folder):
+            return special_use_folder
+        for candidate in SENT_FOLDER_CANDIDATES:
+            if _try_select_mailbox(client, candidate):
+                return candidate
+    except (MailRuntimeError, OSError):
+        return None
+    finally:
+        _logout_imap_client(client)
+    return None
+
+
+def _fetch_incremental_mailbox_messages_sync(
     identity: IdentityProfile,
+    folder: str,
     last_seen_uid: int | None,
 ) -> tuple[int | None, list[ImapFetchedMessage]]:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
     max_seen_uid = last_seen_uid
     try:
-        client = _open_logged_in_imap_client(identity)
+        client = _open_logged_in_imap_client(identity, folder=folder)
         uids = search_uids_since(client, last_seen_uid)
         for uid in uids:
             max_seen_uid = max(max_seen_uid or 0, uid)
@@ -418,15 +485,24 @@ def _fetch_incremental_inbox_messages_sync(
     return max_seen_uid, messages
 
 
-def _fetch_professor_history_inbox_messages_sync(
+def _fetch_incremental_inbox_messages_sync(
     identity: IdentityProfile,
+    last_seen_uid: int | None,
+) -> tuple[int | None, list[ImapFetchedMessage]]:
+    return _fetch_incremental_mailbox_messages_sync(identity, DEFAULT_IMAP_FOLDER, last_seen_uid)
+
+
+def _fetch_professor_history_mailbox_messages_sync(
+    identity: IdentityProfile,
+    folder: str,
     professor_email: str,
+    folder_role: str,
 ) -> list[ImapFetchedMessage]:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
     try:
-        client = _open_logged_in_imap_client(identity)
-        for uid in search_uids_from_sender(client, professor_email):
+        client = _open_logged_in_imap_client(identity, folder=folder)
+        for uid in _search_professor_history_uids(client, professor_email, folder_role=folder_role):
             message = _fetch_message_by_uid_sync(client, uid)
             if message is not None:
                 messages.append(message)
@@ -437,6 +513,36 @@ def _fetch_professor_history_inbox_messages_sync(
     finally:
         _logout_imap_client(client)
     return messages
+
+
+def _fetch_professor_history_inbox_messages_sync(
+    identity: IdentityProfile,
+    professor_email: str,
+) -> list[ImapFetchedMessage]:
+    return _fetch_professor_history_mailbox_messages_sync(
+        identity,
+        DEFAULT_IMAP_FOLDER,
+        professor_email,
+        "inbox",
+    )
+
+
+def _search_professor_history_uids(
+    client: IMAP4 | IMAP4_SSL,
+    professor_email: str,
+    *,
+    folder_role: str,
+) -> list[int]:
+    if folder_role == "sent":
+        seen: set[int] = set()
+        merged: list[int] = []
+        for uid in search_uids_to_recipient(client, professor_email) + search_uids_cc_recipient(client, professor_email):
+            if uid in seen:
+                continue
+            seen.add(uid)
+            merged.append(uid)
+        return merged
+    return search_uids_from_sender(client, professor_email)
 
 
 def _imap_fetched_to_received(message: ImapFetchedMessage) -> ReceivedEmail:
@@ -454,14 +560,14 @@ def _imap_fetched_to_received(message: ImapFetchedMessage) -> ReceivedEmail:
     )
 
 
-def _open_logged_in_imap_client(identity: IdentityProfile) -> IMAP4 | IMAP4_SSL:
+def _open_logged_in_imap_client(identity: IdentityProfile, folder: str = DEFAULT_IMAP_FOLDER) -> IMAP4 | IMAP4_SSL:
     client = _open_imap_client(identity)
     try:
         client.login(identity.imap_username or "", identity.imap_password or "")
     except OSError as exc:
         raise MailRuntimeError(format_imap_login_error(identity, exc)) from exc
     _send_imap_client_id(client, identity)
-    _select_inbox_or_raise(client)
+    _select_mailbox_or_raise(client, folder)
     return client
 
 
@@ -493,7 +599,7 @@ def _fetch_message_header_payload_by_uid(
     status, payload = client.uid(
         "FETCH",
         str(uid),
-        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
     )
     if status != "OK" or not payload:
         return []
@@ -542,9 +648,16 @@ def _parse_fetched_headers(
     received_at: datetime | None,
 ) -> ImapFetchedMessage | None:
     parsed = BytesParser(policy=policy.default).parsebytes(raw_headers)
-    from_email = parseaddr(parsed.get("From", ""))[1].strip().lower()
+    raw_from = parsed.get("From", "")
+    raw_to = parsed.get("To", "")
+    raw_cc = parsed.get("Cc", "")
+    raw_bcc = parsed.get("Bcc", "")
+    from_email = normalize_email_address(raw_from)
     if not from_email:
         return None
+    to_emails = normalize_email_list([raw_to])
+    cc_emails = normalize_email_list([raw_cc])
+    bcc_emails = normalize_email_list([raw_bcc])
     subject = decode_mime_header(parsed.get("Subject"))
     message_id = parsed.get("Message-ID")
     in_reply_to = parsed.get("In-Reply-To")
@@ -557,8 +670,10 @@ def _parse_fetched_headers(
         except (TypeError, ValueError, IndexError):
             pass
     headers = {
-        "from": parsed.get("From", ""),
-        "to": parsed.get("To", ""),
+        "from": raw_from,
+        "to": raw_to,
+        "cc": raw_cc,
+        "bcc": raw_bcc,
         "subject": subject or "",
         "message_id": message_id or "",
         "in_reply_to": in_reply_to or "",
@@ -576,6 +691,13 @@ def _parse_fetched_headers(
         headers=headers,
         body_text=body_text or "",
         body_html=body_html,
+        to_emails=to_emails,
+        cc_emails=cc_emails,
+        bcc_emails=bcc_emails,
+        raw_from=raw_from,
+        raw_to=raw_to,
+        raw_cc=raw_cc,
+        raw_bcc=raw_bcc,
     )
 
 
@@ -621,6 +743,39 @@ def _escape_imap_search_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', r"\"")
 
 
+def _find_special_use_sent_folder(client: IMAP4 | IMAP4_SSL) -> str | None:
+    list_method = getattr(client, "list", None)
+    if not callable(list_method):
+        return None
+    try:
+        status, data = list_method()
+    except Exception:
+        return None
+    if status != "OK" or not data:
+        return None
+    for item in data:
+        text = item.decode("utf-8", errors="replace") if isinstance(item, (bytes, bytearray)) else str(item)
+        if "\\Sent" not in text:
+            continue
+        folder = _parse_imap_list_mailbox_name(text)
+        if folder:
+            return folder
+    return None
+
+
+def _parse_imap_list_mailbox_name(value: str) -> str | None:
+    quoted_values = re.findall(r'"((?:\\.|[^"\\])*)"', value)
+    if quoted_values:
+        mailbox = quoted_values[-1]
+    else:
+        _, _, mailbox = value.rpartition(" ")
+        mailbox = mailbox.strip()
+        if not mailbox:
+            return None
+    mailbox = mailbox.replace(r"\"", '"').replace(r"\\", "\\")
+    return mailbox or None
+
+
 def _extract_received_at_from_fetch_payload(payload: list[object]) -> datetime | None:
     for item in payload:
         if not isinstance(item, tuple) or not item:
@@ -635,11 +790,27 @@ def _extract_received_at_from_fetch_payload(payload: list[object]) -> datetime |
 
 
 def _select_inbox_or_raise(client: IMAP4 | IMAP4_SSL) -> None:
-    status, data = client.select("INBOX")
+    try:
+        _select_mailbox_or_raise(client, DEFAULT_IMAP_FOLDER)
+    except MailRuntimeError as exc:
+        detail = str(exc).split(": ", 1)[-1]
+        raise MailRuntimeError(f"IMAP 选择收件箱失败: {detail}") from exc
+
+
+def _select_mailbox_or_raise(client: IMAP4 | IMAP4_SSL, folder: str) -> None:
+    status, data = client.select(folder)
     if status == "OK":
         return
     detail = _format_imap_response(data)
-    raise MailRuntimeError(f"IMAP 选择收件箱失败: {detail}")
+    raise MailRuntimeError(f"IMAP 选择邮箱文件夹失败: {detail}")
+
+
+def _try_select_mailbox(client: IMAP4 | IMAP4_SSL, folder: str) -> bool:
+    try:
+        status, _ = client.select(folder)
+    except Exception:
+        return False
+    return status == "OK"
 
 
 def _format_imap_response(data: object) -> str:
@@ -822,5 +993,3 @@ def _open_imap_client(identity: IdentityProfile) -> IMAP4 | IMAP4_SSL:
     if identity.imap_port == 993:
         return IMAP4_SSL(identity.imap_host or "", identity.imap_port or 993, timeout=timeout)
     return IMAP4(identity.imap_host or "", identity.imap_port or 143, timeout=timeout)
-
-
