@@ -102,6 +102,93 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertEqual(merged.provider_payload, {"imap": {"flags": ["\\Seen"]}})
         self.assertEqual(merged.reply_headers, {"in_reply_to": "<parent@example.edu>"})
 
+    def test_merges_legacy_system_log_by_normalized_rfc_message_id_fallback(self) -> None:
+        async def scenario() -> tuple[int, EmailLog]:
+            async with self.session_factory() as session:
+                existing = EmailLog(
+                    email_task_id=99,
+                    identity_id=1,
+                    llm_profile_id=7,
+                    professor_id=2,
+                    direction=EmailDirection.SENT.value,
+                    subject="Legacy system sent",
+                    content="legacy body",
+                    content_html="<p>legacy body</p>",
+                    rfc_message_id="<Message.ID@Example.edu>",
+                    normalized_message_id=None,
+                    ingest_source="system",
+                    provider_payload={"smtp": {"message_id": "<Message.ID@Example.edu>"}},
+                    reply_headers={"references": ["<existing@example.edu>"]},
+                    created_at=datetime(2026, 6, 30, 9, 15, tzinfo=UTC),
+                )
+                session.add(existing)
+                await session.flush()
+
+                merged = await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(
+                        identity_id=1,
+                        professor_id=2,
+                        direction=EmailDirection.SENT.value,
+                        subject="Sent folder subject",
+                        content="imap body should not replace",
+                        content_html="<p>imap html should not replace</p>",
+                        message_id="  <message.id@example.edu>  ",
+                        from_email="Student <STUDENT@example.edu>",
+                        to_emails=["Teacher <teacher@example.edu>"],
+                        cc_emails=None,
+                        bcc_emails=None,
+                        created_at=datetime(2026, 6, 30, 9, 16, tzinfo=UTC),
+                        ingest_source="imap",
+                        folder_role="sent",
+                        folder="Sent",
+                        uidvalidity=123,
+                        imap_uid=456,
+                        email_task_id=None,
+                        llm_profile_id=None,
+                        provider_payload={
+                            "smtp": {"message_id": "<new-should-not-overwrite@example.edu>"},
+                            "imap": {"uid": 456},
+                        },
+                        reply_headers={
+                            "references": ["<new-should-not-overwrite@example.edu>"],
+                            "in_reply_to": "<parent@example.edu>",
+                        },
+                    ),
+                )
+                await session.commit()
+
+                count = await session.scalar(select(func.count()).select_from(EmailLog))
+                await session.refresh(merged)
+                assert count is not None
+                return count, merged
+
+        count, merged = self._run_async(scenario())
+
+        self.assertEqual(count, 1)
+        self.assertEqual(merged.id, 1)
+        self.assertEqual(merged.normalized_message_id, "<message.id@example.edu>")
+        self.assertEqual(merged.folder_role, "sent")
+        self.assertEqual(merged.folder, "Sent")
+        self.assertEqual(merged.uidvalidity, 123)
+        self.assertEqual(merged.imap_uid, 456)
+        self.assertEqual(merged.from_email, "student@example.edu")
+        self.assertEqual(merged.to_emails, ["teacher@example.edu"])
+        self.assertEqual(
+            merged.provider_payload,
+            {
+                "smtp": {"message_id": "<Message.ID@Example.edu>"},
+                "imap": {"uid": 456},
+            },
+        )
+        self.assertEqual(
+            merged.reply_headers,
+            {
+                "references": ["<existing@example.edu>"],
+                "in_reply_to": "<parent@example.edu>",
+            },
+        )
+
     def test_creates_external_sent_record_without_task_or_llm_profile_and_normalizes_headers(self) -> None:
         async def scenario() -> EmailLog:
             async with self.session_factory() as session:

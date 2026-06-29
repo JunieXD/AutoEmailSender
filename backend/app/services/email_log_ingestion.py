@@ -131,6 +131,10 @@ async def _find_existing(
         if by_message_id is not None:
             return by_message_id
 
+        by_rfc_message_id = await _find_by_normalized_rfc_message_id(session, record, normalized_message_id)
+        if by_rfc_message_id is not None:
+            return by_rfc_message_id
+
     if _has_imap_location(record):
         by_imap_location = await session.scalar(
             select(EmailLog).where(
@@ -177,9 +181,28 @@ def _merge_email_log(
     _fill_attr(existing, "folder", record.folder)
     _fill_attr(existing, "uidvalidity", record.uidvalidity)
     _fill_attr(existing, "imap_uid", record.imap_uid)
-    _fill_attr(existing, "provider_payload", record.provider_payload)
-    _fill_attr(existing, "reply_headers", record.reply_headers)
+    _merge_dict_attr(existing, "provider_payload", record.provider_payload)
+    _merge_dict_attr(existing, "reply_headers", record.reply_headers)
     existing.synced_at = utc_now()
+
+
+async def _find_by_normalized_rfc_message_id(
+    session: AsyncSession,
+    record: EmailLogIngestRecord,
+    normalized_message_id: str,
+) -> EmailLog | None:
+    candidates = await session.scalars(
+        select(EmailLog).where(
+            EmailLog.identity_id == record.identity_id,
+            EmailLog.professor_id == record.professor_id,
+            EmailLog.direction == str(record.direction),
+            EmailLog.rfc_message_id.is_not(None),
+        ),
+    )
+    for candidate in candidates:
+        if normalize_message_id(candidate.rfc_message_id) == normalized_message_id:
+            return candidate
+    return None
 
 
 def _fill_attr(existing: EmailLog, attr_name: str, value: object | None) -> None:
@@ -188,6 +211,20 @@ def _fill_attr(existing: EmailLog, attr_name: str, value: object | None) -> None
     current = getattr(existing, attr_name)
     if current is None or current == "" or current == []:
         setattr(existing, attr_name, value)
+
+
+def _merge_dict_attr(existing: EmailLog, attr_name: str, value: dict[str, Any] | None) -> None:
+    if value is None:
+        return
+
+    current = getattr(existing, attr_name)
+    if current is None or current == {}:
+        setattr(existing, attr_name, value)
+        return
+
+    merged = dict(value)
+    merged.update(current)
+    setattr(existing, attr_name, merged)
 
 
 def _has_imap_location(record: EmailLogIngestRecord) -> bool:
