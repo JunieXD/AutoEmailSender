@@ -77,6 +77,7 @@ TASK_RELATION_OPTIONS = (
 )
 _IMAP_IDENTITY_LOCKS: dict[int, asyncio.Lock] = {}
 _IMAP_IDENTITY_LOCKS_GUARD = asyncio.Lock()
+VALID_IMAP_FOLDER_ROLES = {"inbox", "sent"}
 
 DISPATCHABLE_EMAIL_TASK_STATUSES = (
     EmailTaskStatus.APPROVED.value,
@@ -1843,6 +1844,7 @@ async def sync_identity_incremental_once(
     folder_role: str = "inbox",
     folder: str = "INBOX",
 ) -> int:
+    _validate_imap_folder_role(folder_role)
     async with session_factory() as session:
         identity = await session.get(IdentityProfile, identity_id)
         if identity is None:
@@ -2059,6 +2061,7 @@ async def process_imap_fetched_messages(
     folder_role: str = "inbox",
     folder: str = "INBOX",
 ) -> int:
+    _validate_imap_folder_role(folder_role)
     if folder_role == "sent":
         return await _process_sent_imap_fetched_messages(
             session_factory,
@@ -2091,6 +2094,11 @@ async def process_imap_fetched_messages(
         folder_role=folder_role,
         folder=folder,
     )
+
+
+def _validate_imap_folder_role(folder_role: str) -> None:
+    if folder_role not in VALID_IMAP_FOLDER_ROLES:
+        raise ValueError(f"Unsupported IMAP folder_role: {folder_role}")
 
 
 async def _process_sent_imap_fetched_messages(

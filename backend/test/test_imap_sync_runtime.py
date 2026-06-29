@@ -383,6 +383,23 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), (10, 10))
 
+    def test_incremental_sync_rejects_unknown_folder_role_without_creating_state(self) -> None:
+        async def scenario() -> int:
+            identity_id = await self._create_identity_with_imap()
+
+            with self.assertRaisesRegex(ValueError, "folder_role"):
+                await sync_identity_incremental_once(
+                    self.session_factory,
+                    identity_id,
+                    folder_role="archive",
+                    folder="Archive",
+                )
+
+            async with self.session_factory() as session:
+                return len(list((await session.execute(select(ImapMailboxSyncState))).scalars()))
+
+        self.assertEqual(self._run_async(scenario()), 0)
+
     def test_sent_incremental_sync_advances_sent_cursor_and_records_existing_professor_mail(self) -> None:
         async def scenario() -> tuple[
             int,
@@ -716,6 +733,27 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return inbox_log.uidvalidity, sent_log.uidvalidity
 
         self.assertEqual(self._run_async(scenario()), (777, 888))
+
+    def test_process_imap_fetched_messages_rejects_unknown_folder_role_without_writing_log(self) -> None:
+        async def scenario() -> int:
+            identity_id, _, _ = await self._create_reply_task(status=EmailTaskStatus.SENT.value)
+
+            with self.assertRaisesRegex(ValueError, "folder_role"):
+                await process_imap_fetched_messages(
+                    self.session_factory,
+                    identity_id,
+                    [self._build_fetched_message(message_id="<archive-message@example.edu>")],
+                    folder_role="archive",
+                    folder="Archive",
+                )
+
+            async with self.session_factory() as session:
+                log = await session.scalar(
+                    select(EmailLog).where(EmailLog.rfc_message_id == "<archive-message@example.edu>"),
+                )
+                return 0 if log is None else 1
+
+        self.assertEqual(self._run_async(scenario()), 0)
 
     def test_inbox_incremental_detects_reply_and_records_imap_metadata(self) -> None:
         async def scenario() -> tuple[int, str, bool, tuple[str, str, int | None, str | None, list[str] | None]]:
