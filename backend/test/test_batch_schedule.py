@@ -1,6 +1,6 @@
 import random
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services.batch_schedule import (
@@ -25,8 +25,8 @@ class BatchScheduleTest(unittest.TestCase):
         )
 
         self.assertEqual(len(result), 6)
-        self.assertEqual(result[0], datetime(2026, 5, 4, 9, 45, tzinfo=UTC))
-        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 15, tzinfo=UTC))
+        self.assertEqual(result[0], datetime(2026, 5, 4, 9, 44, 55, tzinfo=UTC))
+        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 14, 5, tzinfo=UTC))
         self.assertEqual(result, sorted(result))
 
     def test_build_jittered_batch_schedule_fills_dates_in_order(self) -> None:
@@ -56,8 +56,8 @@ class BatchScheduleTest(unittest.TestCase):
             jitter_ratio=0,
         )
 
-        self.assertEqual(result[0], datetime(2026, 5, 4, 14, 30, tzinfo=UTC))
-        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 30, tzinfo=UTC))
+        self.assertEqual(result[0], datetime(2026, 5, 4, 14, 29, 52, 500000, tzinfo=UTC))
+        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 29, 7, 500000, tzinfo=UTC))
         self.assertTrue(all(item >= datetime(2026, 5, 4, 14, 0, tzinfo=UTC) for item in result))
 
     def test_build_jittered_batch_schedule_stores_local_window_times_as_utc(self) -> None:
@@ -71,7 +71,7 @@ class BatchScheduleTest(unittest.TestCase):
             jitter_ratio=0,
         )
 
-        self.assertEqual(result, [datetime(2026, 5, 4, 2, 0, tzinfo=UTC)])
+        self.assertEqual(result, [datetime(2026, 5, 4, 1, 59, 30, tzinfo=UTC)])
         self.assertIs(result[0].tzinfo, UTC)
 
     def test_build_jittered_batch_schedule_skips_expired_today_window(self) -> None:
@@ -103,6 +103,21 @@ class BatchScheduleTest(unittest.TestCase):
         self.assertEqual(len(result), 12)
         self.assertEqual(result, sorted(result))
         self.assertTrue(all(window_start <= item <= window_end for item in result))
+
+    def test_build_jittered_batch_schedule_leaves_tail_buffer_before_window_end(self) -> None:
+        result = build_jittered_batch_schedule(
+            task_count=200,
+            scheduled_dates=["2026-05-04"],
+            window_start_time="09:00",
+            window_end_time="18:00",
+            emails_per_window=200,
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=UTC),
+            random_source=random.Random(42),
+        )
+
+        window_end = datetime(2026, 5, 4, 18, 0, tzinfo=UTC)
+        self.assertEqual(len(result), 200)
+        self.assertLessEqual(result[-1], window_end - timedelta(minutes=1))
 
     def test_build_jittered_batch_schedule_rejects_insufficient_capacity(self) -> None:
         with self.assertRaisesRegex(ValueError, "不足以覆盖全部任务"):

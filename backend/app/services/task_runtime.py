@@ -82,6 +82,7 @@ DISPATCHABLE_EMAIL_TASK_STATUSES = (
 )
 
 STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
+SCHEDULED_BATCH_SEND_GRACE_PERIOD = timedelta(minutes=2)
 INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
 WORKSPACE_DRAFT_REWRITE_TIMEOUT = timedelta(minutes=5)
 WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS = int(WORKSPACE_DRAFT_REWRITE_TIMEOUT.total_seconds())
@@ -220,7 +221,7 @@ async def dispatch_due_tasks_once(
                 if len(task_ids) >= limit:
                     break
                 batch_task = task.batch_task
-                if not _batch_task_allows_dispatch(batch_task, local_now):
+                if not _batch_task_allows_dispatch(task, local_now):
                     continue
                 if (
                     batch_task is not None
@@ -281,19 +282,22 @@ def _resolve_dispatch_clocks(
     return now_utc, now_utc.astimezone(resolved_timezone)
 
 
-def _batch_task_allows_dispatch(batch_task: BatchTask | None, now: datetime) -> bool:
+def _batch_task_allows_dispatch(task: EmailTask, now: datetime) -> bool:
+    batch_task = task.batch_task
     if batch_task is None:
         return True
     if batch_task.status != BatchTaskStatus.RUNNING.value:
         return False
     if batch_task.schedule_type != "scheduled":
         return True
-    return is_datetime_in_batch_window(
+    if is_datetime_in_batch_window(
         now,
         scheduled_dates=batch_task.scheduled_dates,
         window_start_time=batch_task.window_start_time,
         window_end_time=batch_task.window_end_time,
-    )
+    ):
+        return True
+    return _is_task_due_in_scheduled_batch_grace_period(task, now)
 
 
 async def expire_batch_task_if_needed(
@@ -309,6 +313,12 @@ async def expire_batch_task_if_needed(
         local_now,
         scheduled_dates=batch_task.scheduled_dates,
         window_end_time=batch_task.window_end_time,
+    ):
+        return False
+    if any(
+        _is_task_due_in_scheduled_batch_grace_period(email_task, local_now)
+        for email_task in batch_task.email_tasks
+        if not _is_user_removed_batch_item(email_task)
     ):
         return False
 
@@ -389,6 +399,46 @@ def _has_future_scheduled_at(
     if scheduled_date not in set(normalize_scheduled_dates(scheduled_dates)):
         return False
     return scheduled_at_utc > now_utc
+
+
+def _is_task_due_in_scheduled_batch_grace_period(
+    task: EmailTask,
+    local_now: datetime,
+) -> bool:
+    batch_task = task.batch_task
+    if batch_task is None or batch_task.schedule_type != "scheduled":
+        return False
+    if task.status not in DISPATCHABLE_EMAIL_TASK_STATUSES:
+        return False
+    if task.scheduled_at is None:
+        return False
+    if not batch_task.window_end_time:
+        return False
+
+    timezone = local_now.tzinfo or UTC
+    scheduled_at_utc = as_utc_aware(task.scheduled_at).astimezone(UTC)
+    if scheduled_at_utc > local_now.astimezone(UTC):
+        return False
+
+    scheduled_local = scheduled_at_utc.astimezone(timezone)
+    if not is_datetime_in_batch_window(
+        scheduled_local,
+        scheduled_dates=batch_task.scheduled_dates,
+        window_start_time=batch_task.window_start_time,
+        window_end_time=batch_task.window_end_time,
+    ):
+        return False
+
+    end_clock = datetime.strptime(batch_task.window_end_time, "%H:%M").time()
+    window_end = scheduled_local.replace(
+        hour=end_clock.hour,
+        minute=end_clock.minute,
+        second=0,
+        microsecond=0,
+    )
+    if scheduled_local < window_end - SCHEDULED_BATCH_SEND_GRACE_PERIOD:
+        return False
+    return window_end <= local_now <= window_end + SCHEDULED_BATCH_SEND_GRACE_PERIOD
 
 
 async def _batch_task_sent_count_on_date(

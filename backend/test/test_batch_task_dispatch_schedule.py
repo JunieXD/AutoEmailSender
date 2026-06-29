@@ -219,7 +219,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
         self._run_async(self._set_task_status(task_id, EmailTaskStatus.GENERATING_DRAFT.value))
 
-        with self.assertRaisesRegex(ValueError, "草稿正在生成"):
+        with self.assertRaisesRegex(ValueError, "AI 正在改写当前草稿"):
             self._run_async(
                 approve_draft_task(
                     self.session_factory,
@@ -500,6 +500,116 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(second_task_id)), EmailTaskStatus.CANCELED.value)
         self.assertEqual(
             self._run_async(self._get_task_cancellation_reason(first_task_id)),
+            EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
+        )
+
+    def test_dispatch_due_tasks_sends_window_scheduled_item_during_grace_period(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(
+            self._set_task_scheduled_at(
+                task_id,
+                datetime(2026, 5, 4, 17, 59, 50, tzinfo=UTC),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 18, 0, 5, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
+        self.assertEqual(
+            self._run_async(self._get_batch_task_status_by_email_task_id(task_id)),
+            BatchTaskStatus.RUNNING.value,
+        )
+        mocked_send.assert_awaited_once()
+
+    def test_dispatch_due_tasks_expires_window_scheduled_item_after_grace_period(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(
+            self._set_task_scheduled_at(
+                task_id,
+                datetime(2026, 5, 4, 17, 59, 50, tzinfo=UTC),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 18, 2, 1, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(processed, 0)
+        mocked_send.assert_not_called()
+        self.assertEqual(
+            self._run_async(self._get_batch_task_status_by_email_task_id(task_id)),
+            BatchTaskStatus.EXPIRED.value,
+        )
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.CANCELED.value)
+        self.assertEqual(
+            self._run_async(self._get_task_cancellation_reason(task_id)),
+            EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
+        )
+
+    def test_dispatch_due_tasks_does_not_grace_stale_window_scheduled_item(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        self._run_async(
+            self._set_task_scheduled_at(
+                task_id,
+                datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 18, 0, 5, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(processed, 0)
+        mocked_send.assert_not_called()
+        self.assertEqual(
+            self._run_async(self._get_batch_task_status_by_email_task_id(task_id)),
+            BatchTaskStatus.EXPIRED.value,
+        )
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.CANCELED.value)
+        self.assertEqual(
+            self._run_async(self._get_task_cancellation_reason(task_id)),
             EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
         )
 

@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, time, timedelta
 
 
 DATE_FORMAT_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SCHEDULE_TAIL_BUFFER = timedelta(minutes=1)
 
 
 def normalize_scheduled_dates(values: list[str] | None) -> list[str]:
@@ -115,6 +116,9 @@ def build_jittered_batch_schedule(
         window_end = datetime.combine(current_date, end_clock)
         if current_date == local_now.date():
             window_start = max(window_start, local_now)
+        buffered_window_end = window_end - SCHEDULE_TAIL_BUFFER
+        if buffered_window_end > window_start:
+            window_end = buffered_window_end
         if window_start >= window_end:
             continue
 
