@@ -31,6 +31,7 @@ from app.models.email_task import (
 from app.models.identity_profile import IdentityProfile
 from app.models.identity_material import IdentityMaterial, IdentityMaterialType
 from app.models.imap_sync import (
+    ImapFolderRole,
     ImapMailboxSyncState,
     ImapProfessorHistoricalScanStatus,
     ImapProfessorSyncState,
@@ -82,6 +83,7 @@ __all__ = [
     "IdentityProfile",
     "IdentityMaterial",
     "IdentityMaterialType",
+    "ImapFolderRole",
     "ImapMailboxSyncState",
     "ImapProfessorHistoricalScanStatus",
     "ImapProfessorSyncState",

@@ -20,13 +20,19 @@ class ImapProfessorHistoricalScanStatus(str, Enum):
     FAILED = "failed"
 
 
+class ImapFolderRole(str, Enum):
+    INBOX = "inbox"
+    SENT = "sent"
+
+
 class ImapMailboxSyncState(Base):
     __tablename__ = "imap_mailbox_sync_states"
     __table_args__ = (
         UniqueConstraint(
             "identity_id",
+            "folder_role",
             "folder",
-            name="uq_imap_mailbox_identity_folder",
+            name="uq_imap_mailbox_identity_folder_role_folder",
         ),
     )
 
@@ -36,8 +42,13 @@ class ImapMailboxSyncState(Base):
         index=True,
         nullable=False,
     )
+    folder_role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=text("'inbox'"),
+    )
     folder: Mapped[str] = mapped_column(
-        String(64),
+        String(255),
         nullable=False,
         server_default=text("'INBOX'"),
     )
@@ -68,8 +79,9 @@ class ImapProfessorSyncState(Base):
             "identity_id",
             "professor_id",
             "professor_email",
+            "folder_role",
             "folder",
-            name="uq_imap_professor_identity_professor_email_folder",
+            name="uq_imap_professor_identity_professor_email_folder_role_folder",
         ),
     )
 
@@ -85,8 +97,13 @@ class ImapProfessorSyncState(Base):
         nullable=False,
     )
     professor_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    folder_role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=text("'inbox'"),
+    )
     folder: Mapped[str] = mapped_column(
-        String(64),
+        String(255),
         nullable=False,
         server_default=text("'INBOX'"),
     )
