@@ -98,6 +98,7 @@ describe("ProfessorsPage layout", () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+    Reflect.deleteProperty(window, "autoEmailSender");
     mockedUseSelectionContext.mockReset();
     mockedUseSelectionContext.mockReturnValue({
       identities: [],
@@ -304,6 +305,73 @@ describe("ProfessorsPage layout", () => {
         }),
       );
     });
+  });
+
+  it("opens editable homepage and source links with the desktop default browser", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    listProfessorsForManagement.mockResolvedValue([
+      {
+        ...professor,
+        source_url: "https://example.edu/faculty-directory",
+      },
+    ]);
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+
+    const profileInput = screen.getByLabelText("主页链接");
+    fireEvent.change(profileInput, {
+      target: { value: " https://example.edu/li-updated " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "打开主页链接" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开来源链接" }));
+
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.edu/li-updated");
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      "https://example.edu/faculty-directory",
+    );
+  });
+
+  it("falls back to an Electron window when opening an editable professor link fails", async () => {
+    const openExternalUrl = vi.fn().mockRejectedValue(new Error("xdg-open missing"));
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开主页链接" }));
+
+    await waitFor(() => {
+      expect(openWindow).toHaveBeenCalledWith(
+        "https://example.edu/li",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
+    openWindow.mockRestore();
   });
 
   it("guides empty professor lists with three intake cards", async () => {

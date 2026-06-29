@@ -17,6 +17,7 @@ import {
   Archive,
   Bot,
   Download,
+  ExternalLink,
   FileSpreadsheet,
   Loader2,
   Minus,
@@ -48,6 +49,10 @@ import {
   getTotalPages,
   setStoredPageSize,
 } from "@/lib/pagination";
+import {
+  normalizeExternalHttpUrl,
+  openExternalHttpUrl,
+} from "@/lib/externalUrls";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
@@ -341,6 +346,8 @@ const fieldLabelClassName =
   "mb-2 inline-flex items-center gap-1 text-sm font-medium text-stone-800";
 const inputClassName =
   "w-full rounded-2xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15";
+const urlInputWithActionClassName =
+  "w-full rounded-2xl border border-stone-200 bg-white py-2.5 pl-3 pr-11 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15";
 
 const renderFieldLabel = (label: string, required = false) => (
   <span className={fieldLabelClassName}>
@@ -350,6 +357,54 @@ const renderFieldLabel = (label: string, required = false) => (
     <span>{label}</span>
   </span>
 );
+
+const UrlInputField = ({
+  id,
+  label,
+  value,
+  placeholder,
+  openLabel,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder: string;
+  openLabel: string;
+  onChange: (value: string) => void;
+}) => {
+  const openableUrl = normalizeExternalHttpUrl(value);
+
+  return (
+    <div className="block">
+      <label htmlFor={id}>{renderFieldLabel(label)}</label>
+      <div className="relative">
+        <input
+          id={id}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className={urlInputWithActionClassName}
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          aria-label={openLabel}
+          title={openLabel}
+          disabled={!openableUrl}
+          onClick={() => {
+            if (!openableUrl) {
+              return;
+            }
+            openExternalHttpUrl(openableUrl);
+          }}
+          className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl border border-stone-200 bg-stone-50 text-stone-500 transition hover:border-primary/40 hover:bg-white hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          <ExternalLink className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const triggerDownload = (url: string) => {
   const link = document.createElement("a");
@@ -2243,34 +2298,32 @@ export const ProfessorsPage = () => {
               placeholder="只对自己可见的沟通偏好、判断依据或跟进提醒。"
             />
           </label>
-          <label className="block">
-            {renderFieldLabel("主页链接")}
-            <input
-              value={formState.profile_url}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  profile_url: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：https://faculty.example.edu/profile"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("来源链接")}
-            <input
-              value={formState.source_url}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  source_url: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：https://example.edu/faculty-directory"
-            />
-          </label>
+          <UrlInputField
+            id="professor-profile-url"
+            label="主页链接"
+            value={formState.profile_url}
+            placeholder="示例：https://faculty.example.edu/profile"
+            openLabel="打开主页链接"
+            onChange={(value) =>
+              setFormState((previous) => ({
+                ...previous,
+                profile_url: value,
+              }))
+            }
+          />
+          <UrlInputField
+            id="professor-source-url"
+            label="来源链接"
+            value={formState.source_url}
+            placeholder="示例：https://example.edu/faculty-directory"
+            openLabel="打开来源链接"
+            onChange={(value) =>
+              setFormState((previous) => ({
+                ...previous,
+                source_url: value,
+              }))
+            }
+          />
         </div>
         <div className="mt-6 flex flex-wrap justify-end gap-3">
           <button

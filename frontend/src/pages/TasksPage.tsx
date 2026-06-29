@@ -88,6 +88,10 @@ import {
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
+import {
+  normalizeExternalHttpUrl,
+  openExternalHttpUrl,
+} from "@/lib/externalUrls";
 import { deriveTextFromEmailHtml, textToEmailHtml } from "@/lib/richEmail";
 import {
   BATCH_TASK_STATUS_LABELS,
@@ -783,6 +787,37 @@ export const TasksPage = () => {
     selectedIdentityId
       ? `${selectedIdentityId}:${taskListViews.batch}`
       : null;
+  const renderCandidateExternalUrl = useCallback(
+    (url: string | null) => {
+      const normalizedUrl = url?.trim();
+      if (!normalizedUrl) {
+        return "暂无";
+      }
+
+      return (
+        <a
+          href={normalizedUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => {
+            if (
+              !window.autoEmailSender?.openExternalUrl ||
+              !normalizeExternalHttpUrl(normalizedUrl)
+            ) {
+              return;
+            }
+
+            event.preventDefault();
+            openExternalHttpUrl(normalizedUrl);
+          }}
+          className="inline-flex max-w-full items-center gap-1.5 align-bottom text-primary underline-offset-4 hover:underline"
+        >
+          <span className="truncate">{normalizedUrl}</span>
+        </a>
+      );
+    },
+    [],
+  );
   const batchRunningCount = useMemo(
     () => currentBatchTasks.filter((task) => task.status === "running").length,
     [currentBatchTasks],
@@ -4259,11 +4294,11 @@ const selectedCrawlJobCanReview =
                 <div className="mt-2 space-y-2 text-sm text-stone-900">
                   <div>
                     <span className="text-stone-500">资料页：</span>
-                    {selectedCandidateDetail.profile_url || "暂无"}
+                    {renderCandidateExternalUrl(selectedCandidateDetail.profile_url)}
                   </div>
                   <div>
                     <span className="text-stone-500">来源页：</span>
-                    {selectedCandidateDetail.source_url || "暂无"}
+                    {renderCandidateExternalUrl(selectedCandidateDetail.source_url)}
                   </div>
                 </div>
               </div>

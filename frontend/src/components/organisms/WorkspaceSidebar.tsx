@@ -1,5 +1,9 @@
 import { AtSign, ExternalLink, GraduationCap, Microscope, Sparkles } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
+import {
+  normalizeExternalHttpUrl,
+  openExternalHttpUrl,
+} from "@/lib/externalUrls";
 import { normalizeProfessorTitleDisplay } from "@/lib/professorTitle";
 import type { WorkspaceThreadDTO } from "@/types";
 
@@ -37,15 +41,17 @@ const ArchiveCard = ({ thread }: WorkspaceSidebarProps) => {
     [professor.university, professor.school].filter(Boolean).join(" / ") ||
     "未填写学校信息";
   const profileUrl = professor.profile_url?.trim();
-  const openProfileUrl = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!window.autoEmailSender?.openExternalUrl || !profileUrl) {
+  const openProfileUrl = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (
+      !window.autoEmailSender?.openExternalUrl ||
+      !profileUrl ||
+      !normalizeExternalHttpUrl(profileUrl)
+    ) {
       return;
     }
 
     event.preventDefault();
-    void window.autoEmailSender.openExternalUrl(profileUrl).catch(() => {
-      window.open(profileUrl, "_blank", "noopener,noreferrer");
-    });
+    openExternalHttpUrl(profileUrl);
   };
 
   return (

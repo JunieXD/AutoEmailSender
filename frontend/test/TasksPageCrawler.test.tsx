@@ -105,6 +105,7 @@ const renderPage = () =>
 describe("TasksPage crawler jobs tab", () => {
   beforeEach(() => {
     clearDiagnosticEvents();
+    Reflect.deleteProperty(window, "autoEmailSender");
     vi.clearAllMocks();
     mockedUseSelectionContext.mockReturnValue({
       selectedIdentityId: 1,
@@ -319,6 +320,131 @@ describe("TasksPage crawler jobs tab", () => {
       expect(screen.queryByRole("dialog", { name: "候选导师详情" })).not.toBeInTheDocument();
     });
     expect(document.body.style.overflow).toBe("");
+  });
+
+  it("opens candidate profile and source links with the desktop default browser when available", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    vi.mocked(listCrawlCandidates).mockResolvedValue([
+      {
+        id: 21,
+        job_id: 7,
+        professor_id: null,
+        name: "张教授",
+        email: "zhang@example.edu",
+        title: "教授",
+        university: "示例大学",
+        school: "计算机学院",
+        department: "计算机学院",
+        research_direction: "机器学习",
+        recent_papers: [],
+        profile_url: "https://example.edu/faculty/zhang",
+        source_url: "https://example.edu/faculty",
+        confidence: 0.86,
+        field_confidence: null,
+        evidence: null,
+        review_status: "pending",
+        created_at: "2026-04-26T10:02:00Z",
+        updated_at: "2026-04-26T10:02:00Z",
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
+
+    const candidateDialog = await screen.findByRole("dialog", { name: "候选导师详情" });
+    const profileLink = within(candidateDialog).getByRole("link", {
+      name: "https://example.edu/faculty/zhang",
+    });
+    const sourceLink = within(candidateDialog).getByRole("link", {
+      name: "https://example.edu/faculty",
+    });
+    expect(profileLink).toHaveAttribute("href", "https://example.edu/faculty/zhang");
+    expect(sourceLink).toHaveAttribute("href", "https://example.edu/faculty");
+    expect(profileLink).toHaveAttribute("target", "_blank");
+    expect(sourceLink).toHaveAttribute("target", "_blank");
+    expect(profileLink).toHaveAttribute("rel", "noreferrer");
+    expect(sourceLink).toHaveAttribute("rel", "noreferrer");
+
+    fireEvent.click(profileLink);
+    fireEvent.click(sourceLink);
+
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.edu/faculty/zhang");
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.edu/faculty");
+  });
+
+  it("falls back to opening candidate links in an Electron window when the default browser fails", async () => {
+    const openExternalUrl = vi.fn().mockRejectedValue(new Error("xdg-open missing"));
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    vi.mocked(listCrawlCandidates).mockResolvedValue([
+      {
+        id: 21,
+        job_id: 7,
+        professor_id: null,
+        name: "张教授",
+        email: "zhang@example.edu",
+        title: "教授",
+        university: "示例大学",
+        school: "计算机学院",
+        department: "计算机学院",
+        research_direction: "机器学习",
+        recent_papers: [],
+        profile_url: "https://example.edu/faculty/zhang",
+        source_url: "https://example.edu/faculty",
+        confidence: 0.86,
+        field_confidence: null,
+        evidence: null,
+        review_status: "pending",
+        created_at: "2026-04-26T10:02:00Z",
+        updated_at: "2026-04-26T10:02:00Z",
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
+
+    const candidateDialog = await screen.findByRole("dialog", { name: "候选导师详情" });
+    fireEvent.click(
+      within(candidateDialog).getByRole("link", {
+        name: "https://example.edu/faculty/zhang",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(openWindow).toHaveBeenCalledWith(
+        "https://example.edu/faculty/zhang",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
+    openWindow.mockRestore();
   });
 
   it("shows the crawl enrichment failure reason in the candidate detail dialog", async () => {
