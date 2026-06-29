@@ -54,7 +54,9 @@ def build_message_fingerprint(record: EmailLogIngestRecord) -> str:
         "bcc": normalize_email_list(record.bcc_emails),
     }
     content = record.content or ""
+    content_html = record.content_html or ""
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    content_html_hash = hashlib.sha256(content_html.encode("utf-8")).hexdigest()
     created_at_minute = as_utc_aware(record.created_at).replace(second=0, microsecond=0).isoformat()
     payload = {
         "identity_id": record.identity_id,
@@ -65,6 +67,7 @@ def build_message_fingerprint(record: EmailLogIngestRecord) -> str:
         "created_at_minute": created_at_minute,
         "subject": record.subject or "",
         "content_hash": content_hash,
+        "content_html_hash": content_html_hash,
     }
     digest = hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
@@ -74,7 +77,7 @@ def build_message_fingerprint(record: EmailLogIngestRecord) -> str:
 
 async def upsert_email_log(session: AsyncSession, record: EmailLogIngestRecord) -> EmailLog:
     normalized_message_id = normalize_message_id(record.message_id)
-    message_fingerprint = build_message_fingerprint(record)
+    message_fingerprint = _message_fingerprint_or_none(record, normalized_message_id)
     existing = await _find_existing(session, record, normalized_message_id, message_fingerprint)
 
     if existing is None:
@@ -117,7 +120,7 @@ async def _find_existing(
     session: AsyncSession,
     record: EmailLogIngestRecord,
     normalized_message_id: str | None,
-    message_fingerprint: str,
+    message_fingerprint: str | None,
 ) -> EmailLog | None:
     if normalized_message_id:
         by_message_id = await session.scalar(
@@ -149,6 +152,9 @@ async def _find_existing(
         if by_imap_location is not None:
             return by_imap_location
 
+    if message_fingerprint is None:
+        return None
+
     return await session.scalar(
         select(EmailLog).where(
             EmailLog.identity_id == record.identity_id,
@@ -163,7 +169,7 @@ def _merge_email_log(
     existing: EmailLog,
     record: EmailLogIngestRecord,
     normalized_message_id: str | None,
-    message_fingerprint: str,
+    message_fingerprint: str | None,
 ) -> None:
     _fill_attr(existing, "email_task_id", record.email_task_id)
     _fill_attr(existing, "llm_profile_id", record.llm_profile_id)
@@ -197,6 +203,7 @@ async def _find_by_normalized_rfc_message_id(
             EmailLog.professor_id == record.professor_id,
             EmailLog.direction == str(record.direction),
             EmailLog.rfc_message_id.is_not(None),
+            EmailLog.normalized_message_id.is_(None),
         ),
     )
     for candidate in candidates:
@@ -225,6 +232,12 @@ def _merge_dict_attr(existing: EmailLog, attr_name: str, value: dict[str, Any] |
     merged = dict(value)
     merged.update(current)
     setattr(existing, attr_name, merged)
+
+
+def _message_fingerprint_or_none(record: EmailLogIngestRecord, normalized_message_id: str | None) -> str | None:
+    if normalized_message_id is not None or _has_imap_location(record):
+        return None
+    return build_message_fingerprint(record)
 
 
 def _has_imap_location(record: EmailLogIngestRecord) -> bool:

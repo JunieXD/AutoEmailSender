@@ -234,6 +234,55 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertIsNone(created.bcc_emails)
         self.assertEqual(created.ingest_source, "imap")
 
+    def test_distinct_message_ids_do_not_dedupe_by_matching_fingerprint(self) -> None:
+        async def scenario() -> list[EmailLog]:
+            async with self.session_factory() as session:
+                base_kwargs = {
+                    "identity_id": 1,
+                    "professor_id": 2,
+                    "direction": EmailDirection.SENT.value,
+                    "subject": "Same subject",
+                    "content": "Same body",
+                    "content_html": None,
+                    "from_email": "Student <student@example.edu>",
+                    "to_emails": ["Teacher <teacher@example.edu>"],
+                    "cc_emails": None,
+                    "bcc_emails": None,
+                    "created_at": datetime(2026, 6, 30, 10, 2, 30, tzinfo=UTC),
+                    "ingest_source": "imap",
+                    "folder_role": None,
+                    "folder": None,
+                    "uidvalidity": None,
+                    "imap_uid": None,
+                    "email_task_id": None,
+                    "llm_profile_id": None,
+                    "provider_payload": None,
+                    "reply_headers": None,
+                }
+                await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(message_id="<first@example.edu>", **base_kwargs),
+                )
+                await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(message_id="<second@example.edu>", **base_kwargs),
+                )
+                await session.commit()
+                return list(
+                    (
+                        await session.execute(select(EmailLog).order_by(EmailLog.normalized_message_id.asc()))
+                    ).scalars(),
+                )
+
+        saved = self._run_async(scenario())
+
+        self.assertEqual(len(saved), 2)
+        self.assertEqual(
+            [log.normalized_message_id for log in saved],
+            ["<first@example.edu>", "<second@example.edu>"],
+        )
+        self.assertEqual([log.message_fingerprint for log in saved], [None, None])
+
     def test_deduplicates_missing_message_id_by_content_fingerprint(self) -> None:
         record = EmailLogIngestRecord(
             identity_id=1,
@@ -274,6 +323,88 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertEqual(saved.id, 1)
         self.assertIsNotNone(saved.message_fingerprint)
         self.assertTrue(saved.message_fingerprint.startswith("sha256:"))
+
+    def test_html_only_records_with_different_html_have_different_fingerprints(self) -> None:
+        async def scenario() -> list[EmailLog]:
+            async with self.session_factory() as session:
+                base_kwargs = {
+                    "identity_id": 1,
+                    "professor_id": 2,
+                    "direction": EmailDirection.RECEIVED.value,
+                    "subject": "HTML reply",
+                    "content": "",
+                    "message_id": None,
+                    "from_email": "Teacher <teacher@example.edu>",
+                    "to_emails": ["Student <student@example.edu>"],
+                    "cc_emails": None,
+                    "bcc_emails": None,
+                    "created_at": datetime(2026, 6, 30, 11, 2, 59, tzinfo=UTC),
+                    "ingest_source": "imap",
+                    "folder_role": None,
+                    "folder": None,
+                    "uidvalidity": None,
+                    "imap_uid": None,
+                    "email_task_id": None,
+                    "llm_profile_id": None,
+                    "provider_payload": None,
+                    "reply_headers": None,
+                }
+                await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(content_html="<p>First HTML body</p>", **base_kwargs),
+                )
+                await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(content_html="<p>Second HTML body</p>", **base_kwargs),
+                )
+                await session.commit()
+                return list((await session.execute(select(EmailLog).order_by(EmailLog.id.asc()))).scalars())
+
+        saved = self._run_async(scenario())
+
+        self.assertEqual(len(saved), 2)
+        self.assertIsNotNone(saved[0].message_fingerprint)
+        self.assertIsNotNone(saved[1].message_fingerprint)
+        self.assertNotEqual(saved[0].message_fingerprint, saved[1].message_fingerprint)
+
+    def test_html_only_record_with_same_html_still_deduplicates_by_fingerprint(self) -> None:
+        record = EmailLogIngestRecord(
+            identity_id=1,
+            professor_id=2,
+            direction=EmailDirection.RECEIVED.value,
+            subject="HTML reply",
+            content="",
+            content_html="<p>Same HTML body</p>",
+            message_id=None,
+            from_email="Teacher <teacher@example.edu>",
+            to_emails=["Student <student@example.edu>"],
+            cc_emails=None,
+            bcc_emails=None,
+            created_at=datetime(2026, 6, 30, 11, 2, 59, tzinfo=UTC),
+            ingest_source="imap",
+            folder_role=None,
+            folder=None,
+            uidvalidity=None,
+            imap_uid=None,
+            email_task_id=None,
+            llm_profile_id=None,
+            provider_payload=None,
+            reply_headers=None,
+        )
+
+        async def scenario() -> tuple[int, EmailLog]:
+            async with self.session_factory() as session:
+                await upsert_email_log(session, record)
+                second = await upsert_email_log(session, record)
+                await session.commit()
+                count = await session.scalar(select(func.count()).select_from(EmailLog))
+                assert count is not None
+                return count, second
+
+        count, saved = self._run_async(scenario())
+
+        self.assertEqual(count, 1)
+        self.assertIsNotNone(saved.message_fingerprint)
 
     def test_deduplicates_by_imap_location_without_message_id(self) -> None:
         async def scenario() -> tuple[int, EmailLog]:
@@ -412,7 +543,7 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertEqual(merged.to_emails, ["student@example.edu"])
         self.assertEqual(merged.cc_emails, ["copy@example.edu"])
         self.assertEqual(merged.bcc_emails, ["hidden@example.edu"])
-        self.assertIsNotNone(merged.message_fingerprint)
+        self.assertIsNone(merged.message_fingerprint)
         self.assertEqual(merged.provider_payload, {"headers": {"Message-ID": "<Filled@example.edu>"}})
         self.assertEqual(merged.reply_headers, {"references": ["<previous@example.edu>"]})
         self.assertIsNotNone(merged.synced_at)
