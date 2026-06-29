@@ -277,9 +277,54 @@ async def fetch_incremental_mailbox_messages(
     folder: str,
     last_seen_uid: int | None,
 ) -> tuple[int | None, list[ImapFetchedMessage]]:
+    return await _fetch_incremental_mailbox_messages(
+        identity,
+        folder,
+        last_seen_uid,
+        expected_uidvalidity=None,
+        return_uidvalidity=False,
+    )
+
+
+async def fetch_incremental_mailbox_messages_with_uidvalidity(
+    identity: IdentityProfile,
+    folder: str,
+    last_seen_uid: int | None,
+    *,
+    expected_uidvalidity: int | None,
+) -> tuple[int | None, list[ImapFetchedMessage], int | None]:
+    return await _fetch_incremental_mailbox_messages(
+        identity,
+        folder,
+        last_seen_uid,
+        expected_uidvalidity=expected_uidvalidity,
+        return_uidvalidity=True,
+    )
+
+
+async def _fetch_incremental_mailbox_messages(
+    identity: IdentityProfile,
+    folder: str,
+    last_seen_uid: int | None,
+    *,
+    expected_uidvalidity: int | None,
+    return_uidvalidity: bool,
+) -> tuple[int | None, list[ImapFetchedMessage]] | tuple[int | None, list[ImapFetchedMessage], int | None]:
     if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+        if return_uidvalidity:
+            return last_seen_uid, [], None
         return last_seen_uid, []
-    return await asyncio.to_thread(_fetch_incremental_mailbox_messages_sync, identity, folder, last_seen_uid)
+    result = await asyncio.to_thread(
+        _fetch_incremental_mailbox_messages_sync,
+        identity,
+        folder,
+        last_seen_uid,
+        expected_uidvalidity,
+    )
+    if return_uidvalidity:
+        return result
+    max_seen_uid, messages, _ = result
+    return max_seen_uid, messages
 
 
 async def fetch_incremental_inbox_messages(
@@ -465,14 +510,22 @@ def _fetch_incremental_mailbox_messages_sync(
     identity: IdentityProfile,
     folder: str,
     last_seen_uid: int | None,
-) -> tuple[int | None, list[ImapFetchedMessage]]:
+    expected_uidvalidity: int | None = None,
+) -> tuple[int | None, list[ImapFetchedMessage], int | None]:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
-    max_seen_uid = last_seen_uid
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
-        uids = search_uids_since(client, last_seen_uid)
+        effective_last_seen_uid = last_seen_uid
+        if (
+            expected_uidvalidity is not None
+            and uidvalidity is not None
+            and uidvalidity != expected_uidvalidity
+        ):
+            effective_last_seen_uid = None
+        max_seen_uid = effective_last_seen_uid
+        uids = search_uids_since(client, effective_last_seen_uid)
         for uid in uids:
             max_seen_uid = max(max_seen_uid or 0, uid)
             message = _fetch_message_by_uid_sync(client, uid)
@@ -485,7 +538,7 @@ def _fetch_incremental_mailbox_messages_sync(
         raise MailRuntimeError(f"IMAP 增量同步失败: {exc}") from exc
     finally:
         _logout_imap_client(client)
-    return max_seen_uid, messages
+    return max_seen_uid, messages, uidvalidity
 
 
 def _fetch_incremental_inbox_messages_sync(

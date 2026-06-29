@@ -1856,13 +1856,28 @@ async def sync_identity_incremental_once(
             folder=folder,
         )
         last_seen_uid = state.last_seen_uid
+        expected_uidvalidity = state.uidvalidity
         await session.commit()
     try:
-        max_seen_uid, messages = await mail_runtime.fetch_incremental_mailbox_messages(
-            identity,
-            folder,
-            last_seen_uid,
+        fetch_with_uidvalidity = getattr(
+            mail_runtime,
+            "fetch_incremental_mailbox_messages_with_uidvalidity",
+            None,
         )
+        if callable(fetch_with_uidvalidity):
+            max_seen_uid, messages, current_uidvalidity = await fetch_with_uidvalidity(
+                identity,
+                folder,
+                last_seen_uid,
+                expected_uidvalidity=expected_uidvalidity,
+            )
+        else:
+            max_seen_uid, messages = await mail_runtime.fetch_incremental_mailbox_messages(
+                identity,
+                folder,
+                last_seen_uid,
+            )
+            current_uidvalidity = _resolve_messages_uidvalidity(messages)
     except Exception as exc:
         async with session_factory() as session:
             state = await _get_or_create_mailbox_state(
@@ -1888,12 +1903,26 @@ async def sync_identity_incremental_once(
             folder_role=folder_role,
             folder=folder,
         )
+        if (
+            current_uidvalidity is not None
+            and current_uidvalidity != state.uidvalidity
+        ):
+            state.last_seen_uid = None
+        if current_uidvalidity is not None:
+            state.uidvalidity = current_uidvalidity
         if max_seen_uid is not None:
             state.last_seen_uid = max(state.last_seen_uid or 0, max_seen_uid)
         state.last_sync_at = utc_now()
         state.last_error = None
         await session.commit()
     return detected
+
+
+def _resolve_messages_uidvalidity(messages: list[ImapFetchedMessage]) -> int | None:
+    for message in messages:
+        if message.uidvalidity is not None:
+            return message.uidvalidity
+    return None
 
 
 async def sync_workspace_professor_replies(
@@ -1993,20 +2022,20 @@ async def _process_incoming_reply_messages(
                 candidate = fetched_messages[index]
                 if candidate.uid in fetched_by_uid:
                     fetched = candidate
-            if message.message_id:
-                existing = await session.scalar(
-                    select(EmailLog).where(EmailLog.rfc_message_id == message.message_id),
-                )
-                if existing:
-                    if existing.direction == EmailDirection.RECEIVED.value:
-                        changed = _backfill_existing_reply(existing, message, reply_created_at)
-                        if changed:
-                            session.add(existing)
-                            await session.commit()
-                    continue
-
             task = await _find_reply_target(session, identity_id, message)
             if not task:
+                continue
+
+            existing = await _find_existing_received_log_for_reply(
+                session,
+                task,
+                message.message_id,
+            )
+            if existing is not None:
+                changed = _backfill_existing_reply(existing, message, reply_created_at)
+                if changed:
+                    session.add(existing)
+                    await session.commit()
                 continue
 
             task.is_replied = True
@@ -2051,6 +2080,27 @@ async def _process_incoming_reply_messages(
                 continue
             detected += 1
     return detected
+
+
+async def _find_existing_received_log_for_reply(
+    session: AsyncSession,
+    task: EmailTask,
+    message_id: str | None,
+) -> EmailLog | None:
+    normalized_message_id = (message_id or "").strip().lower()
+    if not normalized_message_id:
+        return None
+    return await session.scalar(
+        select(EmailLog).where(
+            EmailLog.identity_id == task.identity_id,
+            EmailLog.professor_id == task.professor_id,
+            EmailLog.direction == EmailDirection.RECEIVED.value,
+            or_(
+                EmailLog.normalized_message_id == normalized_message_id,
+                func.lower(EmailLog.rfc_message_id) == normalized_message_id,
+            ),
+        ),
+    )
 
 
 async def process_imap_fetched_messages(

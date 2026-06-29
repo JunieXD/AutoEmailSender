@@ -330,7 +330,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(side_effect=RuntimeError("fetch failed")),
             ):
                 result = await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -354,8 +354,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(None, [])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(None, [], None)),
             ):
                 await sync_identity_incremental_once(self.session_factory, identity_id)
 
@@ -368,8 +368,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 after_none = state.last_seen_uid
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(7, [])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(7, [], None)),
             ):
                 await sync_identity_incremental_once(self.session_factory, identity_id)
 
@@ -382,6 +382,77 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return after_none, state.last_seen_uid
 
         self.assertEqual(self._run_async(scenario()), (10, 10))
+
+    def test_incremental_sync_resets_cursor_when_uidvalidity_changes(self) -> None:
+        async def scenario() -> tuple[int | None, int | None, int | None]:
+            identity_id = await self._create_identity_with_imap()
+            async with self.session_factory() as session:
+                session.add(
+                    ImapMailboxSyncState(
+                        identity_id=identity_id,
+                        folder_role="inbox",
+                        folder="INBOX",
+                        uidvalidity=111,
+                        last_seen_uid=99,
+                    ),
+                )
+                await session.commit()
+
+            message = self._build_fetched_message(
+                uid=1,
+                uidvalidity=222,
+                message_id="<uidvalidity-reset@example.edu>",
+                from_email="Prof <prof@example.edu>",
+                to_emails=["student@example.com"],
+            )
+            with patch(
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(1, [message], 222)),
+            ) as mocked:
+                await sync_identity_incremental_once(self.session_factory, identity_id)
+
+            async with self.session_factory() as session:
+                state = await session.scalar(
+                    select(ImapMailboxSyncState).where(
+                        ImapMailboxSyncState.identity_id == identity_id,
+                        ImapMailboxSyncState.folder_role == "inbox",
+                    ),
+                )
+                return mocked.await_args.kwargs["expected_uidvalidity"], state.uidvalidity, state.last_seen_uid
+
+        self.assertEqual(self._run_async(scenario()), (111, 222, 1))
+
+    def test_incremental_sync_resets_legacy_cursor_when_uidvalidity_becomes_known(self) -> None:
+        async def scenario() -> tuple[int | None, int | None]:
+            identity_id = await self._create_identity_with_imap()
+            async with self.session_factory() as session:
+                session.add(
+                    ImapMailboxSyncState(
+                        identity_id=identity_id,
+                        folder_role="inbox",
+                        folder="INBOX",
+                        uidvalidity=None,
+                        last_seen_uid=99,
+                    ),
+                )
+                await session.commit()
+
+            with patch(
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(1, [], 222)),
+            ):
+                await sync_identity_incremental_once(self.session_factory, identity_id)
+
+            async with self.session_factory() as session:
+                state = await session.scalar(
+                    select(ImapMailboxSyncState).where(
+                        ImapMailboxSyncState.identity_id == identity_id,
+                        ImapMailboxSyncState.folder_role == "inbox",
+                    ),
+                )
+                return state.uidvalidity, state.last_seen_uid
+
+        self.assertEqual(self._run_async(scenario()), (222, 1))
 
     def test_incremental_sync_rejects_unknown_folder_role_without_creating_state(self) -> None:
         async def scenario() -> int:
@@ -427,8 +498,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 content="sent content",
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(21, [sent_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(21, [sent_message], None)),
             ) as mocked:
                 detected = await sync_identity_incremental_once(
                     self.session_factory,
@@ -483,8 +554,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["outsider@example.edu"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(22, [sent_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(22, [sent_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
                     self.session_factory,
@@ -528,8 +599,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 content="old body",
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(24, [old_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(24, [old_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
                     self.session_factory,
@@ -585,8 +656,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["known@example.edu"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(25, [old_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(25, [old_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
                     self.session_factory,
@@ -653,8 +724,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             sent_message.sent_at = sent_at
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(23, [sent_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(23, [sent_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
                     self.session_factory,
@@ -700,8 +771,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["student@example.com"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(32, [inbox_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(32, [inbox_message], 777)),
             ):
                 await sync_identity_incremental_once(self.session_factory, identity_id)
 
@@ -713,8 +784,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["prof@example.edu"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(33, [sent_message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(33, [sent_message], 888)),
             ):
                 await sync_identity_incremental_once(
                     self.session_factory,
@@ -765,8 +836,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["student@example.com"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
-                new=AsyncMock(return_value=(31, [message])),
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                new=AsyncMock(return_value=(31, [message], None)),
             ):
                 detected = await sync_identity_incremental_once(self.session_factory, identity_id)
 
@@ -790,6 +861,61 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 True,
                 ("inbox", "INBOX", 31, "prof@example.edu", ["student@example.com"]),
             ),
+        )
+
+    def test_inbox_reply_detection_is_not_blocked_by_same_message_id_in_other_scope(self) -> None:
+        async def scenario() -> tuple[int, str, bool, int]:
+            identity_id, _, task_id = await self._create_reply_task(status=EmailTaskStatus.SENT.value)
+            async with self.session_factory() as session:
+                other_identity = self._build_identity()
+                other_identity.email_address = "other-student@example.com"
+                other_identity.smtp_username = "other-student@example.com"
+                other_identity.imap_username = "other-student@example.com"
+                other_llm = LLMProfile(
+                    name="其他模型",
+                    provider="openai",
+                    api_key="key",
+                    model_name="gpt-test",
+                )
+                other_professor = Professor(name="Other Professor", email="other-prof@example.edu")
+                session.add_all([other_identity, other_llm, other_professor])
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        identity_id=other_identity.id,
+                        llm_profile_id=other_llm.id,
+                        professor_id=other_professor.id,
+                        direction=EmailDirection.RECEIVED.value,
+                        subject="other reply",
+                        content="other content",
+                        rfc_message_id="<shared-reply@example.edu>",
+                        normalized_message_id="<shared-reply@example.edu>",
+                    ),
+                )
+                await session.commit()
+
+            detected = await process_imap_fetched_messages(
+                self.session_factory,
+                identity_id,
+                [self._build_fetched_message(message_id="<shared-reply@example.edu>")],
+            )
+
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_id)
+                logs = list(
+                    (
+                        await session.execute(
+                            select(EmailLog).where(
+                                EmailLog.rfc_message_id == "<shared-reply@example.edu>",
+                            ),
+                        )
+                    ).scalars(),
+                )
+                return detected, task.status, task.is_replied, len(logs)
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (1, EmailTaskStatus.REPLY_DETECTED.value, True, 2),
         )
 
     def test_history_scan_uses_state_folder_and_sent_ingestion_path(self) -> None:
@@ -862,7 +988,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(side_effect=RuntimeError("sent failed")),
             ):
                 await sync_identity_incremental_once(
