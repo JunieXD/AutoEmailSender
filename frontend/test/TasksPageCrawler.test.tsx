@@ -377,6 +377,71 @@ describe("TasksPage crawler jobs tab", () => {
     expect(candidateDialog).toHaveTextContent("WinError 2");
   });
 
+  it("hides an older enrichment failure reason after the same candidate is enriched successfully", async () => {
+    vi.mocked(listCrawlCandidates).mockResolvedValue([
+      {
+        id: 21,
+        job_id: 7,
+        professor_id: null,
+        name: "张教授",
+        email: "zhang@example.edu",
+        title: "教授",
+        university: "示例大学",
+        school: "计算机学院",
+        department: null,
+        research_direction: null,
+        recent_papers: [],
+        profile_url: "https://example.edu/faculty/zhang",
+        source_url: "https://example.edu/faculty",
+        confidence: 0.86,
+        field_confidence: null,
+        evidence: null,
+        review_status: "pending",
+        created_at: "2026-04-26T10:02:00Z",
+        updated_at: "2026-04-26T10:12:00Z",
+      },
+    ]);
+    vi.mocked(getCrawlJobEvents).mockResolvedValue([
+      {
+        id: "evt-failed",
+        job_id: 7,
+        event_type: "enrichment",
+        message: "候选导师详情补全失败：张教授",
+        created_at: "2026-04-26T08:34:00",
+        raw: {
+          candidate_id: 21,
+          status: "failed",
+          error_message:
+            "Playwright browser fetch failed: FileNotFoundError: [WinError 2] 系统找不到指定的文件。",
+        },
+      },
+      {
+        id: "evt-succeeded",
+        job_id: 7,
+        event_type: "enrichment",
+        message: "候选导师详情补全成功：张教授",
+        created_at: "2026-04-26T08:40:00",
+        raw: {
+          candidate_id: 21,
+          status: "succeeded",
+        },
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
+
+    const candidateDialog = await screen.findByRole("dialog", { name: "候选导师详情" });
+    expect(candidateDialog).toHaveTextContent("zhang@example.edu");
+    expect(candidateDialog).not.toHaveTextContent("补全失败原因");
+    expect(candidateDialog).not.toHaveTextContent("WinError 2");
+  });
+
   it("shows the crawl enrichment failure reason in the realtime monitor log", async () => {
     vi.mocked(getCrawlJobEvents).mockResolvedValue([
       {

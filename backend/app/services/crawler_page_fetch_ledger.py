@@ -150,7 +150,6 @@ async def should_prefer_browser_for_fetch_domain(
                 select(CrawlPageFetchState).where(
                     CrawlPageFetchState.job_id == job_id,
                     CrawlPageFetchState.fetch_mode == "browser",
-                    CrawlPageFetchState.direct_status.in_(["failed", "succeeded"]),
                     CrawlPageFetchState.browser_status == "succeeded",
                     CrawlPageFetchState.fallback_reason.is_not(None),
                 )
@@ -239,5 +238,3 @@ async def mark_page_chunks_processed(
             state.status = CrawlPageFetchStatus.PROCESSED.value
             state.updated_at = utc_now()
             await session.commit()
-
-

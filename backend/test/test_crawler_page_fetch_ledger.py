@@ -14,6 +14,7 @@ from app.services.crawler_page_fetch_ledger import (
     get_page_fetch_decision,
     mark_page_fetch_result,
     normalize_fetch_url,
+    should_prefer_browser_for_fetch_domain,
 )
 from app.services.crawler_tools import PageSnapshot
 
@@ -182,6 +183,66 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                 return state.status, state.terminal_reason
 
         self.assertEqual(asyncio.run(run()), ("terminal_failed", "anti_bot_or_empty_response"))
+
+    def test_browser_preference_includes_previous_domain_preference_skip(self) -> None:
+        async def run() -> bool:
+            session_factory = await _create_test_session_factory()
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                session.add(job)
+                await session.flush()
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job.id,
+                        normalized_url="https://teacher.example.edu/a",
+                        original_url="https://teacher.example.edu/a",
+                        status="succeeded",
+                        fetch_mode="browser",
+                        direct_status="skipped_by_domain_browser_preference",
+                        fallback_reason="same_domain_previously_required_browser",
+                        browser_status="succeeded",
+                    )
+                )
+                await session.commit()
+                job_id = job.id
+
+            return await should_prefer_browser_for_fetch_domain(
+                session_factory,
+                job_id=job_id,
+                url="https://teacher.example.edu/b",
+            )
+
+        self.assertTrue(asyncio.run(run()))
+
+    def test_browser_preference_includes_any_browser_success_with_fallback_reason(self) -> None:
+        async def run() -> bool:
+            session_factory = await _create_test_session_factory()
+            async with session_factory() as session:
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                session.add(job)
+                await session.flush()
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job.id,
+                        normalized_url="https://teacher.example.edu/a",
+                        original_url="https://teacher.example.edu/a",
+                        status="succeeded",
+                        fetch_mode="browser",
+                        direct_status="direct_unusable",
+                        fallback_reason="direct_fetch_unusable",
+                        browser_status="succeeded",
+                    )
+                )
+                await session.commit()
+                job_id = job.id
+
+            return await should_prefer_browser_for_fetch_domain(
+                session_factory,
+                job_id=job_id,
+                url="https://teacher.example.edu/b",
+            )
+
+        self.assertTrue(asyncio.run(run()))
 
 
 if __name__ == "__main__":

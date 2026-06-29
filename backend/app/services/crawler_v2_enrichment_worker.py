@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlWorkerKind, LLMProfile
+from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlPage, CrawlWorkerKind, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_browser_fallback
 from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
@@ -17,6 +17,8 @@ from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.thinking_adaptation import ensure_thinking_adaptation
 
+
+_PROFILE_TEXT_CACHE: dict[tuple[int, int, int, str], str] = {}
 
 
 async def run_crawler_v2_enrichment_worker_once(
@@ -108,11 +110,13 @@ async def run_crawler_v2_enrichment_worker_once(
             task.worker_id = None
             task.claimed_at = None
             task.lease_expires_at = None
+            await _append_enrichment_success_event(session, task=task, candidate=candidate)
             await session.commit()
         return 1
     except Exception as exc:
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            candidate = await session.get(CrawlCandidate, task.candidate_id) if task is not None else None
             if task is not None and _enrichment_task_owned_by_worker(task, worker_id) and await ensure_job_active(session, task.job_id):
                 mark_crawler_v2_failed(
                     task,
@@ -120,6 +124,7 @@ async def run_crawler_v2_enrichment_worker_once(
                     retryable_status=CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
                     terminal_status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
                 )
+                await _append_enrichment_failure_event(session, task=task, candidate=candidate, error_message=str(exc))
             await session.commit()
         return 1
 
@@ -177,7 +182,7 @@ async def enrich_candidate_once_with_usage(
             thinking_extra_body=thinking_extra_body,
         )
         profile_url = candidate.profile_url or ""
-    page_text = await fetch_profile_text(ctx, profile_url)
+    page_text = await get_or_fetch_profile_text(ctx, candidate.id, profile_url)
     return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
 
 async def enrich_candidate_profile_with_llm_with_usage(
@@ -222,6 +227,96 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
     if snapshot.status != "succeeded":
         raise ValueError(snapshot.error_message or "详情页抓取失败")
     return snapshot.text or snapshot.html
+
+
+async def get_or_fetch_profile_text(ctx: CrawlToolContext, candidate_id: int, profile_url: str) -> str:
+    cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, profile_url.strip())
+    if cache_key in _PROFILE_TEXT_CACHE:
+        return _PROFILE_TEXT_CACHE[cache_key]
+    stored = await _load_successful_profile_text(ctx, profile_url)
+    if stored:
+        _PROFILE_TEXT_CACHE[cache_key] = stored
+        return stored
+    page_text = await fetch_profile_text(ctx, profile_url)
+    _PROFILE_TEXT_CACHE[cache_key] = page_text
+    return page_text
+
+
+async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str) -> str | None:
+    if not profile_url.strip():
+        return None
+    async with ctx.session_factory() as session:
+        page = await session.scalar(
+            select(CrawlPage)
+            .where(
+                CrawlPage.job_id == ctx.job_id,
+                CrawlPage.url == profile_url,
+                CrawlPage.status == "succeeded",
+                CrawlPage.text_excerpt.is_not(None),
+            )
+            .order_by(CrawlPage.created_at.desc(), CrawlPage.id.desc())
+            .limit(1)
+        )
+    if page is None or not page.text_excerpt:
+        return None
+    return page.text_excerpt
+
+
+async def _append_enrichment_failure_event(
+    session: AsyncSession,
+    *,
+    task: CrawlCandidateEnrichmentTask,
+    candidate: CrawlCandidate | None,
+    error_message: str,
+) -> None:
+    job = await session.get(CrawlJob, task.job_id)
+    if job is None:
+        return
+    candidate_name = candidate.name if candidate is not None and candidate.name else "未知导师"
+    trace = list(job.agent_trace or [])
+    trace.append(
+        {
+            "event_type": "enrichment",
+            "message": f"候选导师详情补全失败：{candidate_name}",
+            "created_at": utc_now().isoformat(),
+            "raw": {
+                "candidate_id": task.candidate_id,
+                "task_id": task.id,
+                "status": "failed",
+                "task_status": task.status,
+                "attempt_count": int(task.attempt_count or 0),
+                "error_message": error_message,
+            },
+        }
+    )
+    job.agent_trace = trace[-100:]
+
+
+async def _append_enrichment_success_event(
+    session: AsyncSession,
+    *,
+    task: CrawlCandidateEnrichmentTask,
+    candidate: CrawlCandidate,
+) -> None:
+    job = await session.get(CrawlJob, task.job_id)
+    if job is None:
+        return
+    candidate_name = candidate.name if candidate.name else "未知导师"
+    trace = list(job.agent_trace or [])
+    trace.append(
+        {
+            "event_type": "enrichment",
+            "message": f"候选导师详情补全成功：{candidate_name}",
+            "created_at": utc_now().isoformat(),
+            "raw": {
+                "candidate_id": task.candidate_id,
+                "task_id": task.id,
+                "status": "succeeded",
+                "task_status": task.status,
+            },
+        }
+    )
+    job.agent_trace = trace[-100:]
 
 
 async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:

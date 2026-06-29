@@ -31,37 +31,53 @@ function getCrawlEventRawPayload(
   return current;
 }
 
+function getEventTime(event: CrawlJobEventDTO): number {
+  if (!event.created_at) {
+    return 0;
+  }
+  const value = Date.parse(event.created_at);
+  return Number.isNaN(value) ? 0 : value;
+}
+
 export function getCandidateEnrichmentFailureMessage(
   candidate: CrawlCandidateDTO,
   events: CrawlJobEventDTO[],
 ): string | null {
-  const failedEvent = [...events]
-    .reverse()
-    .find((event) => {
+  const candidateEvents = events
+    .map((event, index) => ({ event, index, raw: getCrawlEventRawPayload(event) }))
+    .filter(({ event, raw }) => {
       if (event.event_type !== "enrichment") {
         return false;
       }
-      const raw = getCrawlEventRawPayload(event);
       if (!raw) {
         return false;
       }
-      const rawCandidateId = raw.candidate_id;
-      const rawStatus = raw.status;
-      const rawErrorMessage = raw.error_message;
-      return (
-        rawCandidateId === candidate.id &&
-        rawStatus === "failed" &&
-        typeof rawErrorMessage === "string" &&
-        rawErrorMessage.trim().length > 0
-      );
+      return raw.candidate_id === candidate.id;
     });
 
-  if (!failedEvent) {
+  if (candidateEvents.length === 0) {
     return null;
   }
 
-  const errorMessage = getCrawlEventRawPayload(failedEvent)?.error_message;
-  return typeof errorMessage === "string" ? errorMessage : null;
+  const latest = candidateEvents.reduce((current, item) => {
+    const currentTime = getEventTime(current.event);
+    const itemTime = getEventTime(item.event);
+    if (itemTime !== currentTime) {
+      return itemTime > currentTime ? item : current;
+    }
+    return item.index > current.index ? item : current;
+  });
+
+  const rawStatus = latest.raw?.status;
+  const rawErrorMessage = latest.raw?.error_message;
+  if (
+    rawStatus !== "failed" ||
+    typeof rawErrorMessage !== "string" ||
+    rawErrorMessage.trim().length === 0
+  ) {
+    return null;
+  }
+  return rawErrorMessage;
 }
 
 export function getCrawlEventFailureReason(event: CrawlJobEventDTO): string | null {
