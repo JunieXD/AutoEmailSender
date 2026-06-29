@@ -137,3 +137,189 @@ class UnifiedEmailLogModelsTestCase(unittest.TestCase):
 
         with self.assertRaises(IntegrityError):
             self._run_async(scenario())
+
+    def test_same_identity_professor_folder_uid_is_rejected(self) -> None:
+        async def scenario() -> None:
+            async with self.session_factory() as session:
+                session.add_all(
+                    [
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent",
+                            uidvalidity=123,
+                            imap_uid=456,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply duplicate",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent",
+                            uidvalidity=123,
+                            imap_uid=456,
+                        ),
+                    ],
+                )
+                await session.commit()
+
+        with self.assertRaises(IntegrityError):
+            self._run_async(scenario())
+
+    def test_same_imap_uid_is_allowed_for_different_professor_or_folder(self) -> None:
+        async def scenario() -> int:
+            async with self.session_factory() as session:
+                session.add_all(
+                    [
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent",
+                            uidvalidity=123,
+                            imap_uid=456,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=3,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent",
+                            uidvalidity=123,
+                            imap_uid=456,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent Items",
+                            uidvalidity=123,
+                            imap_uid=456,
+                        ),
+                    ],
+                )
+                await session.commit()
+                return len(list((await session.execute(select(EmailLog))).scalars()))
+
+        self.assertEqual(self._run_async(scenario()), 3)
+
+    def test_same_identity_professor_direction_fingerprint_is_rejected(self) -> None:
+        async def scenario() -> None:
+            async with self.session_factory() as session:
+                session.add_all(
+                    [
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply",
+                            content="Body",
+                            message_fingerprint="sha256:duplicate",
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply duplicate",
+                            content="Body",
+                            message_fingerprint="sha256:duplicate",
+                        ),
+                    ],
+                )
+                await session.commit()
+
+        with self.assertRaises(IntegrityError):
+            self._run_async(scenario())
+
+    def test_partial_unique_indexes_allow_null_keys(self) -> None:
+        async def scenario() -> int:
+            async with self.session_factory() as session:
+                session.add_all(
+                    [
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="No message id",
+                            content="Body",
+                            normalized_message_id=None,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Still no message id",
+                            content="Body",
+                            normalized_message_id=None,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.SENT.value,
+                            subject="No fingerprint",
+                            content="Body",
+                            message_fingerprint=None,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.SENT.value,
+                            subject="Still no fingerprint",
+                            content="Body",
+                            message_fingerprint=None,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="No imap uid",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent",
+                            uidvalidity=123,
+                            imap_uid=None,
+                        ),
+                        EmailLog(
+                            identity_id=1,
+                            llm_profile_id=None,
+                            professor_id=2,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Still no imap uid",
+                            content="Body",
+                            folder_role="sent",
+                            folder="Sent",
+                            uidvalidity=123,
+                            imap_uid=None,
+                        ),
+                    ],
+                )
+                await session.commit()
+                return len(list((await session.execute(select(EmailLog))).scalars()))
+
+        self.assertEqual(self._run_async(scenario()), 6)

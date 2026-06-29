@@ -21,6 +21,12 @@ LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
 
 
 class MigrationScriptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
     def test_alembic_revision_ids_are_unique(self) -> None:
         revision_ids: dict[str, list[Path]] = {}
         for migration_path in (BACKEND_DIR / "alembic" / "versions").glob("*.py"):
@@ -46,6 +52,150 @@ class MigrationScriptTests(unittest.TestCase):
         }
 
         self.assertEqual({}, duplicates)
+
+    def test_unified_email_history_upgrade_skips_normalized_message_duplicates(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "unified_email_duplicate_messages.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "20260614taskmat")
+        connection = sqlite3.connect(legacy_db_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="normalized-duplicate@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="Normalized Duplicate Model",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "normalized-duplicate@example.edu",
+            )
+            first_task_id = DatabaseSchemaTests._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+            )
+            second_task_id = DatabaseSchemaTests._insert_manual_child_task_into(
+                connection,
+                parent_task_id=first_task_id,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_id=professor_id,
+            )
+            first_log_id = DatabaseSchemaTests._insert_email_log_into(
+                connection,
+                first_task_id,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                rfc_message_id="<Msg@example.edu>",
+            )
+            second_log_id = DatabaseSchemaTests._insert_email_log_into(
+                connection,
+                second_task_id,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                rfc_message_id=" <msg@example.edu> ",
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(legacy_db_path)
+        try:
+            rows = upgraded.execute(
+                """
+                SELECT id, rfc_message_id, normalized_message_id
+                FROM email_logs
+                WHERE id IN (?, ?)
+                ORDER BY id
+                """,
+                (first_log_id, second_log_id),
+            ).fetchall()
+            version = upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+        finally:
+            upgraded.close()
+
+        self.assertEqual(version, HEAD_REVISION)
+        self.assertEqual(
+            rows,
+            [
+                (first_log_id, "<Msg@example.edu>", "<msg@example.edu>"),
+                (second_log_id, " <msg@example.edu> ", None),
+            ],
+        )
+
+    def test_unified_email_history_downgrade_reports_null_llm_profile_logs(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "unified_email_null_llm_downgrade.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "head")
+        connection = sqlite3.connect(legacy_db_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="null-llm-downgrade@example.com",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "null-llm-downgrade@example.edu",
+            )
+            connection.execute(
+                """
+                INSERT INTO email_logs (
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    direction,
+                    content,
+                    ingest_source
+                )
+                VALUES (?, NULL, ?, 'received', 'hello', 'imap')
+                """,
+                (identity_id, professor_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        result = self._run_alembic_result(env, "downgrade", "20260614taskmat")
+
+        self.assertNotEqual(result.returncode, 0)
+        combined_output = result.stdout + result.stderr
+        self.assertIn("llm_profile_id", combined_output)
+        self.assertIn("NULL", combined_output)
+        self.assertIn("cannot downgrade", combined_output)
+
+    def _run_alembic(self, env: dict[str, str], *args: str) -> None:
+        result = self._run_alembic_result(env, *args)
+        if result.returncode != 0:
+            self.fail(
+                "Alembic command failed.\n"
+                f"command: {' '.join(args)}\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}",
+            )
+
+    @staticmethod
+    def _run_alembic_result(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "alembic", *args],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
 
 class DatabaseSchemaTests(unittest.TestCase):

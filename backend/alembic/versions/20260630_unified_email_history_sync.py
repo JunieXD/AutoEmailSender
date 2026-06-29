@@ -65,6 +65,16 @@ def upgrade() -> None:
             SET normalized_message_id = lower(trim(rfc_message_id))
             WHERE rfc_message_id IS NOT NULL
               AND trim(rfc_message_id) != ''
+              AND id = (
+                  SELECT MIN(candidate.id)
+                  FROM email_logs AS candidate
+                  WHERE candidate.identity_id = email_logs.identity_id
+                    AND candidate.professor_id = email_logs.professor_id
+                    AND candidate.direction = email_logs.direction
+                    AND candidate.rfc_message_id IS NOT NULL
+                    AND trim(candidate.rfc_message_id) != ''
+                    AND lower(trim(candidate.rfc_message_id)) = lower(trim(email_logs.rfc_message_id))
+              )
             """,
         ),
     )
@@ -140,6 +150,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    null_llm_profile_count = op.get_bind().scalar(
+        sa.text("SELECT COUNT(*) FROM email_logs WHERE llm_profile_id IS NULL"),
+    )
+    if null_llm_profile_count:
+        raise RuntimeError(
+            "cannot downgrade unified email history sync: "
+            "email_logs.llm_profile_id contains NULL values. "
+            "Clean up IMAP/unified email history rows before downgrade.",
+        )
+
     with op.batch_alter_table("imap_professor_sync_states", schema=None) as batch_op:
         batch_op.drop_constraint(
             "uq_imap_professor_identity_professor_email_folder_role_folder",
