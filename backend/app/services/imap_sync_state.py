@@ -1,51 +1,45 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
 
 from app.core.time import utc_now
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import (
-    EmailLog,
-    EmailTask,
-    IdentityProfile,
-    ImapProfessorHistoricalScanStatus,
-    ImapProfessorSyncState,
-    Professor,
-)
+from app.models import IdentityProfile, ImapProfessorHistoricalScanStatus, ImapProfessorSyncState, Professor
 
 
 async def ensure_professor_scan_states(
     session_factory: async_sessionmaker[AsyncSession],
+    *,
+    identity_id: int | None = None,
+    sent_folder: str | None = None,
 ) -> int:
     created = 0
     async with session_factory() as session:
-        rows = await _load_contacted_professor_rows(session)
+        rows = await _load_existing_professor_rows(session, identity_id=identity_id)
         for identity_id, professor_id, professor_email in rows:
             normalized_email = _normalize_email(professor_email)
             if not normalized_email:
                 continue
-            existing = await session.scalar(
-                select(ImapProfessorSyncState).where(
-                    ImapProfessorSyncState.identity_id == identity_id,
-                    ImapProfessorSyncState.professor_id == professor_id,
-                    ImapProfessorSyncState.professor_email == normalized_email,
-                    ImapProfessorSyncState.folder == "INBOX",
-                ),
+            created += await _ensure_professor_scan_state(
+                session,
+                identity_id=identity_id,
+                professor_id=professor_id,
+                professor_email=normalized_email,
+                folder_role="inbox",
+                folder="INBOX",
             )
-            if existing is not None:
-                continue
-            session.add(
-                ImapProfessorSyncState(
+            if sent_folder:
+                created += await _ensure_professor_scan_state(
+                    session,
                     identity_id=identity_id,
                     professor_id=professor_id,
                     professor_email=normalized_email,
-                ),
-            )
-            created += 1
+                    folder_role="sent",
+                    folder=sent_folder,
+                )
         await session.commit()
     return created
 
@@ -111,38 +105,61 @@ async def mark_professor_scan_failed(
         await session.commit()
 
 
-async def _load_contacted_professor_rows(
+async def _ensure_professor_scan_state(
     session: AsyncSession,
+    *,
+    identity_id: int,
+    professor_id: int,
+    professor_email: str,
+    folder_role: str,
+    folder: str,
+) -> int:
+    existing = await session.scalar(
+        select(ImapProfessorSyncState).where(
+            ImapProfessorSyncState.identity_id == identity_id,
+            ImapProfessorSyncState.professor_id == professor_id,
+            ImapProfessorSyncState.professor_email == professor_email,
+            ImapProfessorSyncState.folder_role == folder_role,
+            ImapProfessorSyncState.folder == folder,
+        ),
+    )
+    if existing is not None:
+        return 0
+    session.add(
+        ImapProfessorSyncState(
+            identity_id=identity_id,
+            professor_id=professor_id,
+            professor_email=professor_email,
+            folder_role=folder_role,
+            folder=folder,
+        ),
+    )
+    return 1
+
+
+async def _load_existing_professor_rows(
+    session: AsyncSession,
+    *,
+    identity_id: int | None,
 ) -> list[tuple[int, int, str | None]]:
-    task_rows = (
-        await session.execute(
-            select(IdentityProfile.id, Professor.id, Professor.email)
-            .join(EmailTask, EmailTask.identity_id == IdentityProfile.id)
-            .join(Professor, Professor.id == EmailTask.professor_id)
-            .where(
-                IdentityProfile.imap_host.is_not(None),
-                IdentityProfile.imap_username.is_not(None),
-                IdentityProfile.imap_password.is_not(None),
-                Professor.email.is_not(None),
-            )
-            .distinct(),
+    query = (
+        select(IdentityProfile.id, Professor.id, Professor.email)
+        .select_from(IdentityProfile)
+        .join(Professor, Professor.email.is_not(None))
+        .where(
+            IdentityProfile.imap_host.is_not(None),
+            IdentityProfile.imap_port.is_not(None),
+            IdentityProfile.imap_username.is_not(None),
+            IdentityProfile.imap_password.is_not(None),
+            Professor.email.is_not(None),
+            Professor.archived_at.is_(None),
         )
-    ).all()
-    log_rows = (
-        await session.execute(
-            select(IdentityProfile.id, Professor.id, Professor.email)
-            .join(EmailLog, EmailLog.identity_id == IdentityProfile.id)
-            .join(Professor, Professor.id == EmailLog.professor_id)
-            .where(
-                IdentityProfile.imap_host.is_not(None),
-                IdentityProfile.imap_username.is_not(None),
-                IdentityProfile.imap_password.is_not(None),
-                Professor.email.is_not(None),
-            )
-            .distinct(),
-        )
-    ).all()
-    return _dedupe_rows([*task_rows, *log_rows])
+        .distinct()
+    )
+    if identity_id is not None:
+        query = query.where(IdentityProfile.id == identity_id)
+    rows = (await session.execute(query)).all()
+    return _dedupe_rows(rows)
 
 
 def _dedupe_rows(
@@ -164,5 +181,3 @@ def _dedupe_rows(
 
 def _normalize_email(value: str | None) -> str:
     return (value or "").strip().lower()
-
-

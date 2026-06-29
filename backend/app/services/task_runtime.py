@@ -31,6 +31,8 @@ from app.models import (
 )
 from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest, EmailTaskScheduleRequest
 from app.services import llm_runtime, mail_runtime
+from app.services.email_addresses import normalize_email_address, normalize_email_list
+from app.services.email_log_ingestion import EmailLogIngestRecord, upsert_email_log
 from app.services.imap_message_fetcher import ImapFetchedMessage
 from app.services.imap_sync_state import (
     claim_next_professor_scan,
@@ -1768,10 +1770,36 @@ async def _sync_identity_imap_once_unlocked(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
 ) -> int:
-    await ensure_professor_scan_states(session_factory)
+    sent_folder = None
+    async with session_factory() as session:
+        identity = await session.get(IdentityProfile, identity_id)
+    if identity is not None:
+        try:
+            sent_folder = await mail_runtime.discover_sent_folder(identity)
+        except Exception:
+            sent_folder = None
+
+    await ensure_professor_scan_states(
+        session_factory,
+        identity_id=identity_id,
+        sent_folder=sent_folder,
+    )
     history_detected = await sync_identity_history_once(session_factory, identity_id)
-    incremental_detected = await sync_identity_incremental_once(session_factory, identity_id)
-    return history_detected + incremental_detected
+    inbox_detected = await sync_identity_incremental_once(
+        session_factory,
+        identity_id,
+        folder_role="inbox",
+        folder="INBOX",
+    )
+    sent_detected = 0
+    if sent_folder:
+        sent_detected = await sync_identity_incremental_once(
+            session_factory,
+            identity_id,
+            folder_role="sent",
+            folder=sent_folder,
+        )
+    return history_detected + inbox_detected + sent_detected
 
 
 async def sync_identity_history_once(
@@ -1787,11 +1815,19 @@ async def sync_identity_history_once(
         if identity is None:
             await mark_professor_scan_completed(session_factory, state.id, state.last_scanned_uid)
             return 0
-        messages = await mail_runtime.fetch_professor_history_inbox_messages(
+        messages = await mail_runtime.fetch_professor_history_mailbox_messages(
             identity,
+            state.folder,
             state.professor_email,
+            folder_role=state.folder_role,
         )
-        detected = await process_imap_fetched_messages(session_factory, identity_id, messages)
+        detected = await process_imap_fetched_messages(
+            session_factory,
+            identity_id,
+            messages,
+            folder_role=state.folder_role,
+            folder=state.folder,
+        )
         max_uid = max((message.uid for message in messages), default=state.last_scanned_uid)
         await mark_professor_scan_completed(session_factory, state.id, max_uid)
         return detected
@@ -1803,28 +1839,53 @@ async def sync_identity_history_once(
 async def sync_identity_incremental_once(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
+    *,
+    folder_role: str = "inbox",
+    folder: str = "INBOX",
 ) -> int:
     async with session_factory() as session:
         identity = await session.get(IdentityProfile, identity_id)
         if identity is None:
             return 0
-        state = await _get_or_create_mailbox_state(session, identity_id)
+        state = await _get_or_create_mailbox_state(
+            session,
+            identity_id,
+            folder_role=folder_role,
+            folder=folder,
+        )
         last_seen_uid = state.last_seen_uid
         await session.commit()
     try:
-        max_seen_uid, messages = await mail_runtime.fetch_incremental_inbox_messages(
+        max_seen_uid, messages = await mail_runtime.fetch_incremental_mailbox_messages(
             identity,
+            folder,
             last_seen_uid,
         )
     except Exception as exc:
         async with session_factory() as session:
-            state = await _get_or_create_mailbox_state(session, identity_id)
+            state = await _get_or_create_mailbox_state(
+                session,
+                identity_id,
+                folder_role=folder_role,
+                folder=folder,
+            )
             state.last_error = str(exc)
             await session.commit()
         return 0
-    detected = await process_imap_fetched_messages(session_factory, identity_id, messages)
+    detected = await process_imap_fetched_messages(
+        session_factory,
+        identity_id,
+        messages,
+        folder_role=folder_role,
+        folder=folder,
+    )
     async with session_factory() as session:
-        state = await _get_or_create_mailbox_state(session, identity_id)
+        state = await _get_or_create_mailbox_state(
+            session,
+            identity_id,
+            folder_role=folder_role,
+            folder=folder,
+        )
         state.last_seen_uid = max_seen_uid
         state.last_sync_at = utc_now()
         state.last_error = None
@@ -1856,16 +1917,24 @@ async def sync_workspace_professor_replies(
 async def _get_or_create_mailbox_state(
     session: AsyncSession,
     identity_id: int,
+    *,
+    folder_role: str = "inbox",
+    folder: str = "INBOX",
 ) -> ImapMailboxSyncState:
     state = await session.scalar(
         select(ImapMailboxSyncState).where(
             ImapMailboxSyncState.identity_id == identity_id,
-            ImapMailboxSyncState.folder == "INBOX",
+            ImapMailboxSyncState.folder_role == folder_role,
+            ImapMailboxSyncState.folder == folder,
         ),
     )
     if state is not None:
         return state
-    state = ImapMailboxSyncState(identity_id=identity_id)
+    state = ImapMailboxSyncState(
+        identity_id=identity_id,
+        folder_role=folder_role,
+        folder=folder,
+    )
     session.add(state)
     await session.flush()
     return state
@@ -1901,11 +1970,26 @@ async def _process_incoming_reply_messages(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
     messages: list[ReceivedEmail],
+    *,
+    fetched_messages: list[ImapFetchedMessage] | None = None,
+    folder_role: str = "inbox",
+    folder: str = "INBOX",
 ) -> int:
     detected = 0
-    for message in messages:
+    fetched_by_message_id = {
+        fetched.message_id: fetched for fetched in fetched_messages or [] if fetched.message_id
+    }
+    fetched_by_uid = {fetched.uid: fetched for fetched in fetched_messages or []}
+    for index, message in enumerate(messages):
         async with session_factory() as session:
             reply_created_at = _get_reply_created_at(message)
+            fetched = None
+            if message.message_id:
+                fetched = fetched_by_message_id.get(message.message_id)
+            if fetched is None and fetched_messages and index < len(fetched_messages):
+                candidate = fetched_messages[index]
+                if candidate.uid in fetched_by_uid:
+                    fetched = candidate
             if message.message_id:
                 existing = await session.scalar(
                     select(EmailLog).where(EmailLog.rfc_message_id == message.message_id),
@@ -1926,8 +2010,9 @@ async def _process_incoming_reply_messages(
             task.status = EmailTaskStatus.REPLY_DETECTED.value
             task.updated_at = utc_now()
             try:
-                session.add(
-                    EmailLog(
+                await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(
                         email_task_id=task.id,
                         identity_id=task.identity_id,
                         llm_profile_id=task.llm_profile_id,
@@ -1936,9 +2021,19 @@ async def _process_incoming_reply_messages(
                         subject=message.subject,
                         content=message.content,
                         content_html=message.content_html,
-                        rfc_message_id=message.message_id,
-                        reply_headers=message.headers,
+                        message_id=message.message_id,
+                        from_email=fetched.from_email if fetched is not None else message.from_email,
+                        to_emails=fetched.to_emails if fetched is not None else None,
+                        cc_emails=fetched.cc_emails if fetched is not None else None,
+                        bcc_emails=fetched.bcc_emails if fetched is not None else None,
                         created_at=reply_created_at,
+                        ingest_source="imap",
+                        folder_role=folder_role,
+                        folder=folder,
+                        uidvalidity=None,
+                        imap_uid=fetched.uid if fetched is not None else None,
+                        provider_payload=None,
+                        reply_headers=message.headers,
                     ),
                 )
                 await _record_email_task_log(
@@ -1959,7 +2054,19 @@ async def process_imap_fetched_messages(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
     messages: list[ImapFetchedMessage],
+    *,
+    folder_role: str = "inbox",
+    folder: str = "INBOX",
 ) -> int:
+    if folder_role == "sent":
+        return await _process_sent_imap_fetched_messages(
+            session_factory,
+            identity_id,
+            messages,
+            folder_role=folder_role,
+            folder=folder,
+        )
+
     received_messages = [
         ReceivedEmail(
             from_email=message.from_email,
@@ -1979,6 +2086,105 @@ async def process_imap_fetched_messages(
         session_factory,
         identity_id,
         received_messages,
+        fetched_messages=messages,
+        folder_role=folder_role,
+        folder=folder,
+    )
+
+
+async def _process_sent_imap_fetched_messages(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    messages: list[ImapFetchedMessage],
+    *,
+    folder_role: str,
+    folder: str,
+) -> int:
+    detected = 0
+    for message in messages:
+        recipient_emails = normalize_email_list(
+            [*message.to_emails, *message.cc_emails, *message.bcc_emails],
+        )
+        if not recipient_emails:
+            continue
+        async with session_factory() as session:
+            professors = list(
+                (
+                    await session.execute(
+                        select(Professor).where(
+                            Professor.archived_at.is_(None),
+                            Professor.email.is_not(None),
+                        ),
+                    )
+                ).scalars(),
+            )
+            professors_by_email = {
+                normalize_email_address(professor.email): professor
+                for professor in professors
+                if normalize_email_address(professor.email)
+            }
+            matched_professors = [
+                professors_by_email[email]
+                for email in recipient_emails
+                if email in professors_by_email
+            ]
+            for professor in matched_professors:
+                task = await _find_latest_identity_professor_task(
+                    session,
+                    identity_id=identity_id,
+                    professor_id=professor.id,
+                )
+                if task is not None and task.status != EmailTaskStatus.REPLY_DETECTED.value:
+                    task.status = EmailTaskStatus.SENT.value
+                    task.sent_at = message.sent_at
+                    if message.message_id:
+                        task.last_rfc_message_id = message.message_id
+                    task.updated_at = utc_now()
+
+                await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(
+                        email_task_id=task.id if task is not None else None,
+                        identity_id=identity_id,
+                        llm_profile_id=task.llm_profile_id if task is not None else None,
+                        professor_id=professor.id,
+                        direction=EmailDirection.SENT.value,
+                        subject=message.subject,
+                        content=message.body_text,
+                        content_html=message.body_html,
+                        message_id=message.message_id,
+                        from_email=message.from_email,
+                        to_emails=message.to_emails,
+                        cc_emails=message.cc_emails,
+                        bcc_emails=message.bcc_emails,
+                        created_at=message.sent_at,
+                        ingest_source="imap",
+                        folder_role=folder_role,
+                        folder=folder,
+                        uidvalidity=None,
+                        imap_uid=message.uid,
+                        provider_payload=None,
+                        reply_headers=message.headers,
+                    ),
+                )
+                detected += 1
+            await session.commit()
+    return detected
+
+
+async def _find_latest_identity_professor_task(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    professor_id: int,
+) -> EmailTask | None:
+    return await session.scalar(
+        select(EmailTask)
+        .where(
+            EmailTask.identity_id == identity_id,
+            EmailTask.professor_id == professor_id,
+        )
+        .order_by(EmailTask.updated_at.desc(), EmailTask.id.desc()),
     )
 
 

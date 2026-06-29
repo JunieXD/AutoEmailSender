@@ -72,7 +72,10 @@ class ConcurrencyGuardTests(unittest.TestCase):
         with patch(
             "app.services.task_runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=delayed_generate),
-        ) as mocked_generate:
+        ) as mocked_generate, patch(
+            "app.services.task_runtime.ensure_thinking_adaptation",
+            new=AsyncMock(return_value=None),
+        ):
             results = self._run_async(run_twice())
 
         self.assertEqual(mocked_generate.await_count, 1)
@@ -543,4 +546,3 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
