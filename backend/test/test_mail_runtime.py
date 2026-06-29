@@ -410,6 +410,28 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertEqual(messages[0].uid, 1)
         self.assertIn("UID 1:*", client.search_criteria)
 
+    def test_incremental_fetch_resets_legacy_cursor_when_uidvalidity_becomes_known(self) -> None:
+        client = _FakeImapClient(
+            search_data=b"1",
+            select_data=[b"1"],
+        )
+        client.response = lambda code: ("UIDVALIDITY", [b"222"])
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            max_seen_uid, messages, uidvalidity = asyncio.run(
+                fetch_incremental_mailbox_messages_with_uidvalidity(
+                    _build_identity(),
+                    "INBOX",
+                    99,
+                    expected_uidvalidity=None,
+                ),
+            )
+
+        self.assertEqual(uidvalidity, 222)
+        self.assertEqual(max_seen_uid, 1)
+        self.assertEqual(messages[0].uid, 1)
+        self.assertIn("UID 1:*", client.search_criteria)
+
     def test_sent_history_searches_to_and_cc_and_deduplicates_uids(self) -> None:
         client = _FakeImapClient(
             search_data_by_criterion={

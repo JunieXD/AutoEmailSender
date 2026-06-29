@@ -42,6 +42,7 @@ IMAP_CLIENT_ID_NAME = "AutoEmailSender"
 IMAP_CLIENT_ID_VERSION = "3.0.0"
 IMAP_CLIENT_ID_VENDOR = "AutoEmailSender"
 DEFAULT_IMAP_FOLDER = "INBOX"
+_UIDVALIDITY_UNSET = object()
 SENT_FOLDER_CANDIDATES = (
     "Sent",
     "Sent Items",
@@ -281,7 +282,7 @@ async def fetch_incremental_mailbox_messages(
         identity,
         folder,
         last_seen_uid,
-        expected_uidvalidity=None,
+        expected_uidvalidity=_UIDVALIDITY_UNSET,
         return_uidvalidity=False,
     )
 
@@ -307,7 +308,7 @@ async def _fetch_incremental_mailbox_messages(
     folder: str,
     last_seen_uid: int | None,
     *,
-    expected_uidvalidity: int | None,
+    expected_uidvalidity: int | None | object,
     return_uidvalidity: bool,
 ) -> tuple[int | None, list[ImapFetchedMessage]] | tuple[int | None, list[ImapFetchedMessage], int | None]:
     if not identity.imap_host or not identity.imap_username or not identity.imap_password:
@@ -510,7 +511,7 @@ def _fetch_incremental_mailbox_messages_sync(
     identity: IdentityProfile,
     folder: str,
     last_seen_uid: int | None,
-    expected_uidvalidity: int | None = None,
+    expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> tuple[int | None, list[ImapFetchedMessage], int | None]:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
@@ -519,7 +520,7 @@ def _fetch_incremental_mailbox_messages_sync(
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
         effective_last_seen_uid = last_seen_uid
         if (
-            expected_uidvalidity is not None
+            expected_uidvalidity is not _UIDVALIDITY_UNSET
             and uidvalidity is not None
             and uidvalidity != expected_uidvalidity
         ):

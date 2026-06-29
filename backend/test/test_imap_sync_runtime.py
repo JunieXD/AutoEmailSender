@@ -423,7 +423,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         self.assertEqual(self._run_async(scenario()), (111, 222, 1))
 
     def test_incremental_sync_resets_legacy_cursor_when_uidvalidity_becomes_known(self) -> None:
-        async def scenario() -> tuple[int | None, int | None]:
+        async def scenario() -> tuple[int | None, int | None, int | None]:
             identity_id = await self._create_identity_with_imap()
             async with self.session_factory() as session:
                 session.add(
@@ -437,10 +437,17 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 )
                 await session.commit()
 
+            message = self._build_fetched_message(
+                uid=1,
+                uidvalidity=222,
+                message_id="<legacy-uidvalidity-reset@example.edu>",
+                from_email="Prof <prof@example.edu>",
+                to_emails=["student@example.com"],
+            )
             with patch(
                 "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
-                new=AsyncMock(return_value=(1, [], 222)),
-            ):
+                new=AsyncMock(return_value=(1, [message], 222)),
+            ) as mocked:
                 await sync_identity_incremental_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
@@ -450,9 +457,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                         ImapMailboxSyncState.folder_role == "inbox",
                     ),
                 )
-                return state.uidvalidity, state.last_seen_uid
+                return mocked.await_args.kwargs["expected_uidvalidity"], state.uidvalidity, state.last_seen_uid
 
-        self.assertEqual(self._run_async(scenario()), (222, 1))
+        self.assertEqual(self._run_async(scenario()), (None, 222, 1))
 
     def test_incremental_sync_rejects_unknown_folder_role_without_creating_state(self) -> None:
         async def scenario() -> int:
