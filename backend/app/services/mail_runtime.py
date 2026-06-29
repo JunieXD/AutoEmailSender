@@ -31,6 +31,7 @@ from app.services.imap_message_fetcher import (
     fetch_message_headers_payload_by_uid,
     fetch_text_body_parts_by_uid,
     parse_text_parts_from_message,
+    search_uids_bcc_recipient,
     search_uids_cc_recipient,
     search_uids_from_sender,
     search_uids_since,
@@ -597,7 +598,8 @@ def _search_professor_history_uids(
     if folder_role == "sent":
         return sorted(
             set(search_uids_to_recipient(client, professor_email))
-            | set(search_uids_cc_recipient(client, professor_email)),
+            | set(search_uids_cc_recipient(client, professor_email))
+            | set(search_uids_bcc_recipient(client, professor_email)),
         )
     raise MailRuntimeError(f"Unsupported IMAP folder_role: {folder_role}")
 

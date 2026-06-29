@@ -502,9 +502,47 @@ class MailRuntimeTest(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(client.search_criteria, ['(TO "teacher@example.com")', '(CC "teacher@example.com")'])
+        self.assertEqual(
+            client.search_criteria,
+            ['(TO "teacher@example.com")', '(CC "teacher@example.com")', '(BCC "teacher@example.com")'],
+        )
         self.assertIn("select:Sent", client.commands)
         self.assertEqual([message.uid for message in messages], [7, 8, 9, 10])
+
+    def test_sent_history_searches_bcc_recipients(self) -> None:
+        client = _FakeImapClient(
+            search_data_by_criterion={
+                '(TO "teacher@example.com")': b"",
+                '(CC "teacher@example.com")': b"",
+                '(BCC "teacher@example.com")': b"11",
+            },
+            headers_by_uid={
+                11: (
+                    b"From: sender@example.com\r\n"
+                    b"Bcc: teacher@example.com\r\n"
+                    b"Subject: hidden recipient\r\n"
+                    b"Message-ID: <sent-bcc@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:04:00 +0800\r\n\r\n"
+                ),
+            },
+        )
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages(
+                    _build_identity(),
+                    "Sent",
+                    "teacher@example.com",
+                    folder_role="sent",
+                ),
+            )
+
+        self.assertEqual(
+            client.search_criteria,
+            ['(TO "teacher@example.com")', '(CC "teacher@example.com")', '(BCC "teacher@example.com")'],
+        )
+        self.assertEqual([message.uid for message in messages], [11])
+        self.assertEqual(messages[0].bcc_emails, ["teacher@example.com"])
 
     def test_mailbox_history_rejects_unknown_folder_role(self) -> None:
         client = _FakeImapClient()

@@ -168,6 +168,12 @@ def search_uids_cc_recipient(client: object, cc_email: str) -> list[int]:
     return _parse_uid_search_payload(status, payload)
 
 
+def search_uids_bcc_recipient(client: object, bcc_email: str) -> list[int]:
+    escaped = _escape_imap_search_value(bcc_email)
+    status, payload = client.uid("SEARCH", None, f'(BCC "{escaped}")')
+    return _parse_uid_search_payload(status, payload)
+
+
 def _escape_imap_search_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', r"\"")
 

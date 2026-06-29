@@ -2031,6 +2031,20 @@ async def _process_incoming_reply_messages(
                     fetched = candidate
             task = await _find_reply_target(session, identity_id, message)
             if not task:
+                professor = await _find_existing_professor_for_incoming_message(session, message)
+                if professor is not None:
+                    await _upsert_unbound_received_log(
+                        session,
+                        identity_id=identity_id,
+                        professor=professor,
+                        message=message,
+                        fetched=fetched,
+                        reply_created_at=reply_created_at,
+                        folder_role=folder_role,
+                        folder=folder,
+                    )
+                    await session.commit()
+                    detected += 1
                 continue
 
             existing = await _find_existing_received_log_for_reply(
@@ -2097,6 +2111,62 @@ async def _process_incoming_reply_messages(
                 continue
             detected += 1
     return detected
+
+
+async def _find_existing_professor_for_incoming_message(
+    session: AsyncSession,
+    message: ReceivedEmail,
+) -> Professor | None:
+    normalized_from_email = normalize_email_address(message.from_email)
+    if not normalized_from_email:
+        return None
+    return await session.scalar(
+        select(Professor)
+        .where(
+            Professor.archived_at.is_(None),
+            func.lower(Professor.email) == normalized_from_email,
+        )
+        .order_by(Professor.updated_at.desc(), Professor.id.desc()),
+    )
+
+
+async def _upsert_unbound_received_log(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    professor: Professor,
+    message: ReceivedEmail,
+    fetched: ImapFetchedMessage | None,
+    reply_created_at: datetime,
+    folder_role: str,
+    folder: str,
+) -> None:
+    await upsert_email_log(
+        session,
+        EmailLogIngestRecord(
+            email_task_id=None,
+            identity_id=identity_id,
+            llm_profile_id=None,
+            professor_id=professor.id,
+            direction=EmailDirection.RECEIVED.value,
+            subject=message.subject,
+            content=message.content,
+            content_html=message.content_html,
+            message_id=message.message_id,
+            from_email=fetched.from_email if fetched is not None else message.from_email,
+            to_emails=fetched.to_emails if fetched is not None else None,
+            cc_emails=fetched.cc_emails if fetched is not None else None,
+            bcc_emails=fetched.bcc_emails if fetched is not None else None,
+            created_at=reply_created_at,
+            ingest_source="imap",
+            folder_role=folder_role,
+            folder=folder,
+            uidvalidity=fetched.uidvalidity if fetched is not None else None,
+            imap_uid=fetched.uid if fetched is not None else None,
+            provider_payload=None,
+            reply_headers=message.headers,
+        ),
+    )
 
 
 def _mark_task_reply_detected(task: EmailTask) -> None:
@@ -2497,21 +2567,28 @@ async def _find_reply_target(
     identity_id: int,
     message: ReceivedEmail,
 ) -> EmailTask | None:
+    normalized_from_email = normalize_email_address(message.from_email)
     reference_ids = extract_message_ids(message.in_reply_to, message.references)
     if reference_ids:
         matched_log = await session.scalar(
             select(EmailLog)
+            .join(Professor, EmailLog.professor_id == Professor.id)
             .where(
                 EmailLog.identity_id == identity_id,
                 EmailLog.direction == EmailDirection.SENT.value,
-                EmailLog.rfc_message_id.in_(reference_ids),
+                Professor.archived_at.is_(None),
+                func.lower(Professor.email) == normalized_from_email,
+                or_(
+                    func.lower(EmailLog.rfc_message_id).in_(reference_ids),
+                    EmailLog.normalized_message_id.in_(reference_ids),
+                ),
             )
             .order_by(EmailLog.created_at.desc()),
         )
         if matched_log and matched_log.email_task_id:
             return await _load_email_task(session, matched_log.email_task_id)
 
-    if not message.from_email:
+    if not normalized_from_email:
         return None
 
     candidate_tasks = list(
@@ -2522,7 +2599,7 @@ async def _find_reply_target(
                 .join(Professor, EmailTask.professor_id == Professor.id)
                 .where(
                     EmailTask.identity_id == identity_id,
-                    Professor.email == message.from_email,
+                    func.lower(Professor.email) == normalized_from_email,
                     EmailTask.status.in_(
                         [
                             EmailTaskStatus.SENT.value,
@@ -2885,7 +2962,7 @@ def extract_message_ids(*headers: str | None) -> set[str]:
     for header in headers:
         if not header:
             continue
-        values.update(re.findall(r"<[^>]+>", header))
+        values.update(value.lower() for value in re.findall(r"<[^>]+>", header))
     return values
 
 

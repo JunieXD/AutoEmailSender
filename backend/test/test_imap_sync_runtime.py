@@ -1043,6 +1043,183 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             ),
         )
 
+    def test_reply_reference_matches_sent_log_scoped_to_sender_professor(self) -> None:
+        async def scenario() -> tuple[int, str, bool, str, bool]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm = self._build_llm()
+                professor_a = Professor(name="Professor A", email="prof-a@example.edu")
+                professor_b = Professor(name="Professor B", email="prof-b@example.edu")
+                session.add_all([identity, llm, professor_a, professor_b])
+                await session.flush()
+                task_a = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm.id,
+                    professor_id=professor_a.id,
+                    status=EmailTaskStatus.SENT.value,
+                    sent_at=datetime(2026, 5, 1, tzinfo=UTC),
+                    approved_subject="Group hello",
+                    last_rfc_message_id="<group-sent@example.com>",
+                )
+                task_b = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm.id,
+                    professor_id=professor_b.id,
+                    status=EmailTaskStatus.SENT.value,
+                    sent_at=datetime(2026, 5, 1, tzinfo=UTC),
+                    approved_subject="Group hello",
+                    last_rfc_message_id="<group-sent@example.com>",
+                )
+                session.add_all([task_a, task_b])
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailLog(
+                            email_task_id=task_a.id,
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=professor_a.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="Group hello",
+                            content="sent",
+                            rfc_message_id="<group-sent@example.com>",
+                            normalized_message_id="<group-sent@example.com>",
+                            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+                        ),
+                        EmailLog(
+                            email_task_id=task_b.id,
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=professor_b.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="Group hello",
+                            content="sent",
+                            rfc_message_id="<group-sent@example.com>",
+                            normalized_message_id="<group-sent@example.com>",
+                            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+                        ),
+                    ],
+                )
+                await session.commit()
+                identity_id = identity.id
+                task_a_id = task_a.id
+                task_b_id = task_b.id
+
+            message = self._build_fetched_message(
+                uid=41,
+                message_id="<reply-from-b@example.edu>",
+                from_email="Professor B <prof-b@example.edu>",
+                to_emails=["student@example.com"],
+                subject="Re: Group hello",
+            )
+            message.in_reply_to = "<group-sent@example.com>"
+            detected = await process_imap_fetched_messages(self.session_factory, identity_id, [message])
+
+            async with self.session_factory() as session:
+                task_a = await session.get(EmailTask, task_a_id)
+                task_b = await session.get(EmailTask, task_b_id)
+                return detected, task_a.status, task_a.is_replied, task_b.status, task_b.is_replied
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (1, EmailTaskStatus.SENT.value, False, EmailTaskStatus.REPLY_DETECTED.value, True),
+        )
+
+    def test_inbox_message_from_existing_professor_without_task_is_logged_unbound(self) -> None:
+        async def scenario() -> tuple[int, tuple[int | None, int | None, str, str, int | None, int | None]]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                professor = Professor(name="主动来信老师", email="incoming@example.edu")
+                session.add_all([identity, professor])
+                await session.commit()
+                identity_id = identity.id
+
+            message = self._build_fetched_message(
+                uid=42,
+                uidvalidity=777,
+                message_id="<incoming-without-task@example.edu>",
+                from_email="Incoming Professor <incoming@example.edu>",
+                to_emails=["student@example.com"],
+                subject="主动来信",
+                content="你好，我想了解一下你的背景。",
+            )
+            detected = await process_imap_fetched_messages(self.session_factory, identity_id, [message])
+
+            async with self.session_factory() as session:
+                log = await session.scalar(
+                    select(EmailLog).where(
+                        EmailLog.rfc_message_id == "<incoming-without-task@example.edu>",
+                    ),
+                )
+                return detected, (
+                    log.email_task_id,
+                    log.llm_profile_id,
+                    log.direction,
+                    log.folder_role,
+                    log.uidvalidity,
+                    log.imap_uid,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (1, (None, None, EmailDirection.RECEIVED.value, "inbox", 777, 42)),
+        )
+
+    def test_reply_fallback_matches_professor_email_case_insensitively(self) -> None:
+        async def scenario() -> tuple[int, str, bool]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm = self._build_llm()
+                professor = Professor(name="Mixed Case", email="MixedCase@Example.edu")
+                session.add_all([identity, llm, professor])
+                await session.flush()
+                task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.SENT.value,
+                    sent_at=datetime(2026, 5, 1, tzinfo=UTC),
+                    approved_subject="Case Hello",
+                    last_rfc_message_id="<case-sent@example.com>",
+                )
+                session.add(task)
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=task.id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm.id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.SENT.value,
+                        subject="Case Hello",
+                        content="sent",
+                        rfc_message_id="<case-sent@example.com>",
+                    ),
+                )
+                await session.commit()
+                identity_id = identity.id
+                task_id = task.id
+
+            message = self._build_fetched_message(
+                uid=43,
+                message_id="<case-reply@example.edu>",
+                from_email="mixedcase@example.edu",
+                to_emails=["student@example.com"],
+                subject="Re: Case Hello",
+            )
+            message.in_reply_to = None
+            message.references = None
+            detected = await process_imap_fetched_messages(self.session_factory, identity_id, [message])
+
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_id)
+                return detected, task.status, task.is_replied
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (1, EmailTaskStatus.REPLY_DETECTED.value, True),
+        )
+
     def test_inbox_reply_detection_is_not_blocked_by_same_message_id_in_other_scope(self) -> None:
         async def scenario() -> tuple[int, str, bool, int]:
             identity_id, _, task_id = await self._create_reply_task(status=EmailTaskStatus.SENT.value)
