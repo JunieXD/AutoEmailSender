@@ -442,6 +442,185 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.sent_count, 4)
         self.assertEqual(result.email.summary.contacted_professor_count, 3)
 
+    def test_dashboard_service_counts_received_log_without_task_as_contacted_and_replied(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+        reply_time = datetime.now(UTC) - timedelta(hours=3)
+
+        async def seed_received_only_log() -> tuple[int, str]:
+            async with self.session_factory() as session:
+                professor = Professor(
+                    name="仅回复老师",
+                    email="reply-only-dashboard@example.edu",
+                    university="第四大学",
+                    school="通信学院",
+                    research_direction="网络系统",
+                    recent_papers=["Reply Paper"],
+                    profile_url="https://example.edu/reply-only",
+                    created_at=reply_time - timedelta(days=1),
+                    updated_at=reply_time - timedelta(days=1),
+                )
+                session.add(professor)
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=None,
+                        identity_id=identity_id,
+                        llm_profile_id=llm_profile_id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.RECEIVED.value,
+                        subject="Re: 邮箱同步",
+                        content="欢迎交流",
+                        created_at=reply_time,
+                    ),
+                )
+                await session.commit()
+                return professor.id, reply_time.date().isoformat()
+
+        professor_id, reply_date = self._run_async(seed_received_only_log())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="第四大学",
+                    email_school="通信学院",
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.sent_count, 0)
+        self.assertEqual(result.email.summary.contacted_professor_count, 1)
+        self.assertEqual(result.email.summary.replied_count, 1)
+        self.assertEqual(result.email.summary.reply_rate, 1.0)
+        trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
+        self.assertEqual(trend_by_date[reply_date].replied_count, 1)
+        self.assertEqual(
+            result.mentor.summary.total_professors,
+            8,
+            msg=f"sanity: received-only professor {professor_id} participates in mentor universe",
+        )
+
+    def test_dashboard_service_counts_multiple_unbound_received_logs_once_per_professor(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+        now = datetime.now(UTC)
+
+        async def seed_duplicate_received_logs() -> str:
+            async with self.session_factory() as session:
+                professor = Professor(
+                    name="多封回复老师",
+                    email="multi-reply-dashboard@example.edu",
+                    university="第五大学",
+                    school="统计学院",
+                    research_direction="统计学习",
+                    recent_papers=["Stats Paper"],
+                    profile_url="https://example.edu/multi-reply",
+                    created_at=now - timedelta(days=1),
+                    updated_at=now - timedelta(days=1),
+                )
+                session.add(professor)
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Re: 第一封",
+                            content="第一封回复",
+                            created_at=now - timedelta(hours=4),
+                        ),
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Re: 第二封",
+                            content="第二封回复",
+                            created_at=now - timedelta(hours=2),
+                        ),
+                    ],
+                )
+                await session.commit()
+                return now.date().isoformat()
+
+        reply_date = self._run_async(seed_duplicate_received_logs())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="第五大学",
+                    email_school="统计学院",
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.contacted_professor_count, 1)
+        self.assertEqual(result.email.summary.replied_count, 1)
+        trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
+        self.assertEqual(trend_by_date[reply_date].replied_count, 1)
+
+    def test_dashboard_service_counts_unbound_sent_log_in_summary_and_trend(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+        sent_time = datetime.now(UTC) - timedelta(hours=5)
+
+        async def seed_unbound_sent_log() -> str:
+            async with self.session_factory() as session:
+                professor = Professor(
+                    name="无任务发送老师",
+                    email="unbound-sent-dashboard@example.edu",
+                    university="第六大学",
+                    school="软件学院",
+                    research_direction="软件工程",
+                    recent_papers=["Software Paper"],
+                    profile_url="https://example.edu/unbound-sent",
+                    created_at=sent_time - timedelta(days=1),
+                    updated_at=sent_time - timedelta(days=1),
+                )
+                session.add(professor)
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=None,
+                        identity_id=identity_id,
+                        llm_profile_id=llm_profile_id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.SENT.value,
+                        subject="邮箱同步发送",
+                        content="老师您好",
+                        created_at=sent_time,
+                    ),
+                )
+                await session.commit()
+                return sent_time.date().isoformat()
+
+        sent_date = self._run_async(seed_unbound_sent_log())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="第六大学",
+                    email_school="软件学院",
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.sent_count, 1)
+        self.assertEqual(result.email.summary.contacted_professor_count, 1)
+        self.assertEqual(result.email.summary.replied_count, 0)
+        trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
+        self.assertEqual(trend_by_date[sent_date].sent_count, 1)
+
     def test_dashboard_service_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id, _, alternate_llm_profile_id = self._run_async(self._seed_dashboard_data())
 

@@ -198,6 +198,130 @@ class ContactStatusTests(unittest.TestCase):
         self.assertEqual(status.sent_count, 0)
         self.assertIsNone(status.last_sent_at)
 
+    def test_received_log_without_task_marks_professor_replied(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                now = datetime.now(UTC)
+                identity = self._build_identity()
+                llm_profile = self._build_llm_profile()
+                professor = Professor(name="无任务回复老师", email="reply-only@example.edu")
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=None,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.RECEIVED.value,
+                        subject="Re: 交流",
+                        content="欢迎交流",
+                        created_at=now,
+                    ),
+                )
+                await session.commit()
+
+                statuses = await build_contact_status_by_professor(
+                    session,
+                    identity_id=identity.id,
+                    professor_ids=[professor.id],
+                )
+                return statuses[professor.id]
+
+        status = self._run_async(scenario())
+
+        self.assertEqual(status.status, "replied")
+        self.assertEqual(status.sent_count, 0)
+        self.assertIsNotNone(status.last_replied_at)
+
+    def test_sent_log_without_task_marks_professor_contacted(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                now = datetime.now(UTC)
+                identity = self._build_identity()
+                llm_profile = self._build_llm_profile()
+                professor = Professor(name="无任务发送老师", email="sent-only@example.edu")
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=None,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.SENT.value,
+                        subject="申请交流",
+                        content="老师您好",
+                        created_at=now,
+                    ),
+                )
+                await session.commit()
+
+                statuses = await build_contact_status_by_professor(
+                    session,
+                    identity_id=identity.id,
+                    professor_ids=[professor.id],
+                )
+                return statuses[professor.id]
+
+        status = self._run_async(scenario())
+
+        self.assertEqual(status.status, "contacted")
+        self.assertEqual(status.sent_count, 1)
+        self.assertIsNotNone(status.last_sent_at)
+
+    def test_contact_status_ignores_logs_from_other_identity(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                now = datetime.now(UTC)
+                identity = self._build_identity()
+                other_identity = self._build_identity()
+                other_identity.email_address = "other-sender@example.com"
+                other_identity.smtp_username = "other-sender@example.com"
+                llm_profile = self._build_llm_profile()
+                professor = Professor(name="隔离老师", email="scoped@example.edu")
+                session.add_all([identity, other_identity, llm_profile, professor])
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=other_identity.id,
+                            llm_profile_id=llm_profile.id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="其他身份发送",
+                            content="老师您好",
+                            created_at=now - timedelta(hours=1),
+                        ),
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=other_identity.id,
+                            llm_profile_id=llm_profile.id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Re: 其他身份发送",
+                            content="欢迎",
+                            created_at=now,
+                        ),
+                    ],
+                )
+                await session.commit()
+
+                statuses = await build_contact_status_by_professor(
+                    session,
+                    identity_id=identity.id,
+                    professor_ids=[professor.id],
+                )
+                return statuses[professor.id]
+
+        status = self._run_async(scenario())
+
+        self.assertEqual(status.status, "not_contacted")
+        self.assertEqual(status.sent_count, 0)
+        self.assertIsNone(status.last_sent_at)
+        self.assertIsNone(status.last_replied_at)
+
     @staticmethod
     def _build_identity() -> IdentityProfile:
         return IdentityProfile(

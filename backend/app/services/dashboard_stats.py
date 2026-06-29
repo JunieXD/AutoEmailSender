@@ -400,10 +400,17 @@ async def _build_email_section(
     replied_professor_ids: set[int] = set()
     received_trend_logs: list[EmailLog] = []
     for log in received_logs:
-        if log.professor_id is None or log.professor_id not in contacted_professor_ids:
+        if log.professor_id is None:
             continue
         if not _datetime_in_range(log.created_at, start_at=start_at, end_at=end_at):
             continue
+        if not _professor_matches_school_filters(
+            log.professor,
+            university=email_university,
+            school=email_school,
+        ):
+            continue
+        contacted_professor_ids.add(log.professor_id)
         replied_professor_ids.add(log.professor_id)
         received_trend_logs.append(log)
 
