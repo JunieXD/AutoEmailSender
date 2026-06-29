@@ -2134,8 +2134,9 @@ async def _process_sent_imap_fetched_messages(
                     identity_id=identity_id,
                     professor_id=professor.id,
                 )
-                if task is not None and task.status != EmailTaskStatus.REPLY_DETECTED.value:
-                    task.status = EmailTaskStatus.SENT.value
+                if task is not None:
+                    if task.status != EmailTaskStatus.REPLY_DETECTED.value:
+                        task.status = EmailTaskStatus.SENT.value
                     task.sent_at = message.sent_at
                     if message.message_id:
                         task.last_rfc_message_id = message.message_id

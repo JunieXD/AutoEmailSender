@@ -427,6 +427,76 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), 0)
 
+    def test_sent_incremental_sync_backfills_sent_metadata_without_downgrading_replied_task(self) -> None:
+        async def scenario() -> tuple[int, str, bool, datetime | None, str | None, tuple[str, str, int | None]]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm = self._build_llm()
+                professor = Professor(name="Known", email="known@example.edu")
+                session.add_all([identity, llm, professor])
+                await session.flush()
+                task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.REPLY_DETECTED.value,
+                    is_replied=True,
+                    sent_at=None,
+                    last_rfc_message_id=None,
+                )
+                session.add(task)
+                await session.commit()
+                identity_id = identity.id
+                task_id = task.id
+
+            sent_at = datetime(2026, 5, 3, 9, 30, tzinfo=UTC)
+            sent_message = self._build_fetched_message(
+                uid=23,
+                message_id="<sent-replied@example.com>",
+                from_email="student@example.com",
+                to_emails=["known@example.edu"],
+                subject="Hello after reply",
+                content="sent body",
+            )
+            sent_message.sent_at = sent_at
+
+            with patch(
+                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
+                new=AsyncMock(return_value=(23, [sent_message])),
+            ):
+                detected = await sync_identity_incremental_once(
+                    self.session_factory,
+                    identity_id,
+                    folder_role="sent",
+                    folder="Sent",
+                )
+
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_id)
+                log = await session.scalar(
+                    select(EmailLog).where(EmailLog.rfc_message_id == "<sent-replied@example.com>"),
+                )
+                return (
+                    detected,
+                    task.status,
+                    task.is_replied,
+                    task.sent_at,
+                    task.last_rfc_message_id,
+                    (log.direction, log.folder_role, log.imap_uid),
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (
+                1,
+                EmailTaskStatus.REPLY_DETECTED.value,
+                True,
+                datetime(2026, 5, 3, 9, 30, tzinfo=UTC),
+                "<sent-replied@example.com>",
+                (EmailDirection.SENT.value, "sent", 23),
+            ),
+        )
+
     def test_inbox_incremental_detects_reply_and_records_imap_metadata(self) -> None:
         async def scenario() -> tuple[int, str, bool, tuple[str, str, int | None, str | None, list[str] | None]]:
             identity_id, _, task_id = await self._create_reply_task(status=EmailTaskStatus.SENT.value)
