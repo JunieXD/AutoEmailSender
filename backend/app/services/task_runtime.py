@@ -480,8 +480,12 @@ async def poll_for_replies_once(
                 await session.execute(
                     select(IdentityProfile.id).where(
                         IdentityProfile.imap_host.is_not(None),
+                        IdentityProfile.imap_port.is_not(None),
                         IdentityProfile.imap_username.is_not(None),
                         IdentityProfile.imap_password.is_not(None),
+                        func.trim(IdentityProfile.imap_host) != "",
+                        func.trim(IdentityProfile.imap_username) != "",
+                        func.trim(IdentityProfile.imap_password) != "",
                     ),
                 )
             ).scalars()

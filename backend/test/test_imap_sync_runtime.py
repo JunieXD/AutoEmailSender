@@ -322,6 +322,59 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), 2)
 
+    def test_poll_for_replies_skips_incomplete_and_blank_imap_identities(self) -> None:
+        async def scenario() -> tuple[int, bool, int]:
+            valid_id = await self._create_identity_with_imap()
+            async with self.session_factory() as session:
+                missing_port = self._build_identity()
+                missing_port.name = "缺少端口"
+                missing_port.profile_name = "缺少端口"
+                missing_port.email_address = "missing-port@example.com"
+                missing_port.smtp_username = "missing-port@example.com"
+                missing_port.imap_username = "missing-port@example.com"
+                missing_port.imap_port = None
+
+                blank_host = self._build_identity()
+                blank_host.name = "空白主机"
+                blank_host.profile_name = "空白主机"
+                blank_host.email_address = "blank-host@example.com"
+                blank_host.smtp_username = "blank-host@example.com"
+                blank_host.imap_username = "blank-host@example.com"
+                blank_host.imap_host = "  "
+
+                blank_username = self._build_identity()
+                blank_username.name = "空白用户名"
+                blank_username.profile_name = "空白用户名"
+                blank_username.email_address = "blank-username@example.com"
+                blank_username.smtp_username = "blank-username@example.com"
+                blank_username.imap_username = "  "
+
+                blank_password = self._build_identity()
+                blank_password.name = "空白密码"
+                blank_password.profile_name = "空白密码"
+                blank_password.email_address = "blank-password@example.com"
+                blank_password.smtp_username = "blank-password@example.com"
+                blank_password.imap_username = "blank-password@example.com"
+                blank_password.imap_password = "  "
+
+                session.add_all([missing_port, blank_host, blank_username, blank_password])
+                await session.commit()
+
+            seen_identity_ids: list[int] = []
+
+            async def fake_sync(_session_factory, identity_id: int) -> int:
+                seen_identity_ids.append(identity_id)
+                return 1
+
+            with patch(
+                "app.services.task_runtime.sync_identity_imap_once",
+                new=AsyncMock(side_effect=fake_sync),
+            ):
+                result = await poll_for_replies_once(self.session_factory)
+            return result, seen_identity_ids == [valid_id], len(seen_identity_ids)
+
+        self.assertEqual(self._run_async(scenario()), (1, True, 1))
+
     def test_incremental_sync_keeps_cursor_and_records_error_when_fetch_fails(self) -> None:
         async def scenario() -> tuple[int | None, str | None]:
             identity_id = await self._create_identity_with_imap()
