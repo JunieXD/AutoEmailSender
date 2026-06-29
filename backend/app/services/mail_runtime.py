@@ -453,7 +453,7 @@ def _discover_sent_folder_sync(identity: IdentityProfile) -> str | None:
         for candidate in SENT_FOLDER_CANDIDATES:
             if _try_select_mailbox(client, candidate):
                 return candidate
-    except (MailRuntimeError, OSError):
+    except Exception:
         return None
     finally:
         _logout_imap_client(client)

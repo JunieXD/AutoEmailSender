@@ -31,6 +31,7 @@ class _FakeImapClient:
         list_payload=None,
         search_data_by_criterion: dict[str, bytes] | None = None,
         headers_by_uid: dict[int, bytes] | None = None,
+        login_error: Exception | None = None,
     ) -> None:
         self.select_status = select_status
         self.search_data = search_data
@@ -39,12 +40,15 @@ class _FakeImapClient:
         self.list_payload = list_payload if list_payload is not None else []
         self.search_data_by_criterion = search_data_by_criterion or {}
         self.headers_by_uid = headers_by_uid or {}
+        self.login_error = login_error
         self.search_called = False
         self.search_criteria: list[str] = []
         self.commands: list[str] = []
 
     def login(self, username: str, password: str):
         self.commands.append("login")
+        if self.login_error is not None:
+            raise self.login_error
         return "OK", [b"logged in"]
 
     def _simple_command(self, command: str, payload: str):
@@ -101,6 +105,7 @@ class _FakeImapClient:
         return "OK", self.fetch_payload or []
 
     def logout(self):
+        self.commands.append("logout")
         return "OK", [b"logout"]
 
 
@@ -279,6 +284,15 @@ class MailRuntimeTest(unittest.TestCase):
 
         self.assertEqual(folder, "Sent")
         self.assertIn("select:Sent", client.commands)
+
+    def test_discover_sent_folder_returns_none_when_login_raises_imap_error(self) -> None:
+        client = _FakeImapClient(login_error=imaplib.IMAP4.error("login failed"))
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            folder = asyncio.run(discover_sent_folder(_build_identity()))
+
+        self.assertIsNone(folder)
+        self.assertEqual(client.commands, ["login", "logout"])
 
     def test_incremental_fetch_sent_mailbox_selects_folder_and_parses_recipients(self) -> None:
         client = _FakeImapClient(
