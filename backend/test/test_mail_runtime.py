@@ -32,6 +32,8 @@ class _FakeImapClient:
         search_data_by_criterion: dict[str, bytes] | None = None,
         headers_by_uid: dict[int, bytes] | None = None,
         login_error: Exception | None = None,
+        logout_error: Exception | None = None,
+        select_status_by_mailbox: dict[str, str] | None = None,
     ) -> None:
         self.select_status = select_status
         self.search_data = search_data
@@ -41,6 +43,8 @@ class _FakeImapClient:
         self.search_data_by_criterion = search_data_by_criterion or {}
         self.headers_by_uid = headers_by_uid or {}
         self.login_error = login_error
+        self.logout_error = logout_error
+        self.select_status_by_mailbox = select_status_by_mailbox or {}
         self.search_called = False
         self.search_criteria: list[str] = []
         self.commands: list[str] = []
@@ -60,7 +64,8 @@ class _FakeImapClient:
 
     def select(self, mailbox: str):
         self.commands.append(f"select:{mailbox}")
-        return self.select_status, [b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"]
+        status = self.select_status_by_mailbox.get(mailbox, self.select_status)
+        return status, [b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"]
 
     def list(self):
         self.commands.append("list")
@@ -106,6 +111,8 @@ class _FakeImapClient:
 
     def logout(self):
         self.commands.append("logout")
+        if self.logout_error is not None:
+            raise self.logout_error
         return "OK", [b"logout"]
 
 
@@ -275,6 +282,19 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertIn("list", client.commands)
         self.assertIn("select:Sent Items", client.commands)
 
+    def test_discover_sent_folder_accepts_lowercase_special_use_sent(self) -> None:
+        client = _FakeImapClient(
+            list_payload=[
+                b'(\\HasNoChildren \\sent) "/" "Sent Items"',
+            ],
+        )
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            folder = asyncio.run(discover_sent_folder(_build_identity()))
+
+        self.assertEqual(folder, "Sent Items")
+        self.assertIn("select:Sent Items", client.commands)
+
     def test_discover_sent_folder_falls_back_without_list_support(self) -> None:
         client = _FakeImapClient()
         client.list = None
@@ -285,8 +305,36 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertEqual(folder, "Sent")
         self.assertIn("select:Sent", client.commands)
 
+    def test_discover_sent_folder_falls_back_to_sent_items_candidate(self) -> None:
+        client = _FakeImapClient(
+            list_status="NO",
+            select_status_by_mailbox={
+                "Sent": "NO",
+                "Sent Items": "OK",
+            },
+        )
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            folder = asyncio.run(discover_sent_folder(_build_identity()))
+
+        self.assertEqual(folder, "Sent Items")
+        self.assertIn("select:Sent", client.commands)
+        self.assertIn("select:Sent Items", client.commands)
+
     def test_discover_sent_folder_returns_none_when_login_raises_imap_error(self) -> None:
         client = _FakeImapClient(login_error=imaplib.IMAP4.error("login failed"))
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            folder = asyncio.run(discover_sent_folder(_build_identity()))
+
+        self.assertIsNone(folder)
+        self.assertEqual(client.commands, ["login", "logout"])
+
+    def test_discover_sent_folder_returns_none_when_login_and_logout_raise_imap_errors(self) -> None:
+        client = _FakeImapClient(
+            login_error=imaplib.IMAP4.error("login failed"),
+            logout_error=imaplib.IMAP4.error("logout failed"),
+        )
 
         with patch("app.services.mail_runtime._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
@@ -326,7 +374,7 @@ class MailRuntimeTest(unittest.TestCase):
     def test_sent_history_searches_to_and_cc_and_deduplicates_uids(self) -> None:
         client = _FakeImapClient(
             search_data_by_criterion={
-                '(TO "teacher@example.com")': b"7 8",
+                '(TO "teacher@example.com")': b"7 10",
                 '(CC "teacher@example.com")': b"8 9",
             },
             headers_by_uid={
@@ -336,6 +384,13 @@ class MailRuntimeTest(unittest.TestCase):
                     b"Subject: first\r\n"
                     b"Message-ID: <sent-7@example.com>\r\n"
                     b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n\r\n"
+                ),
+                10: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: later\r\n"
+                    b"Message-ID: <sent-10@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:03:00 +0800\r\n\r\n"
                 ),
                 8: (
                     b"From: sender@example.com\r\n"
@@ -367,7 +422,23 @@ class MailRuntimeTest(unittest.TestCase):
 
         self.assertEqual(client.search_criteria, ['(TO "teacher@example.com")', '(CC "teacher@example.com")'])
         self.assertIn("select:Sent", client.commands)
-        self.assertEqual([message.uid for message in messages], [7, 8, 9])
+        self.assertEqual([message.uid for message in messages], [7, 8, 9, 10])
+
+    def test_mailbox_history_rejects_unknown_folder_role(self) -> None:
+        client = _FakeImapClient()
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            with self.assertRaisesRegex(MailRuntimeError, "folder_role|unsupported|Unsupported"):
+                asyncio.run(
+                    fetch_professor_history_mailbox_messages(
+                        _build_identity(),
+                        "Archive",
+                        "teacher@example.com",
+                        folder_role="archive",
+                    ),
+                )
+
+        self.assertEqual(client.search_criteria, [])
 
     def test_incremental_fetch_reads_body_and_internaldate(self) -> None:
         client = _FakeImapClient(search_data=b"1")

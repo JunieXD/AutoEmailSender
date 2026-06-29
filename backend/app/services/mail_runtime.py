@@ -44,6 +44,7 @@ IMAP_CLIENT_ID_VENDOR = "AutoEmailSender"
 DEFAULT_IMAP_FOLDER = "INBOX"
 SENT_FOLDER_CANDIDATES = (
     "Sent",
+    "Sent Items",
     "Sent Messages",
     "Sent Mail",
     "已发送",
@@ -533,16 +534,14 @@ def _search_professor_history_uids(
     *,
     folder_role: str,
 ) -> list[int]:
+    if folder_role == "inbox":
+        return search_uids_from_sender(client, professor_email)
     if folder_role == "sent":
-        seen: set[int] = set()
-        merged: list[int] = []
-        for uid in search_uids_to_recipient(client, professor_email) + search_uids_cc_recipient(client, professor_email):
-            if uid in seen:
-                continue
-            seen.add(uid)
-            merged.append(uid)
-        return merged
-    return search_uids_from_sender(client, professor_email)
+        return sorted(
+            set(search_uids_to_recipient(client, professor_email))
+            | set(search_uids_cc_recipient(client, professor_email)),
+        )
+    raise MailRuntimeError(f"Unsupported IMAP folder_role: {folder_role}")
 
 
 def _imap_fetched_to_received(message: ImapFetchedMessage) -> ReceivedEmail:
@@ -706,7 +705,7 @@ def _logout_imap_client(client: IMAP4 | IMAP4_SSL | None) -> None:
         return
     try:
         client.logout()
-    except OSError:
+    except Exception:
         pass
 
 
@@ -755,7 +754,7 @@ def _find_special_use_sent_folder(client: IMAP4 | IMAP4_SSL) -> str | None:
         return None
     for item in data:
         text = item.decode("utf-8", errors="replace") if isinstance(item, (bytes, bytearray)) else str(item)
-        if "\\Sent" not in text:
+        if "\\sent" not in text.lower():
             continue
         folder = _parse_imap_list_mailbox_name(text)
         if folder:
