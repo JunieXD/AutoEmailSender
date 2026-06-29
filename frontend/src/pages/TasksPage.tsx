@@ -77,7 +77,9 @@ import {
 } from "@/features/crawl-review/client/reviewCandidates";
 import {
   getCandidateEnrichmentFailureMessage,
+  getCrawlEventStableKey,
   getCrawlEventFailureReason,
+  isCrawlEnrichmentCompletionEvent,
 } from "@/features/crawl-review/client/crawlJobEvents";
 import {
   buildBatchPendingItemAction,
@@ -189,6 +191,15 @@ const SCHEDULE_DATE_PATTERN = /^\d{4}-(\d{2})-(\d{2})$/;
 const TASKS_PAGE_SIZE = 8;
 const MONITOR_SECTION_PAGE_SIZE = 5;
 const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;
+
+const getCrawlEnrichmentCompletionEventKeys = (
+  events: CrawlJobEventDTO[],
+): Set<string> =>
+  new Set(
+    events
+      .filter(isCrawlEnrichmentCompletionEvent)
+      .map(getCrawlEventStableKey),
+  );
 
 const formatScheduleDate = (value: string) => {
   const match = SCHEDULE_DATE_PATTERN.exec(value);
@@ -754,6 +765,9 @@ export const TasksPage = () => {
   const batchTasksPreloadedKeyRef = useRef<string | null>(null);
   const matchJobsPreloadedKeyRef = useRef<string | null>(null);
   const activeTasksRequestKeyRef = useRef<string | null>(null);
+  const pendingCrawlEnrichmentCompletionRef = useRef<
+    Map<number, Set<string>>
+  >(new Map());
   const previousTaskListViewsRef = useRef(taskListViews);
   const previousSelectedBatchTaskIdRef = useRef(selectedBatchTask?.id);
   const previousSelectedCrawlJobIdRef = useRef(selectedCrawlJob?.id ?? null);
@@ -1255,6 +1269,19 @@ const selectedCrawlJobCanReview =
         if (latestCrawlJobDetailsRequestIdRef.current !== requestId) {
           return;
         }
+        const completionBaseline =
+          pendingCrawlEnrichmentCompletionRef.current.get(jobId);
+        if (completionBaseline) {
+          const completedEvent = events.find(
+            (event) =>
+              isCrawlEnrichmentCompletionEvent(event) &&
+              !completionBaseline.has(getCrawlEventStableKey(event)),
+          );
+          if (completedEvent) {
+            notifySuccess("候选信息补全完成", completedEvent.message);
+            pendingCrawlEnrichmentCompletionRef.current.delete(jobId);
+          }
+        }
         setSelectedCrawlJob(job);
         setCrawlJobPages(pages);
         setCrawlJobCandidates(candidates);
@@ -1281,7 +1308,7 @@ const selectedCrawlJobCanReview =
         }
       }
     },
-    [notifyError],
+    [notifyError, notifySuccess],
   );
 
   useEffect(() => {
@@ -1882,13 +1909,19 @@ const selectedCrawlJobCanReview =
     }
 
     setCrawlJobEnrichLoading(true);
+    const completionEventBaseline =
+      getCrawlEnrichmentCompletionEventKeys(crawlJobEvents);
     try {
       const result = await enrichCrawlCandidates(
         selectedCrawlJobId,
         selectedReviewableCrawlCandidateIds,
         llmProfileId,
       );
-      notifySuccess("候选信息补全完成", result.message);
+      pendingCrawlEnrichmentCompletionRef.current.set(
+        selectedCrawlJobId,
+        completionEventBaseline,
+      );
+      notifySuccess("候选信息补全已开始", result.message);
       await loadCrawlJobs({ showLoading: false });
       await loadCrawlJobDetails(selectedCrawlJobId, { showLoading: false });
     } catch (actionError) {
@@ -1903,6 +1936,9 @@ const selectedCrawlJobCanReview =
   };
 
   const closeCrawlJobDetails = () => {
+    if (selectedCrawlJobId !== null) {
+      pendingCrawlEnrichmentCompletionRef.current.delete(selectedCrawlJobId);
+    }
     latestCrawlJobDetailsRequestIdRef.current += 1;
     setSelectedCrawlJob(null);
     setCrawlJobPages([]);

@@ -13,6 +13,7 @@ from app.models import (
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
+    CrawlJobRun,
     CrawlJobStatus,
     CrawlPageChunk,
     CrawlPageChunkStatus,
@@ -100,6 +101,7 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
             error_message = await _job_terminal_failure_message(session, job_id=job.id) or "抓取未发现候选导师"
         else:
             final_status = CrawlJobStatus.NEEDS_REVIEW.value
+        await _append_enrichment_completion_event_if_needed(session, job, now=now)
         job.status = final_status
         job.error_message = error_message
         job.updated_at = now
@@ -403,6 +405,61 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
 async def _job_has_candidates(session: AsyncSession, *, job_id: int) -> bool:
     candidate = await session.scalar(select(CrawlCandidate.id).where(CrawlCandidate.job_id == job_id).limit(1))
     return candidate is not None
+
+
+async def _append_enrichment_completion_event_if_needed(
+    session: AsyncSession,
+    job: CrawlJob,
+    *,
+    now: datetime,
+) -> None:
+    active_started_at = None
+    if job.current_run_id is not None:
+        run = await session.get(CrawlJobRun, job.current_run_id)
+        if run is not None:
+            active_started_at = run.active_started_at
+    filters = [
+        CrawlCandidateEnrichmentTask.job_id == job.id,
+        CrawlCandidateEnrichmentTask.status.in_(
+            [
+                CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value,
+                CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,
+                CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+            ]
+        ),
+    ]
+    if active_started_at is not None:
+        filters.append(CrawlCandidateEnrichmentTask.updated_at >= active_started_at)
+
+    rows = await session.execute(
+        select(CrawlCandidateEnrichmentTask.status, func.count())
+        .where(*filters)
+        .group_by(CrawlCandidateEnrichmentTask.status)
+    )
+    counts = {status: int(count) for status, count in rows}
+    enriched = counts.get(CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value, 0)
+    unchanged = counts.get(CrawlCandidateEnrichmentTaskStatus.SKIPPED.value, 0)
+    failed = counts.get(CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value, 0)
+    candidate_count = enriched + unchanged + failed
+    if candidate_count == 0:
+        return
+
+    message = f"候选导师详情补全完成：成功 {enriched} 位，未变化 {unchanged} 位，失败 {failed} 位"
+    trace = list(job.agent_trace or [])
+    trace.append(
+        {
+            "event_type": "enrichment",
+            "message": message,
+            "created_at": now.isoformat(),
+            "raw": {
+                "candidate_count": candidate_count,
+                "enriched_count": enriched,
+                "unchanged_count": unchanged,
+                "failed_count": failed,
+            },
+        }
+    )
+    job.agent_trace = trace[-100:]
 
 
 async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -> str | None:

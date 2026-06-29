@@ -763,4 +763,110 @@ describe("TasksPage crawler jobs tab", () => {
       expect(enrichCrawlCandidates).toHaveBeenCalledWith(7, [21, 23], 2);
     });
   });
+
+  it("labels crawl candidate enrichment enqueue as started instead of completed", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review",
+    } as const;
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
+    vi.mocked(enrichCrawlCandidates).mockResolvedValue({
+      selected_count: 1,
+      enriched_count: 0,
+      unchanged_count: 0,
+      failed_count: 0,
+      skipped_count: 0,
+      message: "已加入补全队列：选中 1 位，入队 1 位。",
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "全选无邮箱" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
+
+    await waitFor(() => {
+      expect(notifySuccess).toHaveBeenCalledWith(
+        "候选信息补全已开始",
+        "已加入补全队列：选中 1 位，入队 1 位。",
+      );
+    });
+    expect(notifySuccess).not.toHaveBeenCalledWith(
+      "候选信息补全完成",
+      expect.any(String),
+    );
+  });
+
+  it("notifies once when a user-started crawl candidate enrichment finishes", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review",
+    } as const;
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
+    vi.mocked(enrichCrawlCandidates).mockResolvedValue({
+      selected_count: 1,
+      enriched_count: 0,
+      unchanged_count: 0,
+      failed_count: 0,
+      skipped_count: 0,
+      message: "已加入补全队列：选中 1 位，入队 1 位。",
+    });
+    vi.mocked(getCrawlJobEvents)
+      .mockResolvedValueOnce([
+        {
+          id: "evt-1",
+          job_id: 7,
+          event_type: "crawl_page",
+          message: "调用 crawl_page 抓取入口页面",
+          created_at: "2026-04-26T08:34:00",
+          raw: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "evt-2",
+          job_id: 7,
+          event_type: "enrichment",
+          message: "候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位",
+          created_at: "2026-04-26T08:35:00",
+          raw: {
+            candidate_count: 1,
+            enriched_count: 1,
+            unchanged_count: 0,
+            failed_count: 0,
+          },
+        },
+      ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "全选无邮箱" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
+
+    await waitFor(() => {
+      expect(notifySuccess).toHaveBeenCalledWith(
+        "候选信息补全已开始",
+        "已加入补全队列：选中 1 位，入队 1 位。",
+      );
+    });
+    await waitFor(() => {
+      expect(notifySuccess).toHaveBeenCalledWith(
+        "候选信息补全完成",
+        "候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位",
+      );
+    });
+
+    await waitFor(() => {
+      expect(notifySuccess).toHaveBeenCalledTimes(2);
+    });
+  });
 });

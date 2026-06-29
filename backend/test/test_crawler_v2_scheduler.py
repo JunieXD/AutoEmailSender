@@ -206,9 +206,105 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processed, 0)
         async with self.session_factory() as session:
             job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
+        self.assertIsNone(job.error_message)
+
+    async def test_scheduler_records_enrichment_completion_event_when_queue_finishes(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            candidate_a = CrawlCandidate(job_id=job_id, name="张三", profile_url="https://example.edu/a")
+            candidate_b = CrawlCandidate(job_id=job_id, name="李四", profile_url="https://example.edu/b")
+            candidate_c = CrawlCandidate(job_id=job_id, name="王五", profile_url="https://example.edu/c")
+            session.add_all([candidate_a, candidate_b, candidate_c])
+            await session.flush()
+            session.add_all([
+                CrawlCandidateEnrichmentTask(
+                    job_id=job_id,
+                    candidate_id=candidate_a.id,
+                    status=CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value,
+                ),
+                CrawlCandidateEnrichmentTask(
+                    job_id=job_id,
+                    candidate_id=candidate_b.id,
+                    status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+                    last_error="详情页抓取失败",
+                ),
+                CrawlCandidateEnrichmentTask(
+                    job_id=job_id,
+                    candidate_id=candidate_c.id,
+                    status=CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,
+                ),
+            ])
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        trace_messages = [
+            item.get("message")
+            for item in job.agent_trace or []
+            if isinstance(item, dict)
+        ]
+        self.assertIn(
+            "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位",
+            trace_messages,
+        )
+
+    async def test_scheduler_enrichment_completion_event_counts_current_run_only(self) -> None:
+        job_id = await self._create_job()
+        current_run_started_at = datetime(2026, 6, 29, 12, 0, tzinfo=UTC)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
             assert job is not None
-            self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
-            self.assertIsNone(job.error_message)
+            run = CrawlJobRun(
+                job_id=job_id,
+                attempt_number=1,
+                status=CrawlJobStatus.RUNNING.value,
+                active_started_at=current_run_started_at,
+            )
+            session.add(run)
+            await session.flush()
+            job.current_run_id = run.id
+            old_candidate = CrawlCandidate(job_id=job_id, name="旧候选", profile_url="https://example.edu/old")
+            current_candidate = CrawlCandidate(job_id=job_id, name="新候选", profile_url="https://example.edu/new")
+            session.add_all([old_candidate, current_candidate])
+            await session.flush()
+            old_task = CrawlCandidateEnrichmentTask(
+                job_id=job_id,
+                candidate_id=old_candidate.id,
+                status=CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value,
+            )
+            current_task = CrawlCandidateEnrichmentTask(
+                job_id=job_id,
+                candidate_id=current_candidate.id,
+                status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+                last_error="详情页抓取失败",
+            )
+            session.add_all([old_task, current_task])
+            await session.flush()
+            old_task.updated_at = datetime(2026, 6, 29, 11, 30, tzinfo=UTC)
+            current_task.updated_at = datetime(2026, 6, 29, 12, 1, tzinfo=UTC)
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        trace_messages = [
+            item.get("message")
+            for item in job.agent_trace or []
+            if isinstance(item, dict)
+        ]
+        self.assertIn(
+            "候选导师详情补全完成：成功 0 位，未变化 0 位，失败 1 位",
+            trace_messages,
+        )
 
     async def test_scheduler_does_not_finalize_job_with_active_processing_page(self) -> None:
         job_id = await self._create_job()

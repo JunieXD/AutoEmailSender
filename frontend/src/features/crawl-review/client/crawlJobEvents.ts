@@ -83,3 +83,21 @@ export function getCrawlEventFailureReason(event: CrawlJobEventDTO): string | nu
   }
   return rawErrorMessage;
 }
+
+export function getCrawlEventStableKey(event: CrawlJobEventDTO): string {
+  return [
+    event.id,
+    event.event_type,
+    event.created_at ?? "",
+    event.message,
+  ].join("|");
+}
+
+export function isCrawlEnrichmentCompletionEvent(
+  event: CrawlJobEventDTO,
+): boolean {
+  return (
+    event.event_type === "enrichment" &&
+    event.message.trim().startsWith("候选导师详情补全完成：")
+  );
+}
