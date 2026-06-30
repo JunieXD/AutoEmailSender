@@ -216,6 +216,42 @@ class _MultipartFallbackImapClient(_FakeImapClient):
         return "OK", []
 
 
+class _DuplicateTextPartImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command != "FETCH":
+            return "NO", []
+
+        query = str(args[-1])
+        if "HEADER" in query:
+            return "OK", [
+                (
+                    b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {256}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: Re: hello\r\n"
+                    b"Message-ID: <reply-duplicate@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n"
+                    b"Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+                ),
+            ]
+        if "BODYSTRUCTURE" in query:
+            return "OK", [
+                (
+                    b'1 (BODYSTRUCTURE (("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 5 1 NIL NIL NIL NIL)'
+                    b'("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 9 1 NIL NIL NIL NIL) '
+                    b'"MIXED" ("BOUNDARY" "mix") NIL NIL))',
+                ),
+            ]
+        if "BODY.PEEK[1.MIME]" in query:
+            return "OK", [(b"1 (BODY[1.MIME] {48}", b"Content-Type: text/plain; charset=utf-8\r\n\r\n")]
+        if "BODY.PEEK[1]" in query:
+            return "OK", [(b"1 (BODY[1] {5}", b"first")]
+        if "BODY.PEEK[2" in query:
+            raise AssertionError("duplicate plain text part should not be fetched")
+        return "OK", []
+
+
 class _BatchHeaderImapClient(_FakeImapClient):
     def uid(self, command: str, *args):
         self.commands.append(f"uid:{command}:{args}")
@@ -302,6 +338,13 @@ def _build_identity() -> IdentityProfile:
 
 
 class MailRuntimeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._history_rate_limiter_patcher = patch(
+            "app.services.mail_runtime.acquire_history_imap_command_slot_sync",
+        )
+        self._history_rate_limiter_patcher.start()
+        self.addCleanup(self._history_rate_limiter_patcher.stop)
+
     def test_imap_login_failure_mentions_authorization_code_for_qq_or_163(self) -> None:
         identity = _build_identity()
         identity.imap_host = "imap.qq.com"
@@ -816,6 +859,77 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertIn("uid:FETCH:('2'", serialized_commands)
         self.assertEqual(result.command_count, 3)
 
+    def test_professor_history_header_fetch_uses_history_rate_limiter_per_imap_command(self) -> None:
+        client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
+        identity = _build_identity()
+        seen: list[tuple[str, str]] = []
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            acquire_mock.side_effect = lambda current_identity, command: seen.append(
+                (current_identity.email_address, command),
+            )
+            result = asyncio.run(
+                fetch_professor_history_mailbox_message_headers_with_command_count(
+                    identity,
+                    "INBOX",
+                    "teacher@example.com",
+                    folder_role="inbox",
+                ),
+            )
+
+        self.assertEqual(result.command_count, 3)
+        self.assertEqual(
+            seen,
+            [
+                ("sender@example.com", "SEARCH"),
+                ("sender@example.com", "FETCH"),
+                ("sender@example.com", "FETCH"),
+            ],
+        )
+
+    def test_history_body_fetch_by_uid_uses_history_rate_limiter_per_imap_command(self) -> None:
+        client = _MultipartFallbackImapClient(search_data=b"1")
+        identity = _build_identity()
+        seen: list[str] = []
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            acquire_mock.side_effect = lambda _identity, command: seen.append(command)
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages_by_uid(
+                    identity,
+                    "INBOX",
+                    [1],
+                ),
+            )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(
+            seen,
+            ["FETCH", "FETCH", "FETCH"],
+        )
+
+    def test_incremental_fetch_does_not_use_history_rate_limiter(self) -> None:
+        client = _MultipartFallbackImapClient(search_data=b"1")
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+        ):
+            _, messages = asyncio.run(fetch_incremental_inbox_messages(_build_identity(), None))
+
+        self.assertEqual(len(messages), 1)
+        acquire_mock.assert_not_called()
+
     def test_incremental_fetch_decodes_base64_text_part_without_fetching_attachment(self) -> None:
         client = _MultipartBase64ImapClient(search_data=b"1")
 
@@ -872,6 +986,55 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertIn("BODYSTRUCTURE", serialized_commands)
         self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
         self.assertNotIn("ignored attachment", messages[0].body_text)
+
+    def test_history_body_fetch_by_uid_decodes_text_part_without_fetching_attachment(self) -> None:
+        client = _MultipartBase64ImapClient(search_data=b"1")
+        seen: list[str] = []
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            acquire_mock.side_effect = lambda _identity, command: seen.append(command)
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages_by_uid(
+                    _build_identity(),
+                    "INBOX",
+                    [1],
+                ),
+            )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body_text, "\u4f60\u597d")
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("BODYSTRUCTURE", serialized_commands)
+        self.assertIn("BODY.PEEK[1.MIME]", serialized_commands)
+        self.assertIn("BODY.PEEK[1]", serialized_commands)
+        self.assertNotIn("BODY.PEEK[2", serialized_commands)
+        self.assertEqual(seen, ["FETCH", "FETCH", "FETCH", "FETCH"])
+
+    def test_history_body_fetch_by_uid_skips_duplicate_text_parts(self) -> None:
+        client = _DuplicateTextPartImapClient(search_data=b"1")
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages_by_uid(
+                    _build_identity(),
+                    "INBOX",
+                    [1],
+                ),
+            )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body_text, "first")
+        serialized_commands = " ".join(client.commands)
+        self.assertNotIn("BODY.PEEK[2", serialized_commands)
 
     def test_parse_received_email_strips_quoted_original_message_from_plain_text(self) -> None:
         raw_message = (

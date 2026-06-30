@@ -31,7 +31,11 @@ from app.services.task_runtime import (
     continue_task_manually,
     generate_task_draft,
     poll_identity_replies,
+    repair_identity_replies,
+    sync_workspace_professor_replies,
+    sync_identity_history_poll_once,
     sync_identity_imap_once,
+    sync_identity_incremental_poll_once,
 )
 from app.api.workspace_support import ensure_workspace_task
 
@@ -190,6 +194,235 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         self.assertEqual(mocked_sync.await_count, 1)
         self.assertEqual(sum(results), 1)
+
+    def test_full_imap_sync_skips_while_incremental_poll_is_running(self) -> None:
+        identity_id, _, _ = self._run_async(self._create_reply_context())
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_incremental(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return 1
+
+        async def scenario() -> tuple[int, int, int]:
+            incremental_task = asyncio.create_task(
+                sync_identity_incremental_poll_once(self.session_factory, identity_id),
+            )
+            await started.wait()
+            full_result = await sync_identity_imap_once(self.session_factory, identity_id)
+            release.set()
+            incremental_result = await incremental_task
+            return incremental_result, full_result, full_sync_mock.await_count
+
+        with (
+            patch(
+                "app.services.task_runtime._sync_identity_incremental_once_unlocked",
+                new=AsyncMock(side_effect=delayed_incremental),
+            ),
+            patch(
+                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                new=AsyncMock(return_value=10),
+            ) as full_sync_mock,
+        ):
+            result = self._run_async(scenario())
+
+        self.assertEqual(result, (1, 0, 0))
+
+    def test_full_imap_sync_skips_while_history_poll_is_running(self) -> None:
+        identity_id, _, _ = self._run_async(self._create_reply_context())
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_history(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return 1
+
+        async def scenario() -> tuple[int, int, int]:
+            history_task = asyncio.create_task(
+                sync_identity_history_poll_once(self.session_factory, identity_id),
+            )
+            await started.wait()
+            full_result = await sync_identity_imap_once(self.session_factory, identity_id)
+            release.set()
+            history_result = await history_task
+            return history_result, full_result, full_sync_mock.await_count
+
+        with (
+            patch(
+                "app.services.task_runtime.sync_identity_history_once",
+                new=AsyncMock(side_effect=delayed_history),
+            ),
+            patch(
+                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                new=AsyncMock(return_value=10),
+            ) as full_sync_mock,
+        ):
+            result = self._run_async(scenario())
+
+        self.assertEqual(result, (1, 0, 0))
+
+    def test_full_imap_sync_blocks_incremental_and_history_pollers(self) -> None:
+        identity_id, _, _ = self._run_async(self._create_reply_context())
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_full_sync(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return 1
+
+        async def scenario() -> tuple[int, int, int, int, int]:
+            full_task = asyncio.create_task(sync_identity_imap_once(self.session_factory, identity_id))
+            await started.wait()
+            incremental_result = await sync_identity_incremental_poll_once(
+                self.session_factory,
+                identity_id,
+            )
+            history_result = await sync_identity_history_poll_once(
+                self.session_factory,
+                identity_id,
+            )
+            release.set()
+            full_result = await full_task
+            return (
+                full_result,
+                incremental_result,
+                history_result,
+                incremental_mock.await_count,
+                history_mock.await_count,
+            )
+
+        with (
+            patch(
+                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                new=AsyncMock(side_effect=delayed_full_sync),
+            ),
+            patch(
+                "app.services.task_runtime._sync_identity_incremental_once_unlocked",
+                new=AsyncMock(return_value=10),
+            ) as incremental_mock,
+            patch(
+                "app.services.task_runtime.sync_identity_history_once",
+                new=AsyncMock(return_value=20),
+            ) as history_mock,
+        ):
+            result = self._run_async(scenario())
+
+        self.assertEqual(result, (1, 0, 0, 0, 0))
+
+    def test_incremental_and_history_pollers_can_overlap_for_same_identity(self) -> None:
+        identity_id, _, _ = self._run_async(self._create_reply_context())
+
+        incremental_started = asyncio.Event()
+        release_incremental = asyncio.Event()
+
+        async def delayed_incremental(*args, **kwargs):
+            incremental_started.set()
+            await release_incremental.wait()
+            return 1
+
+        async def scenario() -> tuple[int, int]:
+            incremental_task = asyncio.create_task(
+                sync_identity_incremental_poll_once(self.session_factory, identity_id),
+            )
+            await incremental_started.wait()
+            history_result = await sync_identity_history_poll_once(self.session_factory, identity_id)
+            release_incremental.set()
+            incremental_result = await incremental_task
+            return incremental_result, history_result
+
+        with (
+            patch(
+                "app.services.task_runtime._sync_identity_incremental_once_unlocked",
+                new=AsyncMock(side_effect=delayed_incremental),
+            ),
+            patch(
+                "app.services.task_runtime.sync_identity_history_once",
+                new=AsyncMock(return_value=2),
+            ),
+        ):
+            result = self._run_async(scenario())
+
+        self.assertEqual(result, (1, 2))
+
+    def test_workspace_professor_sync_skips_while_full_imap_sync_is_running(self) -> None:
+        identity_id, _, professor_id = self._run_async(self._create_reply_context())
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_full_sync(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return 1
+
+        async def scenario() -> tuple[int, int, int]:
+            full_task = asyncio.create_task(sync_identity_imap_once(self.session_factory, identity_id))
+            await started.wait()
+            workspace_result = await sync_workspace_professor_replies(
+                self.session_factory,
+                identity_id,
+                professor_id,
+            )
+            release.set()
+            full_result = await full_task
+            return full_result, workspace_result, fetch_mock.await_count
+
+        with (
+            patch(
+                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                new=AsyncMock(side_effect=delayed_full_sync),
+            ),
+            patch(
+                "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+                new=AsyncMock(return_value=[]),
+            ) as fetch_mock,
+        ):
+            result = self._run_async(scenario())
+
+        self.assertEqual(result, (1, 0, 0))
+
+    def test_professor_repair_skips_while_full_imap_sync_is_running(self) -> None:
+        identity_id, _, _ = self._run_async(self._create_reply_context())
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_full_sync(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return 1
+
+        async def scenario() -> tuple[int, int, int]:
+            full_task = asyncio.create_task(sync_identity_imap_once(self.session_factory, identity_id))
+            await started.wait()
+            repair_result = await repair_identity_replies(
+                self.session_factory,
+                identity_id,
+                professor_email="professor@example.edu",
+            )
+            release.set()
+            full_result = await full_task
+            return full_result, repair_result, fetch_mock.await_count
+
+        with (
+            patch(
+                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                new=AsyncMock(side_effect=delayed_full_sync),
+            ),
+            patch(
+                "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+                new=AsyncMock(return_value=[]),
+            ) as fetch_mock,
+        ):
+            result = self._run_async(scenario())
+
+        self.assertEqual(result, (1, 0, 0))
 
     async def _create_schema(self) -> None:
         async with self.engine.begin() as connection:

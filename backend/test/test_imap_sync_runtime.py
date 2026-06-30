@@ -29,7 +29,9 @@ from app.services.mail_runtime import ImapHistoryHeaderFetchResult
 from app.services.task_runtime import _sync_identity_imap_once_unlocked
 from app.services.task_runtime import is_imap_incremental_paused
 from app.services.task_runtime import mark_imap_throttled
+from app.services.task_runtime import poll_imap_history_once
 from app.services.task_runtime import poll_for_replies_once
+from app.services.task_runtime import repair_identity_replies
 from app.services.task_runtime import process_imap_fetched_messages
 from app.services.task_runtime import sync_identity_history_once
 from app.services.task_runtime import sync_identity_imap_once
@@ -561,18 +563,45 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             (1, ImapProfessorHistoricalScanStatus.COMPLETED.value),
         )
 
-    def test_poll_for_replies_uses_identity_sync_entrypoint(self) -> None:
+    def test_poll_for_replies_uses_incremental_entrypoint_only(self) -> None:
         async def scenario() -> int:
             identity_id = await self._create_identity_with_imap()
-            with patch(
-                "app.services.task_runtime.sync_identity_imap_once",
-                new=AsyncMock(return_value=2),
-            ) as mocked:
+            with (
+                patch(
+                    "app.services.task_runtime.sync_identity_incremental_poll_once",
+                    new=AsyncMock(return_value=2),
+                ) as incremental_mock,
+                patch(
+                    "app.services.task_runtime.sync_identity_history_poll_once",
+                    new=AsyncMock(return_value=9),
+                ) as history_mock,
+            ):
                 result = await poll_for_replies_once(self.session_factory)
-            mocked.assert_awaited_once_with(self.session_factory, identity_id)
+            incremental_mock.assert_awaited_once_with(self.session_factory, identity_id)
+            history_mock.assert_not_awaited()
             return result
 
         self.assertEqual(self._run_async(scenario()), 2)
+
+    def test_poll_imap_history_uses_history_entrypoint_only(self) -> None:
+        async def scenario() -> int:
+            identity_id = await self._create_identity_with_imap()
+            with (
+                patch(
+                    "app.services.task_runtime.sync_identity_incremental_poll_once",
+                    new=AsyncMock(return_value=2),
+                ) as incremental_mock,
+                patch(
+                    "app.services.task_runtime.sync_identity_history_poll_once",
+                    new=AsyncMock(return_value=3),
+                ) as history_mock,
+            ):
+                result = await poll_imap_history_once(self.session_factory)
+            history_mock.assert_awaited_once_with(self.session_factory, identity_id)
+            incremental_mock.assert_not_awaited()
+            return result
+
+        self.assertEqual(self._run_async(scenario()), 3)
 
     def test_poll_for_replies_skips_incomplete_and_blank_imap_identities(self) -> None:
         async def scenario() -> tuple[int, bool, int]:
@@ -619,7 +648,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return 1
 
             with patch(
-                "app.services.task_runtime.sync_identity_imap_once",
+                "app.services.task_runtime.sync_identity_incremental_poll_once",
                 new=AsyncMock(side_effect=fake_sync),
             ):
                 result = await poll_for_replies_once(self.session_factory)
@@ -2391,6 +2420,38 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), (5, 1))
 
+    def test_sent_discovery_provider_throttle_pauses_account_and_skips_imap_work(self) -> None:
+        async def scenario() -> tuple[int, bool, int, int]:
+            identity_id = await self._create_identity_with_imap()
+            with (
+                patch(
+                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    new=AsyncMock(side_effect=RuntimeError("Too many requests")),
+                ),
+                patch(
+                    "app.services.task_runtime.ensure_professor_scan_states_if_needed",
+                    new=AsyncMock(return_value=0),
+                ) as ensure_mock,
+                patch(
+                    "app.services.task_runtime.sync_identity_incremental_once",
+                    new=AsyncMock(return_value=5),
+                ) as incremental_mock,
+                patch(
+                    "app.services.task_runtime.sync_identity_history_once",
+                    new=AsyncMock(return_value=7),
+                ) as history_mock,
+            ):
+                detected = await _sync_identity_imap_once_unlocked(self.session_factory, identity_id)
+            paused = await is_imap_incremental_paused(self.session_factory, identity_id)
+            return (
+                detected,
+                paused,
+                ensure_mock.await_count,
+                incremental_mock.await_count + history_mock.await_count,
+            )
+
+        self.assertEqual(self._run_async(scenario()), (0, True, 0, 0))
+
     def test_throttle_pauses_history_but_not_incremental_until_account_backoff(self) -> None:
         async def scenario() -> tuple[int, int, int]:
             identity_id = await self._create_identity_with_imap()
@@ -2423,6 +2484,86 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             return detected, history_mock.await_count, incremental_mock.await_count
 
         self.assertEqual(self._run_async(scenario()), (5, 0, 1))
+
+    def test_identity_imap_once_runs_incremental_before_history(self) -> None:
+        async def scenario() -> tuple[str, ...]:
+            identity_id = await self._create_identity_with_imap()
+            calls: list[str] = []
+
+            async def incremental_side_effect(*_args, folder_role: str, **_kwargs) -> int:
+                calls.append(f"incremental:{folder_role}")
+                return 1
+
+            async def history_side_effect(*_args, **_kwargs) -> int:
+                calls.append("history")
+                return 1
+
+            with (
+                patch(
+                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    new=AsyncMock(return_value="Sent"),
+                ),
+                patch(
+                    "app.services.task_runtime.ensure_professor_scan_states_if_needed",
+                    new=AsyncMock(return_value=0),
+                ),
+                patch(
+                    "app.services.task_runtime.sync_identity_history_once",
+                    new=AsyncMock(side_effect=history_side_effect),
+                ),
+                patch(
+                    "app.services.task_runtime.sync_identity_incremental_once",
+                    new=AsyncMock(side_effect=incremental_side_effect),
+                ),
+            ):
+                await _sync_identity_imap_once_unlocked(self.session_factory, identity_id)
+
+            return tuple(calls)
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            ("incremental:inbox", "incremental:sent", "history"),
+        )
+
+    def test_identity_imap_once_stops_after_inbox_marks_account_throttled(self) -> None:
+        async def scenario() -> tuple[int, int, int, int]:
+            identity_id = await self._create_identity_with_imap()
+
+            async def incremental_side_effect(_session_factory, current_identity_id: int, *, folder_role: str, folder: str) -> int:
+                if folder_role == "inbox":
+                    await mark_imap_throttled(
+                        self.session_factory,
+                        current_identity_id,
+                        reason="Too many requests",
+                        account_level=True,
+                    )
+                return 0
+
+            with (
+                patch(
+                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    new=AsyncMock(return_value="Sent"),
+                ),
+                patch(
+                    "app.services.task_runtime.ensure_professor_scan_states_if_needed",
+                    new=AsyncMock(return_value=0),
+                ),
+                patch(
+                    "app.services.task_runtime.sync_identity_incremental_once",
+                    new=AsyncMock(side_effect=incremental_side_effect),
+                ) as incremental_mock,
+                patch(
+                    "app.services.task_runtime.sync_identity_history_once",
+                    new=AsyncMock(return_value=3),
+                ) as history_mock,
+            ):
+                detected = await _sync_identity_imap_once_unlocked(self.session_factory, identity_id)
+
+            return detected, incremental_mock.await_count, history_mock.await_count, int(
+                await is_imap_incremental_paused(self.session_factory, identity_id),
+            )
+
+        self.assertEqual(self._run_async(scenario()), (0, 1, 0, 1))
 
     def test_account_level_throttle_pauses_history_and_incremental(self) -> None:
         async def scenario() -> tuple[int, int, int]:
@@ -2469,6 +2610,43 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             return detected
 
         self.assertEqual(self._run_async(scenario()), 7)
+
+    def test_repair_identity_replies_with_professor_email_uses_imap_lock(self) -> None:
+        async def scenario() -> tuple[int, int]:
+            identity_id = await self._create_identity_with_imap()
+            call_count = 0
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def fake_fetch(*_args, **_kwargs):
+                nonlocal call_count
+                call_count += 1
+                started.set()
+                await release.wait()
+                return []
+
+            with patch(
+                "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+                new=AsyncMock(side_effect=fake_fetch),
+            ):
+                first = asyncio.create_task(
+                    repair_identity_replies(
+                        self.session_factory,
+                        identity_id,
+                        professor_email="prof@example.edu",
+                    ),
+                )
+                await started.wait()
+                second = await repair_identity_replies(
+                    self.session_factory,
+                    identity_id,
+                    professor_email="prof@example.edu",
+                )
+                release.set()
+                first_result = await first
+            return first_result, second + call_count
+
+        self.assertEqual(self._run_async(scenario()), (0, 1))
 
     async def _create_reply_task(self, *, status: str) -> tuple[int, int, int]:
         async with self.session_factory() as session:

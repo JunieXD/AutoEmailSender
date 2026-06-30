@@ -82,7 +82,8 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker_names.count("crawler-worker-1"), 1)
         self.assertEqual(worker_names.count("crawler-worker-2"), 1)
         self.assertIn("dispatcher", worker_names)
-        self.assertIn("imap-poller", worker_names)
+        self.assertIn("imap-incremental-poller", worker_names)
+        self.assertIn("imap-history-poller", worker_names)
 
         await manager.stop()
 
@@ -358,7 +359,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.stop()
 
-    async def test_start_configures_imap_poller_to_wait_after_processing(self) -> None:
+    async def test_start_configures_separate_imap_pollers_to_wait_after_processing(self) -> None:
         session = object()
         session_context = MagicMock()
         session_context.__aenter__ = AsyncMock(return_value=session)
@@ -404,7 +405,12 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 await manager.start()
 
         worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
-        self.assertTrue(worker_calls["imap-poller"].kwargs["wait_after_processed"])
+        self.assertTrue(worker_calls["imap-incremental-poller"].kwargs["wait_after_processed"])
+        self.assertTrue(worker_calls["imap-history-poller"].kwargs["wait_after_processed"])
+        self.assertNotEqual(
+            worker_calls["imap-incremental-poller"].args[2],
+            worker_calls["imap-history-poller"].args[2],
+        )
 
         await manager.stop()
     async def test_worker_startup_settings_default_crawler_worker_count_is_eight(self) -> None:

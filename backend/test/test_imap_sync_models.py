@@ -171,9 +171,11 @@ class ImapSyncModelsTestCase(unittest.TestCase):
     def test_imap_efficiency_settings_defaults_are_conservative(self) -> None:
         settings = get_settings()
 
-        self.assertEqual(settings.imap_poll_interval_seconds, 300)
-        self.assertEqual(settings.imap_history_batch_size, 50)
-        self.assertEqual(settings.imap_history_command_budget_per_minute, 20)
+        self.assertEqual(settings.imap_poll_interval_seconds, 60)
+        self.assertEqual(settings.imap_history_batch_size, 200)
+        self.assertEqual(settings.imap_history_command_budget_per_minute, 120)
+        self.assertEqual(settings.imap_history_command_rate_per_minute, 40)
+        self.assertEqual(settings.imap_history_command_burst, 3)
         self.assertEqual(settings.imap_fetch_batch_size, 20)
         self.assertEqual(settings.imap_sent_folder_failure_ttl_seconds, 3600)
         self.assertEqual(settings.imap_throttle_backoff_seconds, 86400)

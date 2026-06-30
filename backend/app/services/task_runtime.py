@@ -81,6 +81,8 @@ TASK_RELATION_OPTIONS = (
     selectinload(EmailTask.primary_material),
 )
 _IMAP_IDENTITY_LOCKS: dict[int, asyncio.Lock] = {}
+_IMAP_INCREMENTAL_LOCKS: dict[int, asyncio.Lock] = {}
+_IMAP_HISTORY_LOCKS: dict[int, asyncio.Lock] = {}
 _IMAP_IDENTITY_LOCKS_GUARD = asyncio.Lock()
 VALID_IMAP_FOLDER_ROLES = {"inbox", "sent"}
 IMAP_HISTORY_THROTTLE_PREFIX = "history:"
@@ -510,7 +512,33 @@ async def poll_for_replies_once(
 
     detected = 0
     for identity_id in identity_ids:
-        detected += await sync_identity_imap_once(session_factory, identity_id)
+        detected += await sync_identity_incremental_poll_once(session_factory, identity_id)
+    return detected
+
+
+async def poll_imap_history_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    async with session_factory() as session:
+        identity_ids = list(
+            (
+                await session.execute(
+                    select(IdentityProfile.id).where(
+                        IdentityProfile.imap_host.is_not(None),
+                        IdentityProfile.imap_port.is_not(None),
+                        IdentityProfile.imap_username.is_not(None),
+                        IdentityProfile.imap_password.is_not(None),
+                        func.trim(IdentityProfile.imap_host) != "",
+                        func.trim(IdentityProfile.imap_username) != "",
+                        func.trim(IdentityProfile.imap_password) != "",
+                    ),
+                )
+            ).scalars()
+        )
+
+    detected = 0
+    for identity_id in identity_ids:
+        detected += await sync_identity_history_poll_once(session_factory, identity_id)
     return detected
 
 async def recover_stale_sending_tasks(
@@ -1782,10 +1810,45 @@ async def sync_identity_imap_once(
     identity_id: int,
 ) -> int:
     lock = await _get_imap_identity_lock(identity_id)
+    incremental_lock = await _get_imap_incremental_lock(identity_id)
+    history_lock = await _get_imap_history_lock(identity_id)
+    if lock.locked() or incremental_lock.locked() or history_lock.locked():
+        return 0
+    async with lock:
+        if incremental_lock.locked() or history_lock.locked():
+            return 0
+        return await _sync_identity_imap_once_unlocked(session_factory, identity_id)
+
+
+async def sync_identity_incremental_poll_once(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> int:
+    identity_lock = await _get_imap_identity_lock(identity_id)
+    if identity_lock.locked():
+        return 0
+    lock = await _get_imap_incremental_lock(identity_id)
     if lock.locked():
         return 0
     async with lock:
-        return await _sync_identity_imap_once_unlocked(session_factory, identity_id)
+        if identity_lock.locked():
+            return 0
+        return await _sync_identity_incremental_once_unlocked(session_factory, identity_id)
+
+
+async def sync_identity_history_poll_once(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> int:
+    if await _is_imap_history_work_locked(identity_id):
+        return 0
+    lock = await _get_imap_history_lock(identity_id)
+    async with lock:
+        if await _is_imap_identity_locked(identity_id):
+            return 0
+        if await is_imap_history_paused(session_factory, identity_id):
+            return 0
+        return await sync_identity_history_once(session_factory, identity_id)
 
 
 async def get_cached_or_discover_sent_folder(
@@ -1813,6 +1876,13 @@ async def get_cached_or_discover_sent_folder(
         sent_folder = await mail_runtime.discover_sent_folder(identity)
     except Exception as exc:
         await _record_sent_folder_discovery_failure(session_factory, identity.id, str(exc))
+        if is_provider_throttle_error(exc):
+            await mark_imap_throttled(
+                session_factory,
+                identity.id,
+                reason=str(exc),
+                account_level=_is_account_level_throttle_error(exc),
+            )
         return None
 
     async with session_factory() as session:
@@ -1939,6 +2009,8 @@ def is_provider_throttle_error(exc: object) -> bool:
 
 def _is_account_level_throttle_error(exc: object) -> bool:
     text = str(exc).lower()
+    if "exceed" in text and "limit" in text:
+        return True
     return any(
         marker in text
         for marker in [
@@ -1992,6 +2064,20 @@ async def _sync_identity_imap_once_unlocked(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
 ) -> int:
+    incremental_detected = await _sync_identity_incremental_once_unlocked(
+        session_factory,
+        identity_id,
+    )
+    history_detected = 0
+    if not await is_imap_history_paused(session_factory, identity_id):
+        history_detected = await sync_identity_history_once(session_factory, identity_id)
+    return incremental_detected + history_detected
+
+
+async def _sync_identity_incremental_once_unlocked(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> int:
     sent_folder = None
     incremental_paused = await is_imap_incremental_paused(session_factory, identity_id)
     async with session_factory() as session:
@@ -1999,14 +2085,14 @@ async def _sync_identity_imap_once_unlocked(
     if identity is not None and not incremental_paused:
         sent_folder = await get_cached_or_discover_sent_folder(session_factory, identity)
 
+    if await is_imap_incremental_paused(session_factory, identity_id):
+        return 0
+
     await ensure_professor_scan_states_if_needed(
         session_factory,
         identity_id=identity_id,
         sent_folder=sent_folder,
     )
-    history_detected = 0
-    if not await is_imap_history_paused(session_factory, identity_id):
-        history_detected = await sync_identity_history_once(session_factory, identity_id)
     inbox_detected = 0
     if not incremental_paused:
         inbox_detected = await sync_identity_incremental_once(
@@ -2016,14 +2102,14 @@ async def _sync_identity_imap_once_unlocked(
             folder="INBOX",
         )
     sent_detected = 0
-    if sent_folder and not incremental_paused:
+    if sent_folder and not await is_imap_incremental_paused(session_factory, identity_id):
         sent_detected = await sync_identity_incremental_once(
             session_factory,
             identity_id,
             folder_role="sent",
             folder=sent_folder,
         )
-    return history_detected + inbox_detected + sent_detected
+    return inbox_detected + sent_detected
 
 
 async def sync_identity_history_once(
@@ -2390,10 +2476,12 @@ async def sync_workspace_professor_replies(
     identity_id: int,
     professor_id: int,
 ) -> int:
-    lock = await _get_imap_identity_lock(identity_id)
-    if lock.locked():
+    if await _is_imap_history_work_locked(identity_id):
         return 0
+    lock = await _get_imap_history_lock(identity_id)
     async with lock:
+        if await _is_imap_identity_locked(identity_id):
+            return 0
         async with session_factory() as session:
             identity = await session.get(IdentityProfile, identity_id)
             professor = await session.get(Professor, professor_id)
@@ -2433,11 +2521,36 @@ async def _get_or_create_mailbox_state(
 
 
 async def _get_imap_identity_lock(identity_id: int) -> asyncio.Lock:
+    return await _get_imap_lock(_IMAP_IDENTITY_LOCKS, identity_id)
+
+
+async def _get_imap_incremental_lock(identity_id: int) -> asyncio.Lock:
+    return await _get_imap_lock(_IMAP_INCREMENTAL_LOCKS, identity_id)
+
+
+async def _get_imap_history_lock(identity_id: int) -> asyncio.Lock:
+    return await _get_imap_lock(_IMAP_HISTORY_LOCKS, identity_id)
+
+
+async def _is_imap_identity_locked(identity_id: int) -> bool:
+    return (await _get_imap_identity_lock(identity_id)).locked()
+
+
+async def _is_imap_history_work_locked(identity_id: int) -> bool:
+    return await _is_imap_identity_locked(identity_id) or (
+        await _get_imap_history_lock(identity_id)
+    ).locked()
+
+
+async def _get_imap_lock(
+    locks: dict[int, asyncio.Lock],
+    identity_id: int,
+) -> asyncio.Lock:
     async with _IMAP_IDENTITY_LOCKS_GUARD:
-        lock = _IMAP_IDENTITY_LOCKS.get(identity_id)
+        lock = locks.get(identity_id)
         if lock is None:
             lock = asyncio.Lock()
-            _IMAP_IDENTITY_LOCKS[identity_id] = lock
+            locks[identity_id] = lock
         return lock
 
 
@@ -2453,8 +2566,14 @@ async def repair_identity_replies(
         return 0
 
     if professor_email and professor_email.strip():
-        messages = await mail_runtime.fetch_professor_history_inbox_messages(identity, professor_email)
-        return await process_imap_fetched_messages(session_factory, identity_id, messages)
+        if await _is_imap_history_work_locked(identity_id):
+            return 0
+        lock = await _get_imap_history_lock(identity_id)
+        async with lock:
+            if await _is_imap_identity_locked(identity_id):
+                return 0
+            messages = await mail_runtime.fetch_professor_history_inbox_messages(identity, professor_email)
+            return await process_imap_fetched_messages(session_factory, identity_id, messages)
     return await sync_identity_imap_once(session_factory, identity_id)
 
 

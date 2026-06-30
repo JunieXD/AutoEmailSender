@@ -22,6 +22,7 @@ from app.services.match_analysis_job_runtime import run_queued_match_analysis_jo
 from app.services.runtime_settings import get_runtime_settings
 from app.services.task_runtime import (
     dispatch_due_tasks_once,
+    poll_imap_history_once,
     poll_for_replies_once,
 )
 
@@ -151,9 +152,17 @@ class RuntimeManager:
             ),
             asyncio.create_task(
                 self._loop(
-                    "imap-poller",
+                    "imap-incremental-poller",
                     settings.imap_poll_interval_seconds,
                     poll_for_replies_once,
+                    wait_after_processed=True,
+                ),
+            ),
+            asyncio.create_task(
+                self._loop(
+                    "imap-history-poller",
+                    settings.imap_poll_interval_seconds,
+                    poll_imap_history_once,
                     wait_after_processed=True,
                 ),
             ),

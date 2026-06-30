@@ -26,10 +26,14 @@ from typing import Any
 from app.core.config import get_settings
 from app.models import IdentityProfile, Professor
 from app.services.email_addresses import normalize_email_address, normalize_email_list
+from app.services.imap_rate_limiter import acquire_history_imap_command_slot_sync
 from app.services.imap_message_fetcher import (
     ImapFetchedMessage,
+    ParsedTextParts,
+    TextBodyPart,
     fetch_message_headers_payload_by_uid,
     fetch_message_headers_payloads_by_uid_batch,
+    fetch_text_part_sections_by_uid,
     fetch_text_body_parts_by_uid,
     parse_text_parts_from_message,
     search_uids_combined_sent_recipient,
@@ -631,9 +635,14 @@ def _fetch_professor_history_mailbox_messages_sync(
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
-        search_result = _search_professor_history_uids(client, professor_email, folder_role=folder_role)
+        search_result = _search_professor_history_uids(
+            identity,
+            client,
+            professor_email,
+            folder_role=folder_role,
+        )
         for uid in search_result.uids:
-            message = _fetch_message_by_uid_sync(client, uid)
+            message = _fetch_history_message_by_uid_sync(identity, client, uid)
             if message is not None:
                 message.uidvalidity = uidvalidity
                 messages.append(message)
@@ -678,7 +687,12 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
-        search_result = _search_professor_history_uids(client, professor_email, folder_role=folder_role)
+        search_result = _search_professor_history_uids(
+            identity,
+            client,
+            professor_email,
+            folder_role=folder_role,
+        )
         uids = search_result.uids
         if min_uid is not None:
             uids = [uid for uid in uids if uid > min_uid]
@@ -694,6 +708,7 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
             if max_fetch_batches is not None and fetch_command_count >= max_fetch_batches:
                 exhausted = True
                 break
+            acquire_history_imap_command_slot_sync(identity, "FETCH")
             command_count += 1
             fetch_command_count += 1
             fetched_items = fetch_message_headers_payloads_by_uid_batch(client, batch)
@@ -707,6 +722,7 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
                         break
                     fetch_command_count += 1
                     command_count += 1
+                    acquire_history_imap_command_slot_sync(identity, "FETCH")
                     payload = fetch_message_headers_payload_by_uid(client, uid)
                 if not payload:
                     exhausted = True
@@ -750,11 +766,13 @@ def _fetch_mailbox_messages_by_uid_sync(
         client = _open_logged_in_imap_client(identity, folder=folder)
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
         for batch in _chunked(uids, max(1, get_settings().imap_fetch_batch_size)):
+            acquire_history_imap_command_slot_sync(identity, "FETCH")
             fetched_items = fetch_message_headers_payloads_by_uid_batch(client, batch)
             payloads_by_uid = {uid: payload for uid, payload in fetched_items}
             for uid in batch:
                 payload = payloads_by_uid.get(uid)
                 if payload is None:
+                    acquire_history_imap_command_slot_sync(identity, "FETCH")
                     payload = fetch_message_headers_payload_by_uid(client, uid)
                 if not payload:
                     continue
@@ -762,14 +780,14 @@ def _fetch_mailbox_messages_by_uid_sync(
                 raw_headers = _extract_message_bytes_from_fetch_payload(payload)
                 if not raw_headers:
                     continue
-                text_parts = fetch_text_body_parts_by_uid(client, uid)
+                text_parts = _fetch_history_text_body_parts_by_uid(identity, client, uid)
                 if text_parts.body_text or text_parts.body_html:
                     body_text = strip_quoted_reply_text(text_parts.body_text or "")
                     body_html = strip_quoted_reply_html(text_parts.body_html or "") or None
                     if not body_text and body_html:
                         body_text = strip_quoted_reply_text(convert_html_to_text(body_html))
                 else:
-                    raw_body = _fetch_message_body_by_uid(client, uid)
+                    raw_body = _fetch_history_message_body_by_uid(identity, client, uid)
                     body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
                 message = _parse_fetched_headers(
                     uid,
@@ -803,26 +821,31 @@ def _fetch_professor_history_inbox_messages_sync(
 
 
 def _search_professor_history_uids(
+    identity: IdentityProfile,
     client: IMAP4 | IMAP4_SSL,
     professor_email: str,
     *,
     folder_role: str,
 ) -> _ImapHistorySearchResult:
     if folder_role == "inbox":
+        acquire_history_imap_command_slot_sync(identity, "SEARCH")
         return _ImapHistorySearchResult(
             uids=search_uids_from_sender(client, professor_email),
             command_count=1,
         )
     if folder_role == "sent":
+        acquire_history_imap_command_slot_sync(identity, "SEARCH")
         combined_result = search_uids_combined_sent_recipient(client, professor_email)
         if combined_result.ok:
             return _ImapHistorySearchResult(uids=combined_result.uids, command_count=1)
+        acquire_history_imap_command_slot_sync(identity, "SEARCH")
+        to_uids = search_uids_to_recipient(client, professor_email)
+        acquire_history_imap_command_slot_sync(identity, "SEARCH")
+        cc_uids = search_uids_cc_recipient(client, professor_email)
+        acquire_history_imap_command_slot_sync(identity, "SEARCH")
+        bcc_uids = search_uids_bcc_recipient(client, professor_email)
         return _ImapHistorySearchResult(
-            uids=sorted(
-                set(search_uids_to_recipient(client, professor_email))
-                | set(search_uids_cc_recipient(client, professor_email))
-                | set(search_uids_bcc_recipient(client, professor_email)),
-            ),
+            uids=sorted(set(to_uids) | set(cc_uids) | set(bcc_uids)),
             command_count=4,
         )
     raise MailRuntimeError(f"Unsupported IMAP folder_role: {folder_role}")
@@ -895,6 +918,103 @@ def _fetch_message_by_uid_sync(
         body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
     received_at = _extract_received_at_from_fetch_payload(header_payload)
     return _parse_fetched_headers(uid, raw_headers, body_text, body_html, received_at)
+
+
+def _fetch_history_message_by_uid_sync(
+    identity: IdentityProfile,
+    client: IMAP4 | IMAP4_SSL,
+    uid: int,
+) -> ImapFetchedMessage | None:
+    acquire_history_imap_command_slot_sync(identity, "FETCH")
+    header_payload = fetch_message_headers_payload_by_uid(client, uid)
+    raw_headers = _extract_message_bytes_from_fetch_payload(header_payload)
+    if not raw_headers:
+        return None
+    parsed_parts = _fetch_history_text_body_parts_by_uid(identity, client, uid)
+    if parsed_parts.body_text or parsed_parts.body_html:
+        body_text = strip_quoted_reply_text(parsed_parts.body_text or "")
+        body_html = strip_quoted_reply_html(parsed_parts.body_html or "") or None
+        if not body_text and body_html:
+            body_text = strip_quoted_reply_text(convert_html_to_text(body_html))
+    else:
+        raw_body = _fetch_history_message_body_by_uid(identity, client, uid)
+        body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
+    received_at = _extract_received_at_from_fetch_payload(header_payload)
+    return _parse_fetched_headers(uid, raw_headers, body_text, body_html, received_at)
+
+
+def _fetch_history_text_body_parts_by_uid(
+    identity: IdentityProfile,
+    client: IMAP4 | IMAP4_SSL,
+    uid: int,
+) -> ParsedTextParts:
+    parts = _fetch_history_text_part_sections_by_uid(identity, client, uid)
+    text_part: str | None = None
+    html_part: str | None = None
+    for part in parts:
+        if part.content_type == "text/plain" and text_part is not None:
+            continue
+        if part.content_type == "text/html" and html_part is not None:
+            continue
+        mime = _fetch_history_body_section(identity, client, uid, f"{part.section}.MIME")
+        body = _fetch_history_body_section(identity, client, uid, part.section)
+        if not body:
+            continue
+        message = BytesParser(policy=policy.default).parsebytes(mime + b"\r\n" + body)
+        content = _get_message_part_content(message)
+        if part.content_type == "text/plain" and text_part is None:
+            text_part = content
+        if part.content_type == "text/html" and html_part is None:
+            html_part = content
+    return ParsedTextParts(
+        body_text=text_part,
+        body_html=html_part,
+        has_attachments=False,
+        attachment_names=[],
+    )
+
+
+def _fetch_history_text_part_sections_by_uid(
+    identity: IdentityProfile,
+    client: IMAP4 | IMAP4_SSL,
+    uid: int,
+) -> list[TextBodyPart]:
+    acquire_history_imap_command_slot_sync(identity, "FETCH")
+    return fetch_text_part_sections_by_uid(client, uid)
+
+
+def _fetch_history_body_section(
+    identity: IdentityProfile,
+    client: IMAP4 | IMAP4_SSL,
+    uid: int,
+    section: str,
+) -> bytes:
+    acquire_history_imap_command_slot_sync(identity, "FETCH")
+    status, payload = client.uid("FETCH", str(uid), f"(BODY.PEEK[{section}])")
+    if status != "OK" or not payload:
+        return b""
+    return _extract_message_bytes_from_fetch_payload(list(payload))
+
+
+def _get_message_part_content(message: EmailMessage) -> str:
+    get_content = getattr(message, "get_content", None)
+    if callable(get_content):
+        try:
+            return str(get_content())
+        except Exception:
+            pass
+    payload = message.get_payload(decode=True) or b""
+    charset = message.get_content_charset() or "utf-8"
+    return payload.decode(charset, errors="replace")
+
+
+def _fetch_history_message_body_by_uid(
+    identity: IdentityProfile,
+    client: IMAP4 | IMAP4_SSL,
+    uid: int,
+) -> bytes:
+    acquire_history_imap_command_slot_sync(identity, "FETCH")
+    return _fetch_message_body_by_uid(client, uid)
 
 
 def _fetch_message_header_payload_by_uid(

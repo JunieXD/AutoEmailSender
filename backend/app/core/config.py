@@ -22,6 +22,8 @@ class Settings:
     imap_poll_interval_seconds: int
     imap_history_batch_size: int
     imap_history_command_budget_per_minute: int
+    imap_history_command_rate_per_minute: int
+    imap_history_command_burst: int
     imap_fetch_batch_size: int
     imap_sent_folder_failure_ttl_seconds: int
     imap_throttle_backoff_seconds: int
@@ -96,12 +98,17 @@ def get_settings() -> Settings:
         database_url=database_url,
         draft_worker_interval_seconds=_get_int_env("DRAFT_WORKER_INTERVAL_SECONDS", 10),
         dispatcher_interval_seconds=_get_int_env("DISPATCHER_INTERVAL_SECONDS", 30),
-        imap_poll_interval_seconds=_get_int_env("IMAP_POLL_INTERVAL_SECONDS", 300),
-        imap_history_batch_size=_get_int_env("IMAP_HISTORY_BATCH_SIZE", 50),
+        imap_poll_interval_seconds=_get_int_env("IMAP_POLL_INTERVAL_SECONDS", 60),
+        imap_history_batch_size=_get_int_env("IMAP_HISTORY_BATCH_SIZE", 200),
         imap_history_command_budget_per_minute=_get_int_env(
             "IMAP_HISTORY_COMMAND_BUDGET_PER_MINUTE",
-            20,
+            120,
         ),
+        imap_history_command_rate_per_minute=_get_int_env(
+            "IMAP_HISTORY_COMMAND_RATE_PER_MINUTE",
+            40,
+        ),
+        imap_history_command_burst=_get_int_env("IMAP_HISTORY_COMMAND_BURST", 3),
         imap_fetch_batch_size=_get_int_env("IMAP_FETCH_BATCH_SIZE", 20),
         imap_sent_folder_failure_ttl_seconds=_get_int_env(
             "IMAP_SENT_FOLDER_FAILURE_TTL_SECONDS",
