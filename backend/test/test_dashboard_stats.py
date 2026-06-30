@@ -504,7 +504,12 @@ class DashboardStatsTests(unittest.TestCase):
 
     def test_dashboard_service_counts_multiple_unbound_received_logs_once_per_professor(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
-        now = datetime.now(UTC)
+        reply_day = (datetime.now(UTC) - timedelta(days=1)).replace(
+            hour=12,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
 
         async def seed_duplicate_received_logs() -> str:
             async with self.session_factory() as session:
@@ -516,8 +521,8 @@ class DashboardStatsTests(unittest.TestCase):
                     research_direction="统计学习",
                     recent_papers=["Stats Paper"],
                     profile_url="https://example.edu/multi-reply",
-                    created_at=now - timedelta(days=1),
-                    updated_at=now - timedelta(days=1),
+                    created_at=reply_day - timedelta(days=1),
+                    updated_at=reply_day - timedelta(days=1),
                 )
                 session.add(professor)
                 await session.flush()
@@ -531,7 +536,7 @@ class DashboardStatsTests(unittest.TestCase):
                             direction=EmailDirection.RECEIVED.value,
                             subject="Re: 第一封",
                             content="第一封回复",
-                            created_at=now - timedelta(hours=4),
+                            created_at=reply_day - timedelta(hours=4),
                         ),
                         EmailLog(
                             email_task_id=None,
@@ -541,12 +546,12 @@ class DashboardStatsTests(unittest.TestCase):
                             direction=EmailDirection.RECEIVED.value,
                             subject="Re: 第二封",
                             content="第二封回复",
-                            created_at=now - timedelta(hours=2),
+                            created_at=reply_day - timedelta(hours=2),
                         ),
                     ],
                 )
                 await session.commit()
-                return now.date().isoformat()
+                return reply_day.date().isoformat()
 
         reply_date = self._run_async(seed_duplicate_received_logs())
 
