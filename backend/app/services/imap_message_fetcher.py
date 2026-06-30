@@ -22,6 +22,12 @@ class TextBodyPart:
     content_type: str
 
 
+@dataclass(frozen=True, slots=True)
+class ImapSearchResult:
+    ok: bool
+    uids: list[int]
+
+
 @dataclass(slots=True)
 class ImapFetchedMessage:
     uid: int
@@ -98,11 +104,28 @@ def fetch_message_headers_payload_by_uid(client: object, uid: int) -> list[objec
     status, payload = client.uid(
         "FETCH",
         str(uid),
-        "(BODY.PEEK[HEADER] INTERNALDATE)",
+        "(UID BODY.PEEK[HEADER] INTERNALDATE)",
     )
     if status != "OK" or not payload:
         return []
     return list(payload)
+
+
+def fetch_message_headers_payloads_by_uid_batch(
+    client: object,
+    uids: list[int],
+) -> list[tuple[int, list[object]]]:
+    if not uids:
+        return []
+    uid_set = ",".join(str(uid) for uid in uids)
+    status, payload = client.uid(
+        "FETCH",
+        uid_set,
+        "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+    )
+    if status != "OK" or not payload:
+        return []
+    return _split_header_fetch_payload_by_uid(list(payload), uids)
 
 
 def fetch_text_body_parts_by_uid(client: object, uid: int) -> ParsedTextParts:
@@ -147,7 +170,7 @@ def search_uids_since(client: object, last_seen_uid: int | None) -> list[int]:
     if status != "OK" or not payload:
         return []
     raw = payload[0] if payload else b""
-    return [int(item) for item in raw.split() if item.isdigit()]
+    return [int(item) for item in raw.split() if item.isdigit() and int(item) >= start_uid]
 
 
 def search_uids_from_sender(client: object, from_email: str) -> list[int]:
@@ -174,6 +197,15 @@ def search_uids_bcc_recipient(client: object, bcc_email: str) -> list[int]:
     return _parse_uid_search_payload(status, payload)
 
 
+def search_uids_combined_sent_recipient(client: object, recipient_email: str) -> ImapSearchResult:
+    escaped = _escape_imap_search_value(recipient_email)
+    criterion = f'(OR (OR (TO "{escaped}") (CC "{escaped}")) (BCC "{escaped}"))'
+    status, payload = client.uid("SEARCH", None, criterion)
+    if status != "OK":
+        return ImapSearchResult(ok=False, uids=[])
+    return ImapSearchResult(ok=True, uids=sorted(set(_parse_uid_search_payload(status, payload))))
+
+
 def _escape_imap_search_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', r"\"")
 
@@ -183,6 +215,31 @@ def _parse_uid_search_payload(status: str, payload: object) -> list[int]:
         return []
     raw = payload[0] if payload else b""
     return [int(item) for item in raw.split() if item.isdigit()]
+
+
+def _split_header_fetch_payload_by_uid(
+    payload: list[object],
+    requested_uids: list[int],
+) -> list[tuple[int, list[object]]]:
+    results: list[tuple[int, list[object]]] = []
+    requested_uid_set = set(requested_uids)
+    for item in payload:
+        if not isinstance(item, tuple):
+            continue
+        uid = _extract_uid_from_fetch_response(item[0])
+        if uid is None or uid not in requested_uid_set:
+            continue
+        results.append((uid, [item]))
+    return results
+
+
+def _extract_uid_from_fetch_response(response: object) -> int | None:
+    text = response.decode("utf-8", errors="ignore") if isinstance(response, (bytes, bytearray)) else str(response)
+    parts = text.replace("(", " ").replace(")", " ").split()
+    for index, part in enumerate(parts):
+        if part.upper() == "UID" and index + 1 < len(parts) and parts[index + 1].isdigit():
+            return int(parts[index + 1])
+    return None
 
 
 def _get_part_content(part: Message) -> str:

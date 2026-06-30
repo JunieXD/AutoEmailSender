@@ -20,6 +20,12 @@ class Settings:
     draft_worker_interval_seconds: int
     dispatcher_interval_seconds: int
     imap_poll_interval_seconds: int
+    imap_history_batch_size: int
+    imap_history_command_budget_per_minute: int
+    imap_fetch_batch_size: int
+    imap_sent_folder_failure_ttl_seconds: int
+    imap_throttle_backoff_seconds: int
+    imap_ensure_state_ttl_seconds: int
     match_analysis_job_worker_count: int
     match_analysis_job_interval_seconds: int
     match_analysis_job_item_concurrency: int
@@ -90,7 +96,19 @@ def get_settings() -> Settings:
         database_url=database_url,
         draft_worker_interval_seconds=_get_int_env("DRAFT_WORKER_INTERVAL_SECONDS", 10),
         dispatcher_interval_seconds=_get_int_env("DISPATCHER_INTERVAL_SECONDS", 30),
-        imap_poll_interval_seconds=_get_int_env("IMAP_POLL_INTERVAL_SECONDS", 60),
+        imap_poll_interval_seconds=_get_int_env("IMAP_POLL_INTERVAL_SECONDS", 300),
+        imap_history_batch_size=_get_int_env("IMAP_HISTORY_BATCH_SIZE", 50),
+        imap_history_command_budget_per_minute=_get_int_env(
+            "IMAP_HISTORY_COMMAND_BUDGET_PER_MINUTE",
+            20,
+        ),
+        imap_fetch_batch_size=_get_int_env("IMAP_FETCH_BATCH_SIZE", 20),
+        imap_sent_folder_failure_ttl_seconds=_get_int_env(
+            "IMAP_SENT_FOLDER_FAILURE_TTL_SECONDS",
+            3600,
+        ),
+        imap_throttle_backoff_seconds=_get_int_env("IMAP_THROTTLE_BACKOFF_SECONDS", 86400),
+        imap_ensure_state_ttl_seconds=_get_int_env("IMAP_ENSURE_STATE_TTL_SECONDS", 300),
         match_analysis_job_worker_count=_get_int_env("MATCH_ANALYSIS_JOB_WORKER_COUNT", 1),
         match_analysis_job_interval_seconds=_get_int_env("MATCH_ANALYSIS_JOB_INTERVAL_SECONDS", 10),
         match_analysis_job_item_concurrency=_get_int_env("MATCH_ANALYSIS_JOB_ITEM_CONCURRENCY", 5),

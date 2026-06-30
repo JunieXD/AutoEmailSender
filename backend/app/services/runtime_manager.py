@@ -154,6 +154,7 @@ class RuntimeManager:
                     "imap-poller",
                     settings.imap_poll_interval_seconds,
                     poll_for_replies_once,
+                    wait_after_processed=True,
                 ),
             ),
             asyncio.create_task(
@@ -186,6 +187,7 @@ class RuntimeManager:
         worker: Callable[[async_sessionmaker[AsyncSession]], Awaitable[int]],
         *,
         processed_jitter_seconds: tuple[float, float] | None = None,
+        wait_after_processed: bool = False,
     ) -> None:
         while not self._stopped.is_set():
             processed = 0
@@ -198,6 +200,12 @@ class RuntimeManager:
                 write_backend_worker_error_log(worker_name=worker_name, exc=exc)
 
             if processed > 0:
+                if wait_after_processed:
+                    try:
+                        await asyncio.wait_for(self._stopped.wait(), timeout=interval_seconds)
+                    except TimeoutError:
+                        continue
+                    continue
                 if processed_jitter_seconds is None:
                     continue
                 min_seconds, max_seconds = processed_jitter_seconds

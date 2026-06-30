@@ -61,6 +61,13 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
         serialized = " ".join(str(item) for item in client.commands)
         self.assertIn("11:*", serialized)
 
+    def test_search_incremental_filters_servers_that_echo_last_uid(self) -> None:
+        client = FakeImapClient(search_payload=b"10 11 12")
+
+        result = search_uids_since(client, 10)
+
+        self.assertEqual(result, [11, 12])
+
     def test_search_from_sender_uses_professor_email(self) -> None:
         client = FakeImapClient(search_payload=b"5")
 

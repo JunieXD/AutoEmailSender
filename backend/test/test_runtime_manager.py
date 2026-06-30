@@ -357,6 +357,56 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("processed_jitter_seconds", worker_calls["dispatcher"].kwargs)
 
         await manager.stop()
+
+    async def test_start_configures_imap_poller_to_wait_after_processing(self) -> None:
+        session = object()
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=None)
+        session_factory = Mock(return_value=session_context)
+        manager = RuntimeManager(session_factory)
+
+        async def idle_loop() -> None:
+            await asyncio.Event().wait()
+
+        def build_idle_loop(*args: object, **kwargs: object):
+            _ = args, kwargs
+            return idle_loop()
+
+        async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+            self.assertIs(session_arg, session)
+            return SimpleNamespace(
+                crawler_worker_count=1,
+                match_analysis_job_worker_count=1,
+                match_analysis_job_interval_seconds=10,
+            )
+
+        with patch("app.services.runtime_manager.get_settings") as mocked_get_settings:
+            mocked_get_settings.return_value = type(
+                "SettingsStub",
+                (),
+                {
+                    "dispatcher_interval_seconds": 30,
+                    "imap_poll_interval_seconds": 300,
+                    "crawler_worker_count": 1,
+                    "match_analysis_job_worker_count": 1,
+                    "match_analysis_job_interval_seconds": 10,
+                },
+            )()
+            with patch(
+                "app.services.runtime_manager._load_worker_runtime_settings",
+                new=fake_load_worker_runtime_settings,
+            ), patch.object(
+                manager,
+                "_loop",
+                new=Mock(side_effect=build_idle_loop),
+            ) as mocked_loop:
+                await manager.start()
+
+        worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
+        self.assertTrue(worker_calls["imap-poller"].kwargs["wait_after_processed"])
+
+        await manager.stop()
     async def test_worker_startup_settings_default_crawler_worker_count_is_eight(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "runtime-manager-defaults.db"

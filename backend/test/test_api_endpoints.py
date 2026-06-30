@@ -5186,7 +5186,13 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertNotIn("delivery_mode", payload["current_task"])
         self.assertEqual(payload["current_task"]["selected_material_ids"], [])
         self.assertGreaterEqual(len(payload["messages"]), 2)
-        self.assertEqual(payload["messages"][-1]["direction"], "sent")
+        sent_message = next(
+            message
+            for message in payload["messages"]
+            if message["rfc_message_id"] == "<manual-send@example.com>"
+        )
+        self.assertEqual(sent_message["direction"], "sent")
+        self.assertEqual(sent_message["subject"], "科研交流申请")
         mocked_send.assert_awaited_once()
 
     def test_generate_draft_requires_professor_research_direction(self) -> None:
@@ -7163,7 +7169,9 @@ class ApiEndpointTests(unittest.TestCase):
         identity_id = self._create_identity(with_imap=True)
         llm_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
-        professor_id = self.client.get("/api/professors").json()[0]["id"]
+        professor = self.client.get("/api/professors").json()[0]
+        professor_id = professor["id"]
+        professor_email = professor["email"]
         response = self.client.post(
             "/api/batch-tasks",
             json={
@@ -7222,7 +7230,7 @@ class ApiEndpointTests(unittest.TestCase):
             AsyncMock(
                 return_value=[
                     self._build_imap_fetched_message(
-                        from_email="sample.professor@example.edu",
+                        from_email=professor_email,
                         subject="Re: 套磁申请",
                         content="谢谢来信，我们可以进一步聊聊。",
                         message_id="<reply-1@example.com>",
@@ -7270,7 +7278,7 @@ class ApiEndpointTests(unittest.TestCase):
             AsyncMock(
                 return_value=[
                     self._build_imap_fetched_message(
-                        from_email="sample.professor@example.edu",
+                        from_email=professor_email,
                         subject="Re: 套磁申请",
                         content="谢谢来信，我们可以进一步聊聊。",
                         message_id="<reply-1@example.com>",

@@ -15,7 +15,10 @@ from app.services.mail_runtime import (
     fetch_incremental_mailbox_messages,
     fetch_incremental_mailbox_messages_with_uidvalidity,
     fetch_professor_history_inbox_messages,
+    fetch_professor_history_mailbox_message_headers,
+    fetch_professor_history_mailbox_message_headers_with_command_count,
     fetch_professor_history_mailbox_messages,
+    fetch_professor_history_mailbox_messages_by_uid,
     format_imap_login_error,
     _test_imap_connection_sync,
     parse_received_email,
@@ -36,6 +39,7 @@ class _FakeImapClient:
         logout_error: Exception | None = None,
         select_status_by_mailbox: dict[str, str] | None = None,
         select_data: list[bytes] | None = None,
+        search_status_by_criterion: dict[str, str] | None = None,
     ) -> None:
         self.select_status = select_status
         self.search_data = search_data
@@ -48,6 +52,7 @@ class _FakeImapClient:
         self.logout_error = logout_error
         self.select_status_by_mailbox = select_status_by_mailbox or {}
         self.select_data = select_data
+        self.search_status_by_criterion = search_status_by_criterion or {}
         self.search_called = False
         self.search_criteria: list[str] = []
         self.commands: list[str] = []
@@ -85,7 +90,10 @@ class _FakeImapClient:
             self.search_called = True
             self.search_criteria.append(str(args[-1]))
             criterion = str(args[-1])
-            return "OK", [self.search_data_by_criterion.get(criterion, self.search_data)]
+            return (
+                self.search_status_by_criterion.get(criterion, "OK"),
+                [self.search_data_by_criterion.get(criterion, self.search_data)],
+            )
         if command == "FETCH":
             uid = int(str(args[0]))
             query = str(args[-1])
@@ -206,6 +214,74 @@ class _MultipartFallbackImapClient(_FakeImapClient):
                 ),
             ]
         return "OK", []
+
+
+class _BatchHeaderImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "OK", [self.search_data]
+        if command != "FETCH":
+            return "NO", []
+
+        uid_set = str(args[0])
+        query = str(args[-1])
+        if uid_set == "1,2" and "HEADER" in query:
+            return "OK", [
+                (
+                    b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {128}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: first\r\n"
+                    b"Message-ID: <first@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n\r\n",
+                ),
+                (
+                    b'2 (UID 2 INTERNALDATE "08-May-2026 20:31:00 +0800" BODY[HEADER] {128}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: second\r\n"
+                    b"Message-ID: <second@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:01:00 +0800\r\n\r\n",
+                ),
+            ]
+        return super().uid(command, *args)
+
+
+class _MissingUidBatchHeaderImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "OK", [self.search_data]
+        if command != "FETCH":
+            return "NO", []
+
+        uid_set = str(args[0])
+        query = str(args[-1])
+        if uid_set == "1,2" and "HEADER" in query:
+            return "OK", [
+                (
+                    b'1 (UID 1 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {128}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: first\r\n"
+                    b"Message-ID: <first@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n\r\n",
+                ),
+                (
+                    b'2 (INTERNALDATE "08-May-2026 20:31:00 +0800" BODY[HEADER] {128}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: missing uid\r\n"
+                    b"Message-ID: <missing-uid@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:01:00 +0800\r\n\r\n",
+                ),
+            ]
+        return super().uid(command, *args)
 
 
 def _build_identity() -> IdentityProfile:
@@ -456,8 +532,7 @@ class MailRuntimeTest(unittest.TestCase):
     def test_sent_history_searches_to_and_cc_and_deduplicates_uids(self) -> None:
         client = _FakeImapClient(
             search_data_by_criterion={
-                '(TO "teacher@example.com")': b"7 10",
-                '(CC "teacher@example.com")': b"8 9",
+                '(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))': b"7 8 9 10",
             },
             headers_by_uid={
                 7: (
@@ -504,13 +579,92 @@ class MailRuntimeTest(unittest.TestCase):
 
         self.assertEqual(
             client.search_criteria,
-            ['(TO "teacher@example.com")', '(CC "teacher@example.com")', '(BCC "teacher@example.com")'],
+            ['(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'],
         )
         self.assertIn("select:Sent", client.commands)
         self.assertEqual([message.uid for message in messages], [7, 8, 9, 10])
 
-    def test_sent_history_searches_bcc_recipients(self) -> None:
+    def test_sent_history_search_falls_back_when_combined_or_search_fails(self) -> None:
+        combined = '(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'
         client = _FakeImapClient(
+            search_status_by_criterion={combined: "NO"},
+            search_data_by_criterion={
+                '(TO "teacher@example.com")': b"7",
+                '(CC "teacher@example.com")': b"8",
+                '(BCC "teacher@example.com")': b"9",
+            },
+            headers_by_uid={
+                7: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: first\r\n"
+                    b"Message-ID: <sent-7@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n\r\n"
+                ),
+                8: (
+                    b"From: sender@example.com\r\n"
+                    b"Cc: teacher@example.com\r\n"
+                    b"Subject: copy\r\n"
+                    b"Message-ID: <sent-8@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:01:00 +0800\r\n\r\n"
+                ),
+                9: (
+                    b"From: sender@example.com\r\n"
+                    b"Bcc: teacher@example.com\r\n"
+                    b"Subject: hidden\r\n"
+                    b"Message-ID: <sent-9@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:02:00 +0800\r\n\r\n"
+                ),
+            },
+        )
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages(
+                    _build_identity(),
+                    "Sent",
+                    "teacher@example.com",
+                    folder_role="sent",
+                ),
+            )
+
+        self.assertEqual(
+            client.search_criteria,
+            [
+                combined,
+                '(TO "teacher@example.com")',
+                '(CC "teacher@example.com")',
+                '(BCC "teacher@example.com")',
+            ],
+        )
+        self.assertEqual([message.uid for message in messages], [7, 8, 9])
+
+    def test_sent_history_does_not_fallback_when_combined_search_succeeds_empty(self) -> None:
+        combined = '(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'
+        client = _FakeImapClient(
+            search_data_by_criterion={
+                combined: b"",
+                '(TO "teacher@example.com")': b"7",
+            },
+        )
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages(
+                    _build_identity(),
+                    "Sent",
+                    "teacher@example.com",
+                    folder_role="sent",
+                ),
+            )
+
+        self.assertEqual(client.search_criteria, [combined])
+        self.assertEqual(messages, [])
+
+    def test_sent_history_searches_bcc_recipients(self) -> None:
+        combined = '(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'
+        client = _FakeImapClient(
+            search_status_by_criterion={combined: "NO"},
             search_data_by_criterion={
                 '(TO "teacher@example.com")': b"",
                 '(CC "teacher@example.com")': b"",
@@ -539,7 +693,12 @@ class MailRuntimeTest(unittest.TestCase):
 
         self.assertEqual(
             client.search_criteria,
-            ['(TO "teacher@example.com")', '(CC "teacher@example.com")', '(BCC "teacher@example.com")'],
+            [
+                combined,
+                '(TO "teacher@example.com")',
+                '(CC "teacher@example.com")',
+                '(BCC "teacher@example.com")',
+            ],
         )
         self.assertEqual([message.uid for message in messages], [11])
         self.assertEqual(messages[0].bcc_emails, ["teacher@example.com"])
@@ -588,6 +747,75 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertIn("select:INBOX", client.commands)
         self.assertEqual([message.uid for message in messages], [1])
 
+    def test_professor_history_header_fetch_batches_uids_without_fetching_body(self) -> None:
+        client = _BatchHeaderImapClient(search_data=b"1 2")
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_message_headers(
+                    _build_identity(),
+                    "INBOX",
+                    "teacher@example.com",
+                    folder_role="inbox",
+                ),
+            )
+
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('1,2'", serialized_commands)
+        self.assertNotIn("BODYSTRUCTURE", serialized_commands)
+        self.assertNotIn("BODY.PEEK[TEXT]", serialized_commands)
+        self.assertEqual([message.message_id for message in messages], ["<first@example.com>", "<second@example.com>"])
+
+    def test_professor_history_header_fetch_falls_back_for_batch_items_without_uid(self) -> None:
+        client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_message_headers(
+                    _build_identity(),
+                    "INBOX",
+                    "teacher@example.com",
+                    folder_role="inbox",
+                ),
+            )
+
+        self.assertEqual([message.uid for message in messages], [1, 2])
+        self.assertEqual([message.message_id for message in messages], ["<first@example.com>", "<reply-from-sender@example.com>"])
+
+    def test_professor_history_header_fetch_falls_back_when_batch_payload_omits_uid(self) -> None:
+        client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            result = asyncio.run(
+                fetch_professor_history_mailbox_message_headers_with_command_count(
+                    _build_identity(),
+                    "INBOX",
+                    "teacher@example.com",
+                    folder_role="inbox",
+                ),
+            )
+
+        self.assertEqual(
+            [message.message_id for message in result.messages],
+            ["<first@example.com>", "<reply-from-sender@example.com>"],
+        )
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('1,2'", serialized_commands)
+        self.assertIn("uid:FETCH:('2'", serialized_commands)
+        self.assertEqual(result.command_count, 3)
+
     def test_incremental_fetch_decodes_base64_text_part_without_fetching_attachment(self) -> None:
         client = _MultipartBase64ImapClient(search_data=b"1")
 
@@ -620,6 +848,30 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
         self.assertNotIn("ignored attachment", messages[0].body_text)
         self.assertNotIn("RFC822", serialized_commands)
+
+    def test_history_body_fetch_by_uid_falls_back_when_bodystructure_finds_no_text(self) -> None:
+        client = _MultipartFallbackImapClient(search_data=b"1")
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            messages = asyncio.run(
+                fetch_professor_history_mailbox_messages_by_uid(
+                    _build_identity(),
+                    "INBOX",
+                    [1],
+                ),
+            )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].body_text, "\u4f60\u597d")
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('1'", serialized_commands)
+        self.assertIn("BODYSTRUCTURE", serialized_commands)
+        self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
+        self.assertNotIn("ignored attachment", messages[0].body_text)
 
     def test_parse_received_email_strips_quoted_original_message_from_plain_text(self) -> None:
         raw_message = (

@@ -6,7 +6,7 @@ from app.core.time import utc_now
 
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -59,6 +59,26 @@ class ImapMailboxSyncState(Base):
         nullable=True,
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovered_sent_folder: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sent_folder_discovered_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    sent_folder_discovery_failed_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    sent_folder_discovery_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    throttle_paused_until: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    throttle_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_professor_state_ensure_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    professor_state_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,
@@ -75,6 +95,13 @@ class ImapMailboxSyncState(Base):
 class ImapProfessorSyncState(Base):
     __tablename__ = "imap_professor_sync_states"
     __table_args__ = (
+        Index(
+            "ix_imap_professor_sync_identity_status_updated",
+            "identity_id",
+            "historical_scan_status",
+            "updated_at",
+            "id",
+        ),
         UniqueConstraint(
             "identity_id",
             "professor_id",

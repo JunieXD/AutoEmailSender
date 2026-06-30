@@ -12,6 +12,7 @@ from app.models import (
     ImapProfessorHistoricalScanStatus,
     ImapProfessorSyncState,
 )
+from app.core.config import get_settings
 
 
 class ImapSyncModelsTestCase(unittest.TestCase):
@@ -55,6 +56,47 @@ class ImapSyncModelsTestCase(unittest.TestCase):
                 return saved.folder_role, saved.folder
 
         self.assertEqual(self._run_async(scenario()), ("sent", "Sent"))
+
+    def test_mailbox_state_tracks_sent_folder_cache_and_throttle(self) -> None:
+        async def scenario() -> tuple[str | None, str | None, str | None]:
+            async with self.session_factory() as session:
+                session.add(
+                    ImapMailboxSyncState(
+                        identity_id=1,
+                        folder_role="sent",
+                        folder="Sent",
+                        discovered_sent_folder="Sent Messages",
+                        sent_folder_discovery_error="not found",
+                        throttle_reason="Fetch volume limit exceed",
+                    ),
+                )
+                await session.commit()
+                saved = await session.scalar(select(ImapMailboxSyncState))
+                return (
+                    saved.discovered_sent_folder,
+                    saved.sent_folder_discovery_error,
+                    saved.throttle_reason,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            ("Sent Messages", "not found", "Fetch volume limit exceed"),
+        )
+
+    def test_mailbox_state_tracks_professor_ensure_fingerprint(self) -> None:
+        async def scenario() -> str | None:
+            async with self.session_factory() as session:
+                session.add(
+                    ImapMailboxSyncState(
+                        identity_id=1,
+                        professor_state_fingerprint="abc123",
+                    ),
+                )
+                await session.commit()
+                saved = await session.scalar(select(ImapMailboxSyncState))
+                return saved.professor_state_fingerprint
+
+        self.assertEqual(self._run_async(scenario()), "abc123")
 
     def test_professor_state_defaults_to_pending(self) -> None:
         async def scenario() -> tuple[str, str]:
@@ -112,3 +154,27 @@ class ImapSyncModelsTestCase(unittest.TestCase):
             "folder_role",
             Base.metadata.tables["imap_professor_sync_states"].columns,
         )
+        self.assertIn(
+            "discovered_sent_folder",
+            Base.metadata.tables["imap_mailbox_sync_states"].columns,
+        )
+        self.assertIn(
+            "throttle_paused_until",
+            Base.metadata.tables["imap_mailbox_sync_states"].columns,
+        )
+        professor_indexes = {
+            index.name
+            for index in Base.metadata.tables["imap_professor_sync_states"].indexes
+        }
+        self.assertIn("ix_imap_professor_sync_identity_status_updated", professor_indexes)
+
+    def test_imap_efficiency_settings_defaults_are_conservative(self) -> None:
+        settings = get_settings()
+
+        self.assertEqual(settings.imap_poll_interval_seconds, 300)
+        self.assertEqual(settings.imap_history_batch_size, 50)
+        self.assertEqual(settings.imap_history_command_budget_per_minute, 20)
+        self.assertEqual(settings.imap_fetch_batch_size, 20)
+        self.assertEqual(settings.imap_sent_folder_failure_ttl_seconds, 3600)
+        self.assertEqual(settings.imap_throttle_backoff_seconds, 86400)
+        self.assertEqual(settings.imap_ensure_state_ttl_seconds, 300)

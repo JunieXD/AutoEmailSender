@@ -24,6 +24,7 @@ from app.schemas.identity import (
     IdentityTemplateImportResult,
 )
 from app.services.file_storage import delete_file
+from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache_in_session
 from app.services.mail_runtime import test_imap_connection, test_smtp_connection
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_templates import (
@@ -86,6 +87,7 @@ async def update_identity(
 ) -> IdentityProfileRead:
     identity = await _get_identity(session, identity_id)
     data = _normalize_identity_payload(payload)
+    old_imap_signature = _identity_imap_cache_signature(identity)
     await _ensure_identity_email_available(
         session,
         str(data["email_address"]),
@@ -96,6 +98,8 @@ async def update_identity(
 
     for key, value in data.items():
         setattr(identity, key, value)
+    if _imap_cache_signature_from_data(data) != old_imap_signature:
+        await clear_identity_sent_folder_discovery_cache_in_session(session, identity_id)
     identity.updated_at = utc_now()
 
     try:
@@ -373,6 +377,26 @@ def _normalize_identity_payload(
     return data
 
 
+def _identity_imap_cache_signature(identity: IdentityProfile) -> tuple[object, ...]:
+    return (
+        identity.email_address,
+        identity.imap_host,
+        identity.imap_port,
+        identity.imap_username,
+        identity.imap_password,
+    )
+
+
+def _imap_cache_signature_from_data(data: dict[str, object]) -> tuple[object, ...]:
+    return (
+        data.get("email_address"),
+        data.get("imap_host"),
+        data.get("imap_port"),
+        data.get("imap_username"),
+        data.get("imap_password"),
+    )
+
+
 def _infer_imap_host(smtp_host: str) -> str:
     if not smtp_host:
         return ""
@@ -391,5 +415,4 @@ def _clean_required_text(value: object) -> str:
     if not cleaned:
         raise HTTPException(status_code=400, detail="请填写配置名称和发件人姓名")
     return cleaned
-
 
