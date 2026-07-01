@@ -705,13 +705,74 @@ describe("TasksPage crawler jobs tab", () => {
     );
   });
 
-  it("allows reviewing saved candidates from a canceled crawl job", async () => {
+  it("asks users to resume review before enriching or approving canceled crawl candidates", async () => {
     const canceledJob = {
       ...runningJob,
       status: "canceled",
     } as const;
     vi.mocked(listCrawlJobs).mockResolvedValue([canceledJob]);
     vi.mocked(getCrawlJob).mockResolvedValue(canceledJob);
+    vi.mocked(listCrawlCandidates).mockResolvedValue([
+      {
+        id: 21,
+        job_id: 7,
+        professor_id: null,
+        name: "张教授",
+        email: "zhang@example.edu",
+        title: null,
+        university: "示例大学",
+        school: "计算机学院",
+        department: null,
+        research_direction: null,
+        recent_papers: [],
+        profile_url: null,
+        source_url: "https://example.edu/faculty",
+        confidence: 0.86,
+        field_confidence: null,
+        evidence: null,
+        review_status: "pending",
+        created_at: "2026-04-26T10:02:00Z",
+        updated_at: "2026-04-26T10:02:00Z",
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    expect(
+      within(dialog).getByText(
+        "请先将任务转入待审核状态，再补全或审核导入候选导师。",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("张教授")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("checkbox", {
+        name: "选择候选导师 张教授",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: "补全缺失信息" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: "审核通过并导入" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText("先转入待审核后才可补全或审核导入"),
+    ).toBeInTheDocument();
+    expect(approveCrawlCandidates).not.toHaveBeenCalled();
+    expect(enrichCrawlCandidates).not.toHaveBeenCalled();
+  });
+
+  it("allows reviewing saved candidates after a canceled crawl job is resumed for review", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review",
+    } as const;
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
     vi.mocked(listCrawlCandidates).mockResolvedValue([
       {
         id: 21,

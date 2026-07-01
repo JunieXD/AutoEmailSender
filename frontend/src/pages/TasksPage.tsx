@@ -985,11 +985,12 @@ export const TasksPage = () => {
     [crawlCandidatePage, crawlJobCandidates],
   );
   const selectedCrawlJobId = selectedCrawlJob?.id ?? null;
-const selectedCrawlJobCanReview =
-  selectedCrawlJob?.status === "needs_review" ||
-  selectedCrawlJob?.status === "partially_completed" ||
-  selectedCrawlJob?.status === "canceled" ||
-  selectedCrawlJob?.status === "failed";
+  const selectedCrawlJobCanReview =
+    selectedCrawlJob?.status === "needs_review" ||
+    selectedCrawlJob?.status === "partially_completed";
+  const selectedCrawlJobNeedsReviewResume =
+    selectedCrawlJob?.status === "canceled" ||
+    selectedCrawlJob?.status === "failed";
   const reviewableCrawlCandidateIds = useMemo(
     () => getReviewableCandidateIds(crawlJobCandidates),
     [crawlJobCandidates],
@@ -4092,6 +4093,11 @@ const selectedCrawlJobCanReview =
                         </div>
                       </div>
                     </div>
+                  ) : selectedCrawlJobNeedsReviewResume &&
+                    reviewableCrawlCandidateIds.length > 0 ? (
+                    <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
+                      请先将任务转入待审核状态，再补全或审核导入候选导师。
+                    </div>
                   ) : null}
                   {crawlJobCandidates.length > 0 ? (
                     visibleCrawlJobCandidates.map((candidate) => (
@@ -4127,6 +4133,12 @@ const selectedCrawlJobCanReview =
                               <p className="mt-1 text-sm text-stone-500">
                                 {candidate.email ?? "暂无邮箱（可尝试进行补全）"}
                               </p>
+                              {selectedCrawlJobNeedsReviewResume &&
+                              candidate.review_status === "pending" ? (
+                                <p className="mt-2 text-xs text-amber-700">
+                                  先转入待审核后才可补全或审核导入
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-wrap items-center gap-2">
