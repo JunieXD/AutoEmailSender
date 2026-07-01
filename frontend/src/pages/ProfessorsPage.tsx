@@ -15,7 +15,10 @@ import clsx from "clsx";
 import { useSearchParams } from "react-router-dom";
 import {
   Archive,
+  ArrowDown,
+  ArrowUp,
   Bot,
+  Check,
   Download,
   ExternalLink,
   FileSpreadsheet,
@@ -101,8 +104,10 @@ import {
   buildBulkTagConfirmDescription,
 } from "@/features/professor-management/client/bulkTagConfirmCopy";
 import {
+  DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
   sortManagementProfessors,
+  type ProfessorManagementSortDirection,
   type ProfessorManagementSortKey,
 } from "@/features/professor-management/client/sortManagementProfessors";
 
@@ -140,6 +145,10 @@ const archiveFilterLabels: Record<ArchiveFilter, string> = {
   all: "全部",
 };
 
+const professorManagementSortKeyValues = new Set<ProfessorManagementSortKey>(
+  PROFESSOR_MANAGEMENT_SORT_OPTIONS.map((option) => option.value),
+);
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -151,12 +160,57 @@ const readStringArray = (value: unknown): string[] =>
 const isArchiveFilter = (value: unknown): value is ArchiveFilter =>
   value === "active" || value === "archived" || value === "all";
 
+const isProfessorManagementSortKey = (
+  value: unknown,
+): value is ProfessorManagementSortKey =>
+  typeof value === "string" &&
+  professorManagementSortKeyValues.has(value as ProfessorManagementSortKey);
+
+const isProfessorManagementSortDirection = (
+  value: unknown,
+): value is ProfessorManagementSortDirection =>
+  value === "asc" || value === "desc";
+
+const readStoredManagementSortDirections = (
+  value: unknown,
+): Record<ProfessorManagementSortKey, ProfessorManagementSortDirection> => {
+  const defaults = { ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS };
+  if (!isRecord(value)) {
+    return defaults;
+  }
+
+  PROFESSOR_MANAGEMENT_SORT_OPTIONS.forEach((option) => {
+    const direction = value[option.value];
+    if (isProfessorManagementSortDirection(direction)) {
+      defaults[option.value] = direction;
+    }
+  });
+  return defaults;
+};
+
+const getManagementSortOptionLabel = (sortKey: ProfessorManagementSortKey) =>
+  PROFESSOR_MANAGEMENT_SORT_OPTIONS.find((option) => option.value === sortKey)
+    ?.label ?? "";
+
+const getManagementSortDirectionSymbol = (
+  direction: ProfessorManagementSortDirection,
+) => (direction === "desc" ? "↓" : "↑");
+
+const getManagementSortTriggerLabel = (
+  sortKey: ProfessorManagementSortKey,
+  direction: ProfessorManagementSortDirection,
+) =>
+  `${getManagementSortOptionLabel(sortKey)} ${getManagementSortDirectionSymbol(
+    direction,
+  )}`;
+
 const readStoredProfessorManagementState = () => {
   const defaults = {
     archiveFilter: "active" as ArchiveFilter,
     filters: createDefaultManagementFilters(),
     advancedFiltersOpen: false,
     sortKey: "latest" as ProfessorManagementSortKey,
+    sortDirections: { ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS },
     currentPage: 1,
   };
 
@@ -193,13 +247,18 @@ const readStoredProfessorManagementState = () => {
     nextFilters.titles = readStringArray(filters?.titles);
     nextFilters.tagIds = readStringArray(filters?.tagIds);
 
-    const nextSortKey =
-      parsedValue.sortKey === "latest" ||
-      parsedValue.sortKey === "updatedAtDesc" ||
-      parsedValue.sortKey === "nameAsc" ||
-      parsedValue.sortKey === "universityAsc"
-        ? parsedValue.sortKey
-        : defaults.sortKey;
+    const nextSortKey = isProfessorManagementSortKey(parsedValue.sortKey)
+      ? parsedValue.sortKey
+      : defaults.sortKey;
+    const nextSortDirections = readStoredManagementSortDirections(
+      parsedValue.sortDirections,
+    );
+    if (
+      isProfessorManagementSortDirection(parsedValue.sortDirection) &&
+      !isRecord(parsedValue.sortDirections)
+    ) {
+      nextSortDirections[nextSortKey] = parsedValue.sortDirection;
+    }
 
     return {
       archiveFilter: isArchiveFilter(parsedValue.archiveFilter)
@@ -211,6 +270,7 @@ const readStoredProfessorManagementState = () => {
           ? parsedValue.advancedFiltersOpen
           : defaults.advancedFiltersOpen,
       sortKey: nextSortKey,
+      sortDirections: nextSortDirections,
       currentPage:
         typeof parsedValue.currentPage === "number" &&
         Number.isFinite(parsedValue.currentPage) &&
@@ -229,6 +289,10 @@ const writeStoredProfessorManagementState = (
     filters: ProfessorManagementFilterState;
     advancedFiltersOpen: boolean;
     sortKey: ProfessorManagementSortKey;
+    sortDirections: Record<
+      ProfessorManagementSortKey,
+      ProfessorManagementSortDirection
+    >;
     currentPage: number;
   },
 ) => {
@@ -648,6 +712,9 @@ export const ProfessorsPage = () => {
   const [sortKey, setSortKey] = useState<ProfessorManagementSortKey>(
     storedState.sortKey,
   );
+  const [sortDirections, setSortDirections] = useState<
+    Record<ProfessorManagementSortKey, ProfessorManagementSortDirection>
+  >(storedState.sortDirections);
   const [currentPage, setCurrentPage] = useState(storedState.currentPage);
   const [pageSize, setPageSize] = useState(() =>
     getStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY),
@@ -694,6 +761,8 @@ export const ProfessorsPage = () => {
     setCurrentPage(1);
     setSelectedIds(new Set());
     setAdvancedFiltersOpen(false);
+    setSortKey("latest");
+    setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
     setFilters({ ...createDefaultManagementFilters(), keyword: linkedKeyword });
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous);
@@ -774,9 +843,17 @@ export const ProfessorsPage = () => {
       filters,
       advancedFiltersOpen,
       sortKey,
+      sortDirections,
       currentPage,
     });
-  }, [archiveFilter, advancedFiltersOpen, currentPage, filters, sortKey]);
+  }, [
+    archiveFilter,
+    advancedFiltersOpen,
+    currentPage,
+    filters,
+    sortDirections,
+    sortKey,
+  ]);
 
   const filterOptions = useMemo(
     () =>
@@ -808,9 +885,15 @@ export const ProfessorsPage = () => {
     () => filterManagementProfessors(professors, filters),
     [filters, professors],
   );
+  const currentSortDirection = sortDirections[sortKey];
   const visibleProfessors = useMemo(
-    () => sortManagementProfessors(filteredProfessors, sortKey),
-    [filteredProfessors, sortKey],
+    () =>
+      sortManagementProfessors(
+        filteredProfessors,
+        sortKey,
+        currentSortDirection,
+      ),
+    [currentSortDirection, filteredProfessors, sortKey],
   );
 
   const updateFilters = (nextFilters: Partial<ProfessorManagementFilterState>) => {
@@ -868,6 +951,7 @@ export const ProfessorsPage = () => {
     setCurrentPage(1);
     setFilters(createDefaultManagementFilters());
     setSortKey("latest");
+    setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
   };
 
   const totalPages = getTotalPages(visibleProfessors.length, pageSize);
@@ -1725,6 +1809,10 @@ export const ProfessorsPage = () => {
                 <NativeSelectField
                   ariaLabel="排序"
                   value={sortKey}
+                  selectedLabel={getManagementSortTriggerLabel(
+                    sortKey,
+                    currentSortDirection,
+                  )}
                   onChange={(event) => {
                     setCurrentPage(1);
                     setSortKey(
@@ -1733,6 +1821,61 @@ export const ProfessorsPage = () => {
                   }}
                   wrapperClassName="min-w-0 flex-1"
                   shellClassName="!min-h-0 h-8 border-0 bg-stone-50 px-3 py-0 shadow-none"
+                  renderOption={(option, { selected, selectOption, closeMenu }) => {
+                    const optionKey = option.value as ProfessorManagementSortKey;
+                    const direction = sortDirections[optionKey];
+
+                    return (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          aria-pressed={selected}
+                          aria-label={option.label}
+                          disabled={option.disabled}
+                          onClick={selectOption}
+                          className={clsx(
+                            "flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 transition",
+                            option.disabled
+                              ? "cursor-not-allowed text-stone-300"
+                              : selected
+                                ? "bg-primary text-white shadow-sm shadow-primary/25"
+                                : "text-stone-700 hover:bg-stone-100/90 hover:text-stone-900",
+                          )}
+                        >
+                          <span className="truncate">{option.label}</span>
+                          {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`切换${option.label}排序方向`}
+                          disabled={option.disabled}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setCurrentPage(1);
+                            setSortDirections((previous) => ({
+                              ...previous,
+                              [optionKey]:
+                                previous[optionKey] === "desc" ? "asc" : "desc",
+                            }));
+                            setSortKey(optionKey);
+                            closeMenu();
+                          }}
+                          className={clsx(
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
+                            selected
+                              ? "border-primary/20 bg-primary/10 text-primary"
+                              : "border-stone-200 text-stone-500 hover:border-stone-300 hover:bg-stone-100 hover:text-stone-800",
+                          )}
+                        >
+                          {direction === "desc" ? (
+                            <ArrowDown className="h-4 w-4" />
+                          ) : (
+                            <ArrowUp className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    );
+                  }}
                 >
                   {PROFESSOR_MANAGEMENT_SORT_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>

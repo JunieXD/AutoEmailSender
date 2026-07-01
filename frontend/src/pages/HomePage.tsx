@@ -47,8 +47,8 @@ import {
   buildBulkTagConfirmDescription,
 } from "@/features/professor-management/client/bulkTagConfirmCopy";
 import {
+  DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS,
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
-  isProfessorDashboardTimeSortKey,
   sortDashboardProfessors,
   type ProfessorDashboardSortDirection,
   type ProfessorDashboardSortKey,
@@ -95,18 +95,6 @@ import type {
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
-type ProfessorDashboardTimeSortKey = Extract<
-  ProfessorDashboardSortKey,
-  "lastSentAt" | "lastRepliedAt"
->;
-
-const DEFAULT_TIME_SORT_DIRECTIONS: Record<
-  ProfessorDashboardTimeSortKey,
-  ProfessorDashboardSortDirection
-> = {
-  lastSentAt: "desc",
-  lastRepliedAt: "desc",
-};
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -227,9 +215,6 @@ const getSortTriggerLabel = (
   direction: ProfessorDashboardSortDirection,
 ) => {
   const label = getSortOptionLabel(sortKey);
-  if (!isProfessorDashboardTimeSortKey(sortKey)) {
-    return label;
-  }
   return `${label} ${getTimeSortDirectionSymbol(direction)}`;
 };
 
@@ -332,9 +317,9 @@ export const HomePage = () => {
   );
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [sortKey, setSortKey] = useState<ProfessorDashboardSortKey>("latest");
-  const [timeSortDirections, setTimeSortDirections] = useState<
-    Record<ProfessorDashboardTimeSortKey, ProfessorDashboardSortDirection>
-  >(DEFAULT_TIME_SORT_DIRECTIONS);
+  const [sortDirections, setSortDirections] = useState<
+    Record<ProfessorDashboardSortKey, ProfessorDashboardSortDirection>
+  >(() => ({ ...DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS }));
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(() =>
     getStoredPageSize(HOME_PAGE_SIZE_STORAGE_KEY),
@@ -826,17 +811,15 @@ export const HomePage = () => {
   const resetAllFilters = () => {
     setFilters(createDefaultDashboardFilters());
     setSortKey("latest");
-    setTimeSortDirections({ ...DEFAULT_TIME_SORT_DIRECTIONS });
+    setSortDirections({ ...DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS });
   };
 
-  const currentTimeSortDirection = isProfessorDashboardTimeSortKey(sortKey)
-    ? timeSortDirections[sortKey]
-    : "desc";
+  const currentSortDirection = sortDirections[sortKey];
   const filteredProfessors = filterDashboardProfessors(professors, filters);
   const visibleProfessors = sortDashboardProfessors(
     filteredProfessors,
     sortKey,
-    currentTimeSortDirection,
+    currentSortDirection,
   );
   const totalPages = getTotalPages(visibleProfessors.length, pageSize);
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -884,7 +867,7 @@ export const HomePage = () => {
       prev &&
       prev.filters === filters &&
       prev.sortKey === sortKey &&
-      prev.direction === currentTimeSortDirection &&
+      prev.direction === currentSortDirection &&
       prev.requestKey === professorsRequestKey
     ) {
       return;
@@ -892,11 +875,11 @@ export const HomePage = () => {
     prevPageResetDepsRef.current = {
       filters,
       sortKey,
-      direction: currentTimeSortDirection,
+      direction: currentSortDirection,
       requestKey: professorsRequestKey,
     };
     setCurrentPage(1);
-  }, [filters, sortKey, currentTimeSortDirection, professorsRequestKey]);
+  }, [filters, sortKey, currentSortDirection, professorsRequestKey]);
 
   const handlePageSizeChange = (nextPageSize: number) => {
     setPageSize(nextPageSize);
@@ -1224,7 +1207,7 @@ export const HomePage = () => {
               <NativeSelectField
                 ariaLabel="排序"
                 value={sortKey}
-                selectedLabel={getSortTriggerLabel(sortKey, currentTimeSortDirection)}
+                selectedLabel={getSortTriggerLabel(sortKey, currentSortDirection)}
                 onChange={(event) =>
                   setSortKey(event.target.value as ProfessorDashboardSortKey)
                 }
@@ -1232,31 +1215,7 @@ export const HomePage = () => {
                 shellClassName="!min-h-0 h-8 border-0 bg-stone-50 px-3 py-0 shadow-none"
                 renderOption={(option, { selected, selectOption, closeMenu }) => {
                   const optionKey = option.value as ProfessorDashboardSortKey;
-                  const isTimeOption = isProfessorDashboardTimeSortKey(optionKey);
-
-                  if (!isTimeOption) {
-                    return (
-                      <button
-                        type="button"
-                        aria-pressed={selected}
-                        disabled={option.disabled}
-                        onClick={selectOption}
-                        className={clsx(
-                          "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 transition",
-                          option.disabled
-                            ? "cursor-not-allowed text-stone-300"
-                            : selected
-                              ? "bg-primary text-white shadow-sm shadow-primary/25"
-                              : "text-stone-700 hover:bg-stone-100/90 hover:text-stone-900",
-                        )}
-                      >
-                        <span className="truncate">{option.label}</span>
-                        {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
-                      </button>
-                    );
-                  }
-
-                  const direction = timeSortDirections[optionKey];
+                  const direction = sortDirections[optionKey];
 
                   return (
                     <div className="flex items-center gap-1">
@@ -1284,7 +1243,7 @@ export const HomePage = () => {
                         disabled={option.disabled}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setTimeSortDirections((previous) => ({
+                          setSortDirections((previous) => ({
                             ...previous,
                             [optionKey]:
                               previous[optionKey] === "desc" ? "asc" : "desc",

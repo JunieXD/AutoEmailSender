@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorDashboardItemDTO } from "@/types";
 import {
+  PROFESSOR_DASHBOARD_SORT_OPTIONS,
   sortDashboardProfessors,
   type ProfessorDashboardSortDirection,
   type ProfessorDashboardSortKey,
@@ -38,6 +39,17 @@ const namesFor = (
   );
 
 describe("sortDashboardProfessors", () => {
+  it("uses neutral field labels because direction is selected separately", () => {
+    expect(PROFESSOR_DASHBOARD_SORT_OPTIONS).toEqual([
+      { value: "latest", label: "导入时间" },
+      { value: "matchScoreDesc", label: "匹配度" },
+      { value: "sentCountDesc", label: "发送次数" },
+      { value: "nameAsc", label: "姓名" },
+      { value: "lastSentAt", label: "发送时间" },
+      { value: "lastRepliedAt", label: "回复时间" },
+    ]);
+  });
+
   it("keeps backend order for latest import", () => {
     const professors = [
       buildProfessor({ id: 1, name: "First" }),
@@ -46,6 +58,20 @@ describe("sortDashboardProfessors", () => {
     ];
 
     expect(namesFor("latest", professors)).toEqual(["First", "Second", "Third"]);
+  });
+
+  it("reverses backend order for latest import ascending", () => {
+    const professors = [
+      buildProfessor({ id: 1, name: "First" }),
+      buildProfessor({ id: 2, name: "Second" }),
+      buildProfessor({ id: 3, name: "Third" }),
+    ];
+
+    expect(namesFor("latest", professors, "asc")).toEqual([
+      "Third",
+      "Second",
+      "First",
+    ]);
   });
 
   it("sorts by match score descending and places null scores last", () => {
@@ -62,6 +88,20 @@ describe("sortDashboardProfessors", () => {
     ]);
   });
 
+  it("sorts by match score ascending and places null scores last", () => {
+    const professors = [
+      buildProfessor({ id: 1, name: "Unscored", match_score: null }),
+      buildProfessor({ id: 2, name: "Strong", match_score: 92 }),
+      buildProfessor({ id: 3, name: "Medium", match_score: 76 }),
+    ];
+
+    expect(namesFor("matchScoreDesc", professors, "asc")).toEqual([
+      "Medium",
+      "Strong",
+      "Unscored",
+    ]);
+  });
+
   it("sorts by sent count descending", () => {
     const professors = [
       buildProfessor({ id: 1, name: "None", sent_count: 0 }),
@@ -72,6 +112,20 @@ describe("sortDashboardProfessors", () => {
     expect(namesFor("sentCountDesc", professors)).toEqual(["Many", "One", "None"]);
   });
 
+  it("sorts by sent count ascending", () => {
+    const professors = [
+      buildProfessor({ id: 1, name: "None", sent_count: 0 }),
+      buildProfessor({ id: 2, name: "Many", sent_count: 4 }),
+      buildProfessor({ id: 3, name: "One", sent_count: 1 }),
+    ];
+
+    expect(namesFor("sentCountDesc", professors, "asc")).toEqual([
+      "None",
+      "One",
+      "Many",
+    ]);
+  });
+
   it("sorts names ascending", () => {
     const professors = [
       buildProfessor({ id: 1, name: "Zhang" }),
@@ -80,6 +134,20 @@ describe("sortDashboardProfessors", () => {
     ];
 
     expect(namesFor("nameAsc", professors)).toEqual(["Alice", "Bob", "Zhang"]);
+  });
+
+  it("sorts names descending", () => {
+    const professors = [
+      buildProfessor({ id: 1, name: "Zhang" }),
+      buildProfessor({ id: 2, name: "Alice" }),
+      buildProfessor({ id: 3, name: "Bob" }),
+    ];
+
+    expect(namesFor("nameAsc", professors, "desc")).toEqual([
+      "Zhang",
+      "Bob",
+      "Alice",
+    ]);
   });
 
   it("sorts by sent time descending and keeps missing times last", () => {

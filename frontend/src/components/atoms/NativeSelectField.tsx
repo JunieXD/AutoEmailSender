@@ -228,6 +228,7 @@ export const NativeSelectField = ({
     >
       <div
         className={clsx(
+          "flex flex-col gap-1 py-1",
           (shouldScroll || menuPlacement === "floating-up") &&
             "max-h-60 overflow-y-auto pr-0.5",
         )}

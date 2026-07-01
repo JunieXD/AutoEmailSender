@@ -475,6 +475,56 @@ describe("selection controls", () => {
     );
   });
 
+  it("switches dashboard score sort direction inside the sort menu", async () => {
+    vi.mocked(listProfessors).mockResolvedValue([
+      {
+        ...createDashboardProfessor(351, "Strong Mentor"),
+        match_score: 92,
+      },
+      {
+        ...createDashboardProfessor(352, "Growing Mentor"),
+        match_score: 68,
+      },
+      createDashboardProfessor(353, "Unscored Mentor"),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "排序" }));
+    fireEvent.click(await screen.findByRole("button", { name: "匹配度" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("匹配度 ↓");
+    });
+    expect(
+      screen.getAllByTestId(/dashboard-professor-row-/).map((row) => row.dataset.testid),
+    ).toEqual([
+      "dashboard-professor-row-351",
+      "dashboard-professor-row-352",
+      "dashboard-professor-row-353",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "排序" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "切换匹配度排序方向" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("匹配度 ↑");
+    });
+    expect(
+      screen.getAllByTestId(/dashboard-professor-row-/).map((row) => row.dataset.testid),
+    ).toEqual([
+      "dashboard-professor-row-352",
+      "dashboard-professor-row-351",
+      "dashboard-professor-row-353",
+    ]);
+  });
+
   it("shows a stable management skeleton before the first professor list load resolves", async () => {
     vi.mocked(listProfessorsForManagement).mockImplementation(
       () => new Promise<ProfessorManagementItemDTO[]>(() => {}),
@@ -565,6 +615,58 @@ describe("selection controls", () => {
     expect(
       screen.getByRole("button", { name: "高级筛选" }),
     ).toBeInTheDocument();
+  });
+
+  it("switches management name sort direction inside the sort menu", async () => {
+    vi.mocked(listProfessorsForManagement).mockResolvedValue([
+      {
+        ...managementProfessors[0],
+        id: 561,
+        name: "Carol",
+      },
+      {
+        ...managementProfessors[1],
+        id: 562,
+        name: "Alice",
+      },
+      {
+        ...managementProfessors[2],
+        id: 563,
+        name: "Bob",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "排序" }));
+    fireEvent.click(await screen.findByRole("button", { name: "姓名" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("姓名 ↑");
+    });
+    expect(
+      screen
+        .getAllByTestId("management-professor-name-line")
+        .map((row) => row.textContent),
+    ).toEqual(["Alice", "Bob", "Carol"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "排序" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "切换姓名排序方向" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent("姓名 ↓");
+    });
+    expect(
+      screen
+        .getAllByTestId("management-professor-name-line")
+        .map((row) => row.textContent),
+    ).toEqual(["Carol", "Bob", "Alice"]);
   });
 
   it("restores management filters after remount", async () => {

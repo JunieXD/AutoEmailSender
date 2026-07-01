@@ -15,17 +15,54 @@ export const isProfessorDashboardTimeSortKey = (
 ): sortKey is "lastSentAt" | "lastRepliedAt" =>
   sortKey === "lastSentAt" || sortKey === "lastRepliedAt";
 
+export const DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS: Record<
+  ProfessorDashboardSortKey,
+  ProfessorDashboardSortDirection
+> = {
+  latest: "desc",
+  matchScoreDesc: "desc",
+  sentCountDesc: "desc",
+  nameAsc: "asc",
+  lastSentAt: "desc",
+  lastRepliedAt: "desc",
+};
+
 export const PROFESSOR_DASHBOARD_SORT_OPTIONS: Array<{
   value: ProfessorDashboardSortKey;
   label: string;
 }> = [
-  { value: "latest", label: "最新导入" },
-  { value: "matchScoreDesc", label: "匹配度高到低" },
-  { value: "sentCountDesc", label: "发送次数高到低" },
-  { value: "nameAsc", label: "姓名 A-Z" },
+  { value: "latest", label: "导入时间" },
+  { value: "matchScoreDesc", label: "匹配度" },
+  { value: "sentCountDesc", label: "发送次数" },
+  { value: "nameAsc", label: "姓名" },
   { value: "lastSentAt", label: "发送时间" },
   { value: "lastRepliedAt", label: "回复时间" },
 ];
+
+const getSortDirection = (
+  sortKey: ProfessorDashboardSortKey,
+  direction: ProfessorDashboardSortDirection | undefined,
+) => direction ?? DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS[sortKey];
+
+const directionMultiplier = (direction: ProfessorDashboardSortDirection) =>
+  direction === "asc" ? 1 : -1;
+
+const compareOptionalNumber = (
+  left: number | null | undefined,
+  right: number | null | undefined,
+  direction: ProfessorDashboardSortDirection,
+) => {
+  if (left == null && right == null) {
+    return 0;
+  }
+  if (left == null) {
+    return 1;
+  }
+  if (right == null) {
+    return -1;
+  }
+  return (left - right) * directionMultiplier(direction);
+};
 
 const getTimeSortValue = (
   professor: ProfessorDashboardItemDTO,
@@ -77,27 +114,36 @@ const sortByOptionalTime = (
 export const sortDashboardProfessors = (
   professors: ProfessorDashboardItemDTO[],
   sortKey: ProfessorDashboardSortKey,
-  direction: ProfessorDashboardSortDirection = "desc",
+  direction?: ProfessorDashboardSortDirection,
 ): ProfessorDashboardItemDTO[] => {
   const sorted = [...professors];
+  const resolvedDirection = getSortDirection(sortKey, direction);
 
   if (isProfessorDashboardTimeSortKey(sortKey)) {
-    return sortByOptionalTime(sorted, sortKey, direction);
+    return sortByOptionalTime(sorted, sortKey, resolvedDirection);
   }
 
   if (sortKey === "matchScoreDesc") {
-    return sorted.sort(
-      (left, right) => (right.match_score ?? -1) - (left.match_score ?? -1),
+    return sorted.sort((left, right) =>
+      compareOptionalNumber(left.match_score, right.match_score, resolvedDirection),
     );
   }
 
   if (sortKey === "sentCountDesc") {
-    return sorted.sort((left, right) => right.sent_count - left.sent_count);
+    return sorted.sort(
+      (left, right) =>
+        (left.sent_count - right.sent_count) *
+        directionMultiplier(resolvedDirection),
+    );
   }
 
   if (sortKey === "nameAsc") {
-    return sorted.sort((left, right) => left.name.localeCompare(right.name));
+    return sorted.sort(
+      (left, right) =>
+        left.name.localeCompare(right.name, "zh-CN") *
+        directionMultiplier(resolvedDirection),
+    );
   }
 
-  return sorted;
+  return resolvedDirection === "asc" ? sorted.reverse() : sorted;
 };
