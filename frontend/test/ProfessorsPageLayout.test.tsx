@@ -190,7 +190,7 @@ describe("ProfessorsPage layout", () => {
       "操作",
     ];
 
-    const header = screen.getByTestId("professor-table-header");
+    const header = await screen.findByTestId("professor-table-header");
     expect(header).toHaveClass(
       "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]",
     );
