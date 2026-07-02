@@ -90,9 +90,6 @@ type IdentityFormState = {
   outreach_template_subject: string;
   outreach_template_body_text: string;
   outreach_template_body_html: string;
-  daily_send_limit: string;
-  send_interval_min: string;
-  send_interval_max: string;
   same_domain_cooldown_minutes: string;
   is_default: boolean;
 };
@@ -177,9 +174,6 @@ const createEmptyIdentityForm = (): IdentityFormState => ({
   outreach_template_subject: "",
   outreach_template_body_text: "",
   outreach_template_body_html: "",
-  daily_send_limit: "",
-  send_interval_min: "",
-  send_interval_max: "",
   same_domain_cooldown_minutes: "",
   is_default: false,
 });
@@ -260,18 +254,6 @@ const toIdentityForm = (identity: IdentityDTO): IdentityFormState => {
     outreach_template_subject: identity.outreach_template_subject ?? "",
     outreach_template_body_text: identity.outreach_template_body_text ?? "",
     outreach_template_body_html: identity.outreach_template_body_html ?? "",
-    daily_send_limit:
-      identity.daily_send_limit === null
-        ? ""
-        : String(identity.daily_send_limit),
-    send_interval_min:
-      identity.send_interval_min === null
-        ? ""
-        : String(identity.send_interval_min),
-    send_interval_max:
-      identity.send_interval_max === null
-        ? ""
-        : String(identity.send_interval_max),
     same_domain_cooldown_minutes:
       identity.same_domain_cooldown_minutes === null
         ? ""
@@ -310,15 +292,6 @@ const toIdentityPayload = (form: IdentityFormState): IdentityPayload => {
       form.outreach_template_body_text.trim() || null,
     outreach_template_body_html: hasVisibleTemplateBody(form)
       ? form.outreach_template_body_html.trim() || null
-      : null,
-    daily_send_limit: form.daily_send_limit
-      ? Number(form.daily_send_limit)
-      : null,
-    send_interval_min: form.send_interval_min
-      ? Number(form.send_interval_min)
-      : null,
-    send_interval_max: form.send_interval_max
-      ? Number(form.send_interval_max)
       : null,
     same_domain_cooldown_minutes: form.same_domain_cooldown_minutes
       ? Number(form.same_domain_cooldown_minutes)

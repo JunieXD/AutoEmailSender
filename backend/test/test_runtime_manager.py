@@ -355,7 +355,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
         self.assertEqual(worker_calls["crawler-worker-1"].kwargs["processed_jitter_seconds"], (2, 10))
-        self.assertNotIn("processed_jitter_seconds", worker_calls["dispatcher"].kwargs)
+        self.assertEqual(worker_calls["dispatcher"].kwargs["processed_jitter_seconds"], (5, 5))
 
         await manager.stop()
 

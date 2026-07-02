@@ -65,7 +65,6 @@ from app.services import llm_runtime
 from app.services.task_runtime import (
     approve_and_send_task,
     approve_draft_task,
-    dispatch_email_task,
     expire_batch_task_if_needed,
     regenerate_task_draft,
 )
@@ -229,7 +228,6 @@ async def create_batch_task(
     session.add(batch_task)
     await session.flush()
 
-    created_email_tasks: list[EmailTask] = []
     for index, professor in enumerate(professors):
         generated_subject = None
         generated_body_text = None
@@ -276,10 +274,8 @@ async def create_batch_task(
             selected_material_ids=selected_material_ids,
         )
         session.add(email_task)
-        created_email_tasks.append(email_task)
 
     await session.flush()
-    created_email_task_ids = [email_task.id for email_task in created_email_tasks]
     await record_operation_log(
         session,
         category="email",
@@ -294,13 +290,6 @@ async def create_batch_task(
         },
     )
     await session.commit()
-    if (
-        outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE
-        and payload.schedule_type == "immediate"
-    ):
-        session_factory = get_session_factory()
-        for email_task_id in created_email_task_ids:
-            await dispatch_email_task(session_factory, email_task_id)
     refreshed_batch_task = await _load_batch_task_for_serialization(session, batch_task.id)
     if refreshed_batch_task is not None and sync_batch_task_completion(refreshed_batch_task):
         await session.commit()

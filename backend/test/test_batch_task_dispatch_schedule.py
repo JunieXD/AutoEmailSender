@@ -150,6 +150,126 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
 
+    def test_dispatch_due_tasks_reserves_identity_send_window(self) -> None:
+        first_task_id, second_task_id = self._run_async(
+            self._create_batch_task_with_multiple_approved_tasks(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+                task_count=2,
+            ),
+        )
+        now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    limit=10,
+                    now=now,
+                    local_timezone=UTC,
+                ),
+            )
+
+        statuses = {
+            first_task_id: self._run_async(self._get_task_status(first_task_id)),
+            second_task_id: self._run_async(self._get_task_status(second_task_id)),
+        }
+        self.assertEqual(processed, 1)
+        self.assertEqual(list(statuses.values()).count(EmailTaskStatus.SENT.value), 1)
+        self.assertEqual(list(statuses.values()).count(EmailTaskStatus.APPROVED.value), 1)
+        next_send_after = self._run_async(self._get_identity_next_send_after_by_task_id(first_task_id))
+        self.assertIsNotNone(next_send_after)
+        assert next_send_after is not None
+        self.assertGreaterEqual(next_send_after, now + timedelta(seconds=1))
+        self.assertLessEqual(next_send_after, now + timedelta(seconds=5))
+        mocked_send.assert_awaited_once()
+
+    def test_dispatch_due_tasks_does_not_starve_later_identities(self) -> None:
+        first_identity_task_ids, second_identity_task_id = self._run_async(
+            self._create_many_batch_tasks_for_one_identity_then_one_for_another(),
+        )
+        now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    limit=10,
+                    now=now,
+                    local_timezone=UTC,
+                ),
+            )
+
+        first_identity_statuses = [
+            self._run_async(self._get_task_status(task_id))
+            for task_id in first_identity_task_ids
+        ]
+        self.assertEqual(processed, 2)
+        self.assertEqual(first_identity_statuses.count(EmailTaskStatus.SENT.value), 1)
+        self.assertEqual(self._run_async(self._get_task_status(second_identity_task_id)), EmailTaskStatus.SENT.value)
+        self.assertEqual(mocked_send.await_count, 2)
+
+    def test_dispatch_due_tasks_skips_identity_before_next_send_after(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+        self._run_async(
+            self._set_identity_next_send_after_by_task_id(
+                task_id,
+                now + timedelta(seconds=2),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    limit=10,
+                    now=now,
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(processed, 0)
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+        mocked_send.assert_not_awaited()
+
+    def test_dispatch_due_tasks_can_count_identity_window_deferral_for_runtime_wakeup(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+        self._run_async(
+            self._set_identity_next_send_after_by_task_id(
+                task_id,
+                now + timedelta(seconds=2),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    limit=10,
+                    now=now,
+                    local_timezone=UTC,
+                    count_identity_window_deferred=True,
+                ),
+            )
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+        mocked_send.assert_not_awaited()
+
     def test_dispatch_due_tasks_skips_batch_task_before_scheduled_at_inside_window(self) -> None:
         task_id = self._run_async(
             self._create_batch_task_with_approved_task(
@@ -361,6 +481,42 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
 
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         self.assertIsNone(self._run_async(self._get_task_scheduled_at(task_id)))
+        mocked_send.assert_awaited_once()
+
+    def test_approve_and_send_bypasses_identity_send_window(self) -> None:
+        scheduled_date = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+        task_id = self._run_async(
+            self._create_batch_task_with_review_required_task(
+                scheduled_dates=[scheduled_date],
+                emails_per_window=20,
+            ),
+        )
+        now = datetime.now(UTC)
+        self._run_async(
+            self._set_identity_next_send_after_by_task_id(
+                task_id,
+                now + timedelta(seconds=3),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            self._run_async(
+                approve_and_send_task(
+                    self.session_factory,
+                    task_id,
+                    EmailTaskApprovalRequest(
+                        subject="申请交流",
+                        body_text="老师您好。",
+                        body_html=None,
+                        selected_material_ids=[],
+                    ),
+                ),
+            )
+
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
 
     def test_dispatch_email_task_skips_task_no_longer_dispatchable(self) -> None:
@@ -983,6 +1139,102 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             await session.commit()
             return tuple(task.id for task in tasks)
 
+    async def _create_many_batch_tasks_for_one_identity_then_one_for_another(self) -> tuple[tuple[int, ...], int]:
+        async with self.session_factory() as session:
+            llm_profile = LLMProfile(
+                name=f"默认模型-two-identities-{datetime.now(UTC).timestamp()}",
+                provider="openai",
+                api_base_url="https://api.example.com/v1",
+                api_key="sk-test-key",
+                model_name="gpt-test",
+                is_default=True,
+            )
+            first_identity = IdentityProfile(
+                name="第一身份",
+                profile_name="第一身份",
+                sender_name="王同学",
+                email_address=f"sender-first-{datetime.now(UTC).timestamp()}@example.com",
+                smtp_host="smtp.example.com",
+                smtp_port=465,
+                smtp_username="first@example.com",
+                smtp_password="secret",
+                default_language="zh-CN",
+                outreach_generation_mode="template",
+                outreach_template_subject="申请与{{name}}老师交流",
+                outreach_template_body_text="老师您好，我是{{sender_name}}。",
+                is_default=True,
+            )
+            second_identity = IdentityProfile(
+                name="第二身份",
+                profile_name="第二身份",
+                sender_name="李同学",
+                email_address=f"sender-second-{datetime.now(UTC).timestamp()}@example.com",
+                smtp_host="smtp.example.com",
+                smtp_port=465,
+                smtp_username="second@example.com",
+                smtp_password="secret",
+                default_language="zh-CN",
+                outreach_generation_mode="template",
+                outreach_template_subject="申请与{{name}}老师交流",
+                outreach_template_body_text="老师您好，我是{{sender_name}}。",
+            )
+            first_batch_task = BatchTask(
+                identity=first_identity,
+                llm_profile=llm_profile,
+                name="第一身份立即批量任务",
+                schedule_type="immediate",
+                status=BatchTaskStatus.RUNNING.value,
+                target_count=10,
+            )
+            second_batch_task = BatchTask(
+                identity=second_identity,
+                llm_profile=llm_profile,
+                name="第二身份立即批量任务",
+                schedule_type="immediate",
+                status=BatchTaskStatus.RUNNING.value,
+                target_count=1,
+            )
+            first_tasks = [
+                self._build_email_task(
+                    batch_task=first_batch_task,
+                    identity=first_identity,
+                    llm_profile=llm_profile,
+                    professor=Professor(
+                        name=f"第一身份导师{index}",
+                        email=f"first-identity-{index}-{datetime.now(UTC).timestamp()}@example.edu",
+                        title="Professor",
+                        university="Example University",
+                        school="School of AI",
+                        department="Computer Science",
+                        research_direction="Large language models",
+                        recent_papers=[],
+                    ),
+                    status=EmailTaskStatus.APPROVED.value,
+                    approved_at=datetime(2026, 5, 3, 9, index, tzinfo=UTC),
+                )
+                for index in range(10)
+            ]
+            second_task = self._build_email_task(
+                batch_task=second_batch_task,
+                identity=second_identity,
+                llm_profile=llm_profile,
+                professor=Professor(
+                    name="第二身份导师",
+                    email=f"second-identity-{datetime.now(UTC).timestamp()}@example.edu",
+                    title="Professor",
+                    university="Example University",
+                    school="School of AI",
+                    department="Computer Science",
+                    research_direction="Large language models",
+                    recent_papers=[],
+                ),
+                status=EmailTaskStatus.APPROVED.value,
+                approved_at=datetime(2026, 5, 3, 10, 0, tzinfo=UTC),
+            )
+            session.add_all([first_batch_task, second_batch_task, *first_tasks, second_task])
+            await session.commit()
+            return tuple(task.id for task in first_tasks), second_task.id
+
     async def _create_batch_task_with_review_required_task(
         self,
         *,
@@ -1276,6 +1528,27 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task = await session.get(EmailTask, task_id)
             assert task is not None
             return task.scheduled_at
+
+    async def _get_identity_next_send_after_by_task_id(self, task_id: int) -> datetime | None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            identity = await session.get(IdentityProfile, task.identity_id)
+            assert identity is not None
+            return identity.next_send_after
+
+    async def _set_identity_next_send_after_by_task_id(
+        self,
+        task_id: int,
+        next_send_after: datetime,
+    ) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            identity = await session.get(IdentityProfile, task.identity_id)
+            assert identity is not None
+            identity.next_send_after = next_send_after
+            await session.commit()
 
     async def _get_batch_task_status_by_email_task_id(self, task_id: int) -> str:
         async with self.session_factory() as session:

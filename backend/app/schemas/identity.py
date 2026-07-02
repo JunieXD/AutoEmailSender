@@ -51,9 +51,6 @@ class IdentityProfileBase(BaseModel):
     outreach_template_body_text: str | None = None
     outreach_template_body_html: str | None = None
     match_threshold: int | None = None
-    daily_send_limit: int | None = None
-    send_interval_min: int | None = None
-    send_interval_max: int | None = None
     same_domain_cooldown_minutes: int | None = None
     is_default: bool = False
 
@@ -75,6 +72,9 @@ class IdentityProfileRead(IdentityProfileBase):
     current_primary_material_id: int | None
     current_primary_material: IdentityMaterialRead | None
     materials: list[IdentityMaterialRead]
+    daily_send_limit: int | None
+    send_interval_min: int | None
+    send_interval_max: int | None
     created_at: datetime
     updated_at: datetime
 

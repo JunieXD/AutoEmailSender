@@ -958,6 +958,36 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         self.assertEqual(version, HEAD_REVISION)
 
+    def test_identity_next_send_after_upgrade_skips_existing_column(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "identity_next_send_after_drift.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "20260630_imap_efficiency_guards")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            connection.execute("ALTER TABLE identity_profiles ADD COLUMN next_send_after DATETIME")
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(identity_profiles)").fetchall()
+            }
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertIn("next_send_after", columns)
+        self.assertEqual(version, HEAD_REVISION)
+
     def test_existing_crawl_jobs_are_backfilled_as_v1_when_runtime_v2_is_added(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "runtime_v2_legacy_jobs.db"
         env = os.environ.copy()

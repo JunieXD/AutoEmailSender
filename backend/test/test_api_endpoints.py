@@ -157,6 +157,48 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(body["profile_name"], "旧身份名称")
         self.assertEqual(body["sender_name"], "旧身份名称")
 
+    def test_identity_update_ignores_internal_send_limit_fields(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE identity_profiles
+                SET daily_send_limit = ?, send_interval_min = ?, send_interval_max = ?
+                WHERE id = ?
+                """,
+                (10, 2, 6, identity_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        payload = self._build_identity_payload(
+            with_imap=False,
+            outreach_template_subject="申请与{{name}}老师交流",
+            outreach_template_body_text="老师您好，我是{{sender_name}}。",
+        )
+        payload["daily_send_limit"] = 999
+        payload["send_interval_min"] = 99
+        payload["send_interval_max"] = 100
+
+        response = self.client.put(f"/api/identities/{identity_id}", json=payload)
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT daily_send_limit, send_interval_min, send_interval_max
+                FROM identity_profiles
+                WHERE id = ?
+                """,
+                (identity_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, (10, 2, 6))
+
     def test_identity_create_rejects_duplicate_email_address(self) -> None:
         payload = self._build_identity_payload(
             with_imap=False,
@@ -2293,9 +2335,6 @@ class ApiEndpointTests(unittest.TestCase):
                 "outreach_template_body_text": "{{name}}老师您好，我是{{sender_name}}。",
                 "outreach_template_body_html": "<p>{{name}}老师您好，我是{{sender_name}}。</p>",
                 "match_threshold": None,
-                "daily_send_limit": None,
-                "send_interval_min": None,
-                "send_interval_max": None,
                 "same_domain_cooldown_minutes": None,
                 "is_default": True,
             },
@@ -3640,6 +3679,58 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("information extraction", refreshed_row[0])
         provider_payload = self._latest_email_log_provider_payload()
         self.assertEqual(provider_payload["usage"]["cached_tokens"], 32)
+
+    def test_immediate_template_batch_task_queues_without_synchronous_send(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        update_response = self.client.put(
+            f"/api/identities/{identity_id}",
+            json=self._build_identity_payload(
+                with_imap=False,
+                outreach_generation_mode="template",
+                outreach_template_subject="申请与{{name}}老师交流",
+                outreach_template_body_text="老师您好，我是{{sender_name}}。",
+            ),
+        )
+        self.assertEqual(update_response.status_code, 200, msg=update_response.text)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="queued-template@example.edu")
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(
+                return_value=self._build_send_result(
+                    message_id="<queued-template@example.com>",
+                    provider_payload={},
+                ),
+            ),
+        ) as mocked_send:
+            response = self.client.post(
+                "/api/batch-tasks",
+                json={
+                    "identity_id": identity_id,
+                    "llm_profile_id": llm_id,
+                    "name": "立即模板批量入队",
+                    "professor_ids": [professor_id],
+                    "schedule_type": "immediate",
+                    "window_start_time": None,
+                    "window_end_time": None,
+                    "emails_per_window": None,
+                    "primary_material_id": None,
+                    "email_subject": "申请与{{name}}老师交流",
+                    "email_body": "老师您好，我是{{sender_name}}。",
+                    "selected_material_ids": None,
+                    "outreach_generation_mode": "template",
+                    "outreach_template_subject": "申请与{{name}}老师交流",
+                    "outreach_template_body_text": "老师您好，我是{{sender_name}}。",
+                    "outreach_template_body_html": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        mocked_send.assert_not_awaited()
+        batch_task_id = response.json()["id"]
+        item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
+        self.assertEqual(item["status"], "approved")
 
     def test_app_startup_auto_upgrades_stale_database(self) -> None:
         stale_dir = tempfile.TemporaryDirectory()
@@ -7791,7 +7882,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.json()[0]["cancellation_reason"], "schedule_expired")
         self.assertEqual(task_id, items.json()[0]["id"])
 
-    def test_template_immediate_batch_task_sends_items_on_create(self) -> None:
+    def test_template_immediate_batch_task_queues_items_on_create(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_response = self.client.post(
@@ -7845,12 +7936,12 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201, msg=response.text)
         task_id = response.json()["id"]
-        self.assertEqual(response.json()["sent_count"], 1)
-        mocked_send.assert_awaited_once()
+        self.assertEqual(response.json()["sent_count"], 0)
+        mocked_send.assert_not_awaited()
 
         items = self.client.get(f"/api/batch-tasks/{task_id}/items")
         self.assertEqual(items.status_code, 200, msg=items.text)
-        self.assertEqual(items.json()[0]["status"], "sent")
+        self.assertEqual(items.json()[0]["status"], "approved")
 
     def test_batch_task_items_show_professor_delivery_progress(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -8951,9 +9042,6 @@ class ApiEndpointTests(unittest.TestCase):
             "outreach_template_body_text": outreach_template_body_text,
             "outreach_template_body_html": outreach_template_body_html,
             "match_threshold": None,
-            "daily_send_limit": None,
-            "send_interval_min": None,
-            "send_interval_max": None,
             "same_domain_cooldown_minutes": None,
             "is_default": True,
         }

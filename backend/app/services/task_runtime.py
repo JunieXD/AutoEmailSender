@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -105,6 +106,8 @@ DISPATCHABLE_EMAIL_TASK_STATUSES = (
 
 STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
 SCHEDULED_BATCH_SEND_GRACE_PERIOD = timedelta(minutes=2)
+DEFAULT_SEND_INTERVAL_MIN_SECONDS = 1
+DEFAULT_SEND_INTERVAL_MAX_SECONDS = 5
 INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
 WORKSPACE_DRAFT_REWRITE_TIMEOUT = timedelta(minutes=5)
 WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS = int(WORKSPACE_DRAFT_REWRITE_TIMEOUT.total_seconds())
@@ -186,6 +189,7 @@ async def dispatch_due_tasks_once(
     *,
     now: datetime | None = None,
     local_timezone: tzinfo | None = None,
+    count_identity_window_deferred: bool = False,
 ) -> int:
     now_utc, local_now = _resolve_dispatch_clocks(now, local_timezone)
     if limit <= 0:
@@ -197,14 +201,19 @@ async def dispatch_due_tasks_once(
         await _expire_overdue_scheduled_batch_tasks(session, local_now)
         sent_counts: dict[int, int] = {}
         task_ids: list[int] = []
-        page_size = max(limit, 10)
+        selected_identity_ids: set[int] = set()
+        deferred_identity_ids: set[int] = set()
+        page_size = max(limit * 5, 10)
         offset = 0
         while len(task_ids) < limit:
             candidates = list(
                 (
                     await session.execute(
                         select(EmailTask)
-                        .options(selectinload(EmailTask.batch_task).selectinload(BatchTask.email_tasks))
+                        .options(
+                            selectinload(EmailTask.batch_task).selectinload(BatchTask.email_tasks),
+                            selectinload(EmailTask.identity),
+                        )
                         .join(BatchTask, EmailTask.batch_task_id == BatchTask.id, isouter=True)
                         .where(
                             EmailTask.status.in_(
@@ -245,6 +254,11 @@ async def dispatch_due_tasks_once(
                 batch_task = task.batch_task
                 if not _batch_task_allows_dispatch(task, local_now):
                     continue
+                if task.identity_id in selected_identity_ids:
+                    continue
+                if _is_identity_send_window_deferred(task.identity, now_utc):
+                    deferred_identity_ids.add(task.identity_id)
+                    continue
                 if (
                     batch_task is not None
                     and batch_task.schedule_type == "scheduled"
@@ -258,14 +272,17 @@ async def dispatch_due_tasks_once(
                         continue
                     sent_counts[batch_task.id] = count + 1
                 task_ids.append(task.id)
+                selected_identity_ids.add(task.identity_id)
 
             if len(candidates) < page_size:
                 break
 
     processed = 0
     for task_id in task_ids:
-        await dispatch_email_task(session_factory, task_id)
-        processed += 1
+        if await dispatch_email_task(session_factory, task_id, now=now_utc):
+            processed += 1
+    if count_identity_window_deferred:
+        processed += len(deferred_identity_ids)
     return processed
 
 
@@ -302,6 +319,53 @@ def _resolve_dispatch_clocks(
     now_utc = as_utc_aware(now) if now is not None else utc_now()
     resolved_timezone = local_timezone or get_local_now().tzinfo or UTC
     return now_utc, now_utc.astimezone(resolved_timezone)
+
+
+def _resolve_identity_send_interval_seconds(identity: IdentityProfile) -> tuple[int, int]:
+    min_seconds = identity.send_interval_min or DEFAULT_SEND_INTERVAL_MIN_SECONDS
+    max_seconds = identity.send_interval_max or DEFAULT_SEND_INTERVAL_MAX_SECONDS
+    if min_seconds < 1:
+        min_seconds = DEFAULT_SEND_INTERVAL_MIN_SECONDS
+    if max_seconds < min_seconds:
+        return DEFAULT_SEND_INTERVAL_MIN_SECONDS, DEFAULT_SEND_INTERVAL_MAX_SECONDS
+    return min_seconds, max_seconds
+
+
+def _is_identity_send_window_deferred(identity: IdentityProfile, now: datetime) -> bool:
+    if identity.next_send_after is None:
+        return False
+    return as_utc_aware(identity.next_send_after) > as_utc_aware(now)
+
+
+async def _reserve_identity_send_window(
+    session: AsyncSession,
+    identity: IdentityProfile,
+    now: datetime,
+    *,
+    require_window_open: bool = True,
+) -> bool:
+    min_seconds, max_seconds = _resolve_identity_send_interval_seconds(identity)
+    next_send_after = now + timedelta(
+        seconds=random.uniform(min_seconds, max_seconds),
+    )
+    conditions = [IdentityProfile.id == identity.id]
+    if require_window_open:
+        conditions.append(
+            or_(
+                IdentityProfile.next_send_after.is_(None),
+                IdentityProfile.next_send_after <= now,
+            ),
+        )
+    result = await session.execute(
+        update(IdentityProfile)
+        .where(*conditions)
+        .values(
+            next_send_after=next_send_after,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False),
+    )
+    return result.rowcount == 1
 
 
 def _batch_task_allows_dispatch(task: EmailTask, now: datetime) -> bool:
@@ -1457,7 +1521,11 @@ async def approve_and_send_task(
         identity_id = task.identity_id
         llm_profile_id = task.llm_profile_id
 
-    await dispatch_email_task(session_factory, task_id)
+    await dispatch_email_task(
+        session_factory,
+        task_id,
+        respect_identity_send_window=False,
+    )
     return professor_id, identity_id, llm_profile_id
 
 
@@ -1643,20 +1711,30 @@ async def dispatch_email_task(
 
     session_factory: async_sessionmaker[AsyncSession],
     task_id: int,
-) -> tuple[int, int, int]:
+    *,
+    now: datetime | None = None,
+    respect_identity_send_window: bool = True,
+) -> bool:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
-        task_identity = (task.professor_id, task.identity_id, task.llm_profile_id)
         if task.status not in DISPATCHABLE_EMAIL_TASK_STATUSES:
-            return task_identity
+            return False
         if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
-            return task_identity
+            return False
 
-        claimed_at = utc_now()
+        claimed_at = as_utc_aware(now) if now is not None else utc_now()
         if _is_task_scheduled_for_future(task, claimed_at):
-            return task_identity
+            return False
+        if not await _reserve_identity_send_window(
+            session,
+            task.identity,
+            claimed_at,
+            require_window_open=respect_identity_send_window,
+        ):
+            await session.rollback()
+            return False
         claim_result = await session.execute(
             update(EmailTask)
             .where(
@@ -1677,12 +1755,11 @@ async def dispatch_email_task(
         )
         if claim_result.rowcount != 1:
             await session.rollback()
-            return task_identity
+            return False
         await session.commit()
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
-        task_identity = (task.professor_id, task.identity_id, task.llm_profile_id)
         if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
             if task.batch_task.status == BatchTaskStatus.PAUSED.value:
                 task.status = EmailTaskStatus.APPROVED.value
@@ -1694,7 +1771,7 @@ async def dispatch_email_task(
                 task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
             task.updated_at = utc_now()
             await session.commit()
-            return task_identity
+            return True
 
         subject_template = task.approved_subject or task.generated_subject
         body_text_template = task.approved_body_text or task.generated_content_text
@@ -1716,7 +1793,7 @@ async def dispatch_email_task(
             task.last_error = "任务缺少可发送的主题或正文"
             task.updated_at = utc_now()
             await session.commit()
-            return task.professor_id, task.identity_id, task.llm_profile_id
+            return True
 
         attachments = await _resolve_selected_materials(
             session,
@@ -1795,7 +1872,7 @@ async def dispatch_email_task(
             )
 
         await session.commit()
-        return task.professor_id, task.identity_id, task.llm_profile_id
+        return True
 
 
 async def poll_identity_replies(

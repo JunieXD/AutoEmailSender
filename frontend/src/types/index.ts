@@ -122,9 +122,6 @@ export interface IdentityPayload {
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
-  daily_send_limit: number | null;
-  send_interval_min: number | null;
-  send_interval_max: number | null;
   same_domain_cooldown_minutes: number | null;
   is_default: boolean;
 }

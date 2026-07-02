@@ -63,6 +63,10 @@ class IdentityProfile(Base):
     daily_send_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     send_interval_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     send_interval_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_send_after: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
     same_domain_cooldown_minutes: Mapped[int | None] = mapped_column(
         Integer,
         nullable=True,
