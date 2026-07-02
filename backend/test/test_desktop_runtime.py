@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 
+STARTUP_STATE_TIMEOUT_SECONDS = 30.0
+STARTUP_STATE_POLL_INTERVAL_SECONDS = 0.1
+
+
 class DesktopRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -31,6 +35,27 @@ class DesktopRuntimeTests(unittest.TestCase):
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("ENABLE_BACKGROUND_WORKERS", None)
         self.temp_dir.cleanup()
+
+    def _wait_for_startup_state(
+        self,
+        client: TestClient,
+        expected_state: str,
+        *,
+        timeout_seconds: float = STARTUP_STATE_TIMEOUT_SECONDS,
+    ):
+        deadline = time.monotonic() + timeout_seconds
+        response = client.get("/startup-status")
+        data = response.json()
+        while data["state"] != expected_state:
+            if time.monotonic() >= deadline:
+                self.fail(
+                    f"Timed out waiting for startup state {expected_state!r}; "
+                    f"last response: {data!r}",
+                )
+            time.sleep(STARTUP_STATE_POLL_INTERVAL_SECONDS)
+            response = client.get("/startup-status")
+            data = response.json()
+        return response
 
     def test_health_endpoint_returns_ok(self) -> None:
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
@@ -111,12 +136,7 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         get_settings.cache_clear()
         with TestClient(create_app()) as client:
-            response = client.get("/startup-status")
-            for _ in range(50):
-                if response.json()["state"] == "ready":
-                    break
-                time.sleep(0.1)
-                response = client.get("/startup-status")
+            response = self._wait_for_startup_state(client, "ready")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         data = response.json()
@@ -139,12 +159,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             new_callable=AsyncMock,
         ) as recover_interrupted:
             with TestClient(main_module.create_app()) as client:
-                response = client.get("/startup-status")
-                for _ in range(50):
-                    if response.json()["state"] == "ready":
-                        break
-                    time.sleep(0.1)
-                    response = client.get("/startup-status")
+                response = self._wait_for_startup_state(client, "ready")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["state"], "ready")
@@ -164,12 +179,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             new_callable=AsyncMock,
         ) as recover_interrupted:
             with TestClient(main_module.create_app()) as client:
-                response = client.get("/startup-status")
-                for _ in range(50):
-                    if response.json()["state"] == "ready":
-                        break
-                    time.sleep(0.1)
-                    response = client.get("/startup-status")
+                response = self._wait_for_startup_state(client, "ready")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["state"], "ready")
