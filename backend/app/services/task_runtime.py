@@ -26,6 +26,7 @@ from app.models import (
     EmailTaskStatus,
     IdentityMaterial,
     IdentityProfile,
+    ImapMailboxHistoricalScanStatus,
     ImapMailboxSyncState,
     ImapProfessorSyncState,
     MatchAnalysisRun,
@@ -37,13 +38,19 @@ from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDra
 from app.services import llm_runtime, mail_runtime
 from app.services.email_addresses import normalize_email_address, normalize_email_list
 from app.services.email_log_ingestion import EmailLogIngestRecord, upsert_email_log
+from app.services.imap_errors import is_account_level_throttle_error as _is_account_level_throttle_error
+from app.services.imap_errors import is_provider_throttle_error
 from app.services.imap_message_fetcher import ImapFetchedMessage
 from app.services.imap_sync_state import (
+    claim_next_mailbox_history_scans,
     claim_next_professor_scans,
     clear_identity_sent_folder_discovery_cache,
     ensure_professor_scan_states_if_needed,
+    mark_mailbox_history_scan_failed,
+    mark_mailbox_history_scan_progress,
     mark_professor_scan_completed,
     mark_professor_scan_failed,
+    reset_mailbox_history_scans_to_pending,
     reset_professor_scans_to_pending,
 )
 from app.services.batch_schedule import (
@@ -98,6 +105,21 @@ class _HistoryBodyFetchResult:
     command_count: int
     highest_scanned_uid: int | None
     covered_all_headers: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _MailboxHistoryBodyFetchResult:
+    messages: list[ImapFetchedMessage]
+    command_count: int
+    matched_header_count: int
+    covered_all_headers: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _MailboxHistoryHeaderMatch:
+    message: ImapFetchedMessage
+    professor_ids: tuple[int, ...]
+
 
 DISPATCHABLE_EMAIL_TASK_STATUSES = (
     EmailTaskStatus.APPROVED.value,
@@ -1904,11 +1926,14 @@ async def sync_identity_incremental_poll_once(
     identity_lock = await _get_imap_identity_lock(identity_id)
     if identity_lock.locked():
         return 0
+    history_lock = await _get_imap_history_lock(identity_id)
+    if history_lock.locked():
+        return 0
     lock = await _get_imap_incremental_lock(identity_id)
     if lock.locked():
         return 0
     async with lock:
-        if identity_lock.locked():
+        if identity_lock.locked() or history_lock.locked():
             return 0
         return await _sync_identity_incremental_once_unlocked(session_factory, identity_id)
 
@@ -1922,6 +1947,8 @@ async def sync_identity_history_poll_once(
     lock = await _get_imap_history_lock(identity_id)
     async with lock:
         if await _is_imap_identity_locked(identity_id):
+            return 0
+        if (await _get_imap_incremental_lock(identity_id)).locked():
             return 0
         if await is_imap_history_paused(session_factory, identity_id):
             return 0
@@ -2057,66 +2084,34 @@ async def _get_active_imap_throttle_reason(
         return state.throttle_reason or ""
 
 
-def is_provider_throttle_error(exc: object) -> bool:
-    text = str(exc).lower()
-    if not text:
-        return False
-    direct_markers = [
-        "fetch volume limit exceed",
-        "too many requests",
-        "too many login failures",
-        "too many simultaneous connections",
-        "maximum number of connections",
-        "rate limit",
-        "rate limited",
-        "temporarily blocked",
-        "try again later",
-        "登录过于频繁",
-        "请求过于频繁",
-        "操作过于频繁",
-        "连接数过多",
-        "超过频率限制",
-        "稍后再试",
-        "流量超限",
-    ]
-    if any(marker in text for marker in direct_markers):
-        return True
-    return "exceed" in text and "limit" in text
-
-
-def _is_account_level_throttle_error(exc: object) -> bool:
-    text = str(exc).lower()
-    if "exceed" in text and "limit" in text:
-        return True
-    return any(
-        marker in text
-        for marker in [
-            "fetch volume limit exceed",
-            "too many requests",
-            "too many login failures",
-            "too many simultaneous connections",
-            "maximum number of connections",
-            "rate limit",
-            "rate limited",
-            "temporarily blocked",
-            "try again later",
-            "登录过于频繁",
-            "请求过于频繁",
-            "操作过于频繁",
-            "连接数过多",
-            "超过频率限制",
-            "稍后再试",
-            "流量超限",
-        ]
-    )
-
-
 async def log_imap_history_progress(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
+    *,
+    folders: list[tuple[str, str]] | None = None,
 ) -> None:
+    folder_conditions = [
+        and_(
+            ImapMailboxSyncState.folder_role == folder_role,
+            ImapMailboxSyncState.folder == folder,
+        )
+        for folder_role, folder in (folders or [])
+    ]
+    mailbox_where = [ImapMailboxSyncState.identity_id == identity_id]
+    if folders is not None:
+        mailbox_where.append(or_(*folder_conditions) if folder_conditions else False)
     async with session_factory() as session:
-        rows = (
+        mailbox_rows = (
+            await session.execute(
+                select(
+                    ImapMailboxSyncState.history_scan_status,
+                    func.count(ImapMailboxSyncState.id),
+                )
+                .where(*mailbox_where)
+                .group_by(ImapMailboxSyncState.history_scan_status),
+            )
+        ).all()
+        professor_rows = (
             await session.execute(
                 select(
                     ImapProfessorSyncState.historical_scan_status,
@@ -2126,14 +2121,32 @@ async def log_imap_history_progress(
                 .group_by(ImapProfessorSyncState.historical_scan_status),
             )
         ).all()
-        counts = {status: count for status, count in rows}
+        progress = await session.execute(
+            select(
+                func.coalesce(func.sum(ImapMailboxSyncState.history_scanned_count), 0),
+                func.coalesce(func.sum(ImapMailboxSyncState.history_matched_count), 0),
+            ).where(*mailbox_where),
+        )
+        scanned_count, matched_count = progress.one()
+        mailbox_counts = {status: count for status, count in mailbox_rows}
+        professor_counts = {status: count for status, count in professor_rows}
     logger.info(
-        "imap_history_progress identity_id=%s pending=%s completed=%s failed=%s running=%s",
+        (
+            "imap_history_progress identity_id=%s mailbox_pending=%s mailbox_completed=%s "
+            "mailbox_failed=%s mailbox_running=%s scanned=%s matched=%s "
+            "targeted_pending=%s targeted_completed=%s targeted_failed=%s targeted_running=%s"
+        ),
         identity_id,
-        counts.get("pending", 0),
-        counts.get("completed", 0),
-        counts.get("failed", 0),
-        counts.get("running", 0),
+        mailbox_counts.get("pending", 0),
+        mailbox_counts.get("completed", 0),
+        mailbox_counts.get("failed", 0),
+        mailbox_counts.get("running", 0),
+        scanned_count,
+        matched_count,
+        professor_counts.get("pending", 0),
+        professor_counts.get("completed", 0),
+        professor_counts.get("failed", 0),
+        professor_counts.get("running", 0),
     )
 
 
@@ -2196,9 +2209,209 @@ async def sync_identity_history_once(
     settings = get_settings()
     if await is_imap_history_paused(session_factory, identity_id):
         return 0
+    if settings.imap_history_batch_size <= 0 or settings.imap_history_command_budget_per_minute <= 0:
+        return 0
+
+    async with session_factory() as session:
+        identity = await session.get(IdentityProfile, identity_id)
+    if identity is None:
+        return 0
+    if not _identity_has_imap_config(identity):
+        return 0
+
+    sent_folder = await get_cached_or_discover_sent_folder(session_factory, identity)
+    if await is_imap_history_paused(session_factory, identity_id):
+        return 0
+    folder_specs = _mailbox_history_folder_specs(sent_folder)
+    await _ensure_mailbox_history_scan_states(session_factory, identity_id, folder_specs)
+
+    command_budget = settings.imap_history_command_budget_per_minute
+    states = await claim_next_mailbox_history_scans(
+        session_factory,
+        identity_id,
+        folders=folder_specs,
+        limit=min(len(folder_specs), max(1, command_budget)),
+    )
+    if not states:
+        if await _mailbox_history_scans_completed(session_factory, identity_id, folder_specs):
+            await ensure_professor_scan_states_if_needed(
+                session_factory,
+                identity_id=identity_id,
+                sent_folder=sent_folder,
+            )
+            return await _sync_identity_targeted_history_once(
+                session_factory,
+                identity_id,
+                command_budget=command_budget,
+                mailbox_folders=folder_specs,
+            )
+        await log_imap_history_progress(session_factory, identity_id, folders=folder_specs)
+        return 0
+
+    detected_total = 0
+    for index, state in enumerate(states):
+        try:
+            if command_budget <= 0:
+                raise RuntimeError("IMAP history command budget exhausted")
+            before_uid = state.history_next_before_uid
+            if before_uid is None and state.history_high_water_uid is not None:
+                before_uid = state.history_high_water_uid + 1
+            if before_uid is None and command_budget < 2:
+                await reset_mailbox_history_scans_to_pending(
+                    session_factory,
+                    [pending_state.id for pending_state in states[index:]],
+                )
+                break
+            header_result = await mail_runtime.fetch_history_mailbox_message_headers_before_uid(
+                identity,
+                state.folder,
+                before_uid=before_uid,
+                limit=settings.imap_history_batch_size,
+                max_fetch_batches=1,
+                expected_uidvalidity=state.uidvalidity,
+            )
+            if header_result.command_count > command_budget:
+                raise RuntimeError("IMAP history command budget exhausted during mailbox header fetch")
+            command_budget -= header_result.command_count
+
+            body_result = await _fetch_missing_history_mailbox_message_bodies(
+                session_factory,
+                identity,
+                identity_id=identity_id,
+                state=state,
+                header_messages=header_result.messages,
+                remaining_command_budget=command_budget,
+            )
+            command_budget -= body_result.command_count
+            detected = await process_imap_fetched_messages(
+                session_factory,
+                identity_id,
+                body_result.messages,
+                folder_role=state.folder_role,
+                folder=state.folder,
+            )
+            detected_total += detected
+
+            covered_page = not header_result.exhausted and body_result.covered_all_headers
+            if covered_page:
+                next_before_uid = header_result.next_before_uid
+            elif header_result.uidvalidity_changed and header_result.high_water_uid is not None:
+                next_before_uid = header_result.high_water_uid + 1
+            elif header_result.uidvalidity_changed:
+                next_before_uid = None
+            else:
+                next_before_uid = state.history_next_before_uid
+            completed = covered_page and next_before_uid is not None and next_before_uid <= 0
+            high_water_uid = header_result.high_water_uid
+            last_seen_uid_floor = high_water_uid
+            await mark_mailbox_history_scan_progress(
+                session_factory,
+                state.id,
+                next_before_uid=next_before_uid,
+                scanned_count_delta=header_result.scanned_count if covered_page else 0,
+                matched_count_delta=body_result.matched_header_count if covered_page else 0,
+                uidvalidity=header_result.uidvalidity,
+                high_water_uid=high_water_uid,
+                last_seen_uid_floor=last_seen_uid_floor,
+                completed=completed,
+                uidvalidity_reset=header_result.uidvalidity_changed,
+            )
+            if not covered_page:
+                await reset_mailbox_history_scans_to_pending(
+                    session_factory,
+                    [pending_state.id for pending_state in states[index + 1 :]],
+                )
+                break
+        except Exception as exc:
+            if _is_history_command_budget_error(exc):
+                await reset_mailbox_history_scans_to_pending(
+                    session_factory,
+                    [pending_state.id for pending_state in states[index:]],
+                )
+                break
+            if is_provider_throttle_error(exc):
+                await mark_imap_throttled(
+                    session_factory,
+                    identity_id,
+                    reason=str(exc),
+                    account_level=_is_account_level_throttle_error(exc),
+                )
+                await reset_mailbox_history_scans_to_pending(
+                    session_factory,
+                    [pending_state.id for pending_state in states[index + 1 :]],
+                )
+            await mark_mailbox_history_scan_failed(session_factory, state.id, str(exc))
+            if is_provider_throttle_error(exc):
+                break
+
+    await log_imap_history_progress(session_factory, identity_id, folders=folder_specs)
+    return detected_total
+
+
+async def _ensure_mailbox_history_scan_states(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    folder_specs: list[tuple[str, str]],
+) -> None:
+    async with session_factory() as session:
+        for folder_role, folder in folder_specs:
+            await _get_or_create_mailbox_state(
+                session,
+                identity_id,
+                folder_role=folder_role,
+                folder=folder,
+            )
+        await session.commit()
+
+
+def _mailbox_history_folder_specs(sent_folder: str | None) -> list[tuple[str, str]]:
+    specs = [("inbox", "INBOX")]
+    if sent_folder:
+        specs.append(("sent", sent_folder))
+    return specs
+
+
+async def _mailbox_history_scans_completed(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    folder_specs: list[tuple[str, str]],
+) -> bool:
+    if not folder_specs:
+        return False
+    async with session_factory() as session:
+        for folder_role, folder in folder_specs:
+            state = await session.scalar(
+                select(ImapMailboxSyncState).where(
+                    ImapMailboxSyncState.identity_id == identity_id,
+                    ImapMailboxSyncState.folder_role == folder_role,
+                    ImapMailboxSyncState.folder == folder,
+                ),
+            )
+            if state is None:
+                return False
+            if state.history_scan_status != ImapMailboxHistoricalScanStatus.COMPLETED.value:
+                return False
+    return True
+
+
+async def _sync_identity_targeted_history_once(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    *,
+    command_budget: int | None = None,
+    mailbox_folders: list[tuple[str, str]] | None = None,
+) -> int:
+    settings = get_settings()
+    if await is_imap_history_paused(session_factory, identity_id):
+        return 0
+    effective_command_budget = (
+        settings.imap_history_command_budget_per_minute
+        if command_budget is None
+        else command_budget
+    )
     claim_limit = min(
         settings.imap_history_batch_size,
-        settings.imap_history_command_budget_per_minute,
+        effective_command_budget,
     )
     if claim_limit <= 0:
         return 0
@@ -2210,7 +2423,7 @@ async def sync_identity_history_once(
     if not states:
         return 0
     detected_total = 0
-    command_budget = settings.imap_history_command_budget_per_minute
+    command_budget = effective_command_budget
     for index, state in enumerate(states):
         try:
             async with session_factory() as session:
@@ -2293,8 +2506,188 @@ async def sync_identity_history_once(
             await mark_professor_scan_failed(session_factory, state.id, str(exc))
             if is_provider_throttle_error(exc):
                 break
-    await log_imap_history_progress(session_factory, identity_id)
+    await log_imap_history_progress(session_factory, identity_id, folders=mailbox_folders)
     return detected_total
+
+
+async def _fetch_missing_history_mailbox_message_bodies(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity: IdentityProfile,
+    *,
+    identity_id: int,
+    state: ImapMailboxSyncState,
+    header_messages: list[ImapFetchedMessage],
+    remaining_command_budget: int,
+) -> _MailboxHistoryBodyFetchResult:
+    matched_headers = await _match_history_mailbox_headers(
+        session_factory,
+        folder_role=state.folder_role,
+        header_messages=header_messages,
+    )
+    if not matched_headers:
+        return _MailboxHistoryBodyFetchResult(
+            messages=[],
+            command_count=0,
+            matched_header_count=0,
+            covered_all_headers=True,
+        )
+
+    missing_uids: list[int] = []
+    covered_all_headers = True
+    allowed_uid_count = None
+    for match in sorted(matched_headers, key=lambda item: item.message.uid, reverse=True):
+        if await _history_mailbox_header_already_ingested(
+            session_factory,
+            identity_id=identity_id,
+            state=state,
+            message=match.message,
+            professor_ids=match.professor_ids,
+        ):
+            continue
+        if allowed_uid_count is None:
+            allowed_uid_count = _history_body_fetch_uid_limit(
+                remaining_command_budget,
+                get_settings().imap_fetch_batch_size,
+            )
+            if allowed_uid_count <= 0:
+                raise RuntimeError("IMAP history command budget exhausted before body fetch")
+        if len(missing_uids) >= allowed_uid_count:
+            covered_all_headers = False
+            break
+        missing_uids.append(match.message.uid)
+
+    if not missing_uids:
+        return _MailboxHistoryBodyFetchResult(
+            messages=[],
+            command_count=0,
+            matched_header_count=len(matched_headers),
+            covered_all_headers=covered_all_headers,
+        )
+
+    body_fetch_command_count = _history_body_fetch_command_count(
+        len(missing_uids),
+        get_settings().imap_fetch_batch_size,
+    )
+    messages = await mail_runtime.fetch_professor_history_mailbox_messages_by_uid(
+        identity,
+        state.folder,
+        missing_uids,
+    )
+    fetched_uids = {message.uid for message in messages}
+    missing_after_fetch = [uid for uid in missing_uids if uid not in fetched_uids]
+    if missing_after_fetch:
+        raise RuntimeError(f"IMAP history body fetch incomplete for UIDs: {missing_after_fetch}")
+    return _MailboxHistoryBodyFetchResult(
+        messages=messages,
+        command_count=body_fetch_command_count,
+        matched_header_count=len(matched_headers),
+        covered_all_headers=covered_all_headers,
+    )
+
+
+async def _match_history_mailbox_headers(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    folder_role: str,
+    header_messages: list[ImapFetchedMessage],
+) -> list[_MailboxHistoryHeaderMatch]:
+    if not header_messages:
+        return []
+    professor_ids_by_email = await _load_active_professor_ids_by_email(session_factory)
+    if not professor_ids_by_email:
+        return []
+
+    matches: list[_MailboxHistoryHeaderMatch] = []
+    for message in header_messages:
+        if folder_role == "inbox":
+            candidate_emails = [normalize_email_address(message.from_email)]
+        elif folder_role == "sent":
+            candidate_emails = normalize_email_list(
+                [*message.to_emails, *message.cc_emails, *message.bcc_emails],
+            )
+        else:
+            _validate_imap_folder_role(folder_role)
+            candidate_emails = []
+
+        professor_ids = tuple(
+            dict.fromkeys(
+                professor_id
+                for email in candidate_emails
+                if email
+                for professor_id in professor_ids_by_email.get(email, [])
+            ),
+        )
+        if professor_ids:
+            matches.append(_MailboxHistoryHeaderMatch(message=message, professor_ids=professor_ids))
+    return matches
+
+
+async def _load_active_professor_ids_by_email(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> dict[str, list[int]]:
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(Professor.id, Professor.email).where(
+                    Professor.archived_at.is_(None),
+                    Professor.email.is_not(None),
+                ),
+            )
+        ).all()
+    professor_ids_by_email: dict[str, list[int]] = {}
+    for professor_id, email in rows:
+        normalized_email = normalize_email_address(email)
+        if not normalized_email:
+            continue
+        professor_ids_by_email.setdefault(normalized_email, []).append(professor_id)
+    return professor_ids_by_email
+
+
+async def _history_mailbox_header_already_ingested(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    identity_id: int,
+    state: ImapMailboxSyncState,
+    message: ImapFetchedMessage,
+    professor_ids: tuple[int, ...],
+) -> bool:
+    if not professor_ids:
+        return True
+    direction = EmailDirection.RECEIVED.value if state.folder_role == "inbox" else EmailDirection.SENT.value
+    expected_professor_ids = set(professor_ids)
+    normalized_message_id = (message.message_id or "").strip().lower()
+    async with session_factory() as session:
+        if normalized_message_id:
+            rows = (
+                await session.execute(
+                    select(EmailLog.professor_id).where(
+                        EmailLog.identity_id == identity_id,
+                        EmailLog.professor_id.in_(expected_professor_ids),
+                        EmailLog.direction == direction,
+                        or_(
+                            EmailLog.normalized_message_id == normalized_message_id,
+                            func.lower(EmailLog.rfc_message_id) == normalized_message_id,
+                        ),
+                    ),
+                )
+            ).all()
+            if {professor_id for (professor_id,) in rows} >= expected_professor_ids:
+                return True
+        if message.uidvalidity is None:
+            return False
+        rows = (
+            await session.execute(
+                select(EmailLog.professor_id).where(
+                    EmailLog.identity_id == identity_id,
+                    EmailLog.professor_id.in_(expected_professor_ids),
+                    EmailLog.folder_role == state.folder_role,
+                    EmailLog.folder == state.folder,
+                    EmailLog.uidvalidity == message.uidvalidity,
+                    EmailLog.imap_uid == message.uid,
+                ),
+            )
+        ).all()
+    return {professor_id for (professor_id,) in rows} >= expected_professor_ids
 
 
 async def _fetch_missing_history_message_bodies(
@@ -2453,10 +2846,58 @@ async def sync_identity_incremental_once(
             folder_role=folder_role,
             folder=folder,
         )
+        if not _identity_has_imap_config(identity):
+            state.last_error = None
+            await session.commit()
+            return 0
         last_seen_uid = state.last_seen_uid
         expected_uidvalidity = state.uidvalidity
+        should_bootstrap_history_cursor = (
+            last_seen_uid is None
+            and state.history_high_water_uid is None
+            and state.history_scan_status != ImapMailboxHistoricalScanStatus.COMPLETED.value
+        )
         await session.commit()
     try:
+        if should_bootstrap_history_cursor:
+            bootstrap_result = await mail_runtime.fetch_history_mailbox_message_headers_before_uid(
+                identity,
+                folder,
+                before_uid=None,
+                limit=0,
+                max_fetch_batches=0,
+                expected_uidvalidity=expected_uidvalidity,
+            )
+            if bootstrap_result.high_water_uid is not None:
+                async with session_factory() as session:
+                    state = await _get_or_create_mailbox_state(
+                        session,
+                        identity_id,
+                        folder_role=folder_role,
+                        folder=folder,
+                    )
+                    if bootstrap_result.uidvalidity is not None:
+                        state.uidvalidity = bootstrap_result.uidvalidity
+                    state.history_high_water_uid = bootstrap_result.high_water_uid
+                    state.history_next_before_uid = bootstrap_result.next_before_uid
+                    state.last_seen_uid = max(state.last_seen_uid or 0, bootstrap_result.high_water_uid)
+                    state.last_sync_at = utc_now()
+                    state.last_error = None
+                    await session.commit()
+                return 0
+            async with session_factory() as session:
+                state = await _get_or_create_mailbox_state(
+                    session,
+                    identity_id,
+                    folder_role=folder_role,
+                    folder=folder,
+                )
+                if bootstrap_result.uidvalidity is not None:
+                    state.uidvalidity = bootstrap_result.uidvalidity
+                state.last_sync_at = utc_now()
+                state.last_error = "IMAP high-water bootstrap failed; incremental sync skipped to avoid full mailbox fetch"
+                await session.commit()
+            return 0
         fetch_with_uidvalidity = getattr(
             mail_runtime,
             "fetch_incremental_mailbox_messages_with_uidvalidity",
@@ -2548,6 +2989,18 @@ def _is_history_command_budget_error(exc: object) -> bool:
     return "imap history command budget" in str(exc).lower()
 
 
+def _identity_has_imap_config(identity: IdentityProfile) -> bool:
+    return bool(
+        identity.imap_host
+        and str(identity.imap_host).strip()
+        and identity.imap_port
+        and identity.imap_username
+        and str(identity.imap_username).strip()
+        and identity.imap_password
+        and str(identity.imap_password).strip()
+    )
+
+
 async def sync_workspace_professor_replies(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
@@ -2614,9 +3067,11 @@ async def _is_imap_identity_locked(identity_id: int) -> bool:
 
 
 async def _is_imap_history_work_locked(identity_id: int) -> bool:
-    return await _is_imap_identity_locked(identity_id) or (
-        await _get_imap_history_lock(identity_id)
-    ).locked()
+    return (
+        await _is_imap_identity_locked(identity_id)
+        or (await _get_imap_incremental_lock(identity_id)).locked()
+        or (await _get_imap_history_lock(identity_id)).locked()
+    )
 
 
 async def _get_imap_lock(

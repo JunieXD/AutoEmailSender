@@ -28,6 +28,10 @@ class ImapSearchResult:
     uids: list[int]
 
 
+class ImapFetchCommandError(RuntimeError):
+    pass
+
+
 @dataclass(slots=True)
 class ImapFetchedMessage:
     uid: int
@@ -126,6 +130,58 @@ def fetch_message_headers_payloads_by_uid_batch(
     if status != "OK" or not payload:
         return []
     return _split_header_fetch_payload_by_uid(list(payload), uids)
+
+
+def fetch_message_headers_payloads_by_uid_range(
+    client: object,
+    start_uid: int,
+    end_uid: int,
+) -> list[tuple[int, list[object]]]:
+    if start_uid <= 0 or end_uid < start_uid:
+        return []
+    status, payload = client.uid(
+        "FETCH",
+        f"{start_uid}:{end_uid}",
+        "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+    )
+    if _imap_status_text(status).upper() != "OK":
+        detail = _format_imap_response_detail(status, payload)
+        raise ImapFetchCommandError(f"IMAP header range fetch failed: {detail}")
+    if not payload:
+        return []
+    return _split_header_fetch_payload_by_uid_range(list(payload), start_uid, end_uid)
+
+
+def _imap_status_text(status: object) -> str:
+    if isinstance(status, (bytes, bytearray)):
+        return bytes(status).decode("utf-8", errors="ignore")
+    return str(status)
+
+
+def _format_imap_response_detail(status: object, payload: object) -> str:
+    status_text = _imap_status_text(status)
+    payload_text = _format_imap_payload_text(payload)
+    if payload_text:
+        return f"{status_text}: {payload_text}"
+    return status_text
+
+
+def _format_imap_payload_text(payload: object) -> str:
+    if not payload:
+        return ""
+    items = payload if isinstance(payload, (list, tuple)) else [payload]
+    parts: list[str] = []
+    for item in items:
+        if isinstance(item, (bytes, bytearray)):
+            text = bytes(item).decode("utf-8", errors="ignore")
+        elif isinstance(item, tuple):
+            text = " ".join(_format_imap_payload_text(part) for part in item)
+        else:
+            text = str(item)
+        text = text.strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts)[:500]
 
 
 def fetch_text_body_parts_by_uid(client: object, uid: int) -> ParsedTextParts:
@@ -230,6 +286,23 @@ def _split_header_fetch_payload_by_uid(
         if uid is None or uid not in requested_uid_set:
             continue
         results.append((uid, [item]))
+    return results
+
+
+def _split_header_fetch_payload_by_uid_range(
+    payload: list[object],
+    start_uid: int,
+    end_uid: int,
+) -> list[tuple[int, list[object]]]:
+    results: list[tuple[int, list[object]]] = []
+    for item in payload:
+        if not isinstance(item, tuple):
+            continue
+        uid = _extract_uid_from_fetch_response(item[0])
+        if uid is None or uid < start_uid or uid > end_uid:
+            continue
+        results.append((uid, [item]))
+    results.sort(key=lambda item: item[0])
     return results
 
 

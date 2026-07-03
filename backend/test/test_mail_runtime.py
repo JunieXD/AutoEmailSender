@@ -15,6 +15,7 @@ from app.services.mail_runtime import (
     fetch_incremental_inbox_messages,
     fetch_incremental_mailbox_messages,
     fetch_incremental_mailbox_messages_with_uidvalidity,
+    fetch_history_mailbox_message_headers_before_uid,
     fetch_professor_history_inbox_messages,
     fetch_professor_history_mailbox_message_headers,
     fetch_professor_history_mailbox_message_headers_with_command_count,
@@ -366,6 +367,62 @@ class _MissingUidBatchHeaderImapClient(_FakeImapClient):
         return super().uid(command, *args)
 
 
+class _RangeHeaderImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "OK", [self.search_data]
+        if command != "FETCH":
+            return "NO", []
+
+        uid_set = str(args[0])
+        query = str(args[-1])
+        if uid_set == "41:50" and "HEADER" in query:
+            return "OK", [
+                (
+                    b'42 (UID 42 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {128}',
+                    b"From: other@example.edu\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: other\r\n"
+                    b"Message-ID: <other@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n\r\n",
+                ),
+                (
+                    b'49 (UID 49 INTERNALDATE "08-May-2026 20:31:00 +0800" BODY[HEADER] {128}',
+                    b"From: teacher@example.com\r\n"
+                    b"To: sender@example.com\r\n"
+                    b"Subject: teacher\r\n"
+                    b"Message-ID: <teacher@example.com>\r\n"
+                    b"Date: Fri, 08 May 2026 20:01:00 +0800\r\n\r\n",
+                ),
+            ]
+        return "OK", []
+
+
+class _FailingRangeHeaderImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "OK", [self.search_data]
+        if command == "FETCH":
+            return "NO", [b"Fetch volume limit exceed"]
+        return "NO", []
+
+
+class _FailingHighWaterSearchImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        self.commands.append(f"uid:{command}:{args}")
+        if command == "SEARCH":
+            self.search_called = True
+            self.search_criteria.append(str(args[-1]))
+            return "NO", [b"Fetch volume limit exceed"]
+        return super().uid(command, *args)
+
+
 def _build_identity() -> IdentityProfile:
     return IdentityProfile(
         name="测试身份",
@@ -651,6 +708,13 @@ class MailRuntimeTest(unittest.TestCase):
 
         self.assertIsNone(folder)
         self.assertEqual(client.commands, ["login", "logout"])
+
+    def test_discover_sent_folder_reraises_provider_throttle(self) -> None:
+        client = _FakeImapClient(login_error=RuntimeError("Too many requests"))
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "Too many requests"):
+                asyncio.run(discover_sent_folder(_build_identity()))
 
     def test_incremental_fetch_sent_mailbox_selects_folder_and_parses_recipients(self) -> None:
         client = _FakeImapClient(
@@ -1079,6 +1143,89 @@ class MailRuntimeTest(unittest.TestCase):
                 ("sender@example.com", "FETCH"),
             ],
         )
+
+    def test_mailbox_history_header_fetch_scans_uid_window_without_search_or_body(self) -> None:
+        client = _RangeHeaderImapClient()
+        identity = _build_identity()
+        seen: list[str] = []
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+        ):
+            acquire_mock.side_effect = lambda _identity, command: seen.append(command)
+            result = asyncio.run(
+                fetch_history_mailbox_message_headers_before_uid(
+                    identity,
+                    "INBOX",
+                    before_uid=51,
+                    limit=10,
+                ),
+            )
+
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('41:50'", serialized_commands)
+        self.assertEqual(client.search_criteria, [])
+        self.assertNotIn("BODYSTRUCTURE", serialized_commands)
+        self.assertNotIn("BODY.PEEK[TEXT]", serialized_commands)
+        self.assertEqual([message.uid for message in result.messages], [42, 49])
+        self.assertEqual(result.next_before_uid, 41)
+        self.assertEqual(result.scanned_count, 10)
+        self.assertEqual(result.command_count, 1)
+        self.assertEqual(seen, ["FETCH"])
+
+    def test_mailbox_history_header_fetch_raises_when_uid_range_fetch_fails(self) -> None:
+        client = _FailingRangeHeaderImapClient()
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "Fetch volume limit exceed"):
+                asyncio.run(
+                    fetch_history_mailbox_message_headers_before_uid(
+                        _build_identity(),
+                        "INBOX",
+                        before_uid=51,
+                        limit=10,
+                    ),
+                )
+
+    def test_mailbox_history_header_fetch_raises_when_high_water_search_fails(self) -> None:
+        client = _FailingHighWaterSearchImapClient()
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "Fetch volume limit exceed"):
+                asyncio.run(
+                    fetch_history_mailbox_message_headers_before_uid(
+                        _build_identity(),
+                        "INBOX",
+                        before_uid=None,
+                        limit=0,
+                        max_fetch_batches=0,
+                    ),
+                )
+
+    def test_mailbox_history_header_fetch_resets_window_when_uidvalidity_changes(self) -> None:
+        client = _RangeHeaderImapClient()
+        client.response = lambda code: ("UIDNEXT", [b"51"]) if code == "UIDNEXT" else ("UIDVALIDITY", [b"222"])
+        identity = _build_identity()
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            result = asyncio.run(
+                fetch_history_mailbox_message_headers_before_uid(
+                    identity,
+                    "INBOX",
+                    before_uid=801,
+                    limit=10,
+                    expected_uidvalidity=111,
+                ),
+            )
+
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('41:50'", serialized_commands)
+        self.assertNotIn("uid:FETCH:('791:800'", serialized_commands)
+        self.assertEqual(result.uidvalidity, 222)
+        self.assertEqual(result.high_water_uid, 50)
+        self.assertEqual(result.next_before_uid, 41)
+        self.assertEqual(result.scanned_count, 10)
 
     def test_history_body_fetch_by_uid_uses_history_rate_limiter_per_imap_command(self) -> None:
         client = _MultipartFallbackImapClient(search_data=b"1")

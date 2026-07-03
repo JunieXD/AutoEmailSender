@@ -20,6 +20,13 @@ class ImapProfessorHistoricalScanStatus(str, Enum):
     FAILED = "failed"
 
 
+class ImapMailboxHistoricalScanStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ImapFolderRole(str, Enum):
     INBOX = "inbox"
     SENT = "sent"
@@ -28,6 +35,13 @@ class ImapFolderRole(str, Enum):
 class ImapMailboxSyncState(Base):
     __tablename__ = "imap_mailbox_sync_states"
     __table_args__ = (
+        Index(
+            "ix_imap_mailbox_sync_identity_history_status_updated",
+            "identity_id",
+            "history_scan_status",
+            "updated_at",
+            "id",
+        ),
         UniqueConstraint(
             "identity_id",
             "folder_role",
@@ -79,6 +93,37 @@ class ImapMailboxSyncState(Base):
         nullable=True,
     )
     professor_state_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    history_scan_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'pending'"),
+    )
+    history_high_water_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    history_next_before_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    history_scan_started_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    history_scan_completed_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    history_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    history_scanned_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    history_matched_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    history_strategy_version: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'folder-v1'"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

@@ -26,6 +26,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.models import IdentityProfile, Professor
 from app.services.email_addresses import normalize_email_address, normalize_email_list
+from app.services.imap_errors import is_provider_throttle_error
 from app.services.imap_rate_limiter import acquire_history_imap_command_slot_sync
 from app.services.imap_message_fetcher import (
     ImapFetchedMessage,
@@ -33,6 +34,7 @@ from app.services.imap_message_fetcher import (
     TextBodyPart,
     fetch_message_headers_payload_by_uid,
     fetch_message_headers_payloads_by_uid_batch,
+    fetch_message_headers_payloads_by_uid_range,
     fetch_text_part_sections_by_uid,
     fetch_text_body_parts_by_uid,
     parse_text_parts_from_message,
@@ -169,6 +171,18 @@ class ImapHistoryHeaderFetchResult:
     messages: list[ImapFetchedMessage]
     command_count: int
     exhausted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ImapMailboxHistoryHeaderFetchResult:
+    messages: list[ImapFetchedMessage]
+    command_count: int
+    uidvalidity: int | None
+    high_water_uid: int | None
+    next_before_uid: int | None
+    scanned_count: int
+    exhausted: bool = False
+    uidvalidity_changed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,6 +454,35 @@ async def fetch_professor_history_mailbox_message_headers_with_command_count(
         folder_role,
         min_uid,
         max_fetch_batches,
+    )
+
+
+async def fetch_history_mailbox_message_headers_before_uid(
+    identity: IdentityProfile,
+    folder: str,
+    *,
+    before_uid: int | None,
+    limit: int,
+    max_fetch_batches: int | None = None,
+    expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
+) -> ImapMailboxHistoryHeaderFetchResult:
+    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+        return ImapMailboxHistoryHeaderFetchResult(
+            messages=[],
+            command_count=0,
+            uidvalidity=None,
+            high_water_uid=None,
+            next_before_uid=before_uid,
+            scanned_count=0,
+        )
+    return await asyncio.to_thread(
+        _fetch_history_mailbox_message_headers_before_uid_sync,
+        identity,
+        folder,
+        before_uid,
+        limit,
+        max_fetch_batches,
+        expected_uidvalidity,
     )
 
 
@@ -726,7 +769,9 @@ def _discover_sent_folder_sync(identity: IdentityProfile) -> str | None:
         for candidate in SENT_FOLDER_CANDIDATES:
             if _try_select_mailbox(client, candidate):
                 return candidate
-    except Exception:
+    except Exception as exc:
+        if is_provider_throttle_error(exc):
+            raise
         return None
     finally:
         _logout_imap_client(client)
@@ -906,6 +951,116 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
     )
 
 
+def _fetch_history_mailbox_message_headers_before_uid_sync(
+    identity: IdentityProfile,
+    folder: str,
+    before_uid: int | None,
+    limit: int,
+    max_fetch_batches: int | None,
+    expected_uidvalidity: int | None | object,
+) -> ImapMailboxHistoryHeaderFetchResult:
+    client: IMAP4 | IMAP4_SSL | None = None
+    messages: list[ImapFetchedMessage] = []
+    command_count = 0
+    high_water_uid: int | None = None
+    try:
+        client = _open_logged_in_imap_client(identity, folder=folder)
+        uidvalidity = _get_selected_mailbox_uidvalidity(client)
+        effective_before_uid = before_uid
+        uidvalidity_changed = (
+            expected_uidvalidity is not _UIDVALIDITY_UNSET
+            and uidvalidity is not None
+            and uidvalidity != expected_uidvalidity
+        )
+        if uidvalidity_changed:
+            effective_before_uid = None
+        if effective_before_uid is None:
+            high_water_uid, high_water_command_count = _get_selected_mailbox_high_water_uid(
+                identity,
+                client,
+            )
+            command_count += high_water_command_count
+            if high_water_uid is None:
+                return ImapMailboxHistoryHeaderFetchResult(
+                    messages=[],
+                    command_count=command_count,
+                    uidvalidity=uidvalidity,
+                    high_water_uid=None,
+                    next_before_uid=None,
+                    scanned_count=0,
+                    exhausted=True,
+                    uidvalidity_changed=uidvalidity_changed,
+                )
+            effective_before_uid = high_water_uid + 1
+
+        end_uid = effective_before_uid - 1
+        if end_uid <= 0:
+            return ImapMailboxHistoryHeaderFetchResult(
+                messages=[],
+                command_count=command_count,
+                uidvalidity=uidvalidity,
+                high_water_uid=high_water_uid,
+                next_before_uid=0,
+                scanned_count=0,
+                uidvalidity_changed=uidvalidity_changed,
+            )
+
+        effective_limit = max(0, limit)
+        if effective_limit <= 0:
+            return ImapMailboxHistoryHeaderFetchResult(
+                messages=[],
+                command_count=command_count,
+                uidvalidity=uidvalidity,
+                high_water_uid=high_water_uid,
+                next_before_uid=effective_before_uid,
+                scanned_count=0,
+                exhausted=True,
+                uidvalidity_changed=uidvalidity_changed,
+            )
+
+        start_uid = max(1, end_uid - effective_limit + 1)
+        scanned_count = end_uid - start_uid + 1
+        if max_fetch_batches is not None and max_fetch_batches <= 0:
+            return ImapMailboxHistoryHeaderFetchResult(
+                messages=[],
+                command_count=command_count,
+                uidvalidity=uidvalidity,
+                high_water_uid=high_water_uid,
+                next_before_uid=effective_before_uid,
+                scanned_count=0,
+                exhausted=True,
+                uidvalidity_changed=uidvalidity_changed,
+            )
+
+        acquire_history_imap_command_slot_sync(identity, "FETCH")
+        command_count += 1
+        fetched_items = fetch_message_headers_payloads_by_uid_range(client, start_uid, end_uid)
+        for uid, payload in fetched_items:
+            raw_headers = _extract_message_bytes_from_fetch_payload(payload)
+            if not raw_headers:
+                continue
+            received_at = _extract_received_at_from_fetch_payload(payload)
+            message = _parse_fetched_headers(uid, raw_headers, "", None, received_at)
+            if message is not None:
+                message.uidvalidity = uidvalidity
+                messages.append(message)
+        return ImapMailboxHistoryHeaderFetchResult(
+            messages=messages,
+            command_count=command_count,
+            uidvalidity=uidvalidity,
+            high_water_uid=high_water_uid,
+            next_before_uid=0 if start_uid <= 1 else start_uid,
+            scanned_count=scanned_count,
+            uidvalidity_changed=uidvalidity_changed,
+        )
+    except MailRuntimeError:
+        raise
+    except OSError as exc:
+        raise MailRuntimeError(f"IMAP 文件夹历史同步失败: {exc}") from exc
+    finally:
+        _logout_imap_client(client)
+
+
 def _fetch_mailbox_messages_by_uid_sync(
     identity: IdentityProfile,
     folder: str,
@@ -1041,6 +1196,78 @@ def _get_selected_mailbox_uidvalidity(client: IMAP4 | IMAP4_SSL) -> int | None:
     except Exception:
         return None
     if status not in {"OK", "UIDVALIDITY"} or not payload:
+        return None
+    for item in payload:
+        value = item.decode("utf-8", errors="ignore") if isinstance(item, (bytes, bytearray)) else str(item)
+        value = value.strip()
+        if value.isdigit():
+            return int(value)
+    return None
+
+
+def _get_selected_mailbox_high_water_uid(
+    identity: IdentityProfile,
+    client: IMAP4 | IMAP4_SSL,
+) -> tuple[int | None, int]:
+    uidnext = _get_selected_mailbox_uidnext(client)
+    if uidnext is not None:
+        return max(0, uidnext - 1), 0
+
+    acquire_history_imap_command_slot_sync(identity, "SEARCH")
+    status, payload = client.uid("SEARCH", None, "UID 1:*")
+    if _imap_status_text(status).upper() != "OK":
+        detail = _format_imap_response_detail(status, payload)
+        raise MailRuntimeError(f"IMAP high-water UID search failed: {detail}")
+    if not payload:
+        return None, 1
+    raw = payload[0] if payload else b""
+    uids = [int(item) for item in raw.split() if item.isdigit()]
+    if not uids:
+        return 0, 1
+    return max(uids), 1
+
+
+def _imap_status_text(status: object) -> str:
+    if isinstance(status, (bytes, bytearray)):
+        return bytes(status).decode("utf-8", errors="ignore")
+    return str(status)
+
+
+def _format_imap_response_detail(status: object, payload: object) -> str:
+    status_text = _imap_status_text(status)
+    payload_text = _format_imap_payload_text(payload)
+    if payload_text:
+        return f"{status_text}: {payload_text}"
+    return status_text
+
+
+def _format_imap_payload_text(payload: object) -> str:
+    if not payload:
+        return ""
+    items = payload if isinstance(payload, (list, tuple)) else [payload]
+    parts: list[str] = []
+    for item in items:
+        if isinstance(item, (bytes, bytearray)):
+            text = bytes(item).decode("utf-8", errors="ignore")
+        elif isinstance(item, tuple):
+            text = " ".join(_format_imap_payload_text(part) for part in item)
+        else:
+            text = str(item)
+        text = text.strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts)[:500]
+
+
+def _get_selected_mailbox_uidnext(client: IMAP4 | IMAP4_SSL) -> int | None:
+    response = getattr(client, "response", None)
+    if not callable(response):
+        return None
+    try:
+        status, payload = response("UIDNEXT")
+    except Exception:
+        return None
+    if status not in {"OK", "UIDNEXT"} or not payload:
         return None
     for item in payload:
         value = item.decode("utf-8", errors="ignore") if isinstance(item, (bytes, bytearray)) else str(item)
