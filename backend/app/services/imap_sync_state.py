@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
     IdentityProfile,
+    ImapMailboxHistoricalScanStatus,
     ImapMailboxSyncState,
     ImapProfessorHistoricalScanStatus,
     ImapProfessorSyncState,
@@ -20,8 +21,11 @@ from app.models import (
 
 
 ScanStateKey = tuple[int, int, str, str, str]
+ProfessorEmailKey = tuple[int, int, str]
 STALE_RUNNING_SCAN_AFTER = timedelta(hours=1)
+STALE_RUNNING_MAILBOX_HISTORY_AFTER = timedelta(hours=1)
 SCAN_STATE_KEY_LOOKUP_CHUNK_SIZE = 400
+TARGETED_BASELINE_STRATEGY_VERSION = "folder-v1-targeted-baseline"
 
 
 async def ensure_professor_scan_states(
@@ -29,6 +33,8 @@ async def ensure_professor_scan_states(
     *,
     identity_id: int | None = None,
     sent_folder: str | None = None,
+    historical_scan_status: str = ImapProfessorHistoricalScanStatus.PENDING.value,
+    completed_professor_email_keys: set[ProfessorEmailKey] | None = None,
 ) -> int:
     created = 0
     async with session_factory() as session:
@@ -46,6 +52,13 @@ async def ensure_professor_scan_states(
             if key in existing_keys:
                 continue
             row_identity_id, professor_id, professor_email, folder_role, folder = key
+            professor_email_key = (row_identity_id, professor_id, professor_email)
+            state_status = (
+                ImapProfessorHistoricalScanStatus.COMPLETED.value
+                if completed_professor_email_keys is not None
+                and professor_email_key in completed_professor_email_keys
+                else historical_scan_status
+            )
             session.add(
                 ImapProfessorSyncState(
                     identity_id=row_identity_id,
@@ -53,6 +66,10 @@ async def ensure_professor_scan_states(
                     professor_email=professor_email,
                     folder_role=folder_role,
                     folder=folder,
+                    historical_scan_status=state_status,
+                    historical_scan_completed_at=utc_now()
+                    if state_status == ImapProfessorHistoricalScanStatus.COMPLETED.value
+                    else None,
                 ),
             )
             created += 1
@@ -72,6 +89,12 @@ async def ensure_professor_scan_states_if_needed(
         rows = await _load_existing_professor_rows(session, identity_id=identity_id)
         fingerprint = _build_professor_state_fingerprint(rows, sent_folder)
         state = await _get_or_create_ensure_mailbox_state(session, identity_id)
+        if not await _mailbox_history_completed_for_targeted_catchup(
+            session,
+            identity_id=identity_id,
+            sent_folder=sent_folder,
+        ):
+            return 0
         now = utc_now()
         if (
             state.professor_state_fingerprint == fingerprint
@@ -79,16 +102,35 @@ async def ensure_professor_scan_states_if_needed(
             and now - state.last_professor_state_ensure_at < ttl
         ):
             return 0
+        baseline_completed = state.professor_state_fingerprint is None
+        should_baseline_existing_targeted = (
+            baseline_completed
+            or state.history_strategy_version != TARGETED_BASELINE_STRATEGY_VERSION
+        )
+        completed_professor_email_keys = (
+            None
+            if should_baseline_existing_targeted
+            else await _load_existing_targeted_professor_email_keys(session, identity_id)
+        )
 
+    if should_baseline_existing_targeted:
+        await mark_professor_scan_states_completed_for_identity(session_factory, identity_id)
     created = await ensure_professor_scan_states(
         session_factory,
         identity_id=identity_id,
         sent_folder=sent_folder,
+        historical_scan_status=(
+            ImapProfessorHistoricalScanStatus.COMPLETED.value
+            if should_baseline_existing_targeted
+            else ImapProfessorHistoricalScanStatus.PENDING.value
+        ),
+        completed_professor_email_keys=completed_professor_email_keys,
     )
     async with session_factory() as session:
         state = await _get_or_create_ensure_mailbox_state(session, identity_id)
         state.professor_state_fingerprint = fingerprint
         state.last_professor_state_ensure_at = utc_now()
+        state.history_strategy_version = TARGETED_BASELINE_STRATEGY_VERSION
         await session.commit()
     return created
 
@@ -181,6 +223,30 @@ async def claim_next_professor_scans(
         return states
 
 
+async def mark_professor_scan_states_completed_for_identity(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> None:
+    async with session_factory() as session:
+        states = list(
+            (
+                await session.execute(
+                    select(ImapProfessorSyncState).where(
+                        ImapProfessorSyncState.identity_id == identity_id,
+                        ImapProfessorSyncState.historical_scan_status
+                        != ImapProfessorHistoricalScanStatus.COMPLETED.value,
+                    ),
+                )
+            ).scalars(),
+        )
+        now = utc_now()
+        for state in states:
+            state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
+            state.historical_scan_completed_at = now
+            state.last_error = None
+        await session.commit()
+
+
 async def reset_professor_scans_to_pending(
     session_factory: async_sessionmaker[AsyncSession],
     state_ids: Iterable[int],
@@ -201,6 +267,153 @@ async def reset_professor_scans_to_pending(
                 continue
             state.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
             state.historical_scan_started_at = None
+        await session.commit()
+
+
+async def claim_next_mailbox_history_scans(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    *,
+    folders: Iterable[tuple[str, str]],
+    limit: int,
+) -> list[ImapMailboxSyncState]:
+    if limit <= 0:
+        return []
+    folder_keys = list(dict.fromkeys(folders))
+    if not folder_keys:
+        return []
+    async with session_factory() as session:
+        stale_running_cutoff = utc_now() - STALE_RUNNING_MAILBOX_HISTORY_AFTER
+        folder_filter = or_(
+            *[
+                (ImapMailboxSyncState.folder_role == folder_role)
+                & (ImapMailboxSyncState.folder == folder)
+                for folder_role, folder in folder_keys
+            ],
+        )
+        states = list(
+            (
+                await session.execute(
+                    select(ImapMailboxSyncState)
+                    .where(
+                        ImapMailboxSyncState.identity_id == identity_id,
+                        folder_filter,
+                        or_(
+                            ImapMailboxSyncState.history_scan_status.in_(
+                                [
+                                    ImapMailboxHistoricalScanStatus.PENDING.value,
+                                    ImapMailboxHistoricalScanStatus.FAILED.value,
+                                ],
+                            ),
+                            (
+                                ImapMailboxSyncState.history_scan_status
+                                == ImapMailboxHistoricalScanStatus.RUNNING.value
+                            )
+                            & (
+                                (
+                                    ImapMailboxSyncState.history_scan_started_at.is_(None)
+                                )
+                                | (
+                                    ImapMailboxSyncState.history_scan_started_at
+                                    <= stale_running_cutoff
+                                )
+                            ),
+                        ),
+                    )
+                    .order_by(
+                        ImapMailboxSyncState.updated_at.asc(),
+                        ImapMailboxSyncState.id.asc(),
+                    )
+                    .limit(limit),
+                )
+            ).scalars(),
+        )
+        now = utc_now()
+        for state in states:
+            state.history_scan_status = ImapMailboxHistoricalScanStatus.RUNNING.value
+            state.history_scan_started_at = now
+            state.history_last_error = None
+        await session.commit()
+        for state in states:
+            await session.refresh(state)
+        return states
+
+
+async def reset_mailbox_history_scans_to_pending(
+    session_factory: async_sessionmaker[AsyncSession],
+    state_ids: Iterable[int],
+) -> None:
+    ids = list(dict.fromkeys(state_ids))
+    if not ids:
+        return
+    async with session_factory() as session:
+        states = list(
+            (
+                await session.execute(
+                    select(ImapMailboxSyncState).where(ImapMailboxSyncState.id.in_(ids)),
+                )
+            ).scalars(),
+        )
+        for state in states:
+            if state.history_scan_status == ImapMailboxHistoricalScanStatus.COMPLETED.value:
+                continue
+            state.history_scan_status = ImapMailboxHistoricalScanStatus.PENDING.value
+            state.history_scan_started_at = None
+        await session.commit()
+
+
+async def mark_mailbox_history_scan_progress(
+    session_factory: async_sessionmaker[AsyncSession],
+    state_id: int,
+    *,
+    next_before_uid: int | None,
+    scanned_count_delta: int,
+    matched_count_delta: int,
+    uidvalidity: int | None,
+    high_water_uid: int | None,
+    last_seen_uid_floor: int | None,
+    completed: bool,
+    uidvalidity_reset: bool = False,
+) -> None:
+    async with session_factory() as session:
+        state = await session.get(ImapMailboxSyncState, state_id)
+        if state is None:
+            return
+        if uidvalidity_reset:
+            state.last_seen_uid = None
+            state.history_high_water_uid = None
+            state.history_scanned_count = 0
+            state.history_matched_count = 0
+            state.history_scan_completed_at = None
+        if uidvalidity is not None:
+            state.uidvalidity = uidvalidity
+        if high_water_uid is not None:
+            state.history_high_water_uid = high_water_uid
+        if last_seen_uid_floor is not None:
+            state.last_seen_uid = max(state.last_seen_uid or 0, last_seen_uid_floor)
+        state.history_next_before_uid = next_before_uid
+        state.history_scanned_count = (state.history_scanned_count or 0) + max(0, scanned_count_delta)
+        state.history_matched_count = (state.history_matched_count or 0) + max(0, matched_count_delta)
+        state.history_last_error = None
+        if completed:
+            state.history_scan_status = ImapMailboxHistoricalScanStatus.COMPLETED.value
+            state.history_scan_completed_at = utc_now()
+        else:
+            state.history_scan_status = ImapMailboxHistoricalScanStatus.PENDING.value
+        await session.commit()
+
+
+async def mark_mailbox_history_scan_failed(
+    session_factory: async_sessionmaker[AsyncSession],
+    state_id: int,
+    error: str,
+) -> None:
+    async with session_factory() as session:
+        state = await session.get(ImapMailboxSyncState, state_id)
+        if state is None:
+            return
+        state.history_scan_status = ImapMailboxHistoricalScanStatus.FAILED.value
+        state.history_last_error = error
         await session.commit()
 
 
@@ -327,6 +540,52 @@ async def _load_existing_professor_rows(
         query = query.where(IdentityProfile.id == identity_id)
     rows = (await session.execute(query)).all()
     return _dedupe_rows(rows)
+
+
+async def _load_existing_targeted_professor_email_keys(
+    session: AsyncSession,
+    identity_id: int,
+) -> set[ProfessorEmailKey]:
+    rows = (
+        await session.execute(
+            select(
+                ImapProfessorSyncState.identity_id,
+                ImapProfessorSyncState.professor_id,
+                ImapProfessorSyncState.professor_email,
+            ).where(
+                ImapProfessorSyncState.identity_id == identity_id,
+            ),
+        )
+    ).all()
+    return {
+        (row_identity_id, professor_id, normalized_email)
+        for row_identity_id, professor_id, professor_email in rows
+        if (normalized_email := _normalize_email(professor_email))
+    }
+
+
+async def _mailbox_history_completed_for_targeted_catchup(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    sent_folder: str | None,
+) -> bool:
+    required_folders = [("inbox", "INBOX")]
+    if sent_folder:
+        required_folders.append(("sent", sent_folder))
+    for folder_role, folder in required_folders:
+        state = await session.scalar(
+            select(ImapMailboxSyncState).where(
+                ImapMailboxSyncState.identity_id == identity_id,
+                ImapMailboxSyncState.folder_role == folder_role,
+                ImapMailboxSyncState.folder == folder,
+            ),
+        )
+        if state is None:
+            return False
+        if state.history_scan_status != ImapMailboxHistoricalScanStatus.COMPLETED.value:
+            return False
+    return True
 
 
 def _dedupe_rows(

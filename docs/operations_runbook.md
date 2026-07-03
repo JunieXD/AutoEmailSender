@@ -25,7 +25,7 @@ npm run dev
 | `DRAFT_WORKER_INTERVAL_SECONDS` | `10` | 兼容保留，当前未启用 |
 | `DISPATCHER_INTERVAL_SECONDS` | `30` | 发送 dispatcher 周期 |
 | `IMAP_POLL_INTERVAL_SECONDS` | `60` | IMAP 同步周期 |
-| `IMAP_HISTORY_BATCH_SIZE` | `200` | 每轮最多领取多少个导师历史补扫状态 |
+| `IMAP_HISTORY_BATCH_SIZE` | `200` | 历史文件夹扫描每轮向前看的 UID 窗口大小 |
 | `IMAP_HISTORY_COMMAND_BUDGET_PER_MINUTE` | `120` | 单轮历史补扫最多消耗多少条 SEARCH/FETCH 预算 |
 | `IMAP_HISTORY_COMMAND_RATE_PER_MINUTE` | `40` | 历史补扫 SEARCH/FETCH 平均每分钟放行多少条 |
 | `IMAP_HISTORY_COMMAND_BURST` | `3` | 历史补扫允许的短时突发命令数 |
@@ -37,11 +37,11 @@ npm run dev
 | `ENABLE_BACKGROUND_WORKERS` | `true` | 测试时可关闭 |
 
 ## 3. IMAP 同步口径
-后台会启动两个 IMAP worker：`imap-incremental-poller` 每轮优先同步 `INBOX` 和已缓存的 Sent 新 UID，`imap-history-poller` 慢速补扫已有导师邮箱匹配到的历史通信。用户侧不区分邮件来源，系统发送和邮箱里已有的通信都会进入同一套邮件记录、状态和统计口径。
+后台会启动两个 IMAP worker：`imap-incremental-poller` 每轮优先同步 `INBOX` 和已缓存的 Sent 新 UID，`imap-history-poller` 按文件夹 UID 游标向历史方向分页抓取 header，并在本地匹配系统已有导师邮箱；只有命中导师邮箱的邮件才会继续抓正文并进入邮件记录。用户侧不区分邮件来源，系统发送和邮箱里已有的通信都会进入同一套邮件记录、状态和统计口径。
 
 `IMAP_HISTORY_COMMAND_BUDGET_PER_MINUTE` 是单轮历史补扫最多可消耗的 SEARCH/FETCH 预算，`IMAP_HISTORY_COMMAND_RATE_PER_MINUTE` 和 `IMAP_HISTORY_COMMAND_BURST` 是实际发命令前的平滑限速。遇到 `Fetch volume limit exceed`、`Too many requests` 或类似服务商限流错误时，当前账号会暂停历史补扫；账号级限流会连增量同步一起退避，避免继续消耗 IMAP 配额。
 
-历史补扫只为系统已有导师邮箱创建 inbox 状态；只有发现 Sent 文件夹时才创建 sent 状态。已完成状态不会重复参与候选查询，新增或变更导师会通过老师列表指纹和 TTL 重新确保状态。
+主历史补扫按 `INBOX` 和已发现的 Sent 文件夹维护文件夹级状态；已完成的文件夹状态不会重复参与候选查询。旧的逐导师历史状态只作为 targeted catch-up 补漏机制保留：主文件夹历史完成后，既有导师作为 baseline completed，后续新增少量导师才会进入 pending targeted 队列。
 
 ## 4. 首次配置建议
 1. 在个人页完成发件身份配置，把 SMTP 和 IMAP 一起确认好。

@@ -315,7 +315,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         self.assertEqual(result, (1, 0, 0, 0, 0))
 
-    def test_incremental_and_history_pollers_can_overlap_for_same_identity(self) -> None:
+    def test_history_poller_skips_while_incremental_poller_is_running(self) -> None:
         identity_id, _, _ = self._run_async(self._create_reply_context())
 
         incremental_started = asyncio.Event()
@@ -326,7 +326,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
             await release_incremental.wait()
             return 1
 
-        async def scenario() -> tuple[int, int]:
+        async def scenario() -> tuple[int, int, int]:
             incremental_task = asyncio.create_task(
                 sync_identity_incremental_poll_once(self.session_factory, identity_id),
             )
@@ -334,7 +334,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
             history_result = await sync_identity_history_poll_once(self.session_factory, identity_id)
             release_incremental.set()
             incremental_result = await incremental_task
-            return incremental_result, history_result
+            return incremental_result, history_result, history_mock.await_count
 
         with (
             patch(
@@ -344,11 +344,11 @@ class ConcurrencyGuardTests(unittest.TestCase):
             patch(
                 "app.services.task_runtime.sync_identity_history_once",
                 new=AsyncMock(return_value=2),
-            ),
+            ) as history_mock,
         ):
             result = self._run_async(scenario())
 
-        self.assertEqual(result, (1, 2))
+        self.assertEqual(result, (1, 0, 0))
 
     def test_workspace_professor_sync_skips_while_full_imap_sync_is_running(self) -> None:
         identity_id, _, professor_id = self._run_async(self._create_reply_context())
