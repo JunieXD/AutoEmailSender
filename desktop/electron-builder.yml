@@ -1,6 +1,5 @@
 appId: com.juniexd.autoemailsender
 productName: Auto Email Sender
-artifactName: "AutoEmailSender Setup ${version}.${ext}"
 asar: true
 directories:
   output: release
@@ -17,11 +16,21 @@ extraResources:
   - from: build/icon.ico
     to: build/icon.ico
 win:
+  artifactName: "AutoEmailSender Setup ${version}.${ext}"
   icon: build/icon.ico
   target:
     - target: nsis
       arch:
         - x64
+mac:
+  artifactName: "AutoEmailSender-${version}-${arch}.${ext}"
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  identity: null
+  target:
+    - target: dmg
+      arch:
+        - arm64
 nsis:
   oneClick: false
   perMachine: false

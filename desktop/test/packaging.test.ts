@@ -83,3 +83,30 @@ describe("windows installer packaging", () => {
     expect(script).toContain("un.DeleteAutoEmailSenderAppDataFromFlag");
   });
 });
+
+describe("macOS desktop packaging", () => {
+  it("builds an unsigned dmg with a macOS icon", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+
+    expect(config).toContain("mac:");
+    expect(config).toContain("target: dmg");
+    expect(config).toContain("icon: build/icon.icns");
+    expect(config).toContain("identity: null");
+    expect(existsSync(path.resolve("build", "icon.icns"))).toBe(true);
+  });
+
+  it("keeps platform-specific artifact names", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+
+    expect(config).toContain('artifactName: "AutoEmailSender Setup ${version}.${ext}"');
+    expect(config).toContain('artifactName: "AutoEmailSender-${version}-${arch}.${ext}"');
+  });
+
+  it("declares macOS package scripts without changing Windows scripts", () => {
+    const packageJson = readFileSync(path.resolve("package.json"), "utf8");
+
+    expect(packageJson).toContain('"dist": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
+    expect(packageJson).toContain('"dist:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never"');
+    expect(packageJson).toContain('"publish:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish always"');
+  });
+});

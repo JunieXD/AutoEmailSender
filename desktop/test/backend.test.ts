@@ -87,10 +87,22 @@ describe("desktop backend helpers", () => {
     expect(
       getBackendExecutablePath({
         isPackaged: true,
+        platform: "win32",
         resourcesPath: "C:\\App\\resources",
         repoRoot: "C:\\Repo",
       }),
     ).toBe(path.join("C:\\App\\resources", "backend", "backend.exe"));
+  });
+
+  it("resolves packaged backend executable path on macOS", () => {
+    expect(
+      getBackendExecutablePath({
+        isPackaged: true,
+        platform: "darwin",
+        resourcesPath: "/Applications/Auto Email Sender.app/Contents/Resources",
+        repoRoot: "/repo",
+      }),
+    ).toBe(path.join("/Applications/Auto Email Sender.app/Contents/Resources", "backend", "backend"));
   });
 
   it("resolves dev backend entry path", () => {

@@ -34,7 +34,8 @@ export function normalizePort(value: string): number {
 
 export function getBackendExecutablePath(input: BackendPathInput): string {
   if (input.isPackaged) {
-    return path.join(input.resourcesPath, "backend", "backend.exe");
+    const executableName = (input.platform ?? process.platform) === "win32" ? "backend.exe" : "backend";
+    return path.join(input.resourcesPath, "backend", executableName);
   }
   return path.join(input.repoRoot, "backend", "desktop_entry.py");
 }
@@ -78,7 +79,10 @@ export async function startBackend(options: {
 }): Promise<BackendController> {
   const port = await findAvailablePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const backendPath = getBackendExecutablePath(options);
+  const backendPath = getBackendExecutablePath({
+    ...options,
+    platform: process.platform,
+  });
 
   if (!existsSync(backendPath)) {
     throw new Error(`Backend executable not found: ${backendPath}`);

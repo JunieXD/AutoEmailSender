@@ -1,5 +1,6 @@
 export type BackendPathInput = {
   isPackaged: boolean;
+  platform?: NodeJS.Platform;
   resourcesPath: string;
   repoRoot: string;
 };
