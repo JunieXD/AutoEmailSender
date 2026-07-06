@@ -164,6 +164,10 @@ export function buildManualDownloadStatus(input: {
   };
 }
 
+export function supportsAutomaticUpdateInstall(platform: NodeJS.Platform): boolean {
+  return platform !== "darwin";
+}
+
 export function buildUpdateErrorStatus(input: { version: string; error: unknown }): UpdateStatus {
   return {
     state: "error",
@@ -336,20 +340,23 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
   });
 
   ipcMain.handle("update:download", async (_event, options?: { mode?: UpdateDownloadMode }) => {
-    if (!app.isPackaged) {
+    if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
     return startUpdateDownload(getWindow, options?.mode ?? "differential");
   });
 
   ipcMain.handle("update:switch-to-full-download", async () => {
-    if (!app.isPackaged) {
+    if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
     return startUpdateDownload(getWindow, "full");
   });
 
   ipcMain.handle("update:quit-and-install", () => {
+    if (!isAutomaticUpdateActionSupported()) {
+      return currentStatus;
+    }
     const nextVersion = pendingInstallVersion ?? activeNextVersion ?? app.getVersion();
     publish(getWindow, {
       state: "installing",
@@ -370,6 +377,10 @@ export function checkForUpdatesOnStartup(): void {
   setTimeout(() => {
     getAutoUpdater().checkForUpdates().catch(() => undefined);
   }, 3_000);
+}
+
+function isAutomaticUpdateActionSupported(): boolean {
+  return app.isPackaged && supportsAutomaticUpdateInstall(process.platform);
 }
 
 function getAutoUpdater(): typeof electronUpdater.autoUpdater {

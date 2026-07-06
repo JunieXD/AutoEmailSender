@@ -39,6 +39,9 @@ describe("windows installer packaging", () => {
 
     expect(config).toContain("from: build/icon.ico");
     expect(config).toContain("to: build/icon.ico");
+    expect(config).toContain("from: build/icon.png");
+    expect(config).toContain("to: build/icon.png");
+    expect(existsSync(path.resolve("build", "icon.png"))).toBe(true);
   });
 
   it("packages Playwright browsers as runtime resources", () => {

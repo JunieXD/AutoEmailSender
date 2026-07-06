@@ -12,6 +12,7 @@ import {
   normalizeReleaseTag,
   normalizeReleaseNotes,
   shouldOfferFullDownload,
+  supportsAutomaticUpdateInstall,
 } from "../src/updates.js";
 
 describe("update helpers", () => {
@@ -82,6 +83,11 @@ describe("update helpers", () => {
       version: "2.3.8",
       message: "bad json",
     });
+  });
+
+  it("disables automatic update install actions on macOS", () => {
+    expect(supportsAutomaticUpdateInstall("darwin")).toBe(false);
+    expect(supportsAutomaticUpdateInstall("win32")).toBe(true);
   });
 
   it("estimates remaining seconds from remaining bytes and speed", () => {
@@ -173,6 +179,13 @@ describe("update helpers", () => {
     expect(source).toContain("disableDifferentialDownload");
     expect(source).toContain("startUpdateDownload");
     expect(source).toContain('"full"');
+  });
+
+  it("guards automatic update IPC actions on manual-download platforms", () => {
+    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+
+    expect(source).toContain("function isAutomaticUpdateActionSupported()");
+    expect(source.match(/if \(!isAutomaticUpdateActionSupported\(\)\)/g)).toHaveLength(3);
   });
 
   it("tracks pending install versions without auto-installing", () => {
