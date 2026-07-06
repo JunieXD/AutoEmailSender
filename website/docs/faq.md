@@ -2,7 +2,7 @@
 
 ## 如何更新
 
-应用自动检查 GitHub Releases 的新版本。有新版本时弹窗提示是否更新，确认后下载安装包并引导安装。已是最新版本时，也会有提示。
+应用会检查 GitHub Releases 的新版本。Windows 版可在应用内下载并安装更新；macOS 版会打开 GitHub Releases 下载页，你需要下载新版 `.dmg` 后手动拖到“应用程序”覆盖安装。
 
 ## 检查更新失败怎么办
 
@@ -25,6 +25,10 @@ Windows 安装版会将数据库、上传文件和运行日志保存到当前用
 安装包暂未购买 Windows 代码签名证书，因此 Windows 可能提示「未知发布者」或 SmartScreen 拦截。
 
 请确保安装包来自本项目 GitHub Releases 页面，不要从其他来源下载。
+
+## macOS 为什么提示无法验证开发者
+
+当前 macOS 版未购买 Apple Developer Program 账号签名，因此首次打开会被系统拦截。请确认安装包来自本项目 GitHub Releases 页面，然后到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。之后可以正常双击启动。
 
 ## 启动后白屏怎么办
 

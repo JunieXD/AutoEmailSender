@@ -5,11 +5,11 @@ Auto Email Sender 是一个本地运行的导师联系工具。安装版自动�
 ## 下载安装
 
 1. 打开 [GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases)。
-2. 进入最新版本，下载 `AutoEmailSender Setup x.y.z.exe`。
-3. 双击安装，按安装向导完成安装。
-4. 从开始菜单或桌面快捷方式打开 Auto Email Sender。
+2. Windows 下载 `AutoEmailSender Setup x.y.z.exe`，双击安装后从开始菜单或桌面快捷方式打开。
+3. macOS 下载 `AutoEmailSender-x.y.z-arm64.dmg`，打开后把应用拖到“应用程序”。
+4. macOS 首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。
 
-安装包暂未购买 Windows 代码签名证书。安装时看到「未知发布者」或 SmartScreen 提示，请确认下载来源是本项目 GitHub Releases 页面。
+请只从本项目 GitHub Releases 页面下载安装包。Windows 安装包暂未购买代码签名证书，看到「未知发布者」或 SmartScreen 提示时，请确认下载来源后再继续。
 
 ## 基本流程
 
@@ -43,7 +43,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。安装版自动�
 
 ## 更新
 
-应用自动检查 GitHub Releases 的新版本。有新版本时弹窗提示，确认后下载安装包并引导安装。已是最新版本时，也会有相应提示。
+应用会检查 GitHub Releases 的新版本。Windows 版可在应用内下载并安装更新；macOS 版发现新版本后会打开 GitHub Releases，由你下载新版 `.dmg` 后手动替换安装。
 
 ## 开发者入口
 

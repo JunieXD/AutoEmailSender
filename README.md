@@ -36,7 +36,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 
 - [官网](https://juniexd.github.io/AutoEmailSender/)
 - [文档](https://juniexd.github.io/AutoEmailSender/docs/getting-started)
-- [下载 Windows 安装包](https://github.com/JunieXD/AutoEmailSender/releases)
+- [下载桌面版](https://github.com/JunieXD/AutoEmailSender/releases)
 - [问题反馈](https://github.com/JunieXD/AutoEmailSender/issues)
 - QQ 交流群：`952383261`
 
