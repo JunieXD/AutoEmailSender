@@ -13,11 +13,13 @@ describe("release notes generator", () => {
     expect(notes).toContain("### 新增功能");
     expect(notes).toContain("### 体验优化");
     expect(notes).toContain("### 问题修复");
-    expect(notes).toContain("Windows 用户下载 `AutoEmailSender Setup 2.0.2.exe`");
-    expect(notes).toContain("macOS Apple Silicon 用户下载 `AutoEmailSender-2.0.2-arm64.dmg`");
+    expect(notes).toContain("Windows：下载 `AutoEmailSender Setup 2.0.2.exe` 后双击安装。");
+    expect(notes).toContain("macOS Apple Silicon：下载 `AutoEmailSender-2.0.2-arm64.dmg`，打开后把应用拖到“应用程序”。");
     expect(notes).toContain("系统设置 > 隐私与安全性");
+    expect(notes).toContain("Intel Mac 暂未提供安装包。");
+    expect(notes).toContain("请只从本项目 GitHub Releases 页面下载安装包。");
     expect(notes).toContain("Windows：应用内可下载并安装更新。");
-    expect(notes).toContain("macOS Apple Silicon：应用内可检查更新，发现新版本后会打开 GitHub Releases 手动下载新版 `.dmg`。");
+    expect(notes).toContain("macOS Apple Silicon：应用内可检查更新；发现新版本后会打开 GitHub Releases，请下载新版 `.dmg` 并拖到“应用程序”覆盖安装。");
     expect(notes).not.toContain("fix(后端)");
     expect(notes).not.toContain("AutoEmailSender-Setup-2.0.2.exe");
   });

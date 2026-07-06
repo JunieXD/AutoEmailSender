@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 
 export function buildReleaseNotes(version) {
   const normalizedVersion = normalizeVersion(version);
-  const installerName = `AutoEmailSender Setup ${normalizedVersion}.exe`;
+  const windowsInstallerName = `AutoEmailSender Setup ${normalizedVersion}.exe`;
+  const macAppleSiliconInstallerName = `AutoEmailSender-${normalizedVersion}-arm64.dmg`;
 
   return [
     `# ${version}`,
@@ -19,13 +20,16 @@ export function buildReleaseNotes(version) {
     "",
     "## 安装说明",
     "",
-    `- Windows 用户下载 \`${installerName}\`。`,
-    `- macOS Apple Silicon 用户下载 \`AutoEmailSender-${normalizedVersion}-arm64.dmg\`，打开后拖到“应用程序”。首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。`,
+    `- Windows：下载 \`${windowsInstallerName}\` 后双击安装。`,
+    `- macOS Apple Silicon：下载 \`${macAppleSiliconInstallerName}\`，打开后把应用拖到“应用程序”。`,
+    "- macOS 首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。",
+    "- Intel Mac 暂未提供安装包。",
+    "- 请只从本项目 GitHub Releases 页面下载安装包。",
     "",
     "## 自动更新",
     "",
     "- Windows：应用内可下载并安装更新。",
-    "- macOS Apple Silicon：应用内可检查更新，发现新版本后会打开 GitHub Releases 手动下载新版 `.dmg`。",
+    "- macOS Apple Silicon：应用内可检查更新；发现新版本后会打开 GitHub Releases，请下载新版 `.dmg` 并拖到“应用程序”覆盖安装。",
     "",
   ].join("\n");
 }
