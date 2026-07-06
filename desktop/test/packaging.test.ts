@@ -105,7 +105,10 @@ describe("macOS desktop packaging", () => {
   it("declares macOS package scripts without changing Windows scripts", () => {
     const packageJson = readFileSync(path.resolve("package.json"), "utf8");
 
+    expect(packageJson).toContain('"pack": "npm run build && electron-builder --config electron-builder.yml --win --dir"');
     expect(packageJson).toContain('"dist": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
+    expect(packageJson).toContain('"publish": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"');
+    expect(packageJson).toContain('"pack:mac": "npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never"');
     expect(packageJson).toContain('"dist:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never"');
     expect(packageJson).toContain('"publish:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish always"');
   });
