@@ -56,6 +56,6 @@ node "$script_dir/release-notes.mjs" \
   --version "$tag" \
   --output "$release_notes_path"
 
-echo "已生成 $relative_release_notes_path。"
-echo "请编辑 $relative_release_notes_path，润色更新内容后再运行："
+echo "已生成 ${relative_release_notes_path}。"
+echo "请编辑 ${relative_release_notes_path}，润色更新内容后再运行："
 echo "./scripts/release.sh $version"
