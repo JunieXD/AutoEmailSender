@@ -165,6 +165,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
         with patch(
             "app.api.llm_profiles.probe_llm_profile",
             AsyncMock(return_value=self._build_probe_result()),
+        ), patch(
+            "app.api.llm_profiles.ensure_thinking_adaptation",
+            AsyncMock(return_value=None),
         ):
             response = self.client.post(f"/api/llm-profiles/{llm_profile_id}/test")
 

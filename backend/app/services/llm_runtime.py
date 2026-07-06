@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import ssl
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from math import ceil
 from time import perf_counter
 from textwrap import dedent
 from typing import TYPE_CHECKING, TypeVar
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -211,6 +214,7 @@ def format_llm_client_initialization_error(exc: ImportError | ValueError) -> str
 
 _LLM_CONNECTION_ERROR_MARKERS = (
     "all connection attempts failed",
+    "bad record mac",
     "connecterror",
     "connect error",
     "connection refused",
@@ -222,13 +226,27 @@ _LLM_CONNECTION_ERROR_MARKERS = (
     "getaddrinfo failed",
     "network is unreachable",
     "no route to host",
+    "ssl/tls alert",
+    "sslv3_alert_bad_record_mac",
 )
+
+_LLM_TLS_ERROR_MARKERS = (
+    "bad record mac",
+    "ssl/tls alert",
+    "sslv3_alert_bad_record_mac",
+)
+
+_LLM_TLS_CONNECTION_ERROR_MESSAGE = "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。"
+_LLM_RUNTIME_LOG_NAME = "llm-runtime.log"
+_LOG_URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+")
 
 
 def format_llm_runtime_error_for_user(message_or_exc: object) -> str:
     message = str(message_or_exc).strip()
     if not message:
         return "模型请求失败"
+    if message.rstrip(":").strip() in {"模型请求失败", "获取模型列表失败"}:
+        return message.rstrip(":").strip()
     if "模型服务连接失败" in message:
         return message
 
@@ -239,10 +257,147 @@ def format_llm_runtime_error_for_user(message_or_exc: object) -> str:
         haystack_parts.append(type(cause).__name__)
         haystack_parts.append(str(cause))
     haystack = " ".join(haystack_parts).lower()
+    if any(marker in haystack for marker in _LLM_TLS_ERROR_MARKERS):
+        return _LLM_TLS_CONNECTION_ERROR_MESSAGE
     if any(marker in haystack for marker in _LLM_CONNECTION_ERROR_MARKERS):
         return "模型服务连接失败，请检查系统代理或网络后重试。"
 
     return message
+
+
+def _append_llm_runtime_log(entry: str) -> None:
+    try:
+        log_dir = get_settings().data_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / _LLM_RUNTIME_LOG_NAME).open("a", encoding="utf-8", newline="\n") as file:
+            file.write(entry)
+    except Exception:
+        return
+
+
+def _exception_chain_details(exc: BaseException) -> list[dict[str, str]]:
+    details: list[dict[str, str]] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        details.append(
+            {
+                "type": type(current).__name__,
+                "message": _sanitize_log_text(str(current)),
+                "repr": _sanitize_log_text(repr(current)),
+            },
+        )
+        current = current.__cause__ or current.__context__
+    return details
+
+
+def _sanitize_log_text(value: str) -> str:
+    def replace_url(match: re.Match[str]) -> str:
+        url = match.group(0)
+        trailing = ""
+        while url and url[-1] in ".,);]":
+            trailing = f"{url[-1]}{trailing}"
+            url = url[:-1]
+        return f"{_strip_url_query_and_fragment(url) or url}{trailing}"
+
+    return _LOG_URL_PATTERN.sub(replace_url, value)
+
+
+def _is_tls_bad_record_mac_error(exc: BaseException) -> bool:
+    haystack = " ".join(
+        part
+        for detail in _exception_chain_details(exc)
+        for part in (detail["type"], detail["message"], detail["repr"])
+    ).lower()
+    return any(marker in haystack for marker in _LLM_TLS_ERROR_MARKERS)
+
+
+def _strip_url_query_and_fragment(url: str | None) -> str | None:
+    if url is None:
+        return None
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _log_llm_http_exception(
+    *,
+    profile: LLMProfile,
+    request_url: str,
+    endpoint_kind: str,
+    tls_mode: str,
+    exc: BaseException,
+    will_retry: bool,
+    retry_reason: str | None = None,
+) -> None:
+    entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "event": "llm_http_request_failed",
+        "provider": profile.provider,
+        "model_name": profile.model_name,
+        "api_base_url": _strip_url_query_and_fragment(resolve_base_url(profile.api_base_url)),
+        "request_url": _strip_url_query_and_fragment(request_url),
+        "endpoint_kind": endpoint_kind,
+        "tls_mode": tls_mode,
+        "will_retry": will_retry,
+        "retry_reason": retry_reason,
+        "error_chain": _exception_chain_details(exc),
+    }
+    _append_llm_runtime_log(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _build_tls12_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.maximum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+def _should_retry_with_tls12(profile: LLMProfile, exc: BaseException, tls_mode: str) -> bool:
+    return tls_mode != "tls12" and is_deepseek_profile(profile) and _is_tls_bad_record_mac_error(exc)
+
+
+async def _send_llm_http_request(
+    *,
+    method: str,
+    profile: LLMProfile,
+    url: str,
+    endpoint_kind: str,
+    headers: dict[str, str],
+    timeout: httpx.Timeout,
+    json_body: dict[str, object] | None = None,
+) -> httpx.Response:
+    tls_context: ssl.SSLContext | None = None
+    while True:
+        tls_mode = "tls12" if tls_context is not None else "default"
+        client_kwargs: dict[str, object] = {"timeout": timeout}
+        if tls_context is not None:
+            client_kwargs["verify"] = tls_context
+        try:
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                if method == "GET":
+                    return await client.get(url, headers=headers)
+                if method == "POST":
+                    return await client.post(url, headers=headers, json=json_body)
+                raise ValueError(f"Unsupported LLM HTTP method: {method}")
+        except httpx.TimeoutException:
+            raise
+        except (httpx.HTTPError, ssl.SSLError) as exc:
+            will_retry = _should_retry_with_tls12(profile, exc, tls_mode)
+            retry_reason = "tls12_retry" if will_retry else None
+            _log_llm_http_exception(
+                profile=profile,
+                request_url=url,
+                endpoint_kind=endpoint_kind,
+                tls_mode=tls_mode,
+                exc=exc,
+                will_retry=will_retry,
+                retry_reason=retry_reason,
+            )
+            if will_retry:
+                tls_context = _build_tls12_context()
+                continue
+            raise
 
 
 class LLMRuntimeError(RuntimeError):
@@ -899,13 +1054,20 @@ async def fetch_llm_profile_models(profile: LLMProfile) -> LLMModelCatalogResult
     headers = {
         "Authorization": f"Bearer {profile.api_key}",
         "Content-Type": "application/json",
+        "Connection": "close",
     }
     url = build_endpoint_url(base_url, "models")
     start = perf_counter()
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers)
+        response = await _send_llm_http_request(
+            method="GET",
+            profile=profile,
+            url=url,
+            endpoint_kind="models",
+            headers=headers,
+            timeout=timeout,
+        )
     except (ImportError, ValueError) as exc:
         return LLMModelCatalogResult(
             ok=False,
@@ -928,10 +1090,10 @@ async def fetch_llm_profile_models(profile: LLMProfile) -> LLMModelCatalogResult
             duration_ms=compute_duration_ms(start),
             consumes_tokens=False,
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ssl.SSLError) as exc:
         return LLMModelCatalogResult(
             ok=False,
-            message=f"获取模型列表失败: {exc}",
+            message=format_llm_runtime_error_for_user(f"获取模型列表失败: {exc}"),
             resolved_base_url=base_url,
             request_url=url,
             attempted_urls=[url],
@@ -1031,8 +1193,15 @@ async def request_chat_completion(
         attempted_urls.append(url)
         start = perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=request_body)
+            response = await _send_llm_http_request(
+                method="POST",
+                profile=profile,
+                url=url,
+                endpoint_kind=endpoint_kind,
+                headers=headers,
+                timeout=timeout,
+                json_body=request_body,
+            )
         except (ImportError, ValueError) as exc:
             raise LLMRuntimeError(
                 format_llm_client_initialization_error(exc),
@@ -1049,7 +1218,7 @@ async def request_chat_completion(
                 endpoint_kind=endpoint_kind,
                 duration_ms=compute_duration_ms(start),
             ) from exc
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ssl.SSLError) as exc:
             raise LLMRuntimeError(
                 format_llm_runtime_error_for_user(f"模型请求失败: {exc}"),
                 request_url=url,

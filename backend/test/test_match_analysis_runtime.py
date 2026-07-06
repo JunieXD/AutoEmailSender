@@ -41,8 +41,14 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
         self._run_async(self._create_schema())
         self.email_task_id = self._run_async(self._create_email_task())
+        self.thinking_adaptation_patcher = patch(
+            "app.services.task_runtime.ensure_thinking_adaptation",
+            new=AsyncMock(return_value=None),
+        )
+        self.thinking_adaptation_patcher.start()
 
     def tearDown(self) -> None:
+        self.thinking_adaptation_patcher.stop()
         self._run_async(self.engine.dispose())
         self.temp_dir.cleanup()
 

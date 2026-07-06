@@ -371,6 +371,38 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(json.loads(row[0]), {"enable_thinking": False})
 
+    def test_llm_profile_preview_test_returns_failure_when_thinking_adaptation_fails(self) -> None:
+        from app.services.llm_runtime import LLMRuntimeError
+
+        payload = self._build_llm_payload(api_base_url="https://tls.example.com/v1")
+        error = LLMRuntimeError(
+            "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。",
+            request_url="https://tls.example.com/v1/chat/completions",
+            attempted_urls=["https://tls.example.com/v1/chat/completions"],
+            endpoint_kind="chat_completions",
+            duration_ms=23,
+        )
+
+        with (
+            patch(
+                "app.api.llm_profiles.ensure_thinking_adaptation",
+                AsyncMock(side_effect=error),
+            ),
+            patch("app.api.llm_profiles.probe_llm_profile", AsyncMock()) as probe_mock,
+        ):
+            response = self.client.post("/api/llm-profiles/preview/test", json=payload)
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["message"], "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。")
+        self.assertEqual(data["request_url"], "https://tls.example.com/v1/chat/completions")
+        self.assertEqual(data["attempted_urls"], ["https://tls.example.com/v1/chat/completions"])
+        self.assertEqual(data["endpoint_kind"], "chat_completions")
+        self.assertEqual(data["duration_ms"], 23)
+        self.assertNotIn("_ssl.c", response.text)
+        probe_mock.assert_not_awaited()
+
     def test_identity_template_import_endpoint_supports_unsaved_identity_flow(self) -> None:
         response = self.client.post(
             "/api/identities/template-import",

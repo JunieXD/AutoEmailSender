@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-
-from app.core.time import utc_now
-
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
+from app.core.time import utc_now
 from app.models import LLMProfile
 from app.schemas.llm_profile import (
     LLMProfileCreate,
@@ -19,9 +17,15 @@ from app.schemas.llm_profile import (
     LLMProfileTestResult,
     LLMProfileUpdate,
 )
-from app.services.llm_runtime import fetch_llm_profile_models, probe_llm_profile
+from app.services.llm_runtime import (
+    LLMProbeResult,
+    LLMRuntimeError,
+    fetch_llm_profile_models,
+    probe_llm_profile,
+    resolve_base_url,
+)
 from app.services.operation_logs import record_operation_log
-from app.services.thinking_adaptation import ensure_thinking_adaptation
+from app.services.thinking_adaptation import ThinkingAdaptationFailed, ensure_thinking_adaptation
 
 
 router = APIRouter(prefix="/api/llm-profiles", tags=["llm-profiles"])
@@ -146,11 +150,15 @@ async def preview_llm_profile_test(
     session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfileTestResult:
     profile = LLMProfile(**payload.model_dump())
-    thinking_extra_body = await ensure_thinking_adaptation(session, profile)
-    result = await probe_llm_profile(
-        profile,
-        thinking_extra_body=thinking_extra_body,
-    )
+    try:
+        thinking_extra_body = await ensure_thinking_adaptation(session, profile)
+    except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
+        result = _build_adaptation_failure_probe_result(profile, exc)
+    else:
+        result = await probe_llm_profile(
+            profile,
+            thinking_extra_body=thinking_extra_body,
+        )
     if result.ok:
         await session.commit()
     return LLMProfileTestResult(
@@ -217,12 +225,16 @@ async def test_llm_profile(
     session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfileTestResult:
     profile = await _get_profile(session, profile_id)
-    thinking_extra_body = await ensure_thinking_adaptation(session, profile)
-    result = await probe_llm_profile(
-        profile,
-        session=session,
-        thinking_extra_body=thinking_extra_body,
-    )
+    try:
+        thinking_extra_body = await ensure_thinking_adaptation(session, profile)
+    except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
+        result = _build_adaptation_failure_probe_result(profile, exc)
+    else:
+        result = await probe_llm_profile(
+            profile,
+            session=session,
+            thinking_extra_body=thinking_extra_body,
+        )
     await _record_llm_profile_log(
         session,
         profile,
@@ -275,6 +287,33 @@ async def _clear_default_profiles(
             continue
         profile.is_default = False
         profile.updated_at = utc_now()
+
+
+def _build_adaptation_failure_probe_result(
+    profile: LLMProfile,
+    exc: LLMRuntimeError | ThinkingAdaptationFailed,
+) -> LLMProbeResult:
+    runtime_error = exc.last_error if isinstance(exc, ThinkingAdaptationFailed) else exc
+    if runtime_error is not None:
+        return LLMProbeResult(
+            ok=False,
+            message=str(runtime_error),
+            resolved_base_url=resolve_base_url(profile.api_base_url),
+            request_url=runtime_error.request_url,
+            attempted_urls=runtime_error.attempted_urls,
+            endpoint_kind=runtime_error.endpoint_kind,
+            status_code=runtime_error.status_code,
+            duration_ms=runtime_error.duration_ms,
+            consumes_tokens=True,
+            response_preview=None,
+        )
+    return LLMProbeResult(
+        ok=False,
+        message=str(exc),
+        resolved_base_url=resolve_base_url(profile.api_base_url),
+        consumes_tokens=True,
+        response_preview=None,
+    )
 
 
 async def _record_llm_profile_log(

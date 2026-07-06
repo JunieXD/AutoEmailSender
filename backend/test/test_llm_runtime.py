@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import unittest
 from unittest.mock import patch
 
@@ -69,6 +70,65 @@ class _FakeAsyncClient:
     ) -> _FakeResponse:
         self._calls.append((url, None))
         return self._responses.pop(0)
+
+
+class _CapturingAsyncClient:
+    def __init__(
+        self,
+        outcomes: list[_FakeResponse | BaseException],
+        calls: list[dict[str, object]],
+        client_kwargs: dict[str, object],
+    ) -> None:
+        self._outcomes = outcomes
+        self._calls = calls
+        self._client_kwargs = client_kwargs
+
+    async def __aenter__(self) -> "_CapturingAsyncClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json: dict[str, object] | None = None,
+    ) -> _FakeResponse:
+        self._calls.append(
+            {
+                "method": "POST",
+                "url": url,
+                "headers": headers or {},
+                "json": json,
+                "client_kwargs": self._client_kwargs,
+            },
+        )
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> _FakeResponse:
+        self._calls.append(
+            {
+                "method": "GET",
+                "url": url,
+                "headers": headers or {},
+                "json": None,
+                "client_kwargs": self._client_kwargs,
+            },
+        )
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
 
 class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -1712,6 +1772,151 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.usage.prompt_tokens, 12)
         self.assertEqual(result.usage.completion_tokens, 7)
         self.assertEqual(result.usage.total_tokens, 19)
+
+    async def test_request_chat_completion_retries_deepseek_bad_record_mac_with_tls12(self) -> None:
+        profile = LLMProfile(
+            name="deepseek",
+            provider="openai",
+            api_base_url="https://api.deepseek.com",
+            api_key="test-key",
+            model_name="deepseek-v4-flash",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"),
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "OK",
+                            },
+                        },
+                    ],
+                },
+            ),
+        ]
+        log_entries: list[str] = []
+
+        def fake_client(*args, **kwargs):
+            return _CapturingAsyncClient(outcomes, calls, kwargs)
+
+        with (
+            patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client),
+            patch("app.services.llm_runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+        ):
+            result = await request_chat_completion(
+                profile,
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(result.content, "OK")
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(calls[0]["client_kwargs"].get("verify"))
+        retry_verify = calls[1]["client_kwargs"].get("verify")
+        self.assertIsInstance(retry_verify, ssl.SSLContext)
+        self.assertEqual(retry_verify.maximum_version, ssl.TLSVersion.TLSv1_2)
+        self.assertTrue(any("SSLV3_ALERT_BAD_RECORD_MAC" in entry for entry in log_entries))
+        self.assertTrue(any("tls12_retry" in entry for entry in log_entries))
+
+    async def test_fetch_llm_profile_models_sends_connection_close_header(self) -> None:
+        profile = LLMProfile(
+            name="deepseek",
+            provider="openai",
+            api_base_url="https://api.deepseek.com",
+            api_key="test-key",
+            model_name="deepseek-v4-flash",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "data": [
+                        {
+                            "id": "deepseek-v4-flash",
+                        },
+                    ],
+                },
+            ),
+        ]
+
+        def fake_client(*args, **kwargs):
+            return _CapturingAsyncClient(outcomes, calls, kwargs)
+
+        with patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client):
+            result = await fetch_llm_profile_models(profile)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(calls[0]["headers"]["Connection"], "close")
+
+    async def test_fetch_llm_profile_models_logs_bad_record_mac_without_showing_raw_ssl(self) -> None:
+        profile = LLMProfile(
+            name="deepseek",
+            provider="openai",
+            api_base_url="https://api.deepseek.com",
+            api_key="test-key",
+            model_name="deepseek-v4-flash",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"),
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"),
+        ]
+        log_entries: list[str] = []
+
+        def fake_client(*args, **kwargs):
+            return _CapturingAsyncClient(outcomes, calls, kwargs)
+
+        with (
+            patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client),
+            patch("app.services.llm_runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+        ):
+            result = await fetch_llm_profile_models(profile)
+
+        self.assertFalse(result.ok)
+        self.assertIn("模型服务 TLS 连接失败", result.message)
+        self.assertNotIn("_ssl.c", result.message)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(any("SSLV3_ALERT_BAD_RECORD_MAC" in entry for entry in log_entries))
+        self.assertTrue(any("_ssl.c:2580" in entry for entry in log_entries))
+
+    async def test_llm_http_failure_log_strips_query_and_fragment_from_urls(self) -> None:
+        profile = LLMProfile(
+            name="deepseek",
+            provider="openai",
+            api_base_url="https://api.deepseek.com/v1?api_key=secret#frag",
+            api_key="sk-sensitive-test-key",
+            model_name="deepseek-v4-flash",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            httpx.ConnectError(
+                "proxy failed at https://api.deepseek.com/v1?api_key=secret#frag",
+            ),
+        ]
+        log_entries: list[str] = []
+
+        def fake_client(*args, **kwargs):
+            return _CapturingAsyncClient(outcomes, calls, kwargs)
+
+        with (
+            patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client),
+            patch("app.services.llm_runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+        ):
+            result = await fetch_llm_profile_models(profile)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(len(log_entries), 1)
+        self.assertIn("proxy failed", log_entries[0])
+        self.assertIn("https://api.deepseek.com/v1", log_entries[0])
+        self.assertNotIn("api_key=secret", log_entries[0])
+        self.assertNotIn("#frag", log_entries[0])
+        self.assertNotIn("sk-sensitive-test-key", log_entries[0])
 
     def test_parse_completion_usage_reads_reasoning_tokens(self) -> None:
         usage = parse_completion_usage(
