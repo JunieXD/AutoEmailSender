@@ -13,6 +13,10 @@ const startupCommand = `"${executablePath}" --startup`;
 
 describe("startup at login registry service", () => {
   it("only supports packaged Windows and macOS builds", async () => {
+    const missingRegistry = vi.fn((file: string, args: string[], callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      callback(new Error("missing"), "", "");
+    });
+
     await expect(
       getStartupAtLoginStatus({ platform: "linux", isPackaged: true, executablePath }),
     ).resolves.toMatchObject({ supported: false, enabled: false });
@@ -22,6 +26,27 @@ describe("startup at login registry service", () => {
     await expect(
       getStartupAtLoginStatus({ platform: "darwin", isPackaged: false, executablePath }),
     ).resolves.toMatchObject({ supported: false, enabled: false });
+    await expect(
+      getStartupAtLoginStatus({
+        platform: "win32",
+        isPackaged: true,
+        executablePath,
+        dependencies: { execFile: missingRegistry as never },
+      }),
+    ).resolves.toMatchObject({ supported: true, enabled: false });
+    await expect(
+      getStartupAtLoginStatus({
+        platform: "darwin",
+        isPackaged: true,
+        executablePath: "/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender",
+        dependencies: {
+          loginItems: {
+            getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
+            setLoginItemSettings: vi.fn(),
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ supported: true, enabled: false });
   });
 
   it("builds a quoted startup command", () => {
