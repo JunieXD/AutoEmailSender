@@ -12,12 +12,15 @@ const executablePath = "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.
 const startupCommand = `"${executablePath}" --startup`;
 
 describe("startup at login registry service", () => {
-  it("only supports packaged Windows builds", async () => {
+  it("only supports packaged Windows and macOS builds", async () => {
     await expect(
       getStartupAtLoginStatus({ platform: "linux", isPackaged: true, executablePath }),
     ).resolves.toMatchObject({ supported: false, enabled: false });
     await expect(
       getStartupAtLoginStatus({ platform: "win32", isPackaged: false, executablePath }),
+    ).resolves.toMatchObject({ supported: false, enabled: false });
+    await expect(
+      getStartupAtLoginStatus({ platform: "darwin", isPackaged: false, executablePath }),
     ).resolves.toMatchObject({ supported: false, enabled: false });
   });
 
@@ -98,6 +101,67 @@ describe("startup at login registry service", () => {
       ["delete", STARTUP_REGISTRY_KEY, "/v", STARTUP_REGISTRY_VALUE_NAME, "/f"],
       expect.any(Function),
     );
+  });
+});
+
+describe("startup at login macOS service", () => {
+  const macExecutablePath = "/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender";
+
+  it("reads macOS login item status", async () => {
+    const loginItems = {
+      getLoginItemSettings: vi.fn(() => ({ openAtLogin: true })),
+      setLoginItemSettings: vi.fn(),
+    };
+
+    await expect(
+      getStartupAtLoginStatus({
+        platform: "darwin",
+        isPackaged: true,
+        executablePath: macExecutablePath,
+        dependencies: { loginItems },
+      }),
+    ).resolves.toEqual({ supported: true, enabled: true });
+    expect(loginItems.getLoginItemSettings).toHaveBeenCalled();
+  });
+
+  it("enables macOS login item with startup args", async () => {
+    const loginItems = {
+      getLoginItemSettings: vi.fn(() => ({ openAtLogin: true })),
+      setLoginItemSettings: vi.fn(),
+    };
+
+    await expect(
+      setStartupAtLoginEnabled({
+        platform: "darwin",
+        isPackaged: true,
+        executablePath: macExecutablePath,
+        dependencies: { loginItems },
+      }, true),
+    ).resolves.toEqual({ supported: true, enabled: true });
+    expect(loginItems.setLoginItemSettings).toHaveBeenCalledWith({
+      openAtLogin: true,
+      args: ["--startup"],
+    });
+  });
+
+  it("disables macOS login item", async () => {
+    const loginItems = {
+      getLoginItemSettings: vi.fn(() => ({ openAtLogin: false })),
+      setLoginItemSettings: vi.fn(),
+    };
+
+    await expect(
+      setStartupAtLoginEnabled({
+        platform: "darwin",
+        isPackaged: true,
+        executablePath: macExecutablePath,
+        dependencies: { loginItems },
+      }, false),
+    ).resolves.toEqual({ supported: true, enabled: false });
+    expect(loginItems.setLoginItemSettings).toHaveBeenCalledWith({
+      openAtLogin: false,
+      args: [],
+    });
   });
 });
 

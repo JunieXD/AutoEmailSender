@@ -4,12 +4,22 @@ import type { StartupAtLoginStatus } from "./types.js";
 export const STARTUP_REGISTRY_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 export const STARTUP_REGISTRY_VALUE_NAME = "Auto Email Sender";
 
+type MacLoginItemSettings = {
+  openAtLogin?: boolean;
+};
+
+type MacLoginItemAdapter = {
+  getLoginItemSettings: () => MacLoginItemSettings;
+  setLoginItemSettings: (settings: { openAtLogin: boolean; args: string[] }) => void;
+};
+
 export type StartupAtLoginInput = {
   platform: NodeJS.Platform;
   isPackaged: boolean;
   executablePath: string;
   dependencies?: {
     execFile?: typeof execFile;
+    loginItems?: MacLoginItemAdapter;
   };
 };
 
@@ -33,6 +43,14 @@ export async function getStartupAtLoginStatus(
     return unsupportedStatus;
   }
 
+  if (input.platform === "darwin") {
+    const settings = getMacLoginItems(input).getLoginItemSettings();
+    return {
+      supported: true,
+      enabled: Boolean(settings.openAtLogin),
+    };
+  }
+
   try {
     const result = await runRegistryCommand(["query", STARTUP_REGISTRY_KEY, "/v", STARTUP_REGISTRY_VALUE_NAME], input);
     return {
@@ -51,6 +69,14 @@ export async function setStartupAtLoginEnabled(
   const unsupportedStatus = getUnsupportedStatus(input);
   if (unsupportedStatus !== null) {
     return unsupportedStatus;
+  }
+
+  if (input.platform === "darwin") {
+    getMacLoginItems(input).setLoginItemSettings({
+      openAtLogin: enabled,
+      args: enabled ? ["--startup"] : [],
+    });
+    return getStartupAtLoginStatus(input);
   }
 
   if (enabled) {
@@ -80,14 +106,6 @@ export async function setStartupAtLoginEnabled(
 }
 
 function getUnsupportedStatus(input: StartupAtLoginInput): StartupAtLoginStatus | null {
-  if (input.platform !== "win32") {
-    return {
-      supported: false,
-      enabled: false,
-      message: "当前平台不支持开机自启动。",
-    };
-  }
-
   if (!input.isPackaged) {
     return {
       supported: false,
@@ -96,7 +114,23 @@ function getUnsupportedStatus(input: StartupAtLoginInput): StartupAtLoginStatus 
     };
   }
 
+  if (input.platform !== "win32" && input.platform !== "darwin") {
+    return {
+      supported: false,
+      enabled: false,
+      message: "当前平台不支持开机自启动。",
+    };
+  }
+
   return null;
+}
+
+function getMacLoginItems(input: StartupAtLoginInput): MacLoginItemAdapter {
+  const loginItems = input.dependencies?.loginItems;
+  if (!loginItems) {
+    throw new Error("macOS 开机自启动接口未初始化。");
+  }
+  return loginItems;
 }
 
 function runRegistryCommand(

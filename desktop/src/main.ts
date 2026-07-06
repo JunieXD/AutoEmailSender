@@ -68,6 +68,17 @@ function getStartupInput() {
     platform: process.platform,
     isPackaged: app.isPackaged,
     executablePath: process.execPath,
+    dependencies:
+      process.platform === "darwin"
+        ? {
+            loginItems: {
+              getLoginItemSettings: () => app.getLoginItemSettings(),
+              setLoginItemSettings: (settings: { openAtLogin: boolean; args: string[] }) => {
+                app.setLoginItemSettings(settings);
+              },
+            },
+          }
+        : undefined,
   };
 }
 
