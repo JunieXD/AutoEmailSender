@@ -3,6 +3,7 @@ import {
   downloadDesktopUpdate,
   getDesktopAppVersion,
   isDesktopApp,
+  openDesktopExternalUrl,
   switchDesktopUpdateToFullDownload,
 } from "@/lib/desktopApi";
 
@@ -40,6 +41,17 @@ describe("desktopApi", () => {
     await downloadDesktopUpdate("full");
 
     expect(downloadUpdate).toHaveBeenCalledWith({ mode: "full" });
+  });
+
+  it("opens external URLs through the desktop bridge", async () => {
+    const openExternalUrl = vi.fn(async () => undefined);
+    window.autoEmailSender = buildDesktopApi({ openExternalUrl });
+
+    await openDesktopExternalUrl("https://github.com/JunieXD/AutoEmailSender/releases/tag/v2.4.0");
+
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      "https://github.com/JunieXD/AutoEmailSender/releases/tag/v2.4.0",
+    );
   });
 
   it("switches to full download through the desktop bridge", async () => {

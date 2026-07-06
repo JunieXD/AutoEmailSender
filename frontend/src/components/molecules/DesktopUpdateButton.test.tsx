@@ -200,6 +200,42 @@ describe("DesktopUpdateButton", () => {
     expect(screen.queryByRole("dialog", { name: /发现新版本/ })).not.toBeInTheDocument();
   });
 
+  it("guides macOS users to manually download updates from release notes", async () => {
+    const openExternalUrl = vi.fn(async () => undefined);
+    const downloadUpdate = vi.fn(async () => ({ state: "not_available" as const, version: "2.3.8" }));
+    const quitAndInstall = vi.fn(async () => undefined);
+    const releaseUrl = "https://github.com/JunieXD/AutoEmailSender/releases/tag/v2.4.0";
+    window.autoEmailSender = buildDesktopApi({
+      checkForUpdate: async () => ({
+        state: "manual_download_available",
+        version: "2.3.8",
+        nextVersion: "2.4.0",
+        releaseUrl,
+        releaseNotes: "- 支持 macOS",
+      }),
+      downloadUpdate,
+      quitAndInstall,
+      openExternalUrl,
+    });
+
+    render(<DesktopUpdateButton />);
+    fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: /发现新版本 v2\.4\.0/ });
+    expect(within(dialog).getByText("支持 macOS")).toBeInTheDocument();
+    expect(screen.getByText(/macOS 需前往 GitHub Releases 手动下载新版安装包/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /差量下载/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /全量下载/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /前往下载/ }));
+
+    await waitFor(() => {
+      expect(openExternalUrl).toHaveBeenCalledWith(releaseUrl);
+    });
+    expect(downloadUpdate).not.toHaveBeenCalled();
+    expect(quitAndInstall).not.toHaveBeenCalled();
+  });
+
   it("uses fallback release notes and keeps the pending marker when users dismiss the dialog", async () => {
     window.autoEmailSender = buildDesktopApi({
       checkForUpdate: async () => ({

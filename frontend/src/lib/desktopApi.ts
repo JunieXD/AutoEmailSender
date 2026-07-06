@@ -13,6 +13,15 @@ export async function openDesktopMaterial(materialId: number): Promise<DesktopMa
   }
   return api.openMaterial({ materialId });
 }
+
+export async function openDesktopExternalUrl(url: string): Promise<void> {
+  const api = getDesktopApi();
+  if (!api.openExternalUrl) {
+    throw new Error("当前桌面应用版本不支持打开外部链接");
+  }
+  await api.openExternalUrl(url);
+}
+
 export async function quitDesktopApp(): Promise<void> {
   const api = getDesktopApi();
   if (!api.quitApp) {
@@ -64,4 +73,3 @@ function getDesktopApi(): NonNullable<typeof window.autoEmailSender> {
   }
   return window.autoEmailSender;
 }
-

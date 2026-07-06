@@ -10,12 +10,18 @@ import {
   installDownloadedDesktopUpdate,
   isDesktopApp,
   onDesktopUpdateStatus,
+  openDesktopExternalUrl,
   switchDesktopUpdateToFullDownload,
 } from "@/lib/desktopApi";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import type { DesktopUpdateDownloadMode, DesktopUpdateStatus } from "@/types/desktop";
 
 const PENDING_UPDATE_KEY = "desktop_pending_update_version";
+
+type DesktopUpdateReleaseDialogStatus = Extract<
+  DesktopUpdateStatus,
+  { state: "available" | "manual_download_available" }
+>;
 
 const readPendingVersion = (): string | null => {
   const value = window.localStorage.getItem(PENDING_UPDATE_KEY);
@@ -65,9 +71,7 @@ function DesktopUpdateButtonInner() {
   const [pendingVersion, setPendingVersion] = useState<string | null>(() =>
     typeof window === "undefined" ? null : readPendingVersion(),
   );
-  const [releaseDialogStatus, setReleaseDialogStatus] = useState<
-    Extract<DesktopUpdateStatus, { state: "available" }> | null
-  >(null);
+  const [releaseDialogStatus, setReleaseDialogStatus] = useState<DesktopUpdateReleaseDialogStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const emittedStatusDuringCheckRef = useRef<string | null>(null);
@@ -82,7 +86,7 @@ function DesktopUpdateButtonInner() {
         return;
       }
 
-      if (status.state === "available") {
+      if (status.state === "available" || status.state === "manual_download_available") {
         setChecking(false);
         setPendingVersion(status.nextVersion);
         writePendingVersion(status.nextVersion);
@@ -214,6 +218,19 @@ function DesktopUpdateButtonInner() {
     }
   }, [notifyError]);
 
+  const openManualDownload = useCallback(
+    async (releaseUrl: string) => {
+      try {
+        await openDesktopExternalUrl(releaseUrl);
+        setReleaseDialogStatus(null);
+      } catch (openError) {
+        const message = openError instanceof Error ? openError.message : "打开下载页失败";
+        notifyError("打开下载页失败", message);
+      }
+    },
+    [notifyError],
+  );
+
   const handleCheckUpdateWithInstall = useCallback(async () => {
     if (checking || downloading) {
       return;
@@ -280,6 +297,9 @@ function DesktopUpdateButtonInner() {
         <DesktopUpdateReleaseNotesDialog
           status={releaseDialogStatus}
           onClose={() => setReleaseDialogStatus(null)}
+          onOpenManualDownload={(releaseUrl) => {
+            void openManualDownload(releaseUrl);
+          }}
           onStartDownload={(mode) => {
             setReleaseDialogStatus(null);
             void startDownload(mode);
@@ -293,10 +313,12 @@ function DesktopUpdateButtonInner() {
 function DesktopUpdateReleaseNotesDialog({
   status,
   onClose,
+  onOpenManualDownload,
   onStartDownload,
 }: {
-  status: Extract<DesktopUpdateStatus, { state: "available" }> | null;
+  status: DesktopUpdateReleaseDialogStatus | null;
   onClose: () => void;
+  onOpenManualDownload: (releaseUrl: string) => void;
   onStartDownload: (mode: DesktopUpdateDownloadMode) => void;
 }) {
   const {
@@ -362,20 +384,32 @@ function DesktopUpdateReleaseNotesDialog({
           >
             稍后
           </button>
-          <button
-            type="button"
-            onClick={() => onStartDownload("full")}
-            className="rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 transition hover:border-primary/40 hover:text-primary"
-          >
-            全量下载
-          </button>
-          <button
-            type="button"
-            onClick={() => onStartDownload("differential")}
-            className="rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-primary/20 transition hover:bg-primary/90"
-          >
-            差量下载
-          </button>
+          {status.state === "manual_download_available" ? (
+            <button
+              type="button"
+              onClick={() => onOpenManualDownload(status.releaseUrl)}
+              className="rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-primary/20 transition hover:bg-primary/90"
+            >
+              前往下载
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => onStartDownload("full")}
+                className="rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 transition hover:border-primary/40 hover:text-primary"
+              >
+                全量下载
+              </button>
+              <button
+                type="button"
+                onClick={() => onStartDownload("differential")}
+                className="rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-primary/20 transition hover:bg-primary/90"
+              >
+                差量下载
+              </button>
+            </>
+          )}
         </div>
       </section>
     </div>
@@ -435,6 +469,15 @@ function DesktopUpdateStatusBar({
         >
           差量下载
         </button>
+      </span>
+    );
+  }
+
+  if (status.state === "manual_download_available") {
+    return (
+      <span className="inline-flex min-h-[2.8rem] items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <span className="font-medium">发现 v{status.nextVersion}</span>
+        <span>macOS 需前往 GitHub Releases 手动下载新版安装包。</span>
       </span>
     );
   }
