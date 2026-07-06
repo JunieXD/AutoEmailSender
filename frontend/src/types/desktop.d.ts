@@ -23,6 +23,13 @@ export type DesktopUpdateStatus =
       fullDownloadBytes?: number;
       releaseNotes?: string;
     }
+  | {
+      state: "manual_download_available";
+      version: string;
+      nextVersion: string;
+      releaseUrl: string;
+      releaseNotes?: string;
+    }
   | { state: "not_available"; version: string }
   | ({ state: "downloading"; version: string; nextVersion: string } & DesktopUpdateDownloadProgress)
   | ({ state: "slow_download_offered"; version: string; nextVersion: string; fullDownloadBytes?: number } & DesktopUpdateDownloadProgress)

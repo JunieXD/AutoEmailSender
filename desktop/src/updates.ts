@@ -14,6 +14,9 @@ const BYTES_PER_KIB = 1024;
 const SLOW_CHECK_START_SECONDS = 10;
 const SLOW_REMAINING_SECONDS = 180;
 const FULL_DOWNLOAD_FALLBACK_TOLERANCE_BYTES = 1024 * 1024;
+const GITHUB_LATEST_RELEASE_API_URL =
+  "https://api.github.com/repos/JunieXD/AutoEmailSender/releases/latest";
+const GITHUB_RELEASES_URL = "https://github.com/JunieXD/AutoEmailSender/releases";
 let activeDownloadMode: UpdateDownloadMode = "differential";
 let currentDownloadToken: import("builder-util-runtime").CancellationToken | null = null;
 let currentDownloadStartedAtMs = 0;
@@ -30,6 +33,12 @@ type DownloadStatusPayload = {
 type ElectronReleaseNote = {
   version?: string | null;
   note?: string | null;
+};
+
+type GitHubLatestRelease = {
+  tag_name?: string;
+  html_url?: string;
+  body?: string | null;
 };
 
 export function formatDownloadProgress(percent: number): number {
@@ -114,6 +123,45 @@ export function normalizeReleaseNotes(
     .filter(Boolean);
 
   return sections.length ? sections.join("\n\n") : undefined;
+}
+
+export function normalizeReleaseTag(tagName: string): string {
+  return tagName.trim().replace(/^v/i, "");
+}
+
+export function compareReleaseVersions(left: string, right: string): number {
+  const leftParts = normalizeReleaseTag(left)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const rightParts = normalizeReleaseTag(right)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+
+export function buildManualDownloadStatus(input: {
+  currentVersion: string;
+  release: GitHubLatestRelease;
+}): UpdateStatus {
+  const nextVersion = input.release.tag_name ? normalizeReleaseTag(input.release.tag_name) : "";
+  if (!nextVersion || compareReleaseVersions(nextVersion, input.currentVersion) <= 0) {
+    return { state: "not_available", version: input.currentVersion };
+  }
+
+  return {
+    state: "manual_download_available",
+    version: input.currentVersion,
+    nextVersion,
+    releaseUrl: input.release.html_url ?? GITHUB_RELEASES_URL,
+    ...(input.release.body ? { releaseNotes: input.release.body } : {}),
+  };
 }
 
 export function buildProgressStatus(progress: {
@@ -244,6 +292,22 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
       currentStatus = { state: "not_available", version: app.getVersion() };
       return currentStatus;
     }
+    if (process.platform === "darwin") {
+      publish(getWindow, { state: "checking", version: app.getVersion() });
+      const response = await fetch(GITHUB_LATEST_RELEASE_API_URL, {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub Releases 检查失败：HTTP ${response.status}`);
+      }
+      const release = (await response.json()) as GitHubLatestRelease;
+      const status = buildManualDownloadStatus({
+        currentVersion: app.getVersion(),
+        release,
+      });
+      publish(getWindow, status);
+      return status;
+    }
     if (pendingInstallVersion !== null && pendingInstallVersion !== app.getVersion()) {
       currentStatus = {
         state: "downloaded_pending_install",
@@ -283,6 +347,9 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
 }
 
 export function checkForUpdatesOnStartup(): void {
+  if (process.platform === "darwin") {
+    return;
+  }
   if (!app.isPackaged) {
     return;
   }
