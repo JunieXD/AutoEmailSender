@@ -135,6 +135,13 @@ async function updateStartupAtLoginFromTray(enabled: boolean): Promise<void> {
   }
 
   refreshTrayContextMenu();
+  if (enabled && !currentStartupAtLoginStatus.enabled && currentStartupAtLoginStatus.message) {
+    void dialog.showMessageBox({
+      type: "info",
+      title: "需要在系统设置中允许",
+      message: currentStartupAtLoginStatus.message,
+    });
+  }
 }
 
 function ensureTray(): void {

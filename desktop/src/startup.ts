@@ -6,6 +6,7 @@ export const STARTUP_REGISTRY_VALUE_NAME = "Auto Email Sender";
 
 type MacLoginItemSettings = {
   openAtLogin?: boolean;
+  status?: "not-registered" | "enabled" | "requires-approval" | "not-found";
 };
 
 type MacLoginItemAdapter = {
@@ -61,10 +62,7 @@ export async function getStartupAtLoginStatus(
 
   if (input.platform === "darwin") {
     const settings = getMacLoginItems(input).getLoginItemSettings();
-    return {
-      supported: true,
-      enabled: Boolean(settings.openAtLogin),
-    };
+    return buildMacStartupStatus(settings);
   }
 
   try {
@@ -91,7 +89,14 @@ export async function setStartupAtLoginEnabled(
     getMacLoginItems(input).setLoginItemSettings({
       openAtLogin: enabled,
     });
-    return getStartupAtLoginStatus(input);
+    const status = await getStartupAtLoginStatus(input);
+    if (enabled && !status.enabled && !status.message) {
+      return {
+        ...status,
+        message: "macOS 未确认开机自启动，请到“系统设置 > 通用 > 登录项”中允许 Auto Email Sender。",
+      };
+    }
+    return status;
   }
 
   if (enabled) {
@@ -146,6 +151,21 @@ function getMacLoginItems(input: StartupAtLoginInput): MacLoginItemAdapter {
     throw new Error("macOS 开机自启动接口未初始化。");
   }
   return loginItems;
+}
+
+function buildMacStartupStatus(settings: MacLoginItemSettings): StartupAtLoginStatus {
+  if (settings.status === "requires-approval") {
+    return {
+      supported: true,
+      enabled: false,
+      message: "macOS 还需要在“系统设置 > 通用 > 登录项”中允许 Auto Email Sender 开机自启动。",
+    };
+  }
+
+  return {
+    supported: true,
+    enabled: Boolean(settings.openAtLogin || settings.status === "enabled"),
+  };
 }
 
 function runRegistryCommand(

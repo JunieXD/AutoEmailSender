@@ -150,6 +150,26 @@ describe("startup at login macOS service", () => {
     expect(loginItems.getLoginItemSettings).toHaveBeenCalled();
   });
 
+  it("reports when macOS login item requires user approval", async () => {
+    const loginItems = {
+      getLoginItemSettings: vi.fn(() => ({ openAtLogin: false, status: "requires-approval" as const })),
+      setLoginItemSettings: vi.fn(),
+    };
+
+    await expect(
+      getStartupAtLoginStatus({
+        platform: "darwin",
+        isPackaged: true,
+        executablePath: macExecutablePath,
+        dependencies: { loginItems },
+      }),
+    ).resolves.toEqual({
+      supported: true,
+      enabled: false,
+      message: "macOS 还需要在“系统设置 > 通用 > 登录项”中允许 Auto Email Sender 开机自启动。",
+    });
+  });
+
   it("enables macOS login item without Windows-only args", async () => {
     const loginItems = {
       getLoginItemSettings: vi.fn(() => ({ openAtLogin: true })),
@@ -166,6 +186,26 @@ describe("startup at login macOS service", () => {
     ).resolves.toEqual({ supported: true, enabled: true });
     expect(loginItems.setLoginItemSettings).toHaveBeenCalledWith({
       openAtLogin: true,
+    });
+  });
+
+  it("returns guidance when macOS does not enable login item after a toggle", async () => {
+    const loginItems = {
+      getLoginItemSettings: vi.fn(() => ({ openAtLogin: false, status: "not-registered" as const })),
+      setLoginItemSettings: vi.fn(),
+    };
+
+    await expect(
+      setStartupAtLoginEnabled({
+        platform: "darwin",
+        isPackaged: true,
+        executablePath: macExecutablePath,
+        dependencies: { loginItems },
+      }, true),
+    ).resolves.toEqual({
+      supported: true,
+      enabled: false,
+      message: "macOS 未确认开机自启动，请到“系统设置 > 通用 > 登录项”中允许 Auto Email Sender。",
     });
   });
 
