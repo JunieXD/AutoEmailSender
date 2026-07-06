@@ -164,6 +164,14 @@ export function buildManualDownloadStatus(input: {
   };
 }
 
+export function buildUpdateErrorStatus(input: { version: string; error: unknown }): UpdateStatus {
+  return {
+    state: "error",
+    version: input.version,
+    message: input.error instanceof Error ? input.error.message : String(input.error),
+  };
+}
+
 export function buildProgressStatus(progress: {
   percent: number;
   transferred: number;
@@ -294,19 +302,25 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
     }
     if (process.platform === "darwin") {
       publish(getWindow, { state: "checking", version: app.getVersion() });
-      const response = await fetch(GITHUB_LATEST_RELEASE_API_URL, {
-        headers: { Accept: "application/vnd.github+json" },
-      });
-      if (!response.ok) {
-        throw new Error(`GitHub Releases 检查失败：HTTP ${response.status}`);
+      try {
+        const response = await fetch(GITHUB_LATEST_RELEASE_API_URL, {
+          headers: { Accept: "application/vnd.github+json" },
+        });
+        if (!response.ok) {
+          throw new Error(`GitHub Releases 检查失败：HTTP ${response.status}`);
+        }
+        const release = (await response.json()) as GitHubLatestRelease;
+        const status = buildManualDownloadStatus({
+          currentVersion: app.getVersion(),
+          release,
+        });
+        publish(getWindow, status);
+        return status;
+      } catch (error) {
+        const status = buildUpdateErrorStatus({ version: app.getVersion(), error });
+        publish(getWindow, status);
+        return status;
       }
-      const release = (await response.json()) as GitHubLatestRelease;
-      const status = buildManualDownloadStatus({
-        currentVersion: app.getVersion(),
-        release,
-      });
-      publish(getWindow, status);
-      return status;
     }
     if (pendingInstallVersion !== null && pendingInstallVersion !== app.getVersion()) {
       currentStatus = {

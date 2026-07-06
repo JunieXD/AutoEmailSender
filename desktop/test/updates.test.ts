@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildManualDownloadStatus,
+  buildUpdateErrorStatus,
   compareReleaseVersions,
   estimateRemainingSeconds,
   formatByteSize,
@@ -65,6 +66,22 @@ describe("update helpers", () => {
         },
       }),
     ).toEqual({ state: "not_available", version: "2.4.0" });
+  });
+
+  it("builds update error status from thrown errors", () => {
+    expect(buildUpdateErrorStatus({ version: "2.3.8", error: new Error("network offline") })).toEqual({
+      state: "error",
+      version: "2.3.8",
+      message: "network offline",
+    });
+  });
+
+  it("builds update error status from non-error throws", () => {
+    expect(buildUpdateErrorStatus({ version: "2.3.8", error: "bad json" })).toEqual({
+      state: "error",
+      version: "2.3.8",
+      message: "bad json",
+    });
   });
 
   it("estimates remaining seconds from remaining bytes and speed", () => {
