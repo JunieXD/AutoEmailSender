@@ -5,7 +5,7 @@ import { getFrontendIndexPath, startBackend } from "./backend.js";
 import { registerExternalUrlIpc } from "./externalUrlService.js";
 import { registerFileSelectionIpc } from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
-import { getStartupAtLoginStatus, setStartupAtLoginEnabled } from "./startup.js";
+import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "./startup.js";
 import { bindTrayInteractions } from "./trayController.js";
 import { checkForUpdatesOnStartup, registerUpdateIpc } from "./updates.js";
 import {
@@ -28,7 +28,11 @@ const windowCreationState = { pendingCreation: null as Promise<void> | null };
 
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
-const launchedAtStartup = process.argv.includes("--startup");
+const launchedAtStartup = isLaunchedAtStartup({
+  argv: process.argv,
+  platform: process.platform,
+  getLoginItemSettings: () => app.getLoginItemSettings(),
+});
 app.setAppUserModelId("com.juniexd.autoemailsender");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -73,7 +77,7 @@ function getStartupInput() {
         ? {
             loginItems: {
               getLoginItemSettings: () => app.getLoginItemSettings(),
-              setLoginItemSettings: (settings: { openAtLogin: boolean; args: string[] }) => {
+              setLoginItemSettings: (settings: { openAtLogin: boolean }) => {
                 app.setLoginItemSettings(settings);
               },
             },

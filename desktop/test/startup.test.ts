@@ -4,6 +4,7 @@ import {
   STARTUP_REGISTRY_VALUE_NAME,
   buildStartupCommand,
   getStartupAtLoginStatus,
+  isLaunchedAtStartup,
   setStartupAtLoginEnabled,
   type StartupAtLoginInput,
 } from "../src/startup.js";
@@ -149,7 +150,7 @@ describe("startup at login macOS service", () => {
     expect(loginItems.getLoginItemSettings).toHaveBeenCalled();
   });
 
-  it("enables macOS login item with startup args", async () => {
+  it("enables macOS login item without Windows-only args", async () => {
     const loginItems = {
       getLoginItemSettings: vi.fn(() => ({ openAtLogin: true })),
       setLoginItemSettings: vi.fn(),
@@ -165,7 +166,6 @@ describe("startup at login macOS service", () => {
     ).resolves.toEqual({ supported: true, enabled: true });
     expect(loginItems.setLoginItemSettings).toHaveBeenCalledWith({
       openAtLogin: true,
-      args: ["--startup"],
     });
   });
 
@@ -185,8 +185,40 @@ describe("startup at login macOS service", () => {
     ).resolves.toEqual({ supported: true, enabled: false });
     expect(loginItems.setLoginItemSettings).toHaveBeenCalledWith({
       openAtLogin: false,
-      args: [],
     });
+  });
+});
+
+describe("startup launch detection", () => {
+  it("treats the startup argument as a startup launch", () => {
+    expect(isLaunchedAtStartup({
+      argv: ["/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender", "--startup"],
+      platform: "darwin",
+      getLoginItemSettings: vi.fn(() => ({ wasOpenedAtLogin: false })),
+    })).toBe(true);
+  });
+
+  it("uses macOS login item launch status", () => {
+    expect(isLaunchedAtStartup({
+      argv: ["/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender"],
+      platform: "darwin",
+      getLoginItemSettings: vi.fn(() => ({ wasOpenedAtLogin: true })),
+    })).toBe(true);
+  });
+
+  it("does not treat a regular macOS launch as startup", () => {
+    expect(isLaunchedAtStartup({
+      argv: ["/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender"],
+      platform: "darwin",
+      getLoginItemSettings: vi.fn(() => ({ wasOpenedAtLogin: false })),
+    })).toBe(false);
+  });
+
+  it("does not treat a regular Windows launch as startup", () => {
+    expect(isLaunchedAtStartup({
+      argv: ["C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe"],
+      platform: "win32",
+    })).toBe(false);
   });
 });
 

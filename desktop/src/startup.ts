@@ -10,7 +10,7 @@ type MacLoginItemSettings = {
 
 type MacLoginItemAdapter = {
   getLoginItemSettings: () => MacLoginItemSettings;
-  setLoginItemSettings: (settings: { openAtLogin: boolean; args: string[] }) => void;
+  setLoginItemSettings: (settings: { openAtLogin: boolean }) => void;
 };
 
 export type StartupAtLoginInput = {
@@ -33,6 +33,22 @@ export function buildStartupCommand(executablePath: string): string {
   }
 
   return `"${executablePath}" --startup`;
+}
+
+export function isLaunchedAtStartup(input: {
+  argv: string[];
+  platform: NodeJS.Platform;
+  getLoginItemSettings?: () => { wasOpenedAtLogin?: boolean };
+}): boolean {
+  if (input.argv.includes("--startup")) {
+    return true;
+  }
+
+  if (input.platform === "darwin") {
+    return Boolean(input.getLoginItemSettings?.().wasOpenedAtLogin);
+  }
+
+  return false;
 }
 
 export async function getStartupAtLoginStatus(
@@ -74,7 +90,6 @@ export async function setStartupAtLoginEnabled(
   if (input.platform === "darwin") {
     getMacLoginItems(input).setLoginItemSettings({
       openAtLogin: enabled,
-      args: enabled ? ["--startup"] : [],
     });
     return getStartupAtLoginStatus(input);
   }
