@@ -86,3 +86,27 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
         self.assertNotIn(f"uv run python -m {legacy_browser_driver} install", content)
+
+    def test_macos_backend_build_script_matches_packaged_runtime_dependencies(self) -> None:
+        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.sh"
+        content = script.resolve().read_text(encoding="utf-8")
+
+        self.assertIn("set -euo pipefail", content)
+        self.assertIn('PLAYWRIGHT_BROWSERS_PATH="$PlaywrightBrowsersDir"', content)
+        self.assertIn("uv run python -m playwright install --only-shell chromium", content)
+        self.assertIn("uv run pyinstaller", content)
+        self.assertIn("--debug noarchive", content)
+        self.assertIn("--hidden-import main", content)
+        self.assertIn("--hidden-import aiosqlite", content)
+        self.assertIn("--collect-all markitdown", content)
+        self.assertIn("--collect-all mammoth", content)
+        self.assertIn("--collect-all pdfminer", content)
+        self.assertIn("--collect-all pdfplumber", content)
+        self.assertIn("--collect-all pypdf", content)
+        self.assertIn("--collect-all playwright", content)
+        self.assertIn("--collect-all tiktoken", content)
+        self.assertIn("--collect-submodules tiktoken_ext", content)
+        self.assertIn("--hidden-import tiktoken_ext.openai_public", content)
+        self.assertIn('--add-data "$AlembicIni:."', content)
+        self.assertIn('--add-data "$AlembicDir:alembic"', content)
+        self.assertIn('"$PackagedBackendExe" --self-check', content)
