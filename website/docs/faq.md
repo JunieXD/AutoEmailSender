@@ -2,7 +2,7 @@
 
 ## 如何更新
 
-应用会检查 GitHub Releases 的新版本。Windows 版可在应用内下载并安装更新；macOS 版会打开 GitHub Releases 下载页，你需要下载新版 `.dmg` 后手动拖到“应用程序”覆盖安装。
+应用会检查 GitHub Releases 的新版本。Windows 版可在应用内下载并安装更新；macOS Apple Silicon 版会打开 GitHub Releases 下载页，你需要下载新版 `.dmg` 后手动拖到“应用程序”覆盖安装。Intel Mac 暂未提供安装包。
 
 ## 检查更新失败怎么办
 
@@ -18,6 +18,10 @@ Windows 安装版会将数据库、上传文件和运行日志保存到当前用
 
 `C:\Users\<你的用户名>\AppData\Roaming\Auto Email Sender`
 
+macOS Apple Silicon 安装版数据目录：
+
+`~/Library/Application Support/Auto Email Sender`
+
 本地运行源码时，默认数据目录是仓库根目录下的 `data/`。后端支持通过环境变量 `AUTO_EMAIL_SENDER_DATA_DIR` 自定义路径。
 
 ## 为什么安装时提示未知发布者
@@ -28,7 +32,7 @@ Windows 安装版会将数据库、上传文件和运行日志保存到当前用
 
 ## macOS 为什么提示无法验证开发者
 
-当前 macOS 版未购买 Apple Developer Program 账号签名，因此首次打开会被系统拦截。请确认安装包来自本项目 GitHub Releases 页面，然后到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。之后可以正常双击启动。
+当前 macOS Apple Silicon 版未购买 Apple Developer Program 账号签名，因此首次打开会被系统拦截。请确认安装包来自本项目 GitHub Releases 页面，然后到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。之后可以正常双击启动。
 
 ## 启动后白屏怎么办
 

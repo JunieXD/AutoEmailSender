@@ -20,12 +20,12 @@ export function buildReleaseNotes(version) {
     "## 安装说明",
     "",
     `- Windows 用户下载 \`${installerName}\`。`,
-    `- macOS 用户下载 \`AutoEmailSender-${normalizedVersion}-arm64.dmg\`，打开后拖到“应用程序”。首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。`,
+    `- macOS Apple Silicon 用户下载 \`AutoEmailSender-${normalizedVersion}-arm64.dmg\`，打开后拖到“应用程序”。首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。`,
     "",
     "## 自动更新",
     "",
     "- Windows：应用内可下载并安装更新。",
-    "- macOS：应用内可检查更新，发现新版本后会打开 GitHub Releases 手动下载新版 `.dmg`。",
+    "- macOS Apple Silicon：应用内可检查更新，发现新版本后会打开 GitHub Releases 手动下载新版 `.dmg`。",
     "",
   ].join("\n");
 }
