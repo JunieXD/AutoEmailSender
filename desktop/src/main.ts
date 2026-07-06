@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
@@ -13,7 +13,7 @@ import {
   shouldHideWindowOnClose,
   startWindowCreationOnce,
 } from "./windowLifecycle.js";
-import { getWindowIconPath } from "./windowIcon.js";
+import { createTrayIcon, getWindowIconPath } from "./windowIcon.js";
 import type { BackendController, BackendExit, BackendStatus, StartupAtLoginStatus } from "./types.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -142,11 +142,12 @@ function ensureTray(): void {
     return;
   }
 
-  tray = new Tray(getWindowIconPath({
+  tray = new Tray(createTrayIcon({
     isPackaged: app.isPackaged,
     platform: process.platform,
     resourcesPath: process.resourcesPath,
     repoRoot,
+    nativeImage,
   }));
   tray.setToolTip("Auto Email Sender");
   refreshTrayContextMenu();
