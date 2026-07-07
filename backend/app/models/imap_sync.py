@@ -194,6 +194,11 @@ class ImapProfessorSyncState(Base):
         nullable=True,
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    history_strategy_version: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'legacy'"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

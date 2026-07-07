@@ -192,7 +192,7 @@ class ImapSyncModelsTestCase(unittest.TestCase):
         )
 
     def test_professor_state_defaults_to_pending(self) -> None:
-        async def scenario() -> tuple[str, str]:
+        async def scenario() -> tuple[str, str, str]:
             async with self.session_factory() as session:
                 session.add(
                     ImapProfessorSyncState(
@@ -203,12 +203,35 @@ class ImapSyncModelsTestCase(unittest.TestCase):
                 )
                 await session.commit()
                 saved = await session.scalar(select(ImapProfessorSyncState))
-                return saved.folder_role, saved.historical_scan_status
+                return (
+                    saved.folder_role,
+                    saved.historical_scan_status,
+                    saved.history_strategy_version,
+                )
 
         self.assertEqual(
             self._run_async(scenario()),
-            ("inbox", ImapProfessorHistoricalScanStatus.PENDING.value),
+            ("inbox", ImapProfessorHistoricalScanStatus.PENDING.value, "legacy"),
         )
+
+    def test_professor_sync_state_records_history_strategy_version(self) -> None:
+        async def scenario() -> str:
+            async with self.session_factory() as session:
+                state = ImapProfessorSyncState(
+                    identity_id=1,
+                    professor_id=2,
+                    professor_email="prof@example.edu",
+                    folder_role="inbox",
+                    folder="INBOX",
+                    history_strategy_version="recent-v1-2025",
+                )
+                session.add(state)
+                await session.commit()
+
+                saved = await session.scalar(select(ImapProfessorSyncState))
+                return saved.history_strategy_version
+
+        self.assertEqual(self._run_async(scenario()), "recent-v1-2025")
 
     def test_professor_state_can_store_folder_role_and_real_folder(self) -> None:
         async def scenario() -> tuple[str, str]:
@@ -245,6 +268,10 @@ class ImapSyncModelsTestCase(unittest.TestCase):
         )
         self.assertIn(
             "folder_role",
+            Base.metadata.tables["imap_professor_sync_states"].columns,
+        )
+        self.assertIn(
+            "history_strategy_version",
             Base.metadata.tables["imap_professor_sync_states"].columns,
         )
         self.assertIn(
