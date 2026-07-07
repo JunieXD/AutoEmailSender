@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
+from email.utils import parseaddr
 from typing import Any
 
 
@@ -229,9 +230,23 @@ def search_uids_since(client: object, last_seen_uid: int | None) -> list[int]:
     return [int(item) for item in raw.split() if item.isdigit() and int(item) >= start_uid]
 
 
+def search_uids_since_date(client: object, since_date: date) -> list[int]:
+    criterion = f"SINCE {_format_imap_search_date(since_date)}"
+    status, payload = client.uid("SEARCH", None, criterion)
+    return _parse_uid_search_payload(status, payload)
+
+
 def search_uids_from_sender(client: object, from_email: str) -> list[int]:
     escaped = _escape_imap_search_value(from_email)
     status, payload = client.uid("SEARCH", None, f'(FROM "{escaped}")')
+    return _parse_uid_search_payload(status, payload)
+
+
+def search_uids_from_sender_since(client: object, from_email: str, since_date: date) -> list[int]:
+    normalized = parseaddr(from_email)[1] or from_email
+    escaped = _escape_imap_search_value(normalized)
+    criterion = f'(FROM "{escaped}" SINCE {_format_imap_search_date(since_date)})'
+    status, payload = client.uid("SEARCH", None, criterion)
     return _parse_uid_search_payload(status, payload)
 
 
@@ -264,6 +279,10 @@ def search_uids_combined_sent_recipient(client: object, recipient_email: str) ->
 
 def _escape_imap_search_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', r"\"")
+
+
+def _format_imap_search_date(value: date) -> str:
+    return value.strftime("%d-%b-%Y")
 
 
 def _parse_uid_search_payload(status: str, payload: object) -> list[int]:
