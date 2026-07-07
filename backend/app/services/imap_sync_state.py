@@ -22,10 +22,12 @@ from app.models import (
 
 ScanStateKey = tuple[int, int, str, str, str]
 ProfessorEmailKey = tuple[int, int, str]
+RecentHistoryCandidate = tuple[int, str]
 STALE_RUNNING_SCAN_AFTER = timedelta(hours=1)
 STALE_RUNNING_MAILBOX_HISTORY_AFTER = timedelta(hours=1)
 SCAN_STATE_KEY_LOOKUP_CHUNK_SIZE = 400
 TARGETED_BASELINE_STRATEGY_VERSION = "folder-v1-targeted-baseline"
+RECENT_HISTORY_STRATEGY_PREFIX = "recent-v1"
 
 
 async def ensure_professor_scan_states(
@@ -70,6 +72,72 @@ async def ensure_professor_scan_states(
                     historical_scan_completed_at=utc_now()
                     if state_status == ImapProfessorHistoricalScanStatus.COMPLETED.value
                     else None,
+                ),
+            )
+            created += 1
+        await session.commit()
+    return created
+
+
+async def ensure_recent_history_professor_scan_states(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    identity_id: int,
+    candidates: set[RecentHistoryCandidate],
+    strategy_version: str,
+    folder: str = "INBOX",
+) -> int:
+    normalized_candidates = {
+        (professor_id, normalized)
+        for professor_id, email in candidates
+        if professor_id and (normalized := _normalize_email(email))
+    }
+    if not normalized_candidates:
+        return 0
+
+    created = 0
+    async with session_factory() as session:
+        desired_keys: list[ScanStateKey] = [
+            (identity_id, professor_id, professor_email, "inbox", folder)
+            for professor_id, professor_email in sorted(normalized_candidates)
+        ]
+        existing_keys = await _load_existing_scan_state_keys(session, desired_keys)
+        existing_rows = list(
+            (
+                await session.execute(
+                    select(ImapProfessorSyncState).where(
+                        ImapProfessorSyncState.identity_id == identity_id,
+                        ImapProfessorSyncState.folder_role == "inbox",
+                        ImapProfessorSyncState.folder == folder,
+                        ImapProfessorSyncState.professor_email.in_(
+                            [email for _, email in normalized_candidates],
+                        ),
+                    ),
+                )
+            ).scalars(),
+        )
+        for row in existing_rows:
+            if row.history_strategy_version != strategy_version:
+                row.history_strategy_version = strategy_version
+                row.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
+                row.last_scanned_uid = None
+                row.historical_scan_started_at = None
+                row.historical_scan_completed_at = None
+                row.last_error = None
+
+        for key in desired_keys:
+            if key in existing_keys:
+                continue
+            row_identity_id, professor_id, professor_email, folder_role, folder_name = key
+            session.add(
+                ImapProfessorSyncState(
+                    identity_id=row_identity_id,
+                    professor_id=professor_id,
+                    professor_email=professor_email,
+                    folder_role=folder_role,
+                    folder=folder_name,
+                    historical_scan_status=ImapProfessorHistoricalScanStatus.PENDING.value,
+                    history_strategy_version=strategy_version,
                 ),
             )
             created += 1

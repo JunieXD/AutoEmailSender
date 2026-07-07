@@ -26,6 +26,7 @@ from app.services.imap_message_fetcher import ImapFetchedMessage
 from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache
 from app.services.imap_sync_state import ensure_professor_scan_states
 from app.services.imap_sync_state import ensure_professor_scan_states_if_needed
+from app.services.imap_sync_state import ensure_recent_history_professor_scan_states
 from app.services.mail_runtime import ImapHistoryHeaderFetchResult, ImapMailboxHistoryHeaderFetchResult
 from app.services.task_runtime import _sync_identity_imap_once_unlocked
 from app.services.task_runtime import is_imap_incremental_paused
@@ -246,6 +247,83 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             return second_created, total_states, select_count
 
         self.assertEqual(self._run_async(scenario()), (0, 810, 3))
+
+    def test_recent_history_candidate_states_reset_when_strategy_changes(self) -> None:
+        async def scenario() -> tuple[int, str, int | None, str]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                professor = Professor(name="Known", email="Known@Example.edu")
+                session.add_all([identity, professor])
+                await session.flush()
+                state = ImapProfessorSyncState(
+                    identity_id=identity.id,
+                    professor_id=professor.id,
+                    professor_email="known@example.edu",
+                    folder_role="inbox",
+                    folder="INBOX",
+                    historical_scan_status=ImapProfessorHistoricalScanStatus.COMPLETED.value,
+                    last_scanned_uid=900,
+                    history_strategy_version="recent-v1-2024",
+                )
+                session.add(state)
+                await session.commit()
+                identity_id = identity.id
+                professor_id = professor.id
+
+            created = await ensure_recent_history_professor_scan_states(
+                self.session_factory,
+                identity_id=identity_id,
+                candidates={(professor_id, "known@example.edu")},
+                strategy_version="recent-v1-2025",
+                folder="INBOX",
+            )
+
+            async with self.session_factory() as session:
+                saved = await session.scalar(select(ImapProfessorSyncState))
+                return (
+                    created,
+                    saved.historical_scan_status,
+                    saved.last_scanned_uid,
+                    saved.history_strategy_version,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (0, ImapProfessorHistoricalScanStatus.PENDING.value, None, "recent-v1-2025"),
+        )
+
+    def test_recent_history_candidate_states_create_only_candidates(self) -> None:
+        async def scenario() -> list[tuple[str, str]]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                chosen = Professor(name="Chosen", email="chosen@example.edu")
+                skipped = Professor(name="Skipped", email="skipped@example.edu")
+                session.add_all([identity, chosen, skipped])
+                await session.commit()
+                identity_id = identity.id
+                chosen_id = chosen.id
+
+            await ensure_recent_history_professor_scan_states(
+                self.session_factory,
+                identity_id=identity_id,
+                candidates={(chosen_id, "Chosen@Example.edu")},
+                strategy_version="recent-v1-2025",
+                folder="INBOX",
+            )
+
+            async with self.session_factory() as session:
+                rows = list(
+                    (
+                        await session.execute(
+                            select(ImapProfessorSyncState).order_by(
+                                ImapProfessorSyncState.professor_email,
+                            ),
+                        )
+                    ).scalars(),
+                )
+                return [(row.professor_email, row.history_strategy_version) for row in rows]
+
+        self.assertEqual(self._run_async(scenario()), [("chosen@example.edu", "recent-v1-2025")])
 
     def test_ensure_professor_scan_states_if_needed_skips_unchanged_fingerprint(self) -> None:
         async def scenario() -> tuple[int, int, int]:
