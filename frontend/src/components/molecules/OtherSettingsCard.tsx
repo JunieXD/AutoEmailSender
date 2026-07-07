@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState, type TransitionEvent } from 
 import clsx from "clsx";
 import { ChevronDown, Loader2, Power, Save, Settings } from "lucide-react";
 
-import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { quitDesktopApp } from "@/lib/desktopApi";
 import {
   defaultDraftRewritePreferences,
@@ -15,13 +14,10 @@ import { formatApiDateTime } from "@/lib/dateTime";
 import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
-type TextSettingsKey = {
-  [Key in RuntimeSettingsKey]: RuntimeSettingsUpdateDTO[Key] extends string ? Key : never;
-}[RuntimeSettingsKey];
 type NumberSettingsKey = {
   [Key in RuntimeSettingsKey]: RuntimeSettingsUpdateDTO[Key] extends number ? Key : never;
 }[RuntimeSettingsKey];
-type PreferenceSettingsKey = Exclude<TextSettingsKey, "draft_custom_instruction">;
+type HiddenDraftPreferenceKey = keyof typeof defaultDraftRewritePreferences;
 type FormState = Record<RuntimeSettingsKey, string>;
 
 const numberFields: Array<{
@@ -102,73 +98,9 @@ const numberFields: Array<{
   },
 ];
 
-const preferenceFields: Array<{
-  key: PreferenceSettingsKey;
-  label: string;
-  hint: string;
-  options: Array<{ value: string; label: string }>;
-}> = [
-  {
-    key: "draft_rewrite_intensity",
-    label: "改写强度",
-    hint: "控制 AI 对模板措辞的调整幅度。",
-    options: [
-      { value: "light", label: "轻微" },
-      { value: "moderate", label: "中等" },
-      { value: "strong", label: "明显" },
-    ],
-  },
-  {
-    key: "draft_rewrite_tone",
-    label: "语气",
-    hint: "控制邮件表达的沟通气质。",
-    options: [
-      { value: "polite", label: "礼貌" },
-      { value: "professional", label: "专业" },
-      { value: "friendly", label: "亲和" },
-    ],
-  },
-  {
-    key: "draft_rewrite_formality",
-    label: "正式程度",
-    hint: "控制句式接近自然表达还是正式学术邮件。",
-    options: [
-      { value: "natural", label: "更自然" },
-      { value: "balanced", label: "默认" },
-      { value: "formal", label: "更正式" },
-    ],
-  },
-  {
-    key: "draft_rewrite_length",
-    label: "长度",
-    hint: "控制 AI 是否压缩或展开模板内容。",
-    options: [
-      { value: "shorter", label: "更短" },
-      { value: "default", label: "默认" },
-      { value: "more_detailed", label: "更详细" },
-    ],
-  },
-  {
-    key: "draft_rewrite_specificity",
-    label: "具体性",
-    hint: "控制个性化理由的细节密度。",
-    options: [
-      { value: "concise", label: "概括" },
-      { value: "balanced", label: "平衡" },
-      { value: "detailed", label: "细节更足" },
-    ],
-  },
-  {
-    key: "draft_template_preservation",
-    label: "模板保留度",
-    hint: "控制 AI 对模板结构和主要话术的保留程度。",
-    options: [
-      { value: "structure_first", label: "优先保留结构" },
-      { value: "balanced", label: "平衡" },
-      { value: "content_first", label: "更重内容表达" },
-    ],
-  },
-];
+const hiddenDraftPreferenceKeys = Object.keys(
+  defaultDraftRewritePreferences,
+) as HiddenDraftPreferenceKey[];
 
 const hiddenNumberFields: Array<{
   key: NumberSettingsKey;
@@ -180,11 +112,15 @@ const hiddenNumberFields: Array<{
   },
 ];
 
-const emptyForm = [...numberFields, ...hiddenNumberFields, ...preferenceFields].reduce((state, field) => {
+const emptyForm = [...numberFields, ...hiddenNumberFields].reduce((state, field) => {
   state[field.key] = "";
   return state;
 }, {} as FormState);
+for (const key of hiddenDraftPreferenceKeys) {
+  emptyForm[key] = "";
+}
 emptyForm.draft_custom_instruction = "";
+emptyForm.intended_research_direction = "";
 
 export function OtherSettingsCard() {
   const [open, setOpen] = useState(false);
@@ -257,11 +193,9 @@ export function OtherSettingsCard() {
     const crawlConcurrency = form.crawler_profile_enrichment_concurrency || "3";
     const draftMaxTokens = form.draft_max_tokens || "6000";
     const draftConcurrency = form.batch_draft_generation_concurrency || "5";
-    const draftMode =
-      getPreferenceOptionLabel("draft_rewrite_intensity", form.draft_rewrite_intensity) || "默认";
-    return `草稿 ${draftMaxTokens} / 同时生成草稿 ${draftConcurrency} / 偏好 ${draftMode} / 匹配导师 ${matchConcurrency} / 补全详情页 ${crawlConcurrency}`;
+    const intendedDirection = form.intended_research_direction.trim() ? "意向方向 已设置" : "意向方向 未填写";
+    return `草稿 ${draftMaxTokens} / 同时生成草稿 ${draftConcurrency} / ${intendedDirection} / 匹配导师 ${matchConcurrency} / 补全详情页 ${crawlConcurrency}`;
   }, [form]);
-  const draftPreview = useMemo(() => buildDraftPreferencePreview(form), [form]);
 
   const toggleOpen = () => {
     setOpen((current) => {
@@ -285,14 +219,6 @@ export function OtherSettingsCard() {
     setForm((current) => ({
       ...current,
       [key]: value,
-    }));
-  };
-
-  const resetDraftPreferences = () => {
-    setSavedMessage(null);
-    setForm((current) => ({
-      ...current,
-      ...defaultDraftRewritePreferences,
     }));
   };
 
@@ -359,7 +285,7 @@ export function OtherSettingsCard() {
             </span>
           </div>
           <p className="mt-2 text-sm leading-6 text-stone-600">
-            调整 AI 草稿上限、改写偏好，以及批量匹配、草稿生成和智能抓取的同时处理数量。
+            调整 AI 草稿上限、补充要求、意向研究方向，以及批量匹配、草稿生成和智能抓取的同时处理数量。
           </p>
         </div>
         <ChevronDown
@@ -420,42 +346,9 @@ export function OtherSettingsCard() {
                     <div>
                       <h3 className="text-base font-semibold text-stone-900">草稿改写偏好</h3>
                       <p className="mt-1 text-sm leading-6 text-stone-600">
-                        调整 AI 润色模板时的表达方式。
+                        补充 AI 润色模板时需要额外注意的写作要求。
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={resetDraftPreferences}
-                      className="ui-btn-secondary"
-                    >
-                      恢复草稿默认
-                    </button>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {preferenceFields.map((field) => (
-                      <div
-                        key={field.key}
-                        className="block rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4"
-                      >
-                        <NativeSelectField
-                          label={field.label}
-                          ariaLabel={field.label}
-                          value={form[field.key]}
-                          onChange={(event) => handleChange(field.key, event.target.value)}
-                          shellClassName="h-10"
-                        >
-                          {field.options.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </NativeSelectField>
-                        <span className="mt-2 block text-xs leading-5 text-stone-500">
-                          {field.hint}
-                        </span>
-                      </div>
-                    ))}
                   </div>
 
                   <label className="block rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
@@ -463,6 +356,7 @@ export function OtherSettingsCard() {
                       AI 草稿补充要求
                     </span>
                     <textarea
+                      aria-label="AI 草稿补充要求"
                       value={form.draft_custom_instruction}
                       maxLength={2000}
                       onChange={(event) =>
@@ -495,24 +389,37 @@ export function OtherSettingsCard() {
                       </div>
                     </div>
                   </label>
+                </div>
 
-                  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-4">
-                    <h4 className="text-sm font-semibold text-stone-900">示例效果</h4>
-                    <div className="mt-3 space-y-3 text-sm leading-6">
-                      <div>
-                        <div className="text-xs font-semibold text-stone-500">原模板意图</div>
-                        <p className="mt-1 text-stone-600">{draftPreview.originalIntent}</p>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold text-stone-500">模拟改写结果</div>
-                        <p className="mt-1 text-stone-700">{draftPreview.rewrittenText}</p>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold text-stone-500">当前规则</div>
-                        <p className="mt-1 text-stone-600">{draftPreview.ruleSummary}</p>
+                <div className="space-y-4 border-t border-stone-200 pt-5">
+                  <div>
+                    <h3 className="text-base font-semibold text-stone-900">匹配分析偏好</h3>
+                    <p className="mt-1 text-sm leading-6 text-stone-600">
+                      补充你希望优先匹配的研究方向。
+                    </p>
+                  </div>
+
+                  <label className="block rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
+                    <span className="text-sm font-semibold text-stone-900">意向研究方向</span>
+                    <textarea
+                      aria-label="意向研究方向"
+                      value={form.intended_research_direction}
+                      maxLength={2000}
+                      onChange={(event) =>
+                        handleChange("intended_research_direction", event.target.value)
+                      }
+                      className="mt-3 min-h-28 w-full resize-y rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm leading-6 text-stone-800 outline-none transition placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      placeholder="例如：医学自然语言处理、临床知识图谱、科研智能体。"
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                      <span className="text-xs leading-5 text-stone-500">
+                        填写后会作为匹配度计算参考；当导师方向与意向相近时会提高匹配度，不填写则按默认材料和导师信息计算。
+                      </span>
+                      <div className="text-xs leading-5 text-stone-500">
+                        {form.intended_research_direction.length}/2000
                       </div>
                     </div>
-                  </div>
+                  </label>
                 </div>
 
                 <div className="space-y-3 border-t border-stone-200 pt-5">
@@ -631,10 +538,11 @@ function toFormState(settings: RuntimeSettingsDTO): FormState {
   for (const field of hiddenNumberFields) {
     state[field.key] = String(getNumberSetting(settings, field.key, field.defaultValue));
   }
-  for (const field of preferenceFields) {
-    state[field.key] = getPreferenceSetting(settings, field.key);
+  for (const key of hiddenDraftPreferenceKeys) {
+    state[key] = defaultDraftRewritePreferences[key];
   }
   state.draft_custom_instruction = settings.draft_custom_instruction ?? "";
+  state.intended_research_direction = settings.intended_research_direction ?? "";
   return state;
 }
 
@@ -647,11 +555,6 @@ function getNumberSetting(
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function getPreferenceSetting(settings: RuntimeSettingsDTO, key: PreferenceSettingsKey): string {
-  const value = settings[key];
-  return typeof value === "string" && value ? value : defaultDraftRewritePreferences[key];
-}
-
 function toUpdatePayload(form: FormState): RuntimeSettingsUpdateDTO {
   const payload = {} as RuntimeSettingsUpdateDTO;
   for (const field of numberFields) {
@@ -662,155 +565,10 @@ function toUpdatePayload(form: FormState): RuntimeSettingsUpdateDTO {
     const value = Number(form[field.key]);
     payload[field.key] = Number.isFinite(value) ? value : field.defaultValue;
   }
-  const preferencePayload = payload as Record<
-    PreferenceSettingsKey,
-    RuntimeSettingsUpdateDTO[PreferenceSettingsKey]
-  >;
-  for (const field of preferenceFields) {
-    const defaultValue = defaultDraftRewritePreferences[field.key];
-    const value = field.options.some((option) => option.value === form[field.key])
-      ? form[field.key]
-      : defaultValue;
-    preferencePayload[field.key] = value as RuntimeSettingsUpdateDTO[PreferenceSettingsKey];
-  }
+  Object.assign(payload, defaultDraftRewritePreferences);
   payload.draft_custom_instruction = form.draft_custom_instruction.trim();
+  payload.intended_research_direction = form.intended_research_direction.trim();
   return payload;
-}
-
-function getPreferenceOptionLabel(key: PreferenceSettingsKey, value: string): string | null {
-  const field = preferenceFields.find((candidate) => candidate.key === key);
-  return field?.options.find((option) => option.value === value)?.label ?? null;
-}
-
-type DraftPreferencePreview = {
-  originalIntent: string;
-  rewrittenText: string;
-  ruleSummary: string;
-};
-
-const previewOptions = {
-  intensity: {
-    light: {
-      summary: "轻微调整：尽量保留原句，只做顺滑润色。",
-      intent: "我也想",
-    },
-    moderate: {
-      summary: "中等调整：保留核心信息，同时优化句式和衔接。",
-      intent: "我希望",
-    },
-    strong: {
-      summary: "更主动：明显重写表达，让动机和个性化理由更突出。",
-      intent: "我很希望主动",
-    },
-  },
-  tone: {
-    polite: {
-      summary: "礼貌语气：表达克制、尊重，减少压迫感。",
-      opener: "老师您好，我认真关注到您在人工智能方向的研究",
-    },
-    professional: {
-      summary: "专业语气：突出研究判断和申请目标。",
-      opener: "老师您好，基于我对您课题组人工智能研究方向的了解",
-    },
-    friendly: {
-      summary: "表达更亲近：语气更自然，降低距离感。",
-      opener: "老师您好，我最近读到您在人工智能方向的工作，感觉和自己的经历很有连接",
-    },
-  },
-  formality: {
-    natural: {
-      summary: "自然表达：句子更接近日常邮件。",
-      request: "和您进一步交流",
-    },
-    balanced: {
-      summary: "平衡正式度：自然但保持申请邮件的边界。",
-      request: "进一步了解课题组的研究机会",
-    },
-    formal: {
-      summary: "正式学术邮件：措辞更完整、边界更清晰。",
-      request: "进一步了解贵课题组的研究计划与招生安排",
-    },
-  },
-  length: {
-    shorter: {
-      summary: "更短：压缩背景，只保留动机和请求。",
-      detail: "",
-    },
-    default: {
-      summary: "默认长度：保留一条背景信息和一条请求。",
-      detail: "我过往项目主要关注智能体系统和研究型工具开发，",
-    },
-    more_detailed: {
-      summary: "增加背景和期待：补充经历、兴趣和后续沟通目标。",
-      detail: "我过往项目主要关注智能体系统、研究型工具开发和自动化信息处理，也希望把这些经历延伸到更系统的科研训练中，",
-    },
-  },
-  specificity: {
-    concise: {
-      summary: "概括匹配：只说明方向相关。",
-      match: "我对相关研究方向很感兴趣，",
-    },
-    balanced: {
-      summary: "平衡匹配：说明经历和方向之间的关系。",
-      match: "我希望结合自己的项目经历理解课题组当前关注的问题，",
-    },
-    detailed: {
-      summary: "点出研究交集：强调方法、场景或问题意识的连接。",
-      match: "我尤其关注智能体评估、科研工作流和模型应用落地之间的交集，",
-    },
-  },
-  preservation: {
-    structure_first: {
-      summary: "优先保留结构：沿用问候、背景、请求的模板顺序。",
-      closer: "因此想请教是否有进一步交流的可能。",
-    },
-    balanced: {
-      summary: "平衡保留：保留主要话术，但允许调整段落重心。",
-      closer: "如果方便，我希望进一步了解是否有合适的交流或申请机会。",
-    },
-    content_first: {
-      summary: "优先重组内容：围绕个性化理由重新安排模板信息。",
-      closer: "如果这些方向与课题组近期计划契合，我希望后续能进一步交流。",
-    },
-  },
-} as const;
-
-function buildDraftPreferencePreview(form: FormState): DraftPreferencePreview {
-  const intensity = getPreviewOption(previewOptions.intensity, form.draft_rewrite_intensity, "moderate");
-  const tone = getPreviewOption(previewOptions.tone, form.draft_rewrite_tone, "polite");
-  const formality = getPreviewOption(previewOptions.formality, form.draft_rewrite_formality, "balanced");
-  const length = getPreviewOption(previewOptions.length, form.draft_rewrite_length, "default");
-  const specificity = getPreviewOption(previewOptions.specificity, form.draft_rewrite_specificity, "balanced");
-  const preservation = getPreviewOption(
-    previewOptions.preservation,
-    form.draft_template_preservation,
-    "structure_first",
-  );
-
-  return {
-    originalIntent:
-      "老师您好，我对您的人工智能研究很感兴趣，希望结合自己的经历了解课题组机会。",
-    rewrittenText: [
-      tone.opener,
-      `。${length.detail}${specificity.match}${intensity.intent}${formality.request}。`,
-      preservation.closer,
-    ].join(""),
-    ruleSummary: [
-      intensity.summary,
-      tone.summary,
-      formality.summary,
-      length.summary,
-      specificity.summary,
-      preservation.summary,
-    ].join(" "),
-  };
-}
-
-function getPreviewOption<
-  Options extends Record<string, Record<string, string>>,
-  Fallback extends keyof Options & string,
->(options: Options, value: string, fallback: Fallback): Options[Fallback] {
-  return (value in options ? options[value] : options[fallback]) as Options[Fallback];
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {

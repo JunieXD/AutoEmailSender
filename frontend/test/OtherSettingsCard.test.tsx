@@ -28,6 +28,8 @@ vi.mock("@/lib/api/runtimeSettings", () => ({
     draft_rewrite_length: "default",
     draft_rewrite_specificity: "balanced",
     draft_template_preservation: "structure_first",
+    draft_custom_instruction: "",
+    intended_research_direction: "",
     updated_at: "2026-05-04T00:00:00Z",
   })),
   updateRuntimeSettings: vi.fn(async (payload) => ({
@@ -41,11 +43,6 @@ describe("OtherSettingsCard", () => {
     window.autoEmailSender = undefined;
     vi.clearAllMocks();
   });
-
-  const chooseSelectOption = (label: string, optionName: string) => {
-    fireEvent.click(screen.getByRole("button", { name: label }));
-    fireEvent.click(screen.getByRole("option", { name: optionName }));
-  };
 
   it("loads and saves runtime concurrency settings", async () => {
     const api = await import("@/lib/api/runtimeSettings");
@@ -105,6 +102,8 @@ describe("OtherSettingsCard", () => {
       draft_rewrite_length: "default",
       draft_rewrite_specificity: "balanced",
       draft_template_preservation: "structure_first",
+      draft_custom_instruction: "",
+      intended_research_direction: "",
       updated_at: "2026-05-04T00:00:00Z",
     } as Awaited<ReturnType<typeof api.getRuntimeSettings>>);
 
@@ -117,28 +116,21 @@ describe("OtherSettingsCard", () => {
     expect(screen.getByRole("button", { name: /其他设置/ })).not.toHaveTextContent("undefined");
   });
 
-  it("loads saves and resets draft rewrite preferences", async () => {
+  it("shows only the AI draft custom instruction in draft rewrite preferences", async () => {
     const api = await import("@/lib/api/runtimeSettings");
 
     render(<OtherSettingsCard />);
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
-    expect(await screen.findByRole("button", { name: "改写强度" })).toHaveTextContent("中等");
-    expect(screen.getByText("示例效果")).toBeInTheDocument();
+    const customInstruction = await screen.findByLabelText("AI 草稿补充要求");
+    expect(screen.queryByRole("button", { name: "改写强度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "语气" })).not.toBeInTheDocument();
+    expect(screen.queryByText("示例效果")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复草稿默认" })).not.toBeInTheDocument();
 
-    chooseSelectOption("改写强度", "明显");
-    chooseSelectOption("语气", "专业");
-    expect(screen.getAllByText(/更主动/).length).toBeGreaterThan(0);
-    expect(
-      screen.getByText(
-        (content, element) =>
-          element?.tagName.toLowerCase() === "p" &&
-          content.includes("老师您好，基于我对您课题组人工智能研究方向的了解"),
-      ),
-    ).not.toHaveTextContent(/重写|调整|保留原模板表达/);
-
-    fireEvent.click(screen.getByRole("button", { name: "恢复草稿默认" }));
-    expect(screen.getByRole("button", { name: "改写强度" })).toHaveTextContent("中等");
+    fireEvent.change(customInstruction, {
+      target: { value: "少用套话，结尾保持简短。" },
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => {
@@ -150,34 +142,33 @@ describe("OtherSettingsCard", () => {
           draft_rewrite_length: "default",
           draft_rewrite_specificity: "balanced",
           draft_template_preservation: "structure_first",
+          draft_custom_instruction: "少用套话，结尾保持简短。",
         }),
       );
     });
   });
 
-  it("updates the local preview for every draft rewrite preference", async () => {
+  it("loads and saves the intended research direction", async () => {
+    const api = await import("@/lib/api/runtimeSettings");
+
     render(<OtherSettingsCard />);
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
-    await screen.findByRole("button", { name: "改写强度" });
+    const intendedDirection = await screen.findByLabelText("意向研究方向");
+    expect(intendedDirection).toHaveValue("");
 
-    chooseSelectOption("改写强度", "轻微");
-    expect(screen.getAllByText(/轻微调整/).length).toBeGreaterThan(0);
+    fireEvent.change(intendedDirection, {
+      target: { value: "医学自然语言处理、临床知识图谱" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
-    chooseSelectOption("语气", "亲和");
-    expect(screen.getAllByText(/表达更亲近/).length).toBeGreaterThan(0);
-
-    chooseSelectOption("正式程度", "更正式");
-    expect(screen.getAllByText(/正式学术邮件/).length).toBeGreaterThan(0);
-
-    chooseSelectOption("长度", "更详细");
-    expect(screen.getAllByText(/增加背景和期待/).length).toBeGreaterThan(0);
-
-    chooseSelectOption("具体性", "细节更足");
-    expect(screen.getAllByText(/点出研究交集/).length).toBeGreaterThan(0);
-
-    chooseSelectOption("模板保留度", "更重内容表达");
-    expect(screen.getAllByText(/优先重组内容/).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intended_research_direction: "医学自然语言处理、临床知识图谱",
+        }),
+      );
+    });
   });
 
   it("shows startup at login as unavailable outside the desktop app", async () => {

@@ -32,6 +32,7 @@ class RuntimeSettingsRead(ApiSchema):
     draft_rewrite_specificity: DraftRewriteSpecificity
     draft_template_preservation: DraftTemplatePreservation
     draft_custom_instruction: str
+    intended_research_direction: str
     updated_at: datetime
 
 
@@ -52,3 +53,4 @@ class RuntimeSettingsUpdate(BaseModel):
     draft_rewrite_specificity: DraftRewriteSpecificity
     draft_template_preservation: DraftTemplatePreservation
     draft_custom_instruction: str = Field(max_length=2000)
+    intended_research_direction: str = Field(default="", max_length=2000)

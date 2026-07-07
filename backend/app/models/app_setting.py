@@ -106,3 +106,8 @@ class AppSetting(Base):
         nullable=False,
         server_default=text("''"),
     )
+    intended_research_direction: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text("''"),
+    )

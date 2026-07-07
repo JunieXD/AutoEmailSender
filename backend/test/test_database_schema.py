@@ -291,6 +291,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "draft_rewrite_specificity",
                 "draft_template_preservation",
                 "draft_custom_instruction",
+                "intended_research_direction",
             }.issubset(settings_columns),
         )
         self.assertNotIn("signature", identity_columns)

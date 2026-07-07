@@ -63,6 +63,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(payload["draft_rewrite_specificity"], "balanced")
         self.assertEqual(payload["draft_template_preservation"], "structure_first")
         self.assertEqual(payload["draft_custom_instruction"], "")
+        self.assertEqual(payload["intended_research_direction"], "")
 
     def test_patch_runtime_settings_updates_values_and_records_log(self) -> None:
         response = self.client.patch(
@@ -84,6 +85,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "draft_rewrite_specificity": "detailed",
                 "draft_template_preservation": "content_first",
                 "draft_custom_instruction": "请少用套话，结尾保持简短。",
+                "intended_research_direction": "医学自然语言处理、临床知识图谱",
             },
         )
 
@@ -100,6 +102,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["draft_rewrite_specificity"], "detailed")
         self.assertEqual(response.json()["draft_template_preservation"], "content_first")
         self.assertEqual(response.json()["draft_custom_instruction"], "请少用套话，结尾保持简短。")
+        self.assertEqual(response.json()["intended_research_direction"], "医学自然语言处理、临床知识图谱")
         logs = self.client.get(
             "/api/diagnostics/operation-logs",
             params={"event_name": "runtime_settings.updated"},
@@ -131,6 +134,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["crawler_agent_max_chunks_per_run"], 2)
+        self.assertEqual(response.json()["intended_research_direction"], "")
 
     def test_patch_runtime_settings_rejects_out_of_range_values(self) -> None:
         response = self.client.patch(

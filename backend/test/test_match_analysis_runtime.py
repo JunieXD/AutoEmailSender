@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
+    AppSetting,
     Base,
     EmailTask,
     IdentityMaterial,
@@ -220,6 +221,30 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         runs = self._run_async(self._list_runs())
         self.assertEqual(runs[0].primary_material_id, current_material_id)
 
+    def test_calculate_match_injects_intended_research_direction_from_runtime_settings(self) -> None:
+        self._run_async(self._set_intended_research_direction("医学自然语言处理"))
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=92,
+                match_reason="意向方向与导师方向接近",
+                fit_points=["医学 NLP"],
+                risk_points=[],
+                keywords=["医学 NLP"],
+            ),
+            usage=None,
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ) as mocked_generate:
+            self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+
+        self.assertEqual(
+            mocked_generate.await_args.kwargs["intended_research_direction"],
+            "医学自然语言处理",
+        )
+
     def test_calculate_match_rejects_when_identity_has_no_default_material(self) -> None:
         self._run_async(self._clear_identity_primary_material())
 
@@ -355,6 +380,11 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             task.primary_material_id = None
             await session.commit()
             return current_material_id
+
+    async def _set_intended_research_direction(self, value: str) -> None:
+        async with self.session_factory() as session:
+            session.add(AppSetting(id=1, intended_research_direction=value))
+            await session.commit()
 
     async def _clear_identity_primary_material(self) -> None:
         async with self.session_factory() as session:

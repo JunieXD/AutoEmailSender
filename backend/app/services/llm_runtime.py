@@ -4,7 +4,7 @@ import json
 import hashlib
 import re
 import ssl
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from math import ceil
 from time import perf_counter
@@ -93,6 +93,12 @@ SYSTEM_MATCH_ONLY_PROMPT = dedent(
        - 1-3：只能泛泛表达兴趣。
        - 0：无法形成可信理由。
 
+    用户意向研究方向评分原则：
+    - 如果用户意向研究方向非空，并且导师研究方向或近期论文与该意向方向明确相似，可以作为加分信号提高 match_score。
+    - 加分应体现在研究主题匹配度和个性化理由充分度中，并在 match_reason 或 fit_points 中说明相似点。
+    - 用户意向研究方向不能替代默认材料中的证据；如果默认材料完全缺少支撑，仍需遵守材料证据不足的上限规则。
+    - 用户意向研究方向为空或与导师方向不相似时，不要因为该项额外扣分。
+
     近期论文评分原则：
     - 有近期论文，且论文主题和默认材料有明确交集：应明显高于只有宽泛研究方向的导师。
     - 有近期论文，但论文和默认材料交集弱：不因论文数量多而加分。
@@ -145,11 +151,11 @@ SYSTEM_DRAFT_PROMPT = dedent(
 
     额外要求：
     - 只能输出一个 JSON 对象。
-    - 默认应保留模板的整体结构、段落顺序和主要话术风格；具体改写幅度以用户消息中的“草稿改写偏好”和“任务要求”为准。
+    - 默认应保留模板的整体结构、段落顺序和主要话术风格，只做必要的表达优化和一次自然个性化。
     - 只允许改动：称呼、个性化理由、个性化一段、结尾、主题。
     - 必须围绕导师研究方向进行个性化改写，不能只写泛泛的“我关注您的研究”。
     - 导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。
-    - 不要从零重写整封邮件；即使偏好要求更强改写，也必须基于模板、导师信息和可见材料。
+    - 不要从零重写整封邮件；任何补充要求都必须基于模板、导师信息和可见材料。
     - 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
     - 尽量保留模板中可表达的富文本标记，例如加粗、斜体、链接和列表。
     - 如果模板包含表格，尽量保留其中的信息顺序和语义，但仍按允许的 rich_body 结构输出。
@@ -558,55 +564,6 @@ class GeneratedDraftContent:
     prompt_cache_key: str | None = None
 
 
-DRAFT_REWRITE_INTENSITY_TEXT = {
-    "light": "轻微，只做必要个性化，最大限度保留原文。",
-    "moderate": "中等，在保留模板结构的基础上优化表达。",
-    "strong": "明显，更主动地优化措辞和连接句，但不从零重写。",
-}
-
-DRAFT_REWRITE_TONE_TEXT = {
-    "polite": "礼貌，更重视谦逊、尊重和边界感。",
-    "professional": "专业，更突出研究表达和学术沟通。",
-    "friendly": "亲和，表达更自然，减少生硬套话。",
-}
-
-DRAFT_REWRITE_FORMALITY_TEXT = {
-    "natural": "更自然，句式更口语化，但保持礼貌。",
-    "balanced": "默认，兼顾自然和正式。",
-    "formal": "更正式，更接近正式学术邮件。",
-}
-
-DRAFT_REWRITE_LENGTH_TEXT = {
-    "shorter": "更短，压缩冗余表达，避免过长段落。",
-    "default": "默认，保持接近模板长度。",
-    "more_detailed": "更详细，允许补充更具体的个性化理由，但不堆砌。",
-}
-
-DRAFT_REWRITE_SPECIFICITY_TEXT = {
-    "concise": "概括，个性化理由更简洁。",
-    "balanced": "平衡，兼顾简洁和具体。",
-    "detailed": "细节更足，更强调导师方向、论文和材料经历的具体连接。",
-}
-
-DRAFT_TEMPLATE_PRESERVATION_TEXT = {
-    "structure_first": "优先保留结构，尽量保持段落顺序和原有话术。",
-    "balanced": "平衡，保留结构，同时允许优化表达。",
-    "content_first": "更重内容表达，允许较多改写个性化内容，但仍不能从零重写。",
-}
-
-DRAFT_REWRITE_INTENSITY_REQUIREMENT_TEXT = {
-    "light": "轻微，只做必要个性化和语句顺滑，最大限度保留原文。",
-    "moderate": "中等，在保留模板骨架的基础上优化表达、连接句和个性化内容。",
-    "strong": "明显，可以更主动优化措辞、连接句和个性化段，但必须基于模板与可见材料，不要从零重写。",
-}
-
-DRAFT_TEMPLATE_STRUCTURE_REQUIREMENT_TEXT = {
-    "structure_first": "优先保留结构，保持段落顺序、信息顺序和主要话术。",
-    "balanced": "平衡保留结构，可优化段落内部表达和句间衔接，但不改变模板骨架。",
-    "content_first": "更重内容表达，允许在可改动范围内重排信息重心，但仍需保留模板骨架和原始沟通目的。",
-}
-
-
 StructuredResultT = TypeVar(
     "StructuredResultT",
     MatchEvaluationResult,
@@ -662,6 +619,7 @@ async def generate_match_evaluation(
     llm_profile: LLMProfile,
     professor: Professor,
     available_materials: list[IdentityMaterial],
+    intended_research_direction: str | None = None,
     thinking_extra_body: dict[str, object] | None = None,
 ) -> GeneratedMatchEvaluation:
     prompt_parts = build_match_prompt_parts(
@@ -669,6 +627,7 @@ async def generate_match_evaluation(
         primary_material=primary_material,
         professor=professor,
         available_materials=available_materials,
+        intended_research_direction=intended_research_direction,
         llm_profile=llm_profile,
     )
     payload: dict[str, object] = {
@@ -1296,12 +1255,14 @@ def build_match_prompt(
     primary_material: IdentityMaterial | None,
     professor: Professor,
     available_materials: list[IdentityMaterial],
+    intended_research_direction: str | None = None,
 ) -> str:
     return build_match_prompt_parts(
         identity=identity,
         primary_material=primary_material,
         professor=professor,
         available_materials=available_materials,
+        intended_research_direction=intended_research_direction,
     ).prompt
 
 
@@ -1311,6 +1272,7 @@ def build_match_prompt_parts(
     primary_material: IdentityMaterial | None,
     professor: Professor,
     available_materials: list[IdentityMaterial],
+    intended_research_direction: str | None = None,
     llm_profile: LLMProfile | None = None,
 ) -> MatchPromptParts:
     sorted_materials = sorted(available_materials, key=lambda material: material.id or 0)
@@ -1322,12 +1284,15 @@ def build_match_prompt_parts(
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
 
+    intended_direction = _non_empty_text(intended_research_direction)
+    intended_direction_block = intended_direction or "未填写"
     stable_prefix = dedent(
         f"""
         任务要求：
         1. 只判断匹配度，不要生成邮件草稿。
         2. match_reason 要简洁但具体。
         3. fit_points / risk_points / keywords 尽量聚焦，不要泛泛而谈。
+        4. 如果用户意向研究方向与导师研究方向或近期论文明确相似，可以提高匹配度；不相似或未填写时不要额外扣分。
 
         当前发送身份：
         - 姓名：{_format_nullable(identity.name)}
@@ -1341,6 +1306,14 @@ def build_match_prompt_parts(
 
         默认材料文本：
         {primary_material_text or "未上传可提取文本的默认材料"}
+
+        用户意向研究方向：
+        {intended_direction_block}
+
+        意向方向评分参考：
+        - 当用户意向研究方向与导师研究方向或近期论文相似时，请把它作为加分信号提高匹配度。
+        - 加分必须基于可说明的相似点，并写入 match_reason 或 fit_points。
+        - 该项不能替代默认材料证据；默认材料缺少支撑时仍需遵守上限规则。
 
         可选材料：
         {material_block or "- 无可用材料"}
@@ -1359,6 +1332,7 @@ def build_match_prompt_parts(
                 identity=identity,
                 primary_material=primary_material,
                 llm_profile=llm_profile,
+                intended_research_direction=intended_direction,
             )
             if llm_profile is not None
             else None
@@ -1405,7 +1379,7 @@ def build_draft_prompt(
         5. rich_body 必须是可渲染为邮件正文的受控富文本 JSON。
         6. 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
         7. 围绕导师研究方向做一次自然个性化，不要反复堆砌同一个方向词。
-        8. 按上面的改写幅度要求控制改动大小，同时尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
+        8. 按上面的默认改写约束控制改动大小，同时尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
         9. 如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。
         """,
     )
@@ -1451,7 +1425,7 @@ def _build_base_generation_prompt(
             },
         },
         "input": {
-            "草稿改写偏好": extra_requirements,
+            "草稿改写要求": extra_requirements,
             "学生材料文本": primary_material_text,
             "套磁信模板主题": _non_empty_text(custom_subject),
             "套磁信模板正文": template_body_text,
@@ -1526,6 +1500,8 @@ def build_draft_rewrite_prompt_parts(
             "marks 只能使用 strong、underline、emphasis。",
             "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
             "导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。",
+            "默认在保留模板骨架的基础上优化表达、连接句和个性化内容。",
+            "优先保留段落顺序、信息顺序和主要话术。",
         ],
         "response_schema": {
             "replacements": [
@@ -1617,47 +1593,7 @@ def _serialize_draft_source_block(block: DraftRewriteSourceBlock) -> dict[str, o
 
 def build_draft_rewrite_preferences(preferences: DraftRewritePreferences | None) -> str:
     preferences = preferences or DraftRewritePreferences()
-    intensity = DRAFT_REWRITE_INTENSITY_TEXT.get(
-        preferences.draft_rewrite_intensity,
-        DRAFT_REWRITE_INTENSITY_TEXT["moderate"],
-    )
-    tone = DRAFT_REWRITE_TONE_TEXT.get(
-        preferences.draft_rewrite_tone,
-        DRAFT_REWRITE_TONE_TEXT["polite"],
-    )
-    formality = DRAFT_REWRITE_FORMALITY_TEXT.get(
-        preferences.draft_rewrite_formality,
-        DRAFT_REWRITE_FORMALITY_TEXT["balanced"],
-    )
-    length = DRAFT_REWRITE_LENGTH_TEXT.get(
-        preferences.draft_rewrite_length,
-        DRAFT_REWRITE_LENGTH_TEXT["default"],
-    )
-    specificity = DRAFT_REWRITE_SPECIFICITY_TEXT.get(
-        preferences.draft_rewrite_specificity,
-        DRAFT_REWRITE_SPECIFICITY_TEXT["balanced"],
-    )
-    preservation = DRAFT_TEMPLATE_PRESERVATION_TEXT.get(
-        preferences.draft_template_preservation,
-        DRAFT_TEMPLATE_PRESERVATION_TEXT["structure_first"],
-    )
-    custom_instruction = _build_draft_custom_instruction_block(
-        preferences.draft_custom_instruction,
-    )
-    return dedent(
-        f"""
-        草稿改写偏好：
-        - 改写强度：{intensity}
-        - 语气：{tone}
-        - 正式程度：{formality}
-        - 长度：{length}
-        - 具体性：{specificity}
-        - 模板保留度：{preservation}
-
-        这些偏好只影响表达方式，不得覆盖系统要求、JSON 输出结构、富文本 schema、模板保留边界和导师研究方向个性化要求。
-        {custom_instruction}
-        """
-    ).strip()
+    return _build_draft_custom_instruction_block(preferences.draft_custom_instruction)
 
 def _build_draft_custom_instruction_block(value: str | None) -> str:
     instruction = (value or "").strip()
@@ -1688,22 +1624,14 @@ def _serialize_draft_custom_instruction(value: str | None) -> dict[str, str]:
     }
 
 def build_draft_rewrite_constraints(preferences: DraftRewritePreferences | None) -> str:
-    preferences = preferences or DraftRewritePreferences()
-    intensity = DRAFT_REWRITE_INTENSITY_REQUIREMENT_TEXT.get(
-        preferences.draft_rewrite_intensity,
-        DRAFT_REWRITE_INTENSITY_REQUIREMENT_TEXT["moderate"],
-    )
-    structure = DRAFT_TEMPLATE_STRUCTURE_REQUIREMENT_TEXT.get(
-        preferences.draft_template_preservation,
-        DRAFT_TEMPLATE_STRUCTURE_REQUIREMENT_TEXT["structure_first"],
-    )
+    _ = preferences
     return dedent(
-        f"""
+        """
         草稿改写约束：
-        - 改写幅度要求：{intensity}
-        - 模板结构要求：{structure}
+        - 默认在保留模板骨架的基础上优化表达、连接句和个性化内容。
+        - 优先保留结构，保持段落顺序、信息顺序和主要话术。
 
-        这些约束优先于普通偏好，并且必须与导师研究方向个性化要求一起满足。
+        这些约束必须与导师研究方向个性化要求一起满足。
         """
     ).strip()
 
@@ -1788,15 +1716,8 @@ def _build_draft_rewrite_professor_context(professor: Professor) -> dict[str, ob
     return context
 
 def _serialize_draft_rewrite_preferences(preferences: DraftRewritePreferences) -> dict[str, str]:
-    defaults = asdict(DraftRewritePreferences())
-    values = asdict(preferences)
-    return {
-        key: value
-        for key, value in values.items()
-        if key != "draft_custom_instruction"
-        and isinstance(value, str)
-        and value != defaults.get(key)
-    }
+    _ = preferences
+    return {}
 
 def _format_professor_info_block(professor: Professor) -> str:
     context = _build_professor_prompt_context(professor)
@@ -1839,11 +1760,13 @@ def _build_match_prompt_cache_key(
     identity: IdentityProfile,
     primary_material: IdentityMaterial | None,
     llm_profile: LLMProfile,
+    intended_research_direction: str | None,
 ) -> str | None:
     if not _is_official_openai_profile(llm_profile):
         return None
     material_id = primary_material.id if primary_material is not None else "none"
-    return f"match:v1:{identity.id}:{material_id}:{llm_profile.id}"
+    direction_hash = hashlib.sha256((intended_research_direction or "").encode("utf-8")).hexdigest()[:12]
+    return f"match:v2:{identity.id}:{material_id}:{llm_profile.id}:{direction_hash}"
 
 def _build_draft_rewrite_prompt_cache_key(
     *,

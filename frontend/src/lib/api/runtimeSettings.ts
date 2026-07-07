@@ -24,6 +24,7 @@ export interface RuntimeSettingsDTO {
   draft_rewrite_specificity: DraftRewriteSpecificity;
   draft_template_preservation: DraftTemplatePreservation;
   draft_custom_instruction: string;
+  intended_research_direction: string;
   updated_at: string;
 }
 

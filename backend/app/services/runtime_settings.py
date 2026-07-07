@@ -30,6 +30,7 @@ def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
         draft_rewrite_specificity=settings.draft_rewrite_specificity,
         draft_template_preservation=settings.draft_template_preservation,
         draft_custom_instruction=settings.draft_custom_instruction,
+        intended_research_direction=settings.intended_research_direction,
         updated_at=settings.updated_at,
     )
 
@@ -63,5 +64,4 @@ async def update_runtime_settings(
         },
     )
     return settings
-
 

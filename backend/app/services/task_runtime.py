@@ -976,6 +976,7 @@ async def calculate_task_match(
             return _match_action_result(task)
 
         task.llm_profile_id = runtime_llm_profile.id
+        runtime_settings = await get_runtime_settings(session)
         thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
         run = await _create_running_match_analysis_run(session, task, match_material)
         await session.commit()
@@ -986,6 +987,7 @@ async def calculate_task_match(
                 llm_profile=runtime_llm_profile,
                 professor=task.professor,
                 available_materials=list(task.identity.materials),
+                intended_research_direction=runtime_settings.intended_research_direction,
                 thinking_extra_body=thinking_extra_body,
             )
         except asyncio.CancelledError:
