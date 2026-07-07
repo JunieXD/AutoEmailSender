@@ -90,13 +90,16 @@ async def ensure_recent_history_professor_scan_states(
     normalized_candidates = {
         (professor_id, normalized)
         for professor_id, email in candidates
-        if professor_id and (normalized := _normalize_email(email))
+        if professor_id is not None
+        and professor_id > 0
+        and (normalized := _normalize_email(email))
     }
     if not normalized_candidates:
         return 0
 
     created = 0
     async with session_factory() as session:
+        candidate_keys = set(normalized_candidates)
         desired_keys: list[ScanStateKey] = [
             (identity_id, professor_id, professor_email, "inbox", folder)
             for professor_id, professor_email in sorted(normalized_candidates)
@@ -117,6 +120,8 @@ async def ensure_recent_history_professor_scan_states(
             ).scalars(),
         )
         for row in existing_rows:
+            if (row.professor_id, row.professor_email) not in candidate_keys:
+                continue
             if row.history_strategy_version != strategy_version:
                 row.history_strategy_version = strategy_version
                 row.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
