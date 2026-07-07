@@ -875,6 +875,7 @@ def _fetch_recent_mailbox_message_headers_since_sync(
         if max_fetch_batches is not None and max_fetch_batches < len(batches):
             fetch_batches = batches[: max(0, max_fetch_batches)]
             exhausted = bool(batches)
+        stop_fetching = False
         for batch in fetch_batches:
             acquire_history_imap_command_slot_sync(identity, "FETCH")
             command_count += 1
@@ -882,16 +883,26 @@ def _fetch_recent_mailbox_message_headers_since_sync(
             payloads_by_uid = {uid: payload for uid, payload in fetched_items}
             for uid in batch:
                 payload = payloads_by_uid.get(uid)
+                if payload is None:
+                    acquire_history_imap_command_slot_sync(identity, "FETCH")
+                    command_count += 1
+                    payload = _fetch_message_header_payload_by_uid(client, uid)
                 if not payload:
-                    continue
+                    exhausted = True
+                    stop_fetching = True
+                    break
                 raw_headers = _extract_message_bytes_from_fetch_payload(payload)
                 if not raw_headers:
-                    continue
+                    exhausted = True
+                    stop_fetching = True
+                    break
                 received_at = _extract_received_at_from_fetch_payload(payload)
                 message = _parse_fetched_headers(uid, raw_headers, "", None, received_at)
                 if message is not None:
                     message.uidvalidity = uidvalidity
                     messages.append(message)
+            if stop_fetching:
+                break
     except MailRuntimeError:
         raise
     except OSError as exc:

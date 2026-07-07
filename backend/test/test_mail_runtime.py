@@ -368,6 +368,19 @@ class _MissingUidBatchHeaderImapClient(_FakeImapClient):
         return super().uid(command, *args)
 
 
+class _PartialBatchRecentHeaderImapClient(_FakeImapClient):
+    def uid(self, command: str, *args):
+        if command == "FETCH" and str(args[0]) == "7,9":
+            self.commands.append(f"uid:{command}:{args}")
+            return "OK", [
+                (
+                    b'1 (UID 7 INTERNALDATE "08-May-2026 20:30:00 +0800" BODY[HEADER] {128}',
+                    self.headers_by_uid[7],
+                ),
+            ]
+        return super().uid(command, *args)
+
+
 class _RangeHeaderImapClient(_FakeImapClient):
     def uid(self, command: str, *args):
         self.commands.append(f"uid:{command}:{args}")
@@ -1094,6 +1107,49 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertFalse(
             any(re.fullmatch(r"\d+:\*|\d+:\d+", criterion) for criterion in client.search_criteria),
         )
+
+    def test_recent_mailbox_headers_fallback_when_batch_omits_uid(self) -> None:
+        client = _PartialBatchRecentHeaderImapClient(
+            search_data_by_criterion={"SINCE 01-Jan-2025": b"7 9"},
+            headers_by_uid={
+                7: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: first recent\r\n"
+                    b"Message-ID: <recent-7@example.com>\r\n"
+                    b"Date: Fri, 03 Jan 2025 20:00:00 +0800\r\n\r\n"
+                ),
+                9: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: second recent\r\n"
+                    b"Message-ID: <recent-9@example.com>\r\n"
+                    b"Date: Sat, 04 Jan 2025 20:00:00 +0800\r\n\r\n"
+                ),
+            },
+        )
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            result = asyncio.run(
+                fetch_recent_mailbox_message_headers_since(
+                    _build_identity(),
+                    "Sent",
+                    date(2025, 1, 1),
+                    min_uid=None,
+                    max_fetch_batches=None,
+                ),
+            )
+
+        self.assertEqual([message.uid for message in result.messages], [7, 9])
+        self.assertFalse(result.exhausted)
+        self.assertEqual(result.command_count, 3)
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('7,9'", serialized_commands)
+        self.assertIn("uid:FETCH:('9'", serialized_commands)
 
     def test_professor_history_headers_accept_since_date_for_inbox_search(self) -> None:
         client = _FakeImapClient(
