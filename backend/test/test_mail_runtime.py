@@ -1151,6 +1151,49 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("uid:FETCH:('7,9'", serialized_commands)
         self.assertIn("uid:FETCH:('9'", serialized_commands)
 
+    def test_recent_mailbox_headers_marks_exhausted_when_fallback_would_exceed_budget(self) -> None:
+        client = _PartialBatchRecentHeaderImapClient(
+            search_data_by_criterion={"SINCE 01-Jan-2025": b"7 9"},
+            headers_by_uid={
+                7: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: first recent\r\n"
+                    b"Message-ID: <recent-7@example.com>\r\n"
+                    b"Date: Fri, 03 Jan 2025 20:00:00 +0800\r\n\r\n"
+                ),
+                9: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: second recent\r\n"
+                    b"Message-ID: <recent-9@example.com>\r\n"
+                    b"Date: Sat, 04 Jan 2025 20:00:00 +0800\r\n\r\n"
+                ),
+            },
+        )
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            result = asyncio.run(
+                fetch_recent_mailbox_message_headers_since(
+                    _build_identity(),
+                    "Sent",
+                    date(2025, 1, 1),
+                    min_uid=None,
+                    max_fetch_batches=1,
+                ),
+            )
+
+        self.assertEqual([message.uid for message in result.messages], [7])
+        self.assertTrue(result.exhausted)
+        self.assertEqual(result.command_count, 2)
+        serialized_commands = " ".join(client.commands)
+        self.assertIn("uid:FETCH:('7,9'", serialized_commands)
+        self.assertNotIn("uid:FETCH:('9'", serialized_commands)
+
     def test_professor_history_headers_accept_since_date_for_inbox_search(self) -> None:
         client = _FakeImapClient(
             search_data_by_criterion={'(FROM "teacher@example.edu" SINCE 01-Jan-2025)': b"4"},
