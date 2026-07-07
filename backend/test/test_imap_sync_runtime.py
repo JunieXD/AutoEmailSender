@@ -30,6 +30,8 @@ from app.services.imap_sync_state import ensure_professor_scan_states_if_needed
 from app.services.imap_sync_state import ensure_recent_history_professor_scan_states
 from app.services.mail_runtime import ImapHistoryHeaderFetchResult, ImapMailboxHistoryHeaderFetchResult
 from app.services.task_runtime import _sync_identity_imap_once_unlocked
+from app.services.task_runtime import _sync_identity_targeted_history_once
+from app.services.task_runtime import _fetch_missing_history_mailbox_message_bodies
 from app.services.task_runtime import is_imap_incremental_paused
 from app.services.task_runtime import log_imap_history_progress
 from app.services.task_runtime import mark_imap_throttled
@@ -714,102 +716,165 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), (0, 0, None))
 
-    def test_history_scan_baselines_legacy_targeted_queue_after_mailbox_history_completion(self) -> None:
-        async def scenario() -> tuple[int, str, int]:
+    def test_legacy_pending_mailbox_history_does_not_block_recent_history_sync(self) -> None:
+        async def scenario() -> tuple[int, list[str], int, str, str | None]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
-                professor = Professor(name="Known", email="known@example.edu")
-                session.add_all([identity, professor])
+                recent_professor = Professor(name="Recent", email="recent@example.edu")
+                legacy_professor = Professor(name="Legacy Sent", email="legacy-sent@example.edu")
+                session.add_all([identity, recent_professor, legacy_professor])
                 await session.flush()
                 legacy_state = ImapProfessorSyncState(
                     identity_id=identity.id,
-                    professor_id=professor.id,
-                    professor_email="known@example.edu",
-                    folder_role="inbox",
-                    folder="INBOX",
+                    professor_id=legacy_professor.id,
+                    professor_email="legacy-sent@example.edu",
+                    folder_role="sent",
+                    folder="Sent",
                     historical_scan_status=ImapProfessorHistoricalScanStatus.PENDING.value,
+                    history_strategy_version="legacy",
+                    last_error="legacy pending",
                 )
                 mailbox_state = ImapMailboxSyncState(
                     identity_id=identity.id,
                     folder_role="inbox",
                     folder="INBOX",
-                    history_scan_status=ImapMailboxHistoricalScanStatus.COMPLETED.value,
-                    history_next_before_uid=0,
+                    history_scan_status=ImapMailboxHistoricalScanStatus.PENDING.value,
+                    history_high_water_uid=500,
+                    history_next_before_uid=401,
                 )
                 session.add_all([legacy_state, mailbox_state])
                 await session.commit()
                 identity_id = identity.id
                 legacy_state_id = legacy_state.id
 
+            sent_header = self._build_fetched_message(
+                uid=61,
+                uidvalidity=777,
+                message_id="<recent-sent@example.com>",
+                from_email="student@example.com",
+                to_emails=["recent@example.edu"],
+                content="",
+            )
+            sent_body = self._build_fetched_message(
+                uid=61,
+                uidvalidity=777,
+                message_id="<recent-sent@example.com>",
+                from_email="student@example.com",
+                to_emails=["recent@example.edu"],
+                content="recent sent body",
+            )
+            targeted_emails: list[str] = []
+
+            async def fake_targeted_headers(
+                _identity,
+                _folder,
+                professor_email,
+                *,
+                folder_role,
+                min_uid,
+                max_fetch_batches,
+                since_date=None,
+            ):
+                if folder_role != "inbox" or professor_email == "legacy-sent@example.edu":
+                    raise AssertionError("legacy sent targeted state must not run")
+                targeted_emails.append(professor_email)
+                self.assertIsNone(min_uid)
+                self.assertEqual(since_date.isoformat(), "2025-01-01")
+                return ImapHistoryHeaderFetchResult(messages=[], command_count=1, exhausted=False)
+
             with (
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
-                    new=AsyncMock(return_value=None),
+                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    new=AsyncMock(
+                        return_value=ImapHistoryHeaderFetchResult(
+                            messages=[sent_header],
+                            command_count=1,
+                            exhausted=False,
+                        ),
+                    ),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    new=AsyncMock(return_value=[sent_body]),
                 ),
                 patch(
                     "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
-                    new=AsyncMock(side_effect=AssertionError("legacy targeted queue should be baselined")),
+                    new=AsyncMock(side_effect=fake_targeted_headers),
                 ) as targeted_fetch_mock,
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),
+                ) as legacy_range_scan_mock,
             ):
                 detected = await sync_identity_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, legacy_state_id)
-                return detected, state.historical_scan_status, targeted_fetch_mock.await_count
+                return (
+                    detected,
+                    targeted_emails,
+                    legacy_range_scan_mock.await_count,
+                    state.historical_scan_status,
+                    state.last_error,
+                )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (0, ImapProfessorHistoricalScanStatus.COMPLETED.value, 0),
+            (
+                1,
+                ["recent@example.edu"],
+                0,
+                ImapProfessorHistoricalScanStatus.PENDING.value,
+                "legacy pending",
+            ),
         )
 
-    def test_history_scan_baselines_legacy_targeted_queue_when_fingerprint_already_exists(self) -> None:
-        async def scenario() -> tuple[int, str, int]:
+    def test_sync_identity_history_once_does_not_call_legacy_mailbox_range_scan(self) -> None:
+        async def scenario() -> tuple[int, int, int]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
-                professor = Professor(name="Known", email="known@example.edu")
-                session.add_all([identity, professor])
+                session.add(identity)
                 await session.flush()
-                legacy_state = ImapProfessorSyncState(
-                    identity_id=identity.id,
-                    professor_id=professor.id,
-                    professor_email="known@example.edu",
-                    folder_role="inbox",
-                    folder="INBOX",
-                    historical_scan_status=ImapProfessorHistoricalScanStatus.PENDING.value,
-                )
                 mailbox_state = ImapMailboxSyncState(
                     identity_id=identity.id,
                     folder_role="inbox",
                     folder="INBOX",
-                    history_scan_status=ImapMailboxHistoricalScanStatus.COMPLETED.value,
-                    history_next_before_uid=0,
-                    professor_state_fingerprint="legacy-fingerprint",
-                    last_professor_state_ensure_at=datetime(2026, 6, 30, tzinfo=UTC),
+                    history_scan_status=ImapMailboxHistoricalScanStatus.PENDING.value,
+                    history_next_before_uid=900,
                 )
-                session.add_all([legacy_state, mailbox_state])
+                session.add(mailbox_state)
                 await session.commit()
                 identity_id = identity.id
-                legacy_state_id = legacy_state.id
 
             with (
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
-                    new=AsyncMock(return_value=None),
-                ),
+                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    new=AsyncMock(
+                        return_value=ImapHistoryHeaderFetchResult(
+                            messages=[],
+                            command_count=1,
+                            exhausted=False,
+                        ),
+                    ),
+                ) as recent_fetch_mock,
                 patch(
                     "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
-                    new=AsyncMock(side_effect=AssertionError("legacy targeted queue should be baselined")),
+                    new=AsyncMock(return_value=ImapHistoryHeaderFetchResult(messages=[], command_count=1)),
                 ) as targeted_fetch_mock,
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),
+                ) as legacy_range_scan_mock,
             ):
                 detected = await sync_identity_history_once(self.session_factory, identity_id)
 
-            async with self.session_factory() as session:
-                state = await session.get(ImapProfessorSyncState, legacy_state_id)
-                return detected, state.historical_scan_status, targeted_fetch_mock.await_count
+            return detected, recent_fetch_mock.await_count, legacy_range_scan_mock.await_count
 
         self.assertEqual(
             self._run_async(scenario()),
-            (0, ImapProfessorHistoricalScanStatus.COMPLETED.value, 0),
+            (0, 1, 0),
         )
 
     def test_ensure_professor_scan_states_if_needed_records_fingerprint_after_success(self) -> None:
@@ -1072,7 +1137,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[full_message]),
                 ),
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
@@ -2852,8 +2917,8 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             (1, EmailTaskStatus.REPLY_DETECTED.value, True, 2),
         )
 
-    def test_history_scan_matches_inbox_headers_locally_and_fetches_only_matched_bodies(self) -> None:
-        async def scenario() -> tuple[int, list[int], int | None, int | None, int, int, str, str]:
+    def test_history_mailbox_body_helper_matches_inbox_headers_locally(self) -> None:
+        async def scenario() -> tuple[list[int], int, int, int, bool]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 known = Professor(name="Known", email="known@example.edu")
@@ -2903,61 +2968,37 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
-                    new=AsyncMock(
-                        return_value=ImapMailboxHistoryHeaderFetchResult(
-                            messages=headers,
-                            command_count=1,
-                            uidvalidity=777,
-                            high_water_uid=100,
-                            next_before_uid=91,
-                            scanned_count=10,
-                        ),
-                    ),
-                ),
-                patch(
                     "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
-                patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
-                    new=AsyncMock(side_effect=AssertionError("per-professor search should not run")),
-                ),
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                async with self.session_factory() as session:
+                    identity = await session.get(IdentityProfile, identity_id)
+                    state = await session.get(ImapMailboxSyncState, state_id)
+                result = await _fetch_missing_history_mailbox_message_bodies(
+                    self.session_factory,
+                    identity,
+                    identity_id=identity_id,
+                    state=state,
+                    header_messages=headers,
+                    remaining_command_budget=20,
+                )
 
-            async with self.session_factory() as session:
-                state = await session.get(ImapMailboxSyncState, state_id)
-                log = await session.scalar(
-                    select(EmailLog).where(EmailLog.rfc_message_id == "<known-history@example.edu>"),
-                )
-                return (
-                    detected,
-                    fetched_uids,
-                    state.history_high_water_uid,
-                    state.history_next_before_uid,
-                    state.history_scanned_count,
-                    state.history_matched_count,
-                    state.history_scan_status,
-                    log.content,
-                )
+            return (
+                fetched_uids,
+                len(result.messages),
+                result.command_count,
+                result.matched_header_count,
+                result.covered_all_headers,
+            )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (
-                1,
-                [98],
-                100,
-                91,
-                10,
-                1,
-                ImapMailboxHistoricalScanStatus.PENDING.value,
-                "matched body",
-            ),
+            ([98], 1, 7, 1, True),
         )
 
-    def test_history_scan_matches_sent_headers_by_recipient_without_per_professor_search(self) -> None:
-        async def scenario() -> tuple[int, list[int], str, str]:
+    def test_history_mailbox_body_helper_matches_sent_headers_by_recipient(self) -> None:
+        async def scenario() -> tuple[list[int], int, int, int, bool]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 professor = Professor(name="Sent Known", email="sent-known@example.edu")
@@ -2974,8 +3015,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
                 state_id = state.id
-
-            await self._mark_mailbox_history_completed(identity_id)
 
             header = self._build_fetched_message(
                 uid=37,
@@ -3003,50 +3042,37 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
-                    new=AsyncMock(return_value="Sent"),
-                ),
-                patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
-                    new=AsyncMock(
-                        return_value=ImapMailboxHistoryHeaderFetchResult(
-                            messages=[header],
-                            command_count=1,
-                            uidvalidity=888,
-                            high_water_uid=40,
-                            next_before_uid=0,
-                            scanned_count=40,
-                        ),
-                    ),
-                ),
-                patch(
                     "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
-                patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
-                    new=AsyncMock(side_effect=AssertionError("per-professor search should not run")),
-                ),
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                async with self.session_factory() as session:
+                    identity = await session.get(IdentityProfile, identity_id)
+                    state = await session.get(ImapMailboxSyncState, state_id)
+                result = await _fetch_missing_history_mailbox_message_bodies(
+                    self.session_factory,
+                    identity,
+                    identity_id=identity_id,
+                    state=state,
+                    header_messages=[header],
+                    remaining_command_budget=20,
+                )
 
-            async with self.session_factory() as session:
-                state = await session.get(ImapMailboxSyncState, state_id)
-                log = await session.scalar(select(EmailLog))
-                return detected, fetched_uids, state.history_scan_status, log.content
+            return (
+                fetched_uids,
+                len(result.messages),
+                result.command_count,
+                result.matched_header_count,
+                result.covered_all_headers,
+            )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (
-                1,
-                [37],
-                ImapMailboxHistoricalScanStatus.COMPLETED.value,
-                "sent matched body",
-            ),
+            ([37], 1, 7, 1, True),
         )
 
-    def test_history_scan_empty_folder_page_completes_without_body_fetch(self) -> None:
-        async def scenario() -> tuple[int, int, str, int, int | None]:
+    def test_history_mailbox_body_helper_empty_headers_skip_body_fetch(self) -> None:
+        async def scenario() -> tuple[int, int, int, bool]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 session.add(identity)
@@ -3063,50 +3089,36 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 identity_id = identity.id
                 state_id = state.id
 
-            with (
-                patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
-                    new=AsyncMock(
-                        return_value=ImapMailboxHistoryHeaderFetchResult(
-                            messages=[],
-                            command_count=1,
-                            uidvalidity=777,
-                            high_water_uid=10,
-                            next_before_uid=0,
-                            scanned_count=10,
-                        ),
-                    ),
-                ),
-                patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
-                    new=AsyncMock(return_value=[]),
-                ) as body_fetch_mock,
-            ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
-
-            async with self.session_factory() as session:
-                state = await session.get(ImapMailboxSyncState, state_id)
-                return (
-                    detected,
-                    body_fetch_mock.await_count,
-                    state.history_scan_status,
-                    state.history_scanned_count,
-                    state.history_next_before_uid,
+            with patch(
+                "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                new=AsyncMock(return_value=[]),
+            ) as body_fetch_mock:
+                async with self.session_factory() as session:
+                    identity = await session.get(IdentityProfile, identity_id)
+                    state = await session.get(ImapMailboxSyncState, state_id)
+                result = await _fetch_missing_history_mailbox_message_bodies(
+                    self.session_factory,
+                    identity,
+                    identity_id=identity_id,
+                    state=state,
+                    header_messages=[],
+                    remaining_command_budget=20,
                 )
+
+            return (
+                body_fetch_mock.await_count,
+                len(result.messages),
+                result.command_count,
+                result.covered_all_headers,
+            )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (
-                0,
-                0,
-                ImapMailboxHistoricalScanStatus.COMPLETED.value,
-                10,
-                0,
-            ),
+            (0, 0, 0, True),
         )
 
-    def test_history_scan_resets_state_when_uidvalidity_changes(self) -> None:
-        async def scenario() -> tuple[int, list[dict[str, object]], int | None, int | None, int | None, int, int, str]:
+    def test_recent_history_entry_leaves_legacy_uidvalidity_range_state_untouched(self) -> None:
+        async def scenario() -> tuple[int, int, int | None, int | None, int | None, int, int, str]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 professor = Professor(name="Known", email="known@example.edu")
@@ -3128,43 +3140,12 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 identity_id = identity.id
                 state_id = state.id
 
-            header = self._build_fetched_message(
-                uid=49,
-                uidvalidity=222,
-                message_id="<uidvalidity-history@example.edu>",
-                from_email="known@example.edu",
-                content="",
-            )
-            full_message = self._build_fetched_message(
-                uid=49,
-                uidvalidity=222,
-                message_id="<uidvalidity-history@example.edu>",
-                from_email="known@example.edu",
-                content="new uid space body",
-            )
-            header_calls: list[dict[str, object]] = []
-
-            async def fake_header_fetch(_identity, _folder, **kwargs):
-                header_calls.append(dict(kwargs))
-                return ImapMailboxHistoryHeaderFetchResult(
-                    messages=[header],
-                    command_count=1,
-                    uidvalidity=222,
-                    high_water_uid=50,
-                    next_before_uid=41,
-                    scanned_count=10,
-                    uidvalidity_changed=True,
-                )
-
             with (
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value=None)),
                 patch(
                     "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
-                    new=AsyncMock(side_effect=fake_header_fetch),
-                ),
-                patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
-                    new=AsyncMock(return_value=[full_message]),
-                ),
+                    new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),
+                ) as legacy_range_scan_mock,
             ):
                 detected = await sync_identity_history_once(self.session_factory, identity_id)
 
@@ -3172,7 +3153,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 state = await session.get(ImapMailboxSyncState, state_id)
                 return (
                     detected,
-                    header_calls,
+                    legacy_range_scan_mock.await_count,
                     state.uidvalidity,
                     state.last_seen_uid,
                     state.history_high_water_uid,
@@ -3184,20 +3165,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         self.assertEqual(
             self._run_async(scenario()),
             (
-                1,
-                [
-                    {
-                        "before_uid": 801,
-                        "limit": 200,
-                        "max_fetch_batches": 1,
-                        "expected_uidvalidity": 111,
-                    },
-                ],
-                222,
-                50,
-                50,
-                10,
-                1,
+                0,
+                0,
+                111,
+                1000,
+                1000,
+                200,
+                5,
                 ImapMailboxHistoricalScanStatus.PENDING.value,
             ),
         )
@@ -3220,6 +3194,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value=None)),
                 patch(
                     "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("budget should skip IMAP fetch")),
@@ -3357,7 +3332,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[message]),
                 ),
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             fetched_identity, fetched_folder, fetched_email = mocked.await_args.args
             fetched_folder_role = mocked.await_args.kwargs["folder_role"]
@@ -3432,7 +3407,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.scalar(select(ImapProfessorSyncState))
@@ -3504,7 +3479,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 settings_mock.return_value.imap_history_batch_size = 50
                 settings_mock.return_value.imap_history_command_budget_per_minute = 1
                 settings_mock.return_value.imap_fetch_batch_size = 20
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
@@ -3562,7 +3537,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[full_message]),
                 ) as body_fetch_mock,
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 log = await session.scalar(
@@ -3616,7 +3591,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[]),
                 ),
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
@@ -3668,7 +3643,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 settings_mock.return_value.imap_history_batch_size = 50
                 settings_mock.return_value.imap_history_command_budget_per_minute = 1
                 settings_mock.return_value.imap_fetch_batch_size = 20
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
@@ -3724,7 +3699,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 settings_mock.return_value.imap_history_batch_size = 50
                 settings_mock.return_value.imap_history_command_budget_per_minute = 2
                 settings_mock.return_value.imap_fetch_batch_size = 1
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
@@ -3777,7 +3752,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 settings_mock.return_value.imap_history_command_budget_per_minute = 20
                 settings_mock.return_value.imap_throttle_backoff_seconds = 86400
                 settings_mock.return_value.imap_fetch_batch_size = 20
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 first_state = await session.get(ImapProfessorSyncState, first_state_id)
@@ -3845,7 +3820,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 settings_mock.return_value.imap_history_batch_size = 50
                 settings_mock.return_value.imap_history_command_budget_per_minute = 2
                 settings_mock.return_value.imap_fetch_batch_size = 1
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
@@ -3917,7 +3892,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 settings_mock.return_value.imap_history_batch_size = 50
                 settings_mock.return_value.imap_history_command_budget_per_minute = 8
                 settings_mock.return_value.imap_fetch_batch_size = 20
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await _sync_identity_targeted_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
