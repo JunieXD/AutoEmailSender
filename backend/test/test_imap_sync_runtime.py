@@ -1452,6 +1452,57 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             ),
         )
 
+    def test_sent_ingestion_records_log_for_each_active_professor_sharing_email(self) -> None:
+        async def scenario() -> tuple[int, list[tuple[int, str, str, int | None]]]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                professor_a = Professor(name="A", email="shared@example.edu")
+                professor_b = Professor(name="B", email="Shared@Example.edu")
+                session.add_all([identity, professor_a, professor_b])
+                await session.commit()
+                identity_id = identity.id
+
+            message = self._build_fetched_message(
+                uid=61,
+                uidvalidity=777,
+                message_id="<sent-shared-professors@example.com>",
+                from_email="student@example.com",
+                to_emails=["shared@example.edu"],
+                subject="Shared address",
+                content="sent body",
+            )
+            detected = await process_imap_fetched_messages(
+                self.session_factory,
+                identity_id,
+                [message],
+                folder_role="sent",
+                folder="Sent",
+            )
+
+            async with self.session_factory() as session:
+                logs = list(
+                    (
+                        await session.execute(
+                            select(EmailLog).order_by(EmailLog.professor_id),
+                        )
+                    ).scalars(),
+                )
+                return detected, [
+                    (log.professor_id, log.direction, log.rfc_message_id, log.imap_uid)
+                    for log in logs
+                ]
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (
+                2,
+                [
+                    (1, EmailDirection.SENT.value, "<sent-shared-professors@example.com>", 61),
+                    (2, EmailDirection.SENT.value, "<sent-shared-professors@example.com>", 61),
+                ],
+            ),
+        )
+
     def test_sent_incremental_sync_ignores_non_system_professors(self) -> None:
         async def scenario() -> int:
             identity_id = await self._create_identity_with_imap()
@@ -2052,7 +2103,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         self.assertEqual(logs, [(1, "sent", "sent body"), (2, "sent", "sent body")])
 
     def test_recent_sent_history_keeps_high_water_on_partial_body_budget(self) -> None:
-        async def scenario() -> tuple[int, list[int], int | None, str]:
+        async def scenario() -> tuple[int, list[int], int | None, str, int, int]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 professor_a = Professor(name="A", email="a@example.edu")
@@ -2129,11 +2180,125 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                         ImapMailboxSyncState.folder == "Sent",
                     ),
                 )
-                return detected, fetched_uids, state.history_high_water_uid, state.history_scan_status
+                return (
+                    detected,
+                    fetched_uids,
+                    state.history_high_water_uid,
+                    state.history_scan_status,
+                    state.history_scanned_count,
+                    state.history_matched_count,
+                )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (1, [11], 11, "sent_recent_discovery_running"),
+            (1, [11], 11, "sent_recent_discovery_running", 1, 1),
+        )
+
+    def test_recent_sent_history_advances_exhausted_page_with_only_non_professor_headers(self) -> None:
+        async def scenario() -> tuple[
+            int,
+            tuple[int | None, str, int, int],
+            int,
+            tuple[int | None, str, int, int],
+            list[int | None],
+        ]:
+            identity_id = await self._create_identity_with_imap()
+            header_calls: list[int | None] = []
+            first_page = [
+                self._build_fetched_message(
+                    uid=31,
+                    uidvalidity=777,
+                    message_id="<recent-sent-outsider-31@example.com>",
+                    from_email="student@example.com",
+                    to_emails=["outsider-a@example.edu"],
+                    content="",
+                ),
+                self._build_fetched_message(
+                    uid=33,
+                    uidvalidity=777,
+                    message_id="<recent-sent-outsider-33@example.com>",
+                    from_email="student@example.com",
+                    to_emails=["outsider-b@example.edu"],
+                    content="",
+                ),
+            ]
+
+            async def fake_recent_headers(_identity, _folder, _since_date, *, min_uid, max_fetch_batches):
+                header_calls.append(min_uid)
+                if len(header_calls) == 1:
+                    return ImapHistoryHeaderFetchResult(
+                        messages=first_page,
+                        command_count=1,
+                        exhausted=True,
+                    )
+                return ImapHistoryHeaderFetchResult(
+                    messages=[],
+                    command_count=1,
+                    exhausted=False,
+                )
+
+            with (
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    new=AsyncMock(side_effect=fake_recent_headers),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    new=AsyncMock(side_effect=AssertionError("non-professor headers do not need bodies")),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    new=AsyncMock(side_effect=AssertionError("legacy uid range scan must not run")),
+                ),
+            ):
+                first_detected = await sync_identity_history_once(self.session_factory, identity_id)
+                async with self.session_factory() as session:
+                    first_state = await session.scalar(
+                        select(ImapMailboxSyncState).where(
+                            ImapMailboxSyncState.identity_id == identity_id,
+                            ImapMailboxSyncState.folder_role == "sent",
+                            ImapMailboxSyncState.folder == "Sent",
+                        ),
+                    )
+                    first_snapshot = (
+                        first_state.history_high_water_uid,
+                        first_state.history_scan_status,
+                        first_state.history_scanned_count,
+                        first_state.history_matched_count,
+                    )
+                second_detected = await sync_identity_history_once(self.session_factory, identity_id)
+
+            async with self.session_factory() as session:
+                state = await session.scalar(
+                    select(ImapMailboxSyncState).where(
+                        ImapMailboxSyncState.identity_id == identity_id,
+                        ImapMailboxSyncState.folder_role == "sent",
+                        ImapMailboxSyncState.folder == "Sent",
+                    ),
+                )
+                return (
+                    first_detected,
+                    first_snapshot,
+                    second_detected,
+                    (
+                        state.history_high_water_uid,
+                        state.history_scan_status,
+                        state.history_scanned_count,
+                        state.history_matched_count,
+                    ),
+                    header_calls,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (
+                0,
+                (33, "sent_recent_discovery_running", 2, 0),
+                0,
+                (33, "inbox_recent_replies_pending", 2, 0),
+                [None, 33],
+            ),
         )
 
     def test_recent_sent_history_waits_when_body_budget_unavailable(self) -> None:

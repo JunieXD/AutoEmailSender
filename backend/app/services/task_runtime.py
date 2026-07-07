@@ -131,6 +131,7 @@ class _MailboxHistoryBodyFetchResult:
     matched_header_count: int
     covered_all_headers: bool
     highest_scanned_uid: int | None = None
+    safe_match_uids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2363,12 +2364,12 @@ async def _sync_recent_sent_history_once(
         folder=sent_folder,
     )
     covered_recent_headers = not header_result.exhausted and body_result.covered_all_headers
-    if covered_recent_headers:
-        high_water_uid = _recent_history_high_water_uid(min_uid, header_result.messages)
-    else:
-        high_water_uid = min_uid
-        if body_result.highest_scanned_uid is not None:
-            high_water_uid = _max_optional_uid(high_water_uid, body_result.highest_scanned_uid)
+    high_water_uid, safe_scanned_count, safe_matched_count = _recent_sent_safe_scan_progress(
+        min_uid,
+        header_result.messages,
+        matched_headers,
+        body_result.safe_match_uids,
+    )
     async with session_factory() as session:
         state = await _get_or_create_mailbox_state(
             session,
@@ -2383,8 +2384,8 @@ async def _sync_recent_sent_history_once(
             if covered_recent_headers
             else "sent_recent_discovery_running"
         )
-        state.history_scanned_count = (state.history_scanned_count or 0) + len(header_result.messages)
-        state.history_matched_count = (state.history_matched_count or 0) + len(matched_headers)
+        state.history_scanned_count = (state.history_scanned_count or 0) + safe_scanned_count
+        state.history_matched_count = (state.history_matched_count or 0) + safe_matched_count
         state.history_last_error = None
         await session.commit()
 
@@ -2474,6 +2475,7 @@ async def _fetch_recent_sent_message_bodies(
     covered_all_headers = True
     allowed_uid_count = None
     highest_scanned_uid: int | None = None
+    safe_match_uids: list[int] = []
     for match in sorted(matched_headers, key=lambda item: item.message.uid):
         if await _history_mailbox_header_already_ingested(
             session_factory,
@@ -2483,6 +2485,7 @@ async def _fetch_recent_sent_message_bodies(
             professor_ids=match.professor_ids,
         ):
             highest_scanned_uid = _max_optional_uid(highest_scanned_uid, match.message.uid)
+            safe_match_uids.append(match.message.uid)
             continue
         if allowed_uid_count is None:
             allowed_uid_count = _history_body_fetch_uid_limit(
@@ -2496,6 +2499,7 @@ async def _fetch_recent_sent_message_bodies(
                     matched_header_count=len(matched_headers),
                     covered_all_headers=False,
                     highest_scanned_uid=None,
+                    safe_match_uids=tuple(safe_match_uids),
                 )
         if len(missing_uids) >= allowed_uid_count:
             covered_all_headers = False
@@ -2510,6 +2514,7 @@ async def _fetch_recent_sent_message_bodies(
             matched_header_count=len(matched_headers),
             covered_all_headers=covered_all_headers,
             highest_scanned_uid=highest_scanned_uid,
+            safe_match_uids=tuple(safe_match_uids),
         )
 
     body_fetch_command_count = _history_body_fetch_command_count(
@@ -2525,25 +2530,36 @@ async def _fetch_recent_sent_message_bodies(
     missing_after_fetch = [uid for uid in missing_uids if uid not in fetched_uids]
     if missing_after_fetch:
         raise RuntimeError(f"IMAP history body fetch incomplete for UIDs: {missing_after_fetch}")
+    safe_match_uids.extend(missing_uids)
     return _MailboxHistoryBodyFetchResult(
         messages=messages,
         command_count=body_fetch_command_count,
         matched_header_count=len(matched_headers),
         covered_all_headers=covered_all_headers,
         highest_scanned_uid=highest_scanned_uid,
+        safe_match_uids=tuple(safe_match_uids),
     )
 
 
-def _recent_history_high_water_uid(
+def _recent_sent_safe_scan_progress(
     min_uid: int | None,
     header_messages: list[ImapFetchedMessage],
-) -> int | None:
-    candidates = [message.uid for message in header_messages]
-    if min_uid is not None:
-        candidates.append(min_uid)
-    if not candidates:
-        return None
-    return max(candidates)
+    matched_headers: list[_MailboxHistoryHeaderMatch],
+    safe_match_uids: tuple[int, ...],
+) -> tuple[int | None, int, int]:
+    matched_uids = {match.message.uid for match in matched_headers}
+    safe_matched_uids = set(safe_match_uids)
+    high_water_uid = min_uid
+    scanned_count = 0
+    matched_count = 0
+    for message in sorted(header_messages, key=lambda item: item.uid):
+        if message.uid in matched_uids and message.uid not in safe_matched_uids:
+            break
+        high_water_uid = _max_optional_uid(high_water_uid, message.uid)
+        scanned_count += 1
+        if message.uid in matched_uids:
+            matched_count += 1
+    return high_water_uid, scanned_count, matched_count
 
 
 async def _load_recent_history_inbox_candidates(
@@ -3606,17 +3622,18 @@ async def _process_sent_imap_fetched_messages(
                 )
             ).scalars(),
         )
-        professors_by_email = {
-            normalize_email_address(professor.email): professor
-            for professor in professors
-            if normalize_email_address(professor.email)
-        }
+        professors_by_email: dict[str, list[Professor]] = {}
+        for professor in professors:
+            normalized_email = normalize_email_address(professor.email)
+            if not normalized_email:
+                continue
+            professors_by_email.setdefault(normalized_email, []).append(professor)
         for message in messages:
-            matched_professors = [
-                professors_by_email[email]
-                for email in recipients_by_message[id(message)]
-                if email in professors_by_email
-            ]
+            matched_professors_by_id: dict[int, Professor] = {}
+            for email in recipients_by_message[id(message)]:
+                for professor in professors_by_email.get(email, []):
+                    matched_professors_by_id.setdefault(professor.id, professor)
+            matched_professors = list(matched_professors_by_id.values())
             for professor in matched_professors:
                 task = await _find_sent_message_task_match(
                     session,
