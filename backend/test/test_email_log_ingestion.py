@@ -283,6 +283,67 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         )
         self.assertEqual([log.message_fingerprint for log in saved], [None, None])
 
+    def test_same_message_id_can_create_logs_for_different_professors(self) -> None:
+        async def scenario() -> tuple[int, list[EmailLog]]:
+            async with self.session_factory() as session:
+                base_kwargs = {
+                    "identity_id": 1,
+                    "direction": EmailDirection.SENT.value,
+                    "subject": "Shared recent sent",
+                    "content": "Same body",
+                    "content_html": None,
+                    "from_email": "Student <student@example.edu>",
+                    "to_emails": ["Teacher <teacher@example.edu>"],
+                    "cc_emails": None,
+                    "bcc_emails": None,
+                    "created_at": datetime(2026, 6, 30, 10, 2, 30, tzinfo=UTC),
+                    "ingest_source": "imap",
+                    "folder_role": "sent",
+                    "folder": "Sent",
+                    "uidvalidity": 123,
+                    "imap_uid": 456,
+                    "email_task_id": None,
+                    "llm_profile_id": None,
+                    "provider_payload": None,
+                    "reply_headers": None,
+                }
+                first = await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(
+                        professor_id=2,
+                        message_id="  <Shared.Message.ID@Example.EDU>  ",
+                        **base_kwargs,
+                    ),
+                )
+                second = await upsert_email_log(
+                    session,
+                    EmailLogIngestRecord(
+                        professor_id=3,
+                        message_id="<shared.message.id@example.edu>",
+                        **base_kwargs,
+                    ),
+                )
+                await session.commit()
+                count = await session.scalar(select(func.count()).select_from(EmailLog))
+                assert count is not None
+                saved = list(
+                    (await session.execute(select(EmailLog).order_by(EmailLog.professor_id.asc()))).scalars(),
+                )
+                return count, [first, second, *saved]
+
+        count, logs = self._run_async(scenario())
+        created = logs[:2]
+        saved = logs[2:]
+
+        self.assertEqual(count, 2)
+        self.assertEqual([log.professor_id for log in saved], [2, 3])
+        self.assertEqual(
+            [log.normalized_message_id for log in saved],
+            ["<shared.message.id@example.edu>", "<shared.message.id@example.edu>"],
+        )
+        self.assertNotEqual(created[0].id, created[1].id)
+        self.assertEqual([log.message_fingerprint for log in saved], [None, None])
+
     def test_deduplicates_missing_message_id_by_content_fingerprint(self) -> None:
         record = EmailLogIngestRecord(
             identity_id=1,
