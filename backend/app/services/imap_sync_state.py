@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import timedelta
 
 from app.core.config import get_settings
@@ -105,20 +105,23 @@ async def ensure_recent_history_professor_scan_states(
             for professor_id, professor_email in sorted(normalized_candidates)
         ]
         existing_keys = await _load_existing_scan_state_keys(session, desired_keys)
-        existing_rows = list(
-            (
-                await session.execute(
-                    select(ImapProfessorSyncState).where(
-                        ImapProfessorSyncState.identity_id == identity_id,
-                        ImapProfessorSyncState.folder_role == "inbox",
-                        ImapProfessorSyncState.folder == folder,
-                        ImapProfessorSyncState.professor_email.in_(
-                            [email for _, email in normalized_candidates],
-                        ),
-                    ),
-                )
-            ).scalars(),
-        )
+        candidate_emails = sorted({email for _, email in normalized_candidates})
+        existing_rows: list[ImapProfessorSyncState] = []
+        for email_chunk in _chunked_values(candidate_emails, SCAN_STATE_KEY_LOOKUP_CHUNK_SIZE):
+            existing_rows.extend(
+                list(
+                    (
+                        await session.execute(
+                            select(ImapProfessorSyncState).where(
+                                ImapProfessorSyncState.identity_id == identity_id,
+                                ImapProfessorSyncState.folder_role == "inbox",
+                                ImapProfessorSyncState.folder == folder,
+                                ImapProfessorSyncState.professor_email.in_(email_chunk),
+                            ),
+                        )
+                    ).scalars(),
+                ),
+            )
         for row in existing_rows:
             if (row.professor_id, row.professor_email) not in candidate_keys:
                 continue
@@ -679,6 +682,12 @@ def _dedupe_rows(
 
 
 def _chunked(values: list[ScanStateKey], size: int) -> Iterable[list[ScanStateKey]]:
+    effective_size = max(1, size)
+    for index in range(0, len(values), effective_size):
+        yield values[index : index + effective_size]
+
+
+def _chunked_values(values: list[str], size: int) -> Iterator[list[str]]:
     effective_size = max(1, size)
     for index in range(0, len(values), effective_size):
         yield values[index : index + effective_size]

@@ -22,6 +22,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
+from app.services import imap_sync_state
 from app.services.imap_message_fetcher import ImapFetchedMessage
 from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache
 from app.services.imap_sync_state import ensure_professor_scan_states
@@ -291,6 +292,64 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             self._run_async(scenario()),
             (0, ImapProfessorHistoricalScanStatus.PENDING.value, None, "recent-v1-2025"),
         )
+
+    def test_recent_history_candidate_email_chunks_are_bounded(self) -> None:
+        chunks = list(
+            imap_sync_state._chunked_values(
+                ["a", "b", "c", "d", "e"],
+                2,
+            ),
+        )
+
+        self.assertEqual(chunks, [["a", "b"], ["c", "d"], ["e"]])
+
+    def test_recent_history_candidate_states_handles_large_candidate_batches(self) -> None:
+        async def scenario() -> tuple[int, int]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                professors = [
+                    Professor(name=f"Bulk {index}", email=f"bulk{index}@example.edu")
+                    for index in range(5)
+                ]
+                session.add(identity)
+                session.add_all(professors)
+                await session.flush()
+                for professor in professors:
+                    session.add(
+                        ImapProfessorSyncState(
+                            identity_id=identity.id,
+                            professor_id=professor.id,
+                            professor_email=professor.email,
+                            folder_role="inbox",
+                            folder="INBOX",
+                            historical_scan_status=ImapProfessorHistoricalScanStatus.COMPLETED.value,
+                            last_scanned_uid=900,
+                            history_strategy_version="recent-v1-2024",
+                        ),
+                    )
+                await session.commit()
+                identity_id = identity.id
+                candidates = {(professor.id, professor.email) for professor in professors}
+
+            with patch.object(imap_sync_state, "SCAN_STATE_KEY_LOOKUP_CHUNK_SIZE", 2):
+                created = await ensure_recent_history_professor_scan_states(
+                    self.session_factory,
+                    identity_id=identity_id,
+                    candidates=candidates,
+                    strategy_version="recent-v1-2025",
+                    folder="INBOX",
+                )
+
+            async with self.session_factory() as session:
+                recent_count = await session.scalar(
+                    select(func.count(ImapProfessorSyncState.id)).where(
+                        ImapProfessorSyncState.history_strategy_version == "recent-v1-2025",
+                    ),
+                )
+                assert recent_count is not None
+                return created, recent_count
+
+        self.assertEqual(self._run_async(scenario()), (0, 5))
 
     def test_recent_history_candidate_states_create_only_candidates(self) -> None:
         async def scenario() -> list[tuple[str, str]]:
