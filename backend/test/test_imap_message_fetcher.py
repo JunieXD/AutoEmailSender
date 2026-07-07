@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 from email.message import EmailMessage
+from typing import cast
 
 from app.services.imap_message_fetcher import (
     fetch_message_headers_by_uid,
@@ -91,6 +92,16 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
         self.assertIn("SINCE 01-Jan-2025", serialized)
         self.assertNotIn("1:*", serialized)
 
+    def test_search_uids_since_date_uses_fixed_english_month_names(self) -> None:
+        client = FakeImapClient(search_payload=b"5 7")
+
+        result = search_uids_since_date(client, cast(date, LocaleSensitiveDate()))
+
+        self.assertEqual(result, [5, 7])
+        serialized = " ".join(str(item) for item in client.commands)
+        self.assertIn("SINCE 01-Jan-2025", serialized)
+        self.assertNotIn("1月", serialized)
+
     def test_search_from_sender_since_combines_sender_and_date(self) -> None:
         client = FakeImapClient(search_payload=b"8 9")
 
@@ -100,6 +111,15 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
         serialized = " ".join(str(item) for item in client.commands)
         self.assertIn('FROM "prof@example.edu"', serialized)
         self.assertIn("SINCE 01-Jan-2025", serialized)
+
+
+class LocaleSensitiveDate:
+    year = 2025
+    month = 1
+    day = 1
+
+    def strftime(self, fmt: str) -> str:
+        return "01-1月-2025"
 
 
 class FakeImapClient:

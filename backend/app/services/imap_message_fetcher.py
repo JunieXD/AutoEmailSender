@@ -33,6 +33,22 @@ class ImapFetchCommandError(RuntimeError):
     pass
 
 
+_IMAP_SEARCH_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
 @dataclass(slots=True)
 class ImapFetchedMessage:
     uid: int
@@ -282,7 +298,7 @@ def _escape_imap_search_value(value: str) -> str:
 
 
 def _format_imap_search_date(value: date) -> str:
-    return value.strftime("%d-%b-%Y")
+    return f"{value.day:02d}-{_IMAP_SEARCH_MONTHS[value.month - 1]}-{value.year:04d}"
 
 
 def _parse_uid_search_payload(status: str, payload: object) -> list[int]:
