@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -3280,12 +3281,21 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            with self.assertLogs("app.services.task_runtime", level="INFO") as logs:
-                await log_imap_history_progress(
-                    self.session_factory,
-                    identity_id,
-                    folders=[("inbox", "INBOX"), ("sent", "Sent Items")],
-                )
+            logger = logging.getLogger("app.services.task_runtime")
+            was_disabled = logger.disabled
+            manager_disabled = logging.root.manager.disable
+            logger.disabled = False
+            logging.disable(logging.NOTSET)
+            try:
+                with self.assertLogs("app.services.task_runtime", level="INFO") as logs:
+                    await log_imap_history_progress(
+                        self.session_factory,
+                        identity_id,
+                        folders=[("inbox", "INBOX"), ("sent", "Sent Items")],
+                    )
+            finally:
+                logger.disabled = was_disabled
+                logging.disable(manager_disabled)
             return logs.output[0]
 
         line = self._run_async(scenario())
