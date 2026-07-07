@@ -7,7 +7,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-from app.models import IdentityProfile, Professor
+from app.models import IdentityProfile
 from app.services.mail_runtime import (
     MailRuntimeError,
     discover_sent_folder,
@@ -24,10 +24,7 @@ from app.services.mail_runtime import (
     format_imap_login_error,
     _test_imap_connection_sync,
     parse_received_email,
-    send_email,
     send_email_to_recipient,
-    SENT_FOLDER_SAVE_SEARCH_ATTEMPTS,
-    SENT_FOLDER_SAVE_SEARCH_RETRY_DELAY_SECONDS,
 )
 
 
@@ -492,21 +489,10 @@ class MailRuntimeTest(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].from_email, "teacher@example.com")
 
-    def test_sent_folder_save_waits_long_enough_for_delayed_provider_copy(self) -> None:
-        self.assertEqual(SENT_FOLDER_SAVE_SEARCH_ATTEMPTS, 4)
-        self.assertEqual(SENT_FOLDER_SAVE_SEARCH_RETRY_DELAY_SECONDS, 2.0)
-
-    def test_send_email_does_not_append_when_sent_folder_already_has_message_id(self) -> None:
-        client = _FakeImapClient(
-            search_data_by_criterion={
-                '(HEADER Message-ID "<already-saved@example.com>")': b"9",
-            },
-        )
-
+    def test_send_email_disables_post_send_sent_folder_sync_even_when_imap_is_configured(self) -> None:
         with (
             patch("app.services.mail_runtime._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.make_msgid", return_value="<already-saved@example.com>"),
+            patch("app.services.mail_runtime._open_imap_client") as open_imap,
         ):
             result = asyncio.run(
                 send_email_to_recipient(
@@ -520,93 +506,8 @@ class MailRuntimeTest(unittest.TestCase):
                 ),
             )
 
-        self.assertIn('(HEADER Message-ID ', " ".join(client.search_criteria))
-        self.assertEqual(client.append_calls, [])
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "existing_copy_found")
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["folder"], "Sent")
-
-    def test_send_email_skips_sent_folder_append_when_message_id_search_fails(self) -> None:
-        client = _FakeImapClient(
-            search_status_by_criterion={
-                '(HEADER Message-ID "<unsafely-unknown@example.com>")': "NO",
-            },
-        )
-
-        with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.make_msgid", return_value="<unsafely-unknown@example.com>"),
-        ):
-            result = asyncio.run(
-                send_email_to_recipient(
-                    identity=_build_identity(),
-                    recipient_name="Teacher",
-                    recipient_email="teacher@example.com",
-                    subject="hello",
-                    body_text="hello",
-                    body_html=None,
-                    attachments=[],
-                ),
-            )
-
-        self.assertIn('(HEADER Message-ID ', " ".join(client.search_criteria))
-        self.assertEqual(client.append_calls, [])
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "search_failed_skipped")
-
-    def test_send_email_appends_when_sent_folder_lacks_message_id_after_rechecks(self) -> None:
-        client = _FakeImapClient()
-
-        with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.make_msgid", return_value="<not-yet-visible@example.com>"),
-            patch("app.services.mail_runtime.SENT_FOLDER_SAVE_SEARCH_RETRY_DELAY_SECONDS", 0),
-        ):
-            result = asyncio.run(
-                send_email(
-                    identity=_build_identity(),
-                    professor=Professor(name="Teacher", email="teacher@example.com"),
-                    subject="hello",
-                    body_text="hello",
-                    body_html=None,
-                    attachments=[],
-                ),
-            )
-
-        self.assertIn('(HEADER Message-ID ', " ".join(client.search_criteria))
-        self.assertEqual(len(client.append_calls), 1)
-        self.assertEqual(client.append_calls[0][0], "Sent")
-        self.assertIn(b"Message-ID: <not-yet-visible@example.com>", client.append_calls[0][3])
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "appended")
-
-    def test_send_email_does_not_append_when_delayed_auto_save_appears_on_recheck(self) -> None:
-        client = _FakeImapClient(
-            search_data_by_criterion={
-                '(HEADER Message-ID "<delayed-auto-save@example.com>")': [b"", b"13"],
-            },
-        )
-
-        with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.make_msgid", return_value="<delayed-auto-save@example.com>"),
-            patch("app.services.mail_runtime.SENT_FOLDER_SAVE_SEARCH_RETRY_DELAY_SECONDS", 0),
-        ):
-            result = asyncio.run(
-                send_email(
-                    identity=_build_identity(),
-                    professor=Professor(name="Teacher", email="teacher@example.com"),
-                    subject="hello",
-                    body_text="hello",
-                    body_html=None,
-                    attachments=[],
-                ),
-            )
-
-        self.assertEqual(client.search_criteria.count('(HEADER Message-ID "<delayed-auto-save@example.com>")'), 2)
-        self.assertEqual(client.append_calls, [])
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "existing_copy_found")
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["matched_uids"], [13])
+        open_imap.assert_not_called()
+        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
 
     def test_send_email_skips_sent_folder_sync_when_imap_is_not_configured(self) -> None:
         identity = _build_identity()
@@ -632,7 +533,7 @@ class MailRuntimeTest(unittest.TestCase):
             )
 
         open_imap.assert_not_called()
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "imap_not_configured")
+        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
 
     def test_discover_sent_folder_prefers_special_use_sent(self) -> None:
         client = _FakeImapClient(

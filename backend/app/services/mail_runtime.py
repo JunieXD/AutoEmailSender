@@ -52,8 +52,6 @@ IMAP_CLIENT_ID_VERSION = "3.0.0"
 IMAP_CLIENT_ID_VENDOR = "AutoEmailSender"
 DEFAULT_IMAP_FOLDER = "INBOX"
 _UIDVALIDITY_UNSET = object()
-SENT_FOLDER_SAVE_SEARCH_ATTEMPTS = 4
-SENT_FOLDER_SAVE_SEARCH_RETRY_DELAY_SECONDS = 2.0
 SENT_FOLDER_CANDIDATES = (
     "Sent",
     "Sent Items",
@@ -157,13 +155,6 @@ class SentFolderSyncResult:
         if self.search_attempts is not None:
             payload["search_attempts"] = self.search_attempts
         return payload
-
-
-@dataclass(frozen=True, slots=True)
-class _MessageIdSearchResult:
-    ok: bool
-    uids: tuple[int, ...] = ()
-    attempts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,125 +611,7 @@ def _send_email_sync(identity: IdentityProfile, message: EmailMessage) -> SentFo
                 server.quit()
             except OSError:
                 pass
-    return _inspect_sent_folder_after_smtp_send_sync(identity, message)
-
-
-def _inspect_sent_folder_after_smtp_send_sync(
-    identity: IdentityProfile,
-    message: EmailMessage,
-) -> SentFolderSyncResult:
-    if not _identity_has_imap_config(identity):
-        return SentFolderSyncResult(status="imap_not_configured")
-
-    message_id = str(message["Message-ID"] or "").strip()
-    if not message_id:
-        return SentFolderSyncResult(status="message_id_missing_skipped")
-
-    client: IMAP4 | IMAP4_SSL | None = None
-    try:
-        client = _open_imap_client(identity)
-        client.login(identity.imap_username or "", identity.imap_password or "")
-        _send_imap_client_id(client, identity)
-        folder = _select_sent_folder_for_inspection(client)
-        if folder is None:
-            return SentFolderSyncResult(status="sent_folder_not_found")
-
-        search_result = _search_selected_mailbox_by_message_id_with_retries(client, message_id)
-        if not search_result.ok:
-            return SentFolderSyncResult(
-                status="search_failed_skipped",
-                folder=folder,
-                detail="Message-ID 查重失败，按零重复原则跳过保存到已发送。",
-                search_attempts=search_result.attempts,
-            )
-        if search_result.uids:
-            return SentFolderSyncResult(
-                status="existing_copy_found",
-                folder=folder,
-                matched_uids=search_result.uids,
-                search_attempts=search_result.attempts,
-            )
-
-        append_status, append_payload = client.append(
-            folder,
-            None,
-            None,
-            message.as_bytes(policy=policy.SMTP),
-        )
-        if append_status != "OK":
-            return SentFolderSyncResult(
-                status="append_failed",
-                folder=folder,
-                detail=_format_imap_response(append_payload),
-                search_attempts=search_result.attempts,
-            )
-        post_append_search_result = _search_selected_mailbox_by_message_id(client, message_id)
-        if post_append_search_result.ok and post_append_search_result.uids:
-            return SentFolderSyncResult(
-                status="appended",
-                folder=folder,
-                matched_uids=post_append_search_result.uids,
-                search_attempts=search_result.attempts + post_append_search_result.attempts,
-            )
-        return SentFolderSyncResult(
-            status="appended_unverified",
-            folder=folder,
-            detail="已通过 IMAP APPEND 保存到已发送，但追加后 Message-ID 复查未返回结果。",
-            search_attempts=search_result.attempts + post_append_search_result.attempts,
-        )
-    except Exception as exc:
-        return SentFolderSyncResult(
-            status="error_skipped",
-            detail=f"{type(exc).__name__}: {exc}",
-        )
-    finally:
-        _logout_imap_client(client)
-
-
-def _identity_has_imap_config(identity: IdentityProfile) -> bool:
-    return bool(
-        identity.imap_host
-        and identity.imap_port
-        and identity.imap_username
-        and identity.imap_password
-    )
-
-
-def _select_sent_folder_for_inspection(client: IMAP4 | IMAP4_SSL) -> str | None:
-    special_use_folder = _find_special_use_sent_folder(client)
-    if special_use_folder and _try_select_mailbox(client, special_use_folder):
-        return special_use_folder
-    for candidate in SENT_FOLDER_CANDIDATES:
-        if _try_select_mailbox(client, candidate):
-            return candidate
-    return None
-
-
-def _search_selected_mailbox_by_message_id_with_retries(
-    client: IMAP4 | IMAP4_SSL,
-    message_id: str,
-) -> _MessageIdSearchResult:
-    attempts = max(1, SENT_FOLDER_SAVE_SEARCH_ATTEMPTS)
-    for attempt in range(1, attempts + 1):
-        result = _search_selected_mailbox_by_message_id(client, message_id)
-        if not result.ok or result.uids:
-            return _MessageIdSearchResult(ok=result.ok, uids=result.uids, attempts=attempt)
-        if attempt < attempts:
-            time.sleep(max(0.0, SENT_FOLDER_SAVE_SEARCH_RETRY_DELAY_SECONDS))
-    return _MessageIdSearchResult(ok=True, attempts=attempts)
-
-
-def _search_selected_mailbox_by_message_id(
-    client: IMAP4 | IMAP4_SSL,
-    message_id: str,
-) -> _MessageIdSearchResult:
-    escaped_message_id = _escape_imap_search_value(message_id)
-    status, payload = client.uid("SEARCH", None, f'(HEADER Message-ID "{escaped_message_id}")')
-    if status != "OK":
-        return _MessageIdSearchResult(ok=False, attempts=1)
-    raw = payload[0] if payload else b""
-    uids = tuple(sorted(int(item) for item in raw.split() if item.isdigit()))
-    return _MessageIdSearchResult(ok=True, uids=uids, attempts=1)
+    return SentFolderSyncResult(status="sent_folder_sync_disabled")
 
 
 def format_imap_login_error(identity: IdentityProfile, detail: object) -> str:
