@@ -164,6 +164,8 @@ class ImapHistoryHeaderFetchResult:
     messages: list[ImapFetchedMessage]
     command_count: int
     exhausted: bool = False
+    uidvalidity: int | None = None
+    uidvalidity_changed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,6 +439,7 @@ async def fetch_professor_history_mailbox_message_headers_with_command_count(
     min_uid: int | None = None,
     max_fetch_batches: int | None = None,
     since_date: date | None = None,
+    expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> ImapHistoryHeaderFetchResult:
     if not identity.imap_host or not identity.imap_username or not identity.imap_password:
         return ImapHistoryHeaderFetchResult(messages=[], command_count=0)
@@ -449,6 +452,7 @@ async def fetch_professor_history_mailbox_message_headers_with_command_count(
         min_uid,
         max_fetch_batches,
         since_date=since_date,
+        expected_uidvalidity=expected_uidvalidity,
     )
 
 
@@ -459,6 +463,7 @@ async def fetch_recent_mailbox_message_headers_since(
     *,
     min_uid: int | None,
     max_fetch_batches: int | None,
+    expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> ImapHistoryHeaderFetchResult:
     if not identity.imap_host or not identity.imap_username or not identity.imap_password:
         return ImapHistoryHeaderFetchResult(messages=[], command_count=0)
@@ -469,6 +474,7 @@ async def fetch_recent_mailbox_message_headers_since(
         since_date,
         min_uid,
         max_fetch_batches,
+        expected_uidvalidity,
     )
 
 
@@ -774,6 +780,7 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
     max_fetch_batches: int | None,
     *,
     since_date: date | None = None,
+    expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> ImapHistoryHeaderFetchResult:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
@@ -782,6 +789,12 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
+        uidvalidity_changed = (
+            expected_uidvalidity is not _UIDVALIDITY_UNSET
+            and uidvalidity is not None
+            and uidvalidity != expected_uidvalidity
+        )
+        effective_min_uid = None if uidvalidity_changed else min_uid
         search_result = _search_professor_history_uids(
             identity,
             client,
@@ -790,8 +803,8 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
             since_date=since_date,
         )
         uids = search_result.uids
-        if min_uid is not None:
-            uids = [uid for uid in uids if uid > min_uid]
+        if effective_min_uid is not None:
+            uids = [uid for uid in uids if uid > effective_min_uid]
         command_count += search_result.command_count
         batches = _chunked(uids, max(1, get_settings().imap_fetch_batch_size))
         fetch_batches = batches
@@ -848,6 +861,8 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
         messages=messages,
         command_count=command_count,
         exhausted=exhausted,
+        uidvalidity=uidvalidity,
+        uidvalidity_changed=uidvalidity_changed,
     )
 
 
@@ -857,6 +872,7 @@ def _fetch_recent_mailbox_message_headers_since_sync(
     since_date: date,
     min_uid: int | None,
     max_fetch_batches: int | None,
+    expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> ImapHistoryHeaderFetchResult:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
@@ -865,11 +881,17 @@ def _fetch_recent_mailbox_message_headers_since_sync(
     try:
         client = _open_logged_in_imap_client(identity, folder=folder)
         uidvalidity = _get_selected_mailbox_uidvalidity(client)
+        uidvalidity_changed = (
+            expected_uidvalidity is not _UIDVALIDITY_UNSET
+            and uidvalidity is not None
+            and uidvalidity != expected_uidvalidity
+        )
+        effective_min_uid = None if uidvalidity_changed else min_uid
         acquire_history_imap_command_slot_sync(identity, "SEARCH")
         uids = search_uids_since_date(client, since_date)
         command_count += 1
-        if min_uid is not None:
-            uids = [uid for uid in uids if uid > min_uid]
+        if effective_min_uid is not None:
+            uids = [uid for uid in uids if uid > effective_min_uid]
         batches = _chunked(uids, max(1, get_settings().imap_fetch_batch_size))
         fetch_batches = batches
         if max_fetch_batches is not None and max_fetch_batches < len(batches):
@@ -925,6 +947,8 @@ def _fetch_recent_mailbox_message_headers_since_sync(
         messages=messages,
         command_count=command_count,
         exhausted=exhausted,
+        uidvalidity=uidvalidity,
+        uidvalidity_changed=uidvalidity_changed,
     )
 
 

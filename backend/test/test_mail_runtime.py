@@ -1108,6 +1108,43 @@ class MailRuntimeTestCase(unittest.TestCase):
             any(re.fullmatch(r"\d+:\*|\d+:\d+", criterion) for criterion in client.search_criteria),
         )
 
+    def test_recent_mailbox_headers_reset_min_uid_when_uidvalidity_changes(self) -> None:
+        client = _FakeImapClient(
+            search_data_by_criterion={"SINCE 01-Jan-2025": b"7"},
+            headers_by_uid={
+                7: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: low uid after reset\r\n"
+                    b"Message-ID: <recent-reset-7@example.com>\r\n"
+                    b"Date: Fri, 03 Jan 2025 20:00:00 +0800\r\n\r\n"
+                ),
+            },
+        )
+        client.response = lambda code: ("UIDVALIDITY", [b"222"])
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 20
+            result = asyncio.run(
+                fetch_recent_mailbox_message_headers_since(
+                    _build_identity(),
+                    "Sent",
+                    date(2025, 1, 1),
+                    min_uid=900,
+                    max_fetch_batches=None,
+                    expected_uidvalidity=111,
+                ),
+            )
+
+        self.assertEqual([message.uid for message in result.messages], [7])
+        self.assertEqual(result.uidvalidity, 222)
+        self.assertTrue(result.uidvalidity_changed)
+        self.assertEqual(result.messages[0].uidvalidity, 222)
+        self.assertIn("SINCE 01-Jan-2025", client.search_criteria)
+
     def test_recent_mailbox_headers_fallback_when_batch_omits_uid(self) -> None:
         client = _PartialBatchRecentHeaderImapClient(
             search_data_by_criterion={"SINCE 01-Jan-2025": b"7 9"},
