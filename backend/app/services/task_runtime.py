@@ -130,6 +130,7 @@ class _MailboxHistoryBodyFetchResult:
     command_count: int
     matched_header_count: int
     covered_all_headers: bool
+    highest_scanned_uid: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2272,6 +2273,12 @@ async def sync_identity_history_once(
                     reason=str(exc),
                     account_level=_is_account_level_throttle_error(exc),
                 )
+            await _mark_recent_sent_history_failed(
+                session_factory,
+                identity_id=identity_id,
+                sent_folder=sent_folder,
+                error=exc,
+            )
             await log_imap_history_progress(session_factory, identity_id, folders=[("inbox", "INBOX")])
             return 0
         command_budget = max(0, command_budget - sent_discovery.command_count)
@@ -2361,7 +2368,13 @@ async def _sync_recent_sent_history_once(
         folder_role="sent",
         folder=sent_folder,
     )
-    high_water_uid = _recent_history_high_water_uid(min_uid, header_result.messages)
+    covered_recent_headers = not header_result.exhausted and body_result.covered_all_headers
+    if covered_recent_headers:
+        high_water_uid = _recent_history_high_water_uid(min_uid, header_result.messages)
+    else:
+        high_water_uid = min_uid
+        if body_result.highest_scanned_uid is not None:
+            high_water_uid = _max_optional_uid(high_water_uid, body_result.highest_scanned_uid)
     async with session_factory() as session:
         state = await _get_or_create_mailbox_state(
             session,
@@ -2372,9 +2385,9 @@ async def _sync_recent_sent_history_once(
         state.history_high_water_uid = high_water_uid
         state.history_next_before_uid = None
         state.history_scan_status = (
-            "sent_recent_discovery_running"
-            if header_result.exhausted
-            else "inbox_recent_replies_pending"
+            "inbox_recent_replies_pending"
+            if covered_recent_headers
+            else "sent_recent_discovery_running"
         )
         state.history_scanned_count = (state.history_scanned_count or 0) + len(header_result.messages)
         state.history_matched_count = (state.history_matched_count or 0) + len(matched_headers)
@@ -2386,6 +2399,25 @@ async def _sync_recent_sent_history_once(
         professor_candidates=professor_candidates,
         command_count=header_result.command_count + body_result.command_count,
     )
+
+
+async def _mark_recent_sent_history_failed(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    identity_id: int,
+    sent_folder: str,
+    error: Exception,
+) -> None:
+    async with session_factory() as session:
+        state = await _get_or_create_mailbox_state(
+            session,
+            identity_id,
+            folder_role="sent",
+            folder=sent_folder,
+        )
+        state.history_scan_status = "sent_recent_discovery_failed"
+        state.history_last_error = str(error)
+        await session.commit()
 
 
 async def _match_recent_sent_headers(
@@ -2447,6 +2479,7 @@ async def _fetch_recent_sent_message_bodies(
     missing_uids: list[int] = []
     covered_all_headers = True
     allowed_uid_count = None
+    highest_scanned_uid: int | None = None
     for match in sorted(matched_headers, key=lambda item: item.message.uid):
         if await _history_mailbox_header_already_ingested(
             session_factory,
@@ -2455,6 +2488,7 @@ async def _fetch_recent_sent_message_bodies(
             message=match.message,
             professor_ids=match.professor_ids,
         ):
+            highest_scanned_uid = _max_optional_uid(highest_scanned_uid, match.message.uid)
             continue
         if allowed_uid_count is None:
             allowed_uid_count = _history_body_fetch_uid_limit(
@@ -2467,6 +2501,7 @@ async def _fetch_recent_sent_message_bodies(
             covered_all_headers = False
             break
         missing_uids.append(match.message.uid)
+        highest_scanned_uid = _max_optional_uid(highest_scanned_uid, match.message.uid)
 
     if not missing_uids:
         return _MailboxHistoryBodyFetchResult(
@@ -2474,6 +2509,7 @@ async def _fetch_recent_sent_message_bodies(
             command_count=0,
             matched_header_count=len(matched_headers),
             covered_all_headers=covered_all_headers,
+            highest_scanned_uid=highest_scanned_uid,
         )
 
     body_fetch_command_count = _history_body_fetch_command_count(
@@ -2494,6 +2530,7 @@ async def _fetch_recent_sent_message_bodies(
         command_count=body_fetch_command_count,
         matched_header_count=len(matched_headers),
         covered_all_headers=covered_all_headers,
+        highest_scanned_uid=highest_scanned_uid,
     )
 
 
@@ -2592,6 +2629,23 @@ async def _sync_identity_targeted_history_once(
     )
     if not states:
         return 0
+    if mailbox_folders is not None:
+        allowed_folders = set(mailbox_folders)
+        allowed_states = [
+            state
+            for state in states
+            if (state.folder_role, state.folder) in allowed_folders
+        ]
+        disallowed_state_ids = [
+            state.id
+            for state in states
+            if (state.folder_role, state.folder) not in allowed_folders
+        ]
+        if disallowed_state_ids:
+            await reset_professor_scans_to_pending(session_factory, disallowed_state_ids)
+        states = allowed_states
+        if not states:
+            return 0
     detected_total = 0
     command_budget = effective_command_budget
     for index, state in enumerate(states):
