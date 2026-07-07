@@ -250,12 +250,22 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         self.assertEqual(self._run_async(scenario()), (0, 810, 3))
 
     def test_recent_history_candidate_states_reset_when_strategy_changes(self) -> None:
-        async def scenario() -> tuple[int, str, int | None, str]:
+        async def scenario() -> tuple[
+            int,
+            str,
+            int | None,
+            datetime | None,
+            datetime | None,
+            str | None,
+            str,
+        ]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 professor = Professor(name="Known", email="Known@Example.edu")
                 session.add_all([identity, professor])
                 await session.flush()
+                old_started_at = datetime(2026, 6, 29, 9, 0, tzinfo=UTC)
+                old_completed_at = datetime(2026, 6, 29, 9, 30, tzinfo=UTC)
                 state = ImapProfessorSyncState(
                     identity_id=identity.id,
                     professor_id=professor.id,
@@ -264,6 +274,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     folder="INBOX",
                     historical_scan_status=ImapProfessorHistoricalScanStatus.COMPLETED.value,
                     last_scanned_uid=900,
+                    historical_scan_started_at=old_started_at,
+                    historical_scan_completed_at=old_completed_at,
+                    last_error="old error",
                     history_strategy_version="recent-v1-2024",
                 )
                 session.add(state)
@@ -285,12 +298,23 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     created,
                     saved.historical_scan_status,
                     saved.last_scanned_uid,
+                    saved.historical_scan_started_at,
+                    saved.historical_scan_completed_at,
+                    saved.last_error,
                     saved.history_strategy_version,
                 )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (0, ImapProfessorHistoricalScanStatus.PENDING.value, None, "recent-v1-2025"),
+            (
+                0,
+                ImapProfessorHistoricalScanStatus.PENDING.value,
+                None,
+                None,
+                None,
+                None,
+                "recent-v1-2025",
+            ),
         )
 
     def test_recent_history_candidate_email_chunks_are_bounded(self) -> None:
