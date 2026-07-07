@@ -2398,28 +2398,332 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         self.assertEqual(status, "sent_recent_discovery_failed")
         self.assertIn("boom", last_error or "")
 
-    def test_recent_history_does_not_process_legacy_sent_targeted_state(self) -> None:
-        async def scenario() -> tuple[int, str, str | None, bool, str, int]:
+    def test_recent_inbox_history_searches_only_contacted_candidates_since_window(self) -> None:
+        async def scenario() -> tuple[int, list[dict[str, object]], list[tuple[str, str]], int]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
-                professor = Professor(name="Legacy", email="legacy@example.edu")
-                session.add_all([identity, professor])
+                llm = self._build_llm()
+                contacted = Professor(name="Contacted", email="contacted@example.edu")
+                unrelated = Professor(name="Unrelated", email="unrelated@example.edu")
+                session.add_all([identity, llm, contacted, unrelated])
                 await session.flush()
-                state = ImapProfessorSyncState(
+                session.add(
+                    EmailLog(
+                        identity_id=identity.id,
+                        llm_profile_id=llm.id,
+                        professor_id=contacted.id,
+                        direction=EmailDirection.SENT.value,
+                        subject="Hello",
+                        content="sent",
+                        failure_summary=None,
+                    ),
+                )
+                await session.commit()
+                identity_id = identity.id
+
+            inbox_header = self._build_fetched_message(
+                uid=701,
+                uidvalidity=9001,
+                message_id="<recent-inbox-contacted@example.edu>",
+                from_email="contacted@example.edu",
+                subject="Re: Hello",
+                content="",
+            )
+            inbox_body = self._build_fetched_message(
+                uid=701,
+                uidvalidity=9001,
+                message_id="<recent-inbox-contacted@example.edu>",
+                from_email="contacted@example.edu",
+                subject="Re: Hello",
+                content="reply body",
+            )
+            targeted_calls: list[dict[str, object]] = []
+
+            async def fake_targeted_headers(
+                _identity,
+                folder,
+                professor_email,
+                *,
+                folder_role,
+                min_uid,
+                max_fetch_batches,
+                since_date=None,
+            ):
+                targeted_calls.append(
+                    {
+                        "folder": folder,
+                        "professor_email": professor_email,
+                        "folder_role": folder_role,
+                        "min_uid": min_uid,
+                        "max_fetch_batches": max_fetch_batches,
+                        "since_date": since_date.isoformat() if since_date else None,
+                    },
+                )
+                return ImapHistoryHeaderFetchResult(messages=[inbox_header], command_count=1, exhausted=False)
+
+            with (
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    new=AsyncMock(
+                        return_value=ImapHistoryHeaderFetchResult(
+                            messages=[],
+                            command_count=1,
+                            exhausted=False,
+                        ),
+                    ),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    new=AsyncMock(side_effect=fake_targeted_headers),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    new=AsyncMock(return_value=[inbox_body]),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    new=AsyncMock(side_effect=AssertionError("legacy uid range scan must not run")),
+                ) as legacy_scan_mock,
+            ):
+                detected = await sync_identity_history_once(self.session_factory, identity_id)
+
+            async with self.session_factory() as session:
+                logs = list(
+                    (
+                        await session.execute(
+                            select(EmailLog).where(EmailLog.direction == EmailDirection.RECEIVED.value),
+                        )
+                    ).scalars(),
+                )
+                received_logs = [(log.from_email, log.content) for log in logs]
+            return detected, targeted_calls, received_logs, legacy_scan_mock.await_count
+
+        detected, targeted_calls, received_logs, legacy_scan_count = self._run_async(scenario())
+        self.assertEqual(detected, 1)
+        self.assertEqual(len(targeted_calls), 1)
+        self.assertGreater(targeted_calls[0]["max_fetch_batches"], 0)
+        self.assertEqual(
+            {
+                key: targeted_calls[0][key]
+                for key in ["folder", "professor_email", "folder_role", "min_uid", "since_date"]
+            },
+            {
+                "folder": "INBOX",
+                "professor_email": "contacted@example.edu",
+                "folder_role": "inbox",
+                "min_uid": None,
+                "since_date": "2025-01-01",
+            },
+        )
+        self.assertEqual(received_logs, [("contacted@example.edu", "reply body")])
+        self.assertEqual(legacy_scan_count, 0)
+
+    def test_recent_inbox_history_candidates_include_contacted_email_tasks_only(self) -> None:
+        async def scenario() -> list[str]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm = self._build_llm()
+                log_received = Professor(name="Log Received", email="log-received@example.edu")
+                failed_log = Professor(name="Failed Log", email="failed-log@example.edu")
+                task_sent = Professor(name="Task Sent", email="task-sent@example.edu")
+                task_reply = Professor(name="Task Reply", email="task-reply@example.edu")
+                task_sent_at = Professor(name="Task Sent At", email="task-sent-at@example.edu")
+                task_replied_flag = Professor(name="Task Replied Flag", email="task-replied-flag@example.edu")
+                task_message_id = Professor(name="Task Message Id", email="task-message-id@example.edu")
+                unsent = Professor(name="Unsent", email="unsent@example.edu")
+                archived = Professor(
+                    name="Archived",
+                    email="archived-task@example.edu",
+                    archived_at=datetime(2026, 5, 1, tzinfo=UTC),
+                )
+                no_email = Professor(name="No Email", email=None)
+                session.add_all(
+                    [
+                        identity,
+                        llm,
+                        log_received,
+                        failed_log,
+                        task_sent,
+                        task_reply,
+                        task_sent_at,
+                        task_replied_flag,
+                        task_message_id,
+                        unsent,
+                        archived,
+                        no_email,
+                    ],
+                )
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailLog(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=log_received.id,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Reply",
+                            content="received",
+                            failure_summary="received failures do not exclude contact",
+                        ),
+                        EmailLog(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=failed_log.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="Failed",
+                            content="failed",
+                            failure_summary="smtp failed",
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=task_sent.id,
+                            status=EmailTaskStatus.SENT.value,
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=task_reply.id,
+                            status=EmailTaskStatus.REPLY_DETECTED.value,
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=task_sent_at.id,
+                            status=EmailTaskStatus.APPROVED.value,
+                            sent_at=datetime(2026, 5, 1, tzinfo=UTC),
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=task_replied_flag.id,
+                            status=EmailTaskStatus.DISCOVERED.value,
+                            is_replied=True,
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=task_message_id.id,
+                            status=EmailTaskStatus.DISCOVERED.value,
+                            last_rfc_message_id="<sent-signal@example.edu>",
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=unsent.id,
+                            status=EmailTaskStatus.APPROVED.value,
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=archived.id,
+                            status=EmailTaskStatus.SENT.value,
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm.id,
+                            professor_id=no_email.id,
+                            status=EmailTaskStatus.SENT.value,
+                        ),
+                    ],
+                )
+                await session.commit()
+                identity_id = identity.id
+
+            targeted_emails: list[str] = []
+
+            async def fake_targeted_headers(
+                _identity,
+                _folder,
+                professor_email,
+                *,
+                folder_role,
+                min_uid,
+                max_fetch_batches,
+                since_date=None,
+            ):
+                self.assertEqual(folder_role, "inbox")
+                self.assertIsNone(min_uid)
+                self.assertEqual(since_date.isoformat(), "2025-01-01")
+                targeted_emails.append(professor_email)
+                return ImapHistoryHeaderFetchResult(messages=[], command_count=1, exhausted=False)
+
+            with (
+                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    new=AsyncMock(
+                        return_value=ImapHistoryHeaderFetchResult(
+                            messages=[],
+                            command_count=1,
+                            exhausted=False,
+                        ),
+                    ),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    new=AsyncMock(side_effect=fake_targeted_headers),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    new=AsyncMock(side_effect=AssertionError("empty targeted headers need no bodies")),
+                ),
+                patch(
+                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    new=AsyncMock(side_effect=AssertionError("legacy uid range scan must not run")),
+                ),
+            ):
+                await sync_identity_history_once(self.session_factory, identity_id)
+
+            return sorted(targeted_emails)
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            [
+                "log-received@example.edu",
+                "task-message-id@example.edu",
+                "task-replied-flag@example.edu",
+                "task-reply@example.edu",
+                "task-sent-at@example.edu",
+                "task-sent@example.edu",
+            ],
+        )
+
+    def test_recent_history_does_not_process_legacy_sent_targeted_state(self) -> None:
+        async def scenario() -> tuple[int, list[tuple[str, str, str | None, bool, str]], int]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                pending_professor = Professor(name="Legacy Pending", email="legacy-pending@example.edu")
+                stale_professor = Professor(name="Legacy Stale", email="legacy-stale@example.edu")
+                session.add_all([identity, pending_professor, stale_professor])
+                await session.flush()
+                pending_state = ImapProfessorSyncState(
                     identity_id=identity.id,
-                    professor_id=professor.id,
-                    professor_email="legacy@example.edu",
+                    professor_id=pending_professor.id,
+                    professor_email="legacy-pending@example.edu",
                     folder_role="sent",
                     folder="Sent",
                     historical_scan_status=ImapProfessorHistoricalScanStatus.PENDING.value,
                     history_strategy_version="legacy",
-                    last_error="keep me",
+                    last_error="keep pending",
                     historical_scan_started_at=None,
                 )
-                session.add(state)
+                stale_state = ImapProfessorSyncState(
+                    identity_id=identity.id,
+                    professor_id=stale_professor.id,
+                    professor_email="legacy-stale@example.edu",
+                    folder_role="sent",
+                    folder="Sent",
+                    historical_scan_status=ImapProfessorHistoricalScanStatus.RUNNING.value,
+                    history_strategy_version="legacy",
+                    last_error="keep stale",
+                    historical_scan_started_at=datetime(2026, 6, 29, tzinfo=UTC),
+                )
+                session.add_all([pending_state, stale_state])
                 await session.commit()
                 identity_id = identity.id
-                state_id = state.id
+                state_ids = [pending_state.id, stale_state.id]
 
             with (
                 patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
@@ -2437,23 +2741,60 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=AssertionError("legacy sent targeted must not run")),
                 ) as legacy_fetch_mock,
+                patch(
+                    "app.services.imap_sync_state.utc_now",
+                    return_value=datetime(2026, 6, 30, 2, tzinfo=UTC),
+                ),
             ):
                 detected = await sync_identity_history_once(self.session_factory, identity_id)
 
             async with self.session_factory() as session:
-                state = await session.get(ImapProfessorSyncState, state_id)
+                states = list(
+                    (
+                        await session.execute(
+                            select(ImapProfessorSyncState)
+                            .where(ImapProfessorSyncState.id.in_(state_ids))
+                            .order_by(ImapProfessorSyncState.professor_email),
+                        )
+                    ).scalars(),
+                )
                 return (
                     detected,
-                    state.historical_scan_status,
-                    state.last_error,
-                    state.historical_scan_started_at is None,
-                    state.history_strategy_version,
+                    [
+                        (
+                            state.professor_email,
+                            state.historical_scan_status,
+                            state.last_error,
+                            state.historical_scan_started_at is None,
+                            state.history_strategy_version,
+                        )
+                        for state in states
+                    ],
                     legacy_fetch_mock.await_count,
                 )
 
         self.assertEqual(
             self._run_async(scenario()),
-            (0, ImapProfessorHistoricalScanStatus.PENDING.value, "keep me", True, "legacy", 0),
+            (
+                0,
+                [
+                    (
+                        "legacy-pending@example.edu",
+                        ImapProfessorHistoricalScanStatus.PENDING.value,
+                        "keep pending",
+                        True,
+                        "legacy",
+                    ),
+                    (
+                        "legacy-stale@example.edu",
+                        ImapProfessorHistoricalScanStatus.RUNNING.value,
+                        "keep stale",
+                        False,
+                        "legacy",
+                    ),
+                ],
+                0,
+            ),
         )
 
     def test_inbox_reply_detection_is_not_blocked_by_same_message_id_in_other_scope(self) -> None:

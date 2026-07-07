@@ -247,39 +247,38 @@ async def claim_next_professor_scans(
     identity_id: int,
     *,
     limit: int,
+    strategy_version: str | None = None,
 ) -> list[ImapProfessorSyncState]:
     if limit <= 0:
         return []
     async with session_factory() as session:
         stale_running_cutoff = utc_now() - STALE_RUNNING_SCAN_AFTER
+        conditions = [
+            ImapProfessorSyncState.identity_id == identity_id,
+            or_(
+                ImapProfessorSyncState.historical_scan_status.in_(
+                    [
+                        ImapProfessorHistoricalScanStatus.PENDING.value,
+                        ImapProfessorHistoricalScanStatus.FAILED.value,
+                    ],
+                ),
+                (
+                    ImapProfessorSyncState.historical_scan_status
+                    == ImapProfessorHistoricalScanStatus.RUNNING.value
+                )
+                & (
+                    (ImapProfessorSyncState.historical_scan_started_at.is_(None))
+                    | (ImapProfessorSyncState.historical_scan_started_at <= stale_running_cutoff)
+                ),
+            ),
+        ]
+        if strategy_version is not None:
+            conditions.append(ImapProfessorSyncState.history_strategy_version == strategy_version)
         states = list(
             (
                 await session.execute(
                     select(ImapProfessorSyncState)
-                    .where(
-                        ImapProfessorSyncState.identity_id == identity_id,
-                        or_(
-                            ImapProfessorSyncState.historical_scan_status.in_(
-                                [
-                                    ImapProfessorHistoricalScanStatus.PENDING.value,
-                                    ImapProfessorHistoricalScanStatus.FAILED.value,
-                                ],
-                            ),
-                            (
-                                ImapProfessorSyncState.historical_scan_status
-                                == ImapProfessorHistoricalScanStatus.RUNNING.value
-                            )
-                            & (
-                                (
-                                    ImapProfessorSyncState.historical_scan_started_at.is_(None)
-                                )
-                                | (
-                                    ImapProfessorSyncState.historical_scan_started_at
-                                    <= stale_running_cutoff
-                                )
-                            ),
-                        ),
-                    )
+                    .where(*conditions)
                     .order_by(
                         ImapProfessorSyncState.updated_at.asc(),
                         ImapProfessorSyncState.id.asc(),
