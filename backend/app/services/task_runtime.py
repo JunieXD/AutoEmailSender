@@ -2295,14 +2295,8 @@ async def sync_identity_history_once(
         strategy_version=window.strategy_version,
         folder="INBOX",
     )
-    inbox_detected = await _sync_identity_targeted_history_once(
-        session_factory,
-        identity_id,
-        command_budget=command_budget,
-        mailbox_folders=[("inbox", "INBOX")],
-    )
     await log_imap_history_progress(session_factory, identity_id, folders=[("inbox", "INBOX")])
-    return sent_discovery.detected + inbox_detected
+    return sent_discovery.detected
 
 
 async def _sync_recent_sent_history_once(
@@ -2496,7 +2490,13 @@ async def _fetch_recent_sent_message_bodies(
                 get_settings().imap_fetch_batch_size,
             )
             if allowed_uid_count <= 0:
-                raise RuntimeError("IMAP history command budget exhausted before body fetch")
+                return _MailboxHistoryBodyFetchResult(
+                    messages=[],
+                    command_count=0,
+                    matched_header_count=len(matched_headers),
+                    covered_all_headers=False,
+                    highest_scanned_uid=None,
+                )
         if len(missing_uids) >= allowed_uid_count:
             covered_all_headers = False
             break
