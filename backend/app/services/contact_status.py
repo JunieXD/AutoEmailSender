@@ -43,8 +43,13 @@ async def build_contact_status_by_professor(
     last_sent_at_by_professor: dict[int, datetime] = {}
     last_replied_at_by_professor: dict[int, datetime] = {}
 
-    logs = await session.scalars(
-        select(EmailLog)
+    log_rows = await session.execute(
+        select(
+            EmailLog.professor_id,
+            EmailLog.direction,
+            EmailLog.failure_summary,
+            EmailLog.created_at,
+        )
         .where(
             EmailLog.identity_id == identity_id,
             EmailLog.professor_id.in_(unique_professor_ids),
@@ -52,12 +57,12 @@ async def build_contact_status_by_professor(
         )
         .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
     )
-    for log in logs:
-        if log.direction == EmailDirection.SENT.value and not log.failure_summary:
-            sent_count_by_professor[log.professor_id] += 1
-            _keep_latest_timestamp(last_sent_at_by_professor, log.professor_id, log.created_at)
-        elif log.direction == EmailDirection.RECEIVED.value:
-            _keep_latest_timestamp(last_replied_at_by_professor, log.professor_id, log.created_at)
+    for professor_id, direction, failure_summary, created_at in log_rows:
+        if direction == EmailDirection.SENT.value and not failure_summary:
+            sent_count_by_professor[professor_id] += 1
+            _keep_latest_timestamp(last_sent_at_by_professor, professor_id, created_at)
+        elif direction == EmailDirection.RECEIVED.value:
+            _keep_latest_timestamp(last_replied_at_by_professor, professor_id, created_at)
     professors_with_sent_logs = set(last_sent_at_by_professor)
     professors_with_reply_logs = set(last_replied_at_by_professor)
 

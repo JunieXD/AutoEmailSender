@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, LLMProfile, Professor
+from app.api.professors import list_professors
 from app.services.contact_status import build_contact_status_by_professor
 from test.schema_database import create_schema_sqlite_database
 
@@ -321,6 +323,87 @@ class ContactStatusTests(unittest.TestCase):
         self.assertEqual(status.sent_count, 0)
         self.assertIsNone(status.last_sent_at)
         self.assertIsNone(status.last_replied_at)
+
+    def test_contact_status_queries_only_log_columns_needed_for_status(self) -> None:
+        async def scenario():
+            now = datetime.now(UTC)
+            test_case = self
+
+            class ProjectionOnlySession:
+                async def execute(self, statement):
+                    selected_columns = [
+                        getattr(column, "key", None)
+                        for column in statement.selected_columns
+                    ]
+                    test_case.assertEqual(
+                        selected_columns,
+                        ["professor_id", "direction", "failure_summary", "created_at"],
+                    )
+                    return [
+                        (
+                            1,
+                            EmailDirection.SENT.value,
+                            None,
+                            now,
+                        ),
+                    ]
+
+                async def scalars(self, statement):
+                    raise AssertionError("EmailLog status query should use projected columns")
+
+            statuses = await build_contact_status_by_professor(
+                ProjectionOnlySession(),
+                identity_id=1,
+                professor_ids=[1],
+                tasks_by_professor={},
+            )
+            return statuses[1]
+
+        status = self._run_async(scenario())
+
+        self.assertEqual(status.status, "contacted")
+        self.assertEqual(status.sent_count, 1)
+        self.assertIsNotNone(status.last_sent_at)
+
+    def test_dashboard_professor_list_reuses_loaded_tasks_for_contact_status(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm_profile = self._build_llm_profile()
+                professor = Professor(name="复用任务老师", email="reuse-task@example.edu")
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm_profile.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.SENT.value,
+                    match_score=88,
+                )
+                session.add(task)
+                await session.commit()
+
+                with patch(
+                    "app.api.professors.build_contact_status_by_professor",
+                    new_callable=AsyncMock,
+                ) as build_status:
+                    build_status.return_value = {}
+
+                    items = await list_professors(
+                        identity_id=identity.id,
+                        llm_profile_id=None,
+                        ids=None,
+                        session=session,
+                    )
+
+                return items, build_status, task.id
+
+        items, build_status, task_id = self._run_async(scenario())
+
+        self.assertEqual(items[0].match_score, 88)
+        self.assertIn("tasks_by_professor", build_status.await_args.kwargs)
+        tasks_by_professor = build_status.await_args.kwargs["tasks_by_professor"]
+        self.assertEqual([task.id for task in tasks_by_professor[items[0].id]], [task_id])
 
     @staticmethod
     def _build_identity() -> IdentityProfile:

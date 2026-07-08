@@ -101,6 +101,7 @@ async def list_professors(
             session,
             identity_id=identity_id,
             professor_ids=professor_ids,
+            tasks_by_professor=tasks_by_professor,
         )
 
     latest_match_task_by_professor: dict[int, EmailTask] = {}
