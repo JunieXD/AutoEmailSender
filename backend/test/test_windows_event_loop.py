@@ -19,6 +19,7 @@ class WindowsEventLoopPolicyTests(unittest.TestCase):
             patch(
                 "app.core.windows_event_loop.asyncio.WindowsProactorEventLoopPolicy",
                 FakeProactorPolicy,
+                create=True,
             ),
             patch("app.core.windows_event_loop.asyncio.set_event_loop_policy") as set_policy,
         ):
@@ -37,7 +38,11 @@ class WindowsEventLoopPolicyTests(unittest.TestCase):
         with (
             patch("app.core.windows_event_loop.platform.system", return_value="Windows"),
             patch("app.core.windows_event_loop.asyncio.get_event_loop_policy", return_value=current_policy),
-            patch("app.core.windows_event_loop.asyncio.WindowsProactorEventLoopPolicy", FakeProactorPolicy),
+            patch(
+                "app.core.windows_event_loop.asyncio.WindowsProactorEventLoopPolicy",
+                FakeProactorPolicy,
+                create=True,
+            ),
             patch("app.core.windows_event_loop.asyncio.set_event_loop_policy") as set_policy,
         ):
             changed = ensure_windows_proactor_event_loop_policy()

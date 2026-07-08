@@ -201,15 +201,21 @@ class MigrationScriptTests(unittest.TestCase):
 class DatabaseSchemaTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / "schema_test.db"
-        create_migrated_sqlite_database(self.db_path)
-
-        self.connection = sqlite3.connect(self.db_path)
-        self.connection.execute("PRAGMA foreign_keys = ON")
+        self._schema_db_path = Path(self.temp_dir.name) / "schema_test.db"
+        self._connection: sqlite3.Connection | None = None
 
     def tearDown(self) -> None:
-        self.connection.close()
+        if self._connection is not None:
+            self._connection.close()
         self.temp_dir.cleanup()
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        if self._connection is None:
+            create_migrated_sqlite_database(self._schema_db_path)
+            self._connection = sqlite3.connect(self._schema_db_path)
+            self._connection.execute("PRAGMA foreign_keys = ON")
+        return self._connection
 
     def test_runtime_tables_and_columns_are_created(self) -> None:
         rows = self.connection.execute(

@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 
-STARTUP_STATE_TIMEOUT_SECONDS = 30.0
-STARTUP_STATE_POLL_INTERVAL_SECONDS = 0.1
+STARTUP_STATE_TIMEOUT_SECONDS = 3.0
+STARTUP_STATE_POLL_INTERVAL_SECONDS = 0.05
 
 
 class DesktopRuntimeTests(unittest.TestCase):
@@ -61,11 +61,15 @@ class DesktopRuntimeTests(unittest.TestCase):
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
 
         from app.core.config import get_settings
-        from main import create_app
+        import main as main_module
 
         get_settings.cache_clear()
-        with TestClient(create_app()) as client:
-            response = client.get("/health")
+        with (
+            patch.object(main_module, "ensure_database_schema", new_callable=AsyncMock),
+            patch.object(main_module, "cleanup_runtime_state", new_callable=AsyncMock),
+        ):
+            with TestClient(main_module.create_app()) as client:
+                response = client.get("/health")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json(), {"status": "ok"})
@@ -86,7 +90,11 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         with (
             patch.object(main_module, "ensure_database_schema", slow_schema),
-            patch.object(main_module.RuntimeManager, "start", new_callable=AsyncMock) as runtime_start,
+            patch.object(
+                main_module.RuntimeManager,
+                "start",
+                new_callable=AsyncMock,
+            ) as runtime_start,
         ):
             with TestClient(main_module.create_app()) as client:
                 response = client.get("/health")
@@ -132,11 +140,15 @@ class DesktopRuntimeTests(unittest.TestCase):
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
 
         from app.core.config import get_settings
-        from main import create_app
+        import main as main_module
 
         get_settings.cache_clear()
-        with TestClient(create_app()) as client:
-            response = self._wait_for_startup_state(client, "ready")
+        with (
+            patch.object(main_module, "ensure_database_schema", new_callable=AsyncMock),
+            patch.object(main_module, "cleanup_runtime_state", new_callable=AsyncMock),
+        ):
+            with TestClient(main_module.create_app()) as client:
+                response = self._wait_for_startup_state(client, "ready")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         data = response.json()
@@ -153,11 +165,30 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         get_settings.cache_clear()
 
-        with patch.object(
-            main_module,
-            "recover_interrupted_crawl_jobs",
-            new_callable=AsyncMock,
-        ) as recover_interrupted:
+        with (
+            patch.object(main_module, "ensure_database_schema", new_callable=AsyncMock),
+            patch.object(main_module, "cleanup_old_operation_logs", new_callable=AsyncMock),
+            patch.object(
+                main_module,
+                "recover_interrupted_crawl_jobs",
+                new_callable=AsyncMock,
+            ) as recover_interrupted,
+            patch.object(
+                main_module,
+                "recover_interrupted_match_analysis_runs",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                main_module,
+                "recover_interrupted_workspace_draft_rewrites",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                main_module,
+                "recover_stale_generating_drafts",
+                new_callable=AsyncMock,
+            ),
+        ):
             with TestClient(main_module.create_app()) as client:
                 response = self._wait_for_startup_state(client, "ready")
 
@@ -173,11 +204,30 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         get_settings.cache_clear()
 
-        with patch.object(
-            main_module,
-            "recover_interrupted_match_analysis_runs",
-            new_callable=AsyncMock,
-        ) as recover_interrupted:
+        with (
+            patch.object(main_module, "ensure_database_schema", new_callable=AsyncMock),
+            patch.object(main_module, "cleanup_old_operation_logs", new_callable=AsyncMock),
+            patch.object(
+                main_module,
+                "recover_interrupted_crawl_jobs",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                main_module,
+                "recover_interrupted_match_analysis_runs",
+                new_callable=AsyncMock,
+            ) as recover_interrupted,
+            patch.object(
+                main_module,
+                "recover_interrupted_workspace_draft_rewrites",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                main_module,
+                "recover_stale_generating_drafts",
+                new_callable=AsyncMock,
+            ),
+        ):
             with TestClient(main_module.create_app()) as client:
                 response = self._wait_for_startup_state(client, "ready")
 
