@@ -863,24 +863,35 @@ export const ProfessorsPage = () => {
       }),
     [filters.schools, filters.universities, professors],
   );
-  const activeAdvancedFilterCount =
-    getActiveManagementAdvancedFilterCount(filters);
-  const tagFilterEntries = [
-    ...filterOptions.tags.map((tag) => ({
-      value: String(tag.id),
-      label: tag.name,
-    })),
-    { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
-  ];
-  const tagLabelByValue = new Map(
-    tagFilterEntries.map((entry) => [entry.value, entry.label]),
+  const activeAdvancedFilterCount = useMemo(
+    () => getActiveManagementAdvancedFilterCount(filters),
+    [filters],
   );
-  const tagValueByLabel = new Map(
-    tagFilterEntries.map((entry) => [entry.label, entry.value]),
+  const tagFilterEntries = useMemo(
+    () => [
+      ...filterOptions.tags.map((tag) => ({
+        value: String(tag.id),
+        label: tag.name,
+      })),
+      { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+    ],
+    [filterOptions.tags],
   );
-  const selectedTagLabels = filters.tagIds
-    .map((value) => tagLabelByValue.get(value))
-    .filter((value): value is string => Boolean(value));
+  const tagLabelByValue = useMemo(
+    () => new Map(tagFilterEntries.map((entry) => [entry.value, entry.label])),
+    [tagFilterEntries],
+  );
+  const tagValueByLabel = useMemo(
+    () => new Map(tagFilterEntries.map((entry) => [entry.label, entry.value])),
+    [tagFilterEntries],
+  );
+  const selectedTagLabels = useMemo(
+    () =>
+      filters.tagIds
+        .map((value) => tagLabelByValue.get(value))
+        .filter((value): value is string => Boolean(value)),
+    [filters.tagIds, tagLabelByValue],
+  );
   const filteredProfessors = useMemo(
     () => filterManagementProfessors(professors, filters),
     [filters, professors],
@@ -954,25 +965,33 @@ export const ProfessorsPage = () => {
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
   };
 
-  const totalPages = getTotalPages(visibleProfessors.length, pageSize);
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const paginatedProfessors = getPageItems(
-    visibleProfessors,
-    safeCurrentPage,
-    pageSize,
+  const totalPages = useMemo(
+    () => getTotalPages(visibleProfessors.length, pageSize),
+    [pageSize, visibleProfessors.length],
   );
-  const isProfessorSelectable = (professor: ProfessorManagementItemDTO) => {
-    if (archiveFilter === "archived") {
-      return Boolean(professor.archived_at);
-    }
-    return !professor.archived_at;
-  };
-  const filteredSelectableIds = visibleProfessors
-    .filter(isProfessorSelectable)
-    .map((professor) => professor.id);
-  const filteredSelectedCount = filteredSelectableIds.filter((id) =>
-    selectedIds.has(id),
-  ).length;
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedProfessors = useMemo(
+    () => getPageItems(visibleProfessors, safeCurrentPage, pageSize),
+    [pageSize, safeCurrentPage, visibleProfessors],
+  );
+  const isProfessorSelectable = useCallback(
+    (professor: ProfessorManagementItemDTO) =>
+      archiveFilter === "archived"
+        ? Boolean(professor.archived_at)
+        : !professor.archived_at,
+    [archiveFilter],
+  );
+  const filteredSelectableIds = useMemo(
+    () =>
+      visibleProfessors
+        .filter(isProfessorSelectable)
+        .map((professor) => professor.id),
+    [isProfessorSelectable, visibleProfessors],
+  );
+  const filteredSelectedCount = useMemo(
+    () => filteredSelectableIds.filter((id) => selectedIds.has(id)).length,
+    [filteredSelectableIds, selectedIds],
+  );
   const someFilteredSelected = filteredSelectedCount > 0;
   const allFilteredSelected =
     filteredSelectableIds.length > 0 &&

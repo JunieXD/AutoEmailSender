@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import {
@@ -708,27 +708,48 @@ export const HomePage = () => {
     }
   };
 
-  const filterOptions = buildDashboardFilterOptions(professors, filters);
-  const activeAdvancedFilterCount = getActiveDashboardFilterCount(filters);
-  const selectedStatusLabels = filters.statuses.map((item) =>
-    getProfessorDashboardStatusLabel(item),
+  const filterOptions = useMemo(
+    () =>
+      buildDashboardFilterOptions(professors, {
+        universities: filters.universities,
+        schools: filters.schools,
+      }),
+    [filters.schools, filters.universities, professors],
   );
-  const tagFilterEntries = [
-    ...filterOptions.tags.map((tag) => ({
-      value: String(tag.id),
-      label: tag.name,
-    })),
-    { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
-  ];
-  const tagLabelByValue = new Map(
-    tagFilterEntries.map((entry) => [entry.value, entry.label]),
+  const activeAdvancedFilterCount = useMemo(
+    () => getActiveDashboardFilterCount(filters),
+    [filters],
   );
-  const tagValueByLabel = new Map(
-    tagFilterEntries.map((entry) => [entry.label, entry.value]),
+  const selectedStatusLabels = useMemo(
+    () =>
+      filters.statuses.map((item) => getProfessorDashboardStatusLabel(item)),
+    [filters.statuses],
   );
-  const selectedTagLabels = filters.tagIds
-    .map((value) => tagLabelByValue.get(value))
-    .filter((value): value is string => Boolean(value));
+  const tagFilterEntries = useMemo(
+    () => [
+      ...filterOptions.tags.map((tag) => ({
+        value: String(tag.id),
+        label: tag.name,
+      })),
+      { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+    ],
+    [filterOptions.tags],
+  );
+  const tagLabelByValue = useMemo(
+    () => new Map(tagFilterEntries.map((entry) => [entry.value, entry.label])),
+    [tagFilterEntries],
+  );
+  const tagValueByLabel = useMemo(
+    () => new Map(tagFilterEntries.map((entry) => [entry.label, entry.value])),
+    [tagFilterEntries],
+  );
+  const selectedTagLabels = useMemo(
+    () =>
+      filters.tagIds
+        .map((value) => tagLabelByValue.get(value))
+        .filter((value): value is string => Boolean(value)),
+    [filters.tagIds, tagLabelByValue],
+  );
 
   const updateFilters = (nextFilters: Partial<DashboardFilterState>) => {
     setFilters((previous) => ({ ...previous, ...nextFilters }));
@@ -815,23 +836,36 @@ export const HomePage = () => {
   };
 
   const currentSortDirection = sortDirections[sortKey];
-  const filteredProfessors = filterDashboardProfessors(professors, filters);
-  const visibleProfessors = sortDashboardProfessors(
-    filteredProfessors,
-    sortKey,
-    currentSortDirection,
+  const filteredProfessors = useMemo(
+    () => filterDashboardProfessors(professors, filters),
+    [filters, professors],
   );
-  const totalPages = getTotalPages(visibleProfessors.length, pageSize);
+  const visibleProfessors = useMemo(
+    () =>
+      sortDashboardProfessors(
+        filteredProfessors,
+        sortKey,
+        currentSortDirection,
+      ),
+    [currentSortDirection, filteredProfessors, sortKey],
+  );
+  const totalPages = useMemo(
+    () => getTotalPages(visibleProfessors.length, pageSize),
+    [pageSize, visibleProfessors.length],
+  );
   const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pagedProfessors = getPageItems(
-    visibleProfessors,
-    safeCurrentPage,
-    pageSize,
+  const pagedProfessors = useMemo(
+    () => getPageItems(visibleProfessors, safeCurrentPage, pageSize),
+    [pageSize, safeCurrentPage, visibleProfessors],
   );
-  const filteredProfessorIds = visibleProfessors.map((item) => item.id);
-  const filteredSelectedCount = filteredProfessorIds.filter((id) =>
-    selectedIds.has(id),
-  ).length;
+  const filteredProfessorIds = useMemo(
+    () => visibleProfessors.map((item) => item.id),
+    [visibleProfessors],
+  );
+  const filteredSelectedCount = useMemo(
+    () => filteredProfessorIds.filter((id) => selectedIds.has(id)).length,
+    [filteredProfessorIds, selectedIds],
+  );
   const allFilteredProfessorsSelected =
     filteredProfessorIds.length > 0 &&
     filteredSelectedCount === filteredProfessorIds.length;
