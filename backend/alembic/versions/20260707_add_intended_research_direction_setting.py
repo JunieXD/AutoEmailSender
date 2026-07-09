@@ -20,6 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if "intended_research_direction" in _app_setting_columns():
+        return
+
     with op.batch_alter_table("app_settings", schema=None) as batch_op:
         batch_op.add_column(
             sa.Column(
@@ -32,5 +35,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if "intended_research_direction" not in _app_setting_columns():
+        return
+
     with op.batch_alter_table("app_settings", schema=None) as batch_op:
         batch_op.drop_column("intended_research_direction")
+
+
+def _app_setting_columns() -> set[str]:
+    inspector = sa.inspect(op.get_bind())
+    return {column["name"] for column in inspector.get_columns("app_settings")}

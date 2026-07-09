@@ -25,18 +25,21 @@ def upgrade() -> None:
         "professors",
         ["archived_at", "created_at", "id"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         "ix_email_tasks_identity_professor_created_id",
         "email_tasks",
         ["identity_id", "professor_id", "created_at", "id"],
         unique=False,
+        if_not_exists=True,
     )
     op.create_index(
         "ix_email_logs_status_identity_professor_direction_created",
         "email_logs",
         ["identity_id", "professor_id", "direction", "created_at", "id"],
         unique=False,
+        if_not_exists=True,
     )
 
 
@@ -44,12 +47,15 @@ def downgrade() -> None:
     op.drop_index(
         "ix_email_logs_status_identity_professor_direction_created",
         table_name="email_logs",
+        if_exists=True,
     )
     op.drop_index(
         "ix_email_tasks_identity_professor_created_id",
         table_name="email_tasks",
+        if_exists=True,
     )
     op.drop_index(
         "ix_professors_archived_created_id",
         table_name="professors",
+        if_exists=True,
     )

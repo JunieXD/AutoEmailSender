@@ -1012,6 +1012,84 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("next_send_after", columns)
         self.assertEqual(version, HEAD_REVISION)
 
+    def test_recent_partial_migrations_can_resume_to_head(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "recent_partial_migration.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "20260702_identity_next_send_after")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            connection.executescript(
+                """
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_scan_status VARCHAR(32) DEFAULT 'pending' NOT NULL;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_high_water_uid INTEGER;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_next_before_uid INTEGER;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_scan_started_at DATETIME;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_scan_completed_at DATETIME;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_last_error TEXT;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_scanned_count INTEGER DEFAULT 0 NOT NULL;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_matched_count INTEGER DEFAULT 0 NOT NULL;
+                ALTER TABLE imap_mailbox_sync_states
+                    ADD COLUMN history_strategy_version VARCHAR(32) DEFAULT 'folder-v1' NOT NULL;
+                CREATE INDEX ix_imap_mailbox_sync_identity_history_status_updated
+                    ON imap_mailbox_sync_states (
+                        identity_id,
+                        history_scan_status,
+                        updated_at,
+                        id
+                    );
+                ALTER TABLE app_settings
+                    ADD COLUMN intended_research_direction TEXT DEFAULT '' NOT NULL;
+                ALTER TABLE imap_professor_sync_states
+                    ADD COLUMN history_strategy_version VARCHAR(32) DEFAULT 'legacy' NOT NULL;
+                CREATE INDEX ix_professors_archived_created_id
+                    ON professors (archived_at, created_at, id);
+                CREATE INDEX ix_email_tasks_identity_professor_created_id
+                    ON email_tasks (identity_id, professor_id, created_at, id);
+                CREATE INDEX ix_email_logs_status_identity_professor_direction_created
+                    ON email_logs (identity_id, professor_id, direction, created_at, id);
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+            mailbox_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(imap_mailbox_sync_states)").fetchall()
+            }
+            professor_state_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(imap_professor_sync_states)").fetchall()
+            }
+            app_setting_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(app_settings)").fetchall()
+            }
+        finally:
+            connection.close()
+
+        self.assertEqual(version, HEAD_REVISION)
+        self.assertIn("history_scan_status", mailbox_columns)
+        self.assertIn("history_strategy_version", professor_state_columns)
+        self.assertIn("intended_research_direction", app_setting_columns)
+
     def test_existing_crawl_jobs_are_backfilled_as_v1_when_runtime_v2_is_added(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "runtime_v2_legacy_jobs.db"
         env = os.environ.copy()

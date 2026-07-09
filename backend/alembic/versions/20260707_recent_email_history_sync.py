@@ -18,6 +18,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if "history_strategy_version" in _professor_state_columns():
+        return
+
     op.add_column(
         "imap_professor_sync_states",
         sa.Column(
@@ -30,4 +33,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if "history_strategy_version" not in _professor_state_columns():
+        return
+
     op.drop_column("imap_professor_sync_states", "history_strategy_version")
+
+
+def _professor_state_columns() -> set[str]:
+    inspector = sa.inspect(op.get_bind())
+    return {column["name"] for column in inspector.get_columns("imap_professor_sync_states")}
