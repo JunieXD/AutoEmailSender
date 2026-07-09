@@ -18,7 +18,7 @@ extraResources:
   - from: build/icon.png
     to: build/icon.png
 win:
-  artifactName: "AutoEmailSender Setup ${version}.${ext}"
+  artifactName: "AutoEmailSender-Setup-${version}.${ext}"
   icon: build/icon.ico
   target:
     - target: nsis

@@ -52,6 +52,12 @@ try {
   if ($notes -notmatch "# v1.0.1" -or $notes -notmatch "### 新增功能" -or $notes -notmatch "### 体验优化" -or $notes -notmatch "### 问题修复") {
     throw "公告模板内容不符合预期。`n$notes"
   }
+  if ($notes -notmatch "Windows：下载 ``AutoEmailSender-Setup-1.0.1.exe``") {
+    throw "公告模板缺少 Windows 安装说明。`n$notes"
+  }
+  if ($notes -notmatch "macOS Apple Silicon：下载 ``AutoEmailSender-1.0.1-arm64.dmg``") {
+    throw "公告模板缺少 macOS Apple Silicon 安装说明。`n$notes"
+  }
   if ($notes -match "fix\(更新\): 修复公告弹窗高度") {
     throw "公告模板不应该直接包含 commit subject。`n$notes"
   }

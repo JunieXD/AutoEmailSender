@@ -46,6 +46,7 @@ assert_contains "$notes" "# v1.0.1" "公告模板缺少版本标题。"
 assert_contains "$notes" "### 新增功能" "公告模板缺少新增功能分组。"
 assert_contains "$notes" "### 体验优化" "公告模板缺少体验优化分组。"
 assert_contains "$notes" "### 问题修复" "公告模板缺少问题修复分组。"
+assert_contains "$notes" "Windows：下载 \`AutoEmailSender-Setup-1.0.1.exe\`" "公告模板缺少 Windows 安装说明。"
 assert_contains "$notes" "macOS Apple Silicon：下载 \`AutoEmailSender-1.0.1-arm64.dmg\`" "公告模板缺少 macOS Apple Silicon 安装说明。"
 assert_contains "$notes" "系统设置 > 隐私与安全性" "公告模板缺少 macOS 首次打开说明。"
 if [[ "$notes" == *"fix(更新): 修复公告弹窗高度"* ]]; then

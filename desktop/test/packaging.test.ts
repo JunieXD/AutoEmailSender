@@ -101,7 +101,7 @@ describe("macOS desktop packaging", () => {
   it("keeps platform-specific artifact names", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
 
-    expect(config).toContain('artifactName: "AutoEmailSender Setup ${version}.${ext}"');
+    expect(config).toContain('artifactName: "AutoEmailSender-Setup-${version}.${ext}"');
     expect(config).toContain('artifactName: "AutoEmailSender-${version}-${arch}.${ext}"');
   });
 

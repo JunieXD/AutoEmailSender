@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export function buildReleaseNotes(version) {
   const normalizedVersion = normalizeVersion(version);
-  const windowsInstallerName = `AutoEmailSender Setup ${normalizedVersion}.exe`;
+  const windowsInstallerName = `AutoEmailSender-Setup-${normalizedVersion}.exe`;
   const macAppleSiliconInstallerName = `AutoEmailSender-${normalizedVersion}-arm64.dmg`;
 
   return [

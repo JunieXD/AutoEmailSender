@@ -79,7 +79,7 @@ assert_clean_repository() {
   fi
 
   if [[ "$branch" != "master" ]]; then
-    echo "发布必须在 master 分支执行，当前分支是 $branch。" >&2
+    echo "发布必须在 master 分支执行，当前分支是 ${branch}。" >&2
     exit 1
   fi
 
@@ -104,7 +104,7 @@ assert_clean_repository() {
 assert_release_notes() {
   local relative_path="docs/releases/$release_tag.md"
   if [[ ! -f "$curated_release_notes_path" ]]; then
-    echo "缺少 $relative_path，请先运行 ./scripts/prepare-release.sh $version 并润色公告后再发布。" >&2
+    echo "缺少 ${relative_path}，请先运行 ./scripts/prepare-release.sh ${version} 并润色公告后再发布。" >&2
     exit 1
   fi
 }
@@ -176,5 +176,5 @@ run_git push origin "$release_tag"
 if ((dry_run)); then
   echo "[dry-run] 未创建提交、tag 或推送。真实发布会触发 GitHub Actions 创建 Release。"
 else
-  echo "已发布 $release_tag。GitHub Actions 将自动创建 Release。"
+  echo "已发布 ${release_tag}。GitHub Actions 将自动创建 Release。"
 fi
