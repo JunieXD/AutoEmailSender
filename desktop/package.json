@@ -1,6 +1,6 @@
 {
   "name": "auto-email-sender-desktop",
-  "version": "2.3.8",
+  "version": "2.3.9",
   "private": true,
   "type": "module",
   "main": "dist/src/main.js",
