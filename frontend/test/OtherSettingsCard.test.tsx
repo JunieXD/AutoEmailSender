@@ -66,7 +66,7 @@ describe("OtherSettingsCard", () => {
     fireEvent.change(screen.getByLabelText("同时生成草稿数"), {
       target: { value: "6" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
 
     await waitFor(() => {
       expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
@@ -79,7 +79,7 @@ describe("OtherSettingsCard", () => {
       );
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "保存设置" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "保存全部设置" })).toBeEnabled();
     });
     expect(screen.getByLabelText("每个匹配任务同时分析导师数")).toHaveValue(4);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(6);
@@ -132,7 +132,7 @@ describe("OtherSettingsCard", () => {
       target: { value: "少用套话，结尾保持简短。" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
     await waitFor(() => {
       expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -160,7 +160,7 @@ describe("OtherSettingsCard", () => {
     fireEvent.change(intendedDirection, {
       target: { value: "医学自然语言处理、临床知识图谱" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
 
     await waitFor(() => {
       expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
@@ -179,6 +179,26 @@ describe("OtherSettingsCard", () => {
     expect(await screen.findByText("开机自启动")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /开机自启动/ })).toBeDisabled();
     expect(screen.getByText("仅安装后的 Windows 桌面版支持开机自启动。")).toBeInTheDocument();
+  });
+
+  it("keeps one global save action available in a sticky footer", async () => {
+    render(<OtherSettingsCard />);
+
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+
+    const saveBar = await screen.findByRole("region", { name: "其他设置保存栏" });
+    const saveButtons = screen.getAllByRole("button", { name: "保存全部设置" });
+    const settingsContent = document.querySelector("#other-settings-card-content");
+    const formContent = screen.getByTestId("other-settings-form-content");
+    expect(saveButtons).toHaveLength(1);
+    expect(saveBar).toHaveClass("sticky", "bottom-0");
+    expect(saveBar).toContainElement(saveButtons[0]);
+    expect(settingsContent).toHaveClass("other-settings-card-content");
+    expect(settingsContent).toContainElement(saveBar);
+    expect(formContent).toHaveClass("pb-6");
+    expect(formContent).not.toHaveClass("pb-28");
+    expect(saveBar.className).not.toContain("shadow-[");
+    expect(screen.queryByRole("button", { name: "保存补充要求" })).not.toBeInTheDocument();
   });
 
 

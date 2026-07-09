@@ -158,6 +158,10 @@ button.collapsible-card-toggle:not(:disabled):active {
   opacity: 0;
 }
 
+.other-settings-card-content[data-state="open"] {
+  overflow: visible;
+}
+
 .collapsible-card-body {
   padding-bottom: 1.5rem;
   transition: padding-bottom 190ms cubic-bezier(0.4, 0, 0.2, 1);
