@@ -234,9 +234,15 @@ class ProfessorCandidatePayload(BaseModel):
 
 class CandidateEnrichmentPayload(BaseModel):
     email: str | None = None
+    title: str | None = None
     department: str | None = None
     research_direction: str | None = None
     recent_papers: list[str] = Field(default_factory=list)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str | None:
+        return normalize_professor_title(_clean_optional(value))
 
 
 class CandidateBatchFailure(TypedDict):
@@ -1009,17 +1015,18 @@ def build_candidate_enrichment_prompt(
 - 资料页：{candidate.profile_url or "未知"}
 
 要求：
-- 只补全缺失字段：email, department, research_direction, recent_papers
+- 只补全缺失字段：email, title, department, research_direction, recent_papers
 - 只输出一个 JSON 对象，不要输出 Markdown、解释或前后缀文本
-- JSON 字段必须包含：email, department, research_direction, recent_papers
+- JSON 字段必须包含：email, title, department, research_direction, recent_papers
 - recent_papers 必须是 JSON 数组，例如 ["Paper A", "Paper B"]；没有证据时返回 []，不要输出拼接字符串
 - 不要改写已有基础字段
 - 如果正文出现该导师的邮箱，必须补全 email 字段；如邮箱被反爬混淆，请根据页面上下文还原为标准邮箱格式。常见混淆包括但不限于 at、(at)、[at]、[@]、邮箱符号 表示 @，dot、(dot)、[dot]、点 表示 .，以及全角符号。如果正文出现多个邮箱，只填写最可能属于该导师的一个；无法明确判断则保持为空
+- 如果正文出现教授、副教授、助理教授、讲师、研究员、副研究员、助理研究员、特聘研究员等职称，必须补全 title 字段；不要把院长、主任、教师等行政职务或普通岗位当作职称
 - 字段值尽量保持页面原文：页面是中文就保留中文，页面是英文就保留英文；不要翻译、音译或拼音化已有内容
 - 没有证据的字符串字段保持为空字符串，recent_papers 保持 []
 
 输出示例：
-{{"email": "zhang@example.edu", "department": "软件工程系", "research_direction": "大语言模型、软件工程", "recent_papers": []}}
+{{"email": "zhang@example.edu", "title": "教授", "department": "软件工程系", "research_direction": "大语言模型、软件工程", "recent_papers": []}}
 
 资料页正文：
 {page_text}

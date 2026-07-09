@@ -571,14 +571,17 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("张三", prompt)
         self.assertIn("zhang@example.edu", prompt)
         self.assertIn("https://example.edu/faculty/zhang", prompt)
-        self.assertIn("只补全缺失字段：email, department, research_direction, recent_papers", prompt)
+        self.assertIn("只补全缺失字段：email, title, department, research_direction, recent_papers", prompt)
         self.assertIn("如果正文出现该导师的邮箱，必须补全 email 字段", prompt)
+        self.assertIn("必须补全 title 字段", prompt)
+        self.assertIn("不要把院长、主任、教师等行政职务或普通岗位当作职称", prompt)
         self.assertIn("多个邮箱", prompt)
         self.assertIn("最可能属于该导师", prompt)
         self.assertIn("[@]", prompt)
         self.assertIn("字段值尽量保持页面原文", prompt)
         self.assertIn("输出示例", prompt)
         self.assertIn('"email"', prompt)
+        self.assertIn('"title": "教授"', prompt)
         self.assertIn('"recent_papers": []', prompt)
 
     def test_build_profile_candidate_prompt_requires_preserving_source_language_values(self) -> None:

@@ -104,7 +104,7 @@ async def run_crawler_v2_enrichment_worker_once(
                 worker_kind="enrichment",
                 event_name="enrichment_completed",
                 work_item_id=task_id,
-                payload={"candidate_id": candidate.id, "email": candidate.email, "department": candidate.department},
+                payload={"candidate_id": candidate.id, "email": candidate.email, "title": candidate.title, "department": candidate.department},
             )
             task.status = CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
             task.worker_id = None
@@ -333,6 +333,8 @@ async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfi
 def _apply_enrichment(candidate: CrawlCandidate, payload: CandidateEnrichmentPayload) -> None:
     if payload.email and not candidate.email:
         candidate.email = payload.email.strip()
+    if payload.title and not candidate.title:
+        candidate.title = payload.title.strip()
     if payload.department and not candidate.department:
         candidate.department = payload.department.strip()
     if payload.research_direction and not candidate.research_direction:

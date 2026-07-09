@@ -20,6 +20,7 @@ from app.services.crawl_job_runtime import (
     crawl_job_has_pending_work,
     create_chunks_for_successful_page_snapshot,
     _enrich_saved_candidates,
+    _needs_profile_enrichment,
     enrich_selected_crawl_candidates,
     enrich_candidate_profile_with_llm,
     extract_profile_candidate_with_llm,
@@ -1329,6 +1330,89 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(candidate)
             assert candidate is not None
             self.assertEqual(candidate.email, "wang5@example.edu")
+
+    async def test_enrich_saved_candidates_fills_candidate_title_when_missing(self) -> None:
+        job_id = await self._create_default_profile_and_job()
+        ctx = self._build_crawl_context(job_id)
+        async with self.session_factory() as session:
+            candidate = CrawlCandidate(
+                job_id=job_id,
+                name="张三",
+                email="zhang@example.edu",
+                title=None,
+                university="示例大学",
+                school="计算机学院",
+                department="计算机学院",
+                research_direction="人工智能",
+                recent_papers=["Paper A"],
+                profile_url="https://example.edu/zhang.html",
+                source_url="https://example.edu/faculty",
+                confidence=0.9,
+            )
+            session.add(candidate)
+            await session.commit()
+            candidate_id = candidate.id
+
+        llm_profile = await self._get_default_llm_profile()
+
+        async def fake_crawl_page_with_browser_fallback(
+            ctx: CrawlToolContext,
+            url: str,
+            *,
+            intent: str = "generic",
+        ) -> PageSnapshot:
+            _ = ctx, intent
+            return PageSnapshot(
+                url=url,
+                title="张三",
+                text="张三\n教授\n邮箱：zhang@example.edu",
+                html="<html></html>",
+                links=[],
+                fetch_method="http",
+                status="succeeded",
+            )
+
+        async def fake_enrich_with_llm(
+            ctx: CrawlToolContext,
+            llm_profile: LLMProfile,
+            candidate: CrawlCandidate,
+            page_text: str,
+        ) -> CandidateEnrichmentPayload:
+            _ = ctx, llm_profile, candidate, page_text
+            return CandidateEnrichmentPayload(title="教授")
+
+        with patch(
+            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            new=fake_crawl_page_with_browser_fallback,
+        ), patch(
+            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            new=fake_enrich_with_llm,
+        ):
+            enriched = await _enrich_saved_candidates(
+                self.session_factory,
+                ctx,
+                llm_profile=llm_profile,
+            )
+
+        self.assertEqual(enriched, 1)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+        assert candidate is not None
+        self.assertEqual(candidate.title, "教授")
+
+    def test_needs_profile_enrichment_includes_missing_title(self) -> None:
+        candidate = CrawlCandidate(
+            job_id=1,
+            name="张三",
+            email="zhang@example.edu",
+            title=None,
+            department="计算机学院",
+            research_direction="人工智能",
+            recent_papers=["Paper A"],
+            profile_url="https://example.edu/zhang.html",
+        )
+
+        self.assertTrue(_needs_profile_enrichment(candidate))
 
     async def test_enrich_saved_candidates_limits_concurrency(self) -> None:
         job_id = await self._create_default_profile_and_job()

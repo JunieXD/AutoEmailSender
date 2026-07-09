@@ -1286,6 +1286,11 @@ async def _apply_candidate_enrichment(
             candidate.email = email
             changed = True
 
+        title = update_payload.get("title")
+        if title and not candidate.title:
+            candidate.title = title
+            changed = True
+
         department = update_payload.get("department")
         if department and not candidate.department:
             candidate.department = department
@@ -1363,6 +1368,7 @@ def _needs_profile_enrichment(candidate: CrawlCandidate) -> bool:
     return any(
         (
             not (candidate.email or "").strip(),
+            not (candidate.title or "").strip(),
             not (candidate.department or "").strip(),
             not (candidate.research_direction or "").strip(),
             not any(str(item).strip() for item in candidate.recent_papers or []),
@@ -1373,6 +1379,7 @@ def _needs_profile_enrichment(candidate: CrawlCandidate) -> bool:
 def _format_enrichment_fields(fields: list[str]) -> str:
     labels = {
         "email": "邮箱",
+        "title": "职称",
         "department": "院系",
         "research_direction": "研究方向",
         "recent_papers": "近期论文",
@@ -1501,4 +1508,3 @@ def _stringify_trace_payload(event: dict[str, object]) -> str:
     if raw is not None:
         parts.append(str(raw))
     return "\n".join(parts)
-
