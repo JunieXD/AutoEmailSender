@@ -297,6 +297,89 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(value, {"thinking": {"type": "disabled"}})
         self.assertEqual(row_count, 1)
 
+    async def test_concurrent_record_uses_single_cache_row(self) -> None:
+        from app.models import ThinkingAdaptationCache
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            record_thinking_adaptation,
+        )
+        from sqlalchemy import func, select
+
+        async def record(value: dict[str, object] | None) -> None:
+            async with self.session_factory() as session:
+                await record_thinking_adaptation(
+                    session,
+                    api_base_url="https://api.concurrent.ai/v1",
+                    model_name="concurrent-v1",
+                    learned_extra_body=value,
+                )
+                await session.commit()
+
+        await asyncio.gather(
+            record({"thinking": {"type": "disabled"}}),
+            record({"enable_thinking": False}),
+        )
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.concurrent.ai/v1",
+                model_name="concurrent-v1",
+            )
+            row_count = await session.scalar(
+                select(func.count()).select_from(ThinkingAdaptationCache)
+            )
+
+        self.assertTrue(hit)
+        self.assertIn(
+            value,
+            [
+                {"thinking": {"type": "disabled"}},
+                {"enable_thinking": False},
+            ],
+        )
+        self.assertEqual(row_count, 1)
+
+    async def test_record_updates_loaded_row_in_same_session(self) -> None:
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            record_thinking_adaptation,
+        )
+
+        async with self.session_factory() as session:
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.identity-map.ai/v1",
+                model_name="identity-v1",
+                learned_extra_body={"thinking": {"type": "disabled"}},
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.identity-map.ai/v1",
+                model_name="identity-v1",
+            )
+            self.assertTrue(hit)
+            self.assertEqual(value, {"thinking": {"type": "disabled"}})
+
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.identity-map.ai/v1",
+                model_name="identity-v1",
+                learned_extra_body={"enable_thinking": False},
+            )
+
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.identity-map.ai/v1",
+                model_name="identity-v1",
+            )
+
+        self.assertTrue(hit)
+        self.assertEqual(value, {"enable_thinking": False})
+
 
 class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:

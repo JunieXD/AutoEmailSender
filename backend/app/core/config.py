@@ -39,6 +39,8 @@ class Settings:
     smtp_send_timeout_seconds: int
     imap_lookback_hours: int
     operation_log_retention_days: int
+    sqlite_busy_timeout_ms: int
+    sqlite_wal_enabled: bool
     enable_background_workers: bool
     crawler_debug_enabled: bool
 
@@ -133,6 +135,8 @@ def get_settings() -> Settings:
         smtp_send_timeout_seconds=_get_int_env("SMTP_SEND_TIMEOUT_SECONDS", 30),
         imap_lookback_hours=_get_int_env("IMAP_LOOKBACK_HOURS", 72),
         operation_log_retention_days=_get_int_env("OPERATION_LOG_RETENTION_DAYS", 30),
+        sqlite_busy_timeout_ms=max(0, _get_int_env("SQLITE_BUSY_TIMEOUT_MS", 5000)),
+        sqlite_wal_enabled=_get_bool_env("SQLITE_ENABLE_WAL", True),
         enable_background_workers=_get_bool_env("ENABLE_BACKGROUND_WORKERS", True),
         crawler_debug_enabled=_get_bool_env("CRAWLER_DEBUG", True),
     )

@@ -4,6 +4,7 @@ import traceback
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
+from app.core.sqlite_diagnostics import sqlite_lock_diagnostic_line
 
 BACKEND_ERROR_LOG_NAME = "backend-errors.log"
 
@@ -27,8 +28,11 @@ def write_backend_error_log(
     try:
         timestamp = datetime.now(UTC).isoformat()
         traceback_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        diagnostic_line = sqlite_lock_diagnostic_line(exc)
+        diagnostic_text = f"{diagnostic_line}\n" if diagnostic_line else ""
         entry = (
             f"[{timestamp}] request_id={request_id} {method} {path}\n"
+            f"{diagnostic_text}"
             f"{traceback_text}\n"
         )
         _append_backend_error_entry(entry)
@@ -44,8 +48,11 @@ def write_backend_worker_error_log(
     try:
         timestamp = datetime.now(UTC).isoformat()
         traceback_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        diagnostic_line = sqlite_lock_diagnostic_line(exc)
+        diagnostic_text = f"{diagnostic_line}\n" if diagnostic_line else ""
         entry = (
             f"[{timestamp}] worker_name={worker_name}\n"
+            f"{diagnostic_text}"
             f"{traceback_text}\n"
         )
         _append_backend_error_entry(entry)

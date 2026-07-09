@@ -206,7 +206,7 @@ class OperationLogTests(unittest.TestCase):
         self.assertNotIn("smtp-secret", message)
         self.assertIn("status=failed", message)
 
-    def test_record_operation_log_removes_logs_older_than_retention_days(self) -> None:
+    def test_record_operation_log_does_not_cleanup_old_logs_inline(self) -> None:
         from app.core.database import get_session_factory
         from app.models import OperationLog
         from app.services.operation_logs import record_operation_log
@@ -249,7 +249,7 @@ class OperationLogTests(unittest.TestCase):
                     ).scalars(),
                 )
 
-        self.assertEqual(asyncio.run(scenario()), ["new.event", "recent.event"])
+        self.assertEqual(asyncio.run(scenario()), ["new.event", "old.event", "recent.event"])
 
 
     def test_cleanup_old_operation_logs_handles_loaded_sqlite_naive_datetimes(self) -> None:
@@ -279,13 +279,13 @@ class OperationLogTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(scenario()), 1)
 
-    def test_operation_log_retention_can_be_disabled_by_env(self) -> None:
+    def test_cleanup_old_operation_logs_respects_disabled_retention_env(self) -> None:
         os.environ["OPERATION_LOG_RETENTION_DAYS"] = "0"
 
         from app.core.config import get_settings
         from app.core.database import get_session_factory
         from app.models import OperationLog
-        from app.services.operation_logs import record_operation_log
+        from app.services.operation_logs import cleanup_old_operation_logs
 
         get_settings.cache_clear()
         now = datetime(2026, 4, 26, 12, 0, tzinfo=UTC)
@@ -302,13 +302,9 @@ class OperationLogTests(unittest.TestCase):
                 await session.commit()
 
             async with get_session_factory()() as session:
-                await record_operation_log(
-                    session,
-                    category="backend",
-                    event_name="new.event",
-                    now=now,
-                )
+                deleted = await cleanup_old_operation_logs(session, now=now)
                 await session.commit()
+                self.assertEqual(deleted, 0)
 
             async with get_session_factory()() as session:
                 return list(
@@ -319,7 +315,7 @@ class OperationLogTests(unittest.TestCase):
                     ).scalars(),
                 )
 
-        self.assertEqual(asyncio.run(scenario()), ["new.event", "old.event"])
+        self.assertEqual(asyncio.run(scenario()), ["old.event"])
 
 if __name__ == "__main__":
     unittest.main()

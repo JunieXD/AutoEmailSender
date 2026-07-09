@@ -16,9 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routers import API_ROUTERS
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
+from app.core.error_formatting import safe_exception_message
 from app.core.migrations import ensure_database_schema
 from app.core.schema_metadata import DatabaseRequiresNewerAppError
 from app.core.request_context import RequestContextMiddleware
+from app.core.sqlite_diagnostics import is_sqlite_database_lock_error
 from app.core.startup_logging import write_startup_phase_log
 from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 from app.services.operation_logs import cleanup_old_operation_logs
@@ -146,13 +148,14 @@ async def initialize_runtime(app: FastAPI) -> None:
         raise
     except Exception as exc:
         error_detail = build_startup_error_detail(exc)
-        app.state.runtime_error = str(exc)
+        error_message = safe_exception_message(exc)
+        app.state.runtime_error = error_message
         app.state.runtime_error_detail = error_detail
         set_startup_status(
             app,
             state="error",
             phase="error",
-            error=str(exc),
+            error=error_message,
             error_detail=error_detail,
         )
         write_startup_diagnostic_log("桌面后端启动初始化失败", exc=exc)
@@ -198,16 +201,6 @@ async def run_startup_step_with_database_lock_retry(
             await asyncio.sleep(STARTUP_DATABASE_LOCK_RETRY_SECONDS * attempt)
 
 
-def is_sqlite_database_lock_error(exc: Exception) -> bool:
-    current: BaseException | None = exc
-    while current is not None:
-        message = str(current).lower()
-        if "database is locked" in message or "database table is locked" in message:
-            return True
-        current = current.__cause__ or current.__context__
-    return False
-
-
 def write_startup_diagnostic_log(
     message: str,
     *,
@@ -227,7 +220,7 @@ def write_startup_diagnostic_log(
         if attempt is not None and max_attempts is not None:
             lines.append(f"attempt={attempt}/{max_attempts}")
         if exc is not None:
-            lines.append(f"error={type(exc).__name__}: {exc}")
+            lines.append(f"error={type(exc).__name__}: {safe_exception_message(exc)}")
             lines.append("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip())
         append_text(log_path, "\n".join(lines) + "\n")
     except Exception:

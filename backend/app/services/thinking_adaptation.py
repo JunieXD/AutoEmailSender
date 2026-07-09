@@ -84,6 +84,7 @@ def merge_extra_body(
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -129,29 +130,28 @@ async def record_thinking_adaptation(
     The caller is responsible for committing the surrounding session.
     """
 
-    row = await session.scalar(
-        select(ThinkingAdaptationCache).where(
-            ThinkingAdaptationCache.api_base_url == api_base_url,
-            ThinkingAdaptationCache.model_name == model_name,
+    now = utc_now()
+    learned_value = dict(learned_extra_body) if learned_extra_body else None
+    statement = sqlite_insert(ThinkingAdaptationCache).values(
+        api_base_url=api_base_url,
+        model_name=model_name,
+        learned_extra_body=learned_value,
+        probed_at=now,
+        updated_at=now,
+    )
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[
+                ThinkingAdaptationCache.api_base_url,
+                ThinkingAdaptationCache.model_name,
+            ],
+            set_={
+                "learned_extra_body": statement.excluded.learned_extra_body,
+                "probed_at": statement.excluded.probed_at,
+                "updated_at": now,
+            },
         )
     )
-    now = utc_now()
-    if row is None:
-        row = ThinkingAdaptationCache(
-            api_base_url=api_base_url,
-            model_name=model_name,
-            learned_extra_body=(
-                dict(learned_extra_body) if learned_extra_body else None
-            ),
-            probed_at=now,
-        )
-        session.add(row)
-    else:
-        row.learned_extra_body = (
-            dict(learned_extra_body) if learned_extra_body else None
-        )
-        row.probed_at = now
-    await session.flush([row])
 
 
 class ThinkingAdaptationFailed(RuntimeError):

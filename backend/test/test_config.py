@@ -11,6 +11,8 @@ class SettingsTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         os.environ["AUTO_EMAIL_SENDER_DATA_DIR"] = self.temp_dir.name
         os.environ.pop("CRAWLER_DEBUG", None)
+        os.environ.pop("SQLITE_BUSY_TIMEOUT_MS", None)
+        os.environ.pop("SQLITE_ENABLE_WAL", None)
 
         from app.core.config import get_settings
 
@@ -22,6 +24,8 @@ class SettingsTests(unittest.TestCase):
         get_settings.cache_clear()
         os.environ.pop("AUTO_EMAIL_SENDER_DATA_DIR", None)
         os.environ.pop("CRAWLER_DEBUG", None)
+        os.environ.pop("SQLITE_BUSY_TIMEOUT_MS", None)
+        os.environ.pop("SQLITE_ENABLE_WAL", None)
         self.temp_dir.cleanup()
 
     def test_crawler_debug_defaults_to_enabled(self) -> None:
@@ -34,6 +38,36 @@ class SettingsTests(unittest.TestCase):
             settings.crawler_debug_dir,
             (Path(self.temp_dir.name) / "logs" / "crawler").resolve(),
         )
+
+    def test_sqlite_lock_defaults_are_enabled(self) -> None:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+
+        self.assertEqual(settings.sqlite_busy_timeout_ms, 5000)
+        self.assertTrue(settings.sqlite_wal_enabled)
+
+    def test_sqlite_lock_settings_can_be_overridden_by_env(self) -> None:
+        from app.core.config import get_settings
+
+        os.environ["SQLITE_BUSY_TIMEOUT_MS"] = "12000"
+        os.environ["SQLITE_ENABLE_WAL"] = "0"
+        get_settings.cache_clear()
+
+        settings = get_settings()
+
+        self.assertEqual(settings.sqlite_busy_timeout_ms, 12000)
+        self.assertFalse(settings.sqlite_wal_enabled)
+
+    def test_sqlite_busy_timeout_negative_env_clamps_to_zero(self) -> None:
+        from app.core.config import get_settings
+
+        os.environ["SQLITE_BUSY_TIMEOUT_MS"] = "-1"
+        get_settings.cache_clear()
+
+        settings = get_settings()
+
+        self.assertEqual(settings.sqlite_busy_timeout_ms, 0)
 
 
 if __name__ == "__main__":

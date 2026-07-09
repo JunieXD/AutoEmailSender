@@ -67,10 +67,11 @@ class StartupRuntimeTest(unittest.TestCase):
     def test_cleanup_runtime_state_recovers_generating_drafts_immediately(self) -> None:
         async def run_test() -> None:
             session_factory = _session_factory()
+            cleanup_logs = AsyncMock()
             recover_workspace_rewrites = AsyncMock(return_value=1)
             recover_generating_drafts = AsyncMock(return_value=1)
             with (
-                patch.object(main, "cleanup_old_operation_logs", AsyncMock()),
+                patch.object(main, "cleanup_old_operation_logs", cleanup_logs),
                 patch.object(main, "recover_interrupted_crawl_jobs", AsyncMock()),
                 patch.object(main, "recover_interrupted_match_analysis_runs", AsyncMock()),
                 patch.object(main, "recover_interrupted_workspace_draft_rewrites", recover_workspace_rewrites),
@@ -79,6 +80,7 @@ class StartupRuntimeTest(unittest.TestCase):
             ):
                 await main.cleanup_runtime_state()
 
+            cleanup_logs.assert_awaited_once()
             recover_workspace_rewrites.assert_awaited_once_with(session_factory)
             recover_generating_drafts.assert_awaited_once_with(
                 session_factory,
@@ -136,6 +138,38 @@ class StartupRuntimeTest(unittest.TestCase):
             self.assertIn("桌面后端启动初始化失败", log_text)
             self.assertIn("broken migration", log_text)
             self.assertIn("Traceback", log_text)
+
+        asyncio.run(run_test())
+
+    def test_initialize_runtime_handles_exception_with_broken_string(self) -> None:
+        class BadStringError(Exception):
+            def __str__(self) -> str:
+                raise RuntimeError("broken __str__")
+
+        async def fail_schema_check() -> None:
+            raise BadStringError()
+
+        async def run_test() -> None:
+            app = SimpleNamespace(state=SimpleNamespace())
+            with tempfile.TemporaryDirectory() as temp_dir:
+                with (
+                    patch.object(main, "ensure_database_schema", fail_schema_check),
+                    patch.object(main, "get_settings", return_value=SimpleNamespace(enable_background_workers=False, data_dir=Path(temp_dir))),
+                ):
+                    main.initialize_startup_status(app)  # type: ignore[arg-type]
+                    with self.assertRaises(BadStringError):
+                        await main.initialize_runtime(app)  # type: ignore[arg-type]
+
+                log_text = (Path(temp_dir) / "logs" / "startup.log").read_text(encoding="utf-8")
+
+            self.assertEqual(app.state.startup_status.state, "error")
+            self.assertIn("BadStringError", app.state.runtime_error)
+            self.assertIn("raised while formatting exception", app.state.runtime_error)
+            self.assertIn("BadStringError", app.state.startup_status.error)
+            self.assertIn("raised while formatting exception", app.state.startup_status.error)
+            self.assertIn("桌面后端启动初始化失败", log_text)
+            self.assertIn("BadStringError", log_text)
+            self.assertIn("raised while formatting exception", log_text)
 
         asyncio.run(run_test())
 

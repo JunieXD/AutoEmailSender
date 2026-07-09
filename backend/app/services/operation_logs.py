@@ -73,7 +73,7 @@ async def record_operation_log(
     request_id: str | None = None,
     now: datetime | None = None,
 ) -> OperationLog:
-    await cleanup_old_operation_logs(session, now=now)
+    _ = now
     log = OperationLog(
         request_id=request_id if request_id is not None else get_request_id(),
         category=category,
@@ -207,5 +207,4 @@ def _truncate_string(value: str) -> str:
 
 def _stringify_exception(exc: BaseException) -> str:
     return _truncate_string(f"{exc.__class__.__name__}: {exc}")
-
 
