@@ -4,8 +4,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus
 
@@ -43,26 +44,33 @@ async def build_contact_status_by_professor(
     last_sent_at_by_professor: dict[int, datetime] = {}
     last_replied_at_by_professor: dict[int, datetime] = {}
 
+    successful_sent_log = (
+        (EmailLog.direction == EmailDirection.SENT.value)
+        & (EmailLog.failure_summary.is_(None) | (EmailLog.failure_summary == ""))
+    )
     log_rows = await session.execute(
         select(
             EmailLog.professor_id,
-            EmailLog.direction,
-            EmailLog.failure_summary,
-            EmailLog.created_at,
+            func.sum(case((successful_sent_log, 1), else_=0)).label("sent_count"),
+            func.max(case((successful_sent_log, EmailLog.created_at), else_=None)).label("last_sent_at"),
+            func.max(
+                case(
+                    (EmailLog.direction == EmailDirection.RECEIVED.value, EmailLog.created_at),
+                    else_=None,
+                ),
+            ).label("last_replied_at"),
         )
         .where(
             EmailLog.identity_id == identity_id,
             EmailLog.professor_id.in_(unique_professor_ids),
             EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
         )
-        .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
+        .group_by(EmailLog.professor_id),
     )
-    for professor_id, direction, failure_summary, created_at in log_rows:
-        if direction == EmailDirection.SENT.value and not failure_summary:
-            sent_count_by_professor[professor_id] += 1
-            _keep_latest_timestamp(last_sent_at_by_professor, professor_id, created_at)
-        elif direction == EmailDirection.RECEIVED.value:
-            _keep_latest_timestamp(last_replied_at_by_professor, professor_id, created_at)
+    for professor_id, sent_count, last_sent_at, last_replied_at in log_rows:
+        sent_count_by_professor[professor_id] = int(sent_count or 0)
+        _keep_latest_timestamp(last_sent_at_by_professor, professor_id, last_sent_at)
+        _keep_latest_timestamp(last_replied_at_by_professor, professor_id, last_replied_at)
     professors_with_sent_logs = set(last_sent_at_by_professor)
     professors_with_reply_logs = set(last_replied_at_by_professor)
 
@@ -135,6 +143,17 @@ async def _load_tasks_by_professor(
 ) -> dict[int, list[EmailTask]]:
     rows = await session.scalars(
         select(EmailTask)
+        .options(
+            load_only(
+                EmailTask.professor_id,
+                EmailTask.status,
+                EmailTask.created_at,
+                EmailTask.match_score,
+                EmailTask.sent_at,
+                EmailTask.is_replied,
+                EmailTask.updated_at,
+            ),
+        )
         .where(
             EmailTask.identity_id == identity_id,
             EmailTask.professor_id.in_(professor_ids),
@@ -143,7 +162,7 @@ async def _load_tasks_by_professor(
                 & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
             ),
         )
-        .order_by(EmailTask.created_at.desc(), EmailTask.id.desc()),
+        .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
     )
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
     for task in rows:

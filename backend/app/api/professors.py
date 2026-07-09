@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 
 from app.core.database import get_async_session
 from app.models import (
@@ -66,7 +66,7 @@ async def list_professors(
         select(Professor)
         .options(selectinload(Professor.tags))
         .where(Professor.archived_at.is_(None))
-        .order_by(Professor.created_at.desc())
+        .order_by(Professor.created_at.desc(), Professor.id.asc())
     )
     if ids:
         professor_ids = [int(item) for item in ids.split(",") if item.strip()]
@@ -85,6 +85,17 @@ async def list_professors(
     if identity_id is not None:
         task_result = await session.execute(
             select(EmailTask)
+            .options(
+                load_only(
+                    EmailTask.professor_id,
+                    EmailTask.status,
+                    EmailTask.created_at,
+                    EmailTask.match_score,
+                    EmailTask.sent_at,
+                    EmailTask.is_replied,
+                    EmailTask.updated_at,
+                ),
+            )
             .where(
                 EmailTask.identity_id == identity_id,
                 EmailTask.professor_id.in_(professor_ids),
@@ -93,7 +104,7 @@ async def list_professors(
                     & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
                 ),
             )
-            .order_by(EmailTask.created_at.desc(), EmailTask.id.desc()),
+            .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
         )
         for task in task_result.scalars():
             tasks_by_professor[task.professor_id].append(task)

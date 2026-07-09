@@ -59,6 +59,13 @@ class EmailTask(Base):
             unique=True,
             sqlite_where=text("source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"),
         ),
+        Index(
+            "ix_email_tasks_identity_professor_created_id",
+            "identity_id",
+            "professor_id",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

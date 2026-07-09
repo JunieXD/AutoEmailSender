@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, LLMProfile, Professor
@@ -200,6 +201,43 @@ class ContactStatusTests(unittest.TestCase):
         self.assertEqual(status.sent_count, 0)
         self.assertIsNone(status.last_sent_at)
 
+    def test_empty_failure_summary_sent_log_counts_as_successful(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                now = datetime.now(UTC)
+                identity = self._build_identity()
+                llm_profile = self._build_llm_profile()
+                professor = Professor(name="空失败信息老师", email="empty-failure@example.edu")
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=None,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.SENT.value,
+                        subject="申请交流",
+                        content="老师您好",
+                        failure_summary="",
+                        created_at=now,
+                    ),
+                )
+                await session.commit()
+
+                statuses = await build_contact_status_by_professor(
+                    session,
+                    identity_id=identity.id,
+                    professor_ids=[professor.id],
+                )
+                return statuses[professor.id]
+
+        status = self._run_async(scenario())
+
+        self.assertEqual(status.status, "contacted")
+        self.assertEqual(status.sent_count, 1)
+        self.assertIsNotNone(status.last_sent_at)
+
     def test_received_log_without_task_marks_professor_replied(self) -> None:
         async def scenario():
             async with self.session_factory() as session:
@@ -324,7 +362,7 @@ class ContactStatusTests(unittest.TestCase):
         self.assertIsNone(status.last_sent_at)
         self.assertIsNone(status.last_replied_at)
 
-    def test_contact_status_queries_only_log_columns_needed_for_status(self) -> None:
+    def test_contact_status_aggregates_log_rows_by_professor(self) -> None:
         async def scenario():
             now = datetime.now(UTC)
             test_case = self
@@ -337,14 +375,15 @@ class ContactStatusTests(unittest.TestCase):
                     ]
                     test_case.assertEqual(
                         selected_columns,
-                        ["professor_id", "direction", "failure_summary", "created_at"],
+                        ["professor_id", "sent_count", "last_sent_at", "last_replied_at"],
                     )
+                    test_case.assertEqual(tuple(statement._group_by_clauses), (EmailLog.professor_id,))
                     return [
                         (
                             1,
-                            EmailDirection.SENT.value,
-                            None,
+                            1,
                             now,
+                            None,
                         ),
                     ]
 
@@ -364,6 +403,54 @@ class ContactStatusTests(unittest.TestCase):
         self.assertEqual(status.status, "contacted")
         self.assertEqual(status.sent_count, 1)
         self.assertIsNotNone(status.last_sent_at)
+
+    def test_dashboard_professor_list_keeps_large_task_columns_unloaded(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm_profile = self._build_llm_profile()
+                professor = Professor(name="窄列任务老师", email="narrow-task@example.edu")
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm_profile.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.SENT.value,
+                    match_score=92,
+                    match_reason="很长的匹配理由",
+                    generated_content_text="正文" * 200,
+                    generated_content_html="<p>正文</p>" * 200,
+                )
+                session.add(task)
+                await session.commit()
+                identity_id = identity.id
+                professor_id = professor.id
+
+            async with self.session_factory() as session:
+                with patch(
+                    "app.api.professors.build_contact_status_by_professor",
+                    new_callable=AsyncMock,
+                ) as build_status:
+                    build_status.return_value = {}
+
+                    await list_professors(
+                        identity_id=identity_id,
+                        llm_profile_id=None,
+                        ids=None,
+                        session=session,
+                    )
+
+                tasks_by_professor = build_status.await_args.kwargs["tasks_by_professor"]
+                loaded_task = tasks_by_professor[professor_id][0]
+                return loaded_task.match_score, inspect(loaded_task).unloaded
+
+        match_score, unloaded = self._run_async(scenario())
+
+        self.assertEqual(match_score, 92)
+        self.assertIn("match_reason", unloaded)
+        self.assertIn("generated_content_text", unloaded)
+        self.assertIn("generated_content_html", unloaded)
 
     def test_dashboard_professor_list_reuses_loaded_tasks_for_contact_status(self) -> None:
         async def scenario():

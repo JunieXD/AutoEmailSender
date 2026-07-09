@@ -68,6 +68,14 @@ class EmailLog(Base):
             sqlite_where=text("message_fingerprint IS NOT NULL"),
             postgresql_where=text("message_fingerprint IS NOT NULL"),
         ),
+        Index(
+            "ix_email_logs_status_identity_professor_direction_created",
+            "identity_id",
+            "professor_id",
+            "direction",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -444,6 +444,23 @@ class DatabaseSchemaTests(unittest.TestCase):
             }.issubset(match_job_item_indexes),
         )
 
+    def test_dashboard_professor_query_indexes_are_created(self) -> None:
+        self.assertEqual(
+            self._get_index_columns("professors", "ix_professors_archived_created_id"),
+            ["archived_at", "created_at", "id"],
+        )
+        self.assertEqual(
+            self._get_index_columns("email_tasks", "ix_email_tasks_identity_professor_created_id"),
+            ["identity_id", "professor_id", "created_at", "id"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "email_logs",
+                "ix_email_logs_status_identity_professor_direction_created",
+            ),
+            ["identity_id", "professor_id", "direction", "created_at", "id"],
+        )
+
     def test_email_tasks_contains_workspace_rewrite_fields(self) -> None:
         task_columns = self._get_columns("email_tasks")
 
@@ -2122,6 +2139,15 @@ class DatabaseSchemaTests(unittest.TestCase):
     def _get_columns(self, table_name: str) -> set[str]:
         rows = self.connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
         return {row[1] for row in rows}
+
+    def _get_index_columns(self, table_name: str, index_name: str) -> list[str]:
+        index_names = {
+            row[1]
+            for row in self.connection.execute(f"PRAGMA index_list('{table_name}')").fetchall()
+        }
+        self.assertIn(index_name, index_names)
+        rows = self.connection.execute(f"PRAGMA index_info('{index_name}')").fetchall()
+        return [row[2] for row in rows]
 
     @staticmethod
     def _load_json(raw_value: str | None) -> list[int]:

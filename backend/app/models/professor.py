@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -18,6 +18,14 @@ if TYPE_CHECKING:
 
 class Professor(Base):
     __tablename__ = "professors"
+    __table_args__ = (
+        Index(
+            "ix_professors_archived_created_id",
+            "archived_at",
+            "created_at",
+            "id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
