@@ -88,13 +88,14 @@ describe("windows installer packaging", () => {
 });
 
 describe("macOS desktop packaging", () => {
-  it("builds an unsigned dmg with a macOS icon", () => {
+  it("builds an ad-hoc signed dmg with a macOS icon", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
 
     expect(config).toContain("mac:");
     expect(config).toContain("target: dmg");
     expect(config).toContain("icon: build/icon.icns");
-    expect(config).toContain("identity: null");
+    expect(config).toContain('identity: "-"');
+    expect(config).not.toContain("identity: null");
     expect(existsSync(path.resolve("build", "icon.icns"))).toBe(true);
   });
 
