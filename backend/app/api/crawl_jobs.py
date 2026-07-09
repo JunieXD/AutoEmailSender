@@ -557,6 +557,7 @@ async def _enqueue_v2_crawl_candidate_enrichment_tasks(
     enqueued_count = 0
     existing_count = 0
     runnable_existing_count = 0
+    completed_skipped_count = 0
     for candidate in enrichable_candidates:
         existing_task = await session.scalar(
             select(CrawlCandidateEnrichmentTask).where(
@@ -566,7 +567,17 @@ async def _enqueue_v2_crawl_candidate_enrichment_tasks(
         )
         if existing_task is not None:
             if existing_task.status == CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value:
+                if _candidate_has_missing_enrichment_fields(candidate):
+                    existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
+                    existing_task.worker_id = None
+                    existing_task.claimed_at = None
+                    existing_task.lease_expires_at = None
+                    existing_task.last_error = None
+                    existing_task.updated_at = now
+                    enqueued_count += 1
+                    continue
                 existing_count += 1
+                completed_skipped_count += 1
                 continue
             if existing_task.status in {
                 CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
@@ -608,10 +619,13 @@ async def _enqueue_v2_crawl_candidate_enrichment_tasks(
     await session.commit()
     selected_count = len(enrichable_candidates)
     skipped_message = f"跳过 {skipped_count} 位缺少详情页 URL 的候选。" if skipped_count > 0 else ""
+    completed_skipped_message = f"已补全跳过 {completed_skipped_count} 位。" if completed_skipped_count > 0 else ""
     if enqueued_count > 0:
-        message = f"已加入补全队列：选中 {selected_count} 位，入队 {enqueued_count} 位。{skipped_message}"
+        message = f"已加入补全队列：选中 {selected_count} 位，入队 {enqueued_count} 位。{completed_skipped_message}{skipped_message}"
+    elif completed_skipped_count > 0 and existing_count == completed_skipped_count:
+        message = f"选中 {selected_count} 位，已补全跳过 {completed_skipped_count} 位。{skipped_message}"
     else:
-        message = f"选中的 {selected_count} 位候选已在补全队列中或已补全。{skipped_message}"
+        message = f"选中的 {selected_count} 位候选已在补全队列中或已补全。{completed_skipped_message}{skipped_message}"
     return CrawlJobEnrichResult(
         selected_count=selected_count,
         enriched_count=0,
@@ -619,6 +633,18 @@ async def _enqueue_v2_crawl_candidate_enrichment_tasks(
         failed_count=0,
         skipped_count=skipped_count,
         message=message,
+    )
+
+
+def _candidate_has_missing_enrichment_fields(candidate: CrawlCandidate) -> bool:
+    return any(
+        (
+            not (candidate.email or "").strip(),
+            not (candidate.title or "").strip(),
+            not (candidate.department or "").strip(),
+            not (candidate.research_direction or "").strip(),
+            not any(str(item).strip() for item in candidate.recent_papers or []),
+        )
     )
 
 

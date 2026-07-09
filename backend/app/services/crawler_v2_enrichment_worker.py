@@ -110,6 +110,7 @@ async def run_crawler_v2_enrichment_worker_once(
             task.worker_id = None
             task.claimed_at = None
             task.lease_expires_at = None
+            task.last_error = None
             await _append_enrichment_success_event(session, task=task, candidate=candidate)
             await session.commit()
         return 1
@@ -302,7 +303,11 @@ async def _append_enrichment_success_event(
     if job is None:
         return
     candidate_name = candidate.name if candidate.name else "未知导师"
-    trace = list(job.agent_trace or [])
+    trace = [
+        item
+        for item in list(job.agent_trace or [])
+        if not _is_previous_failed_enrichment_event(item, task=task, candidate_name=candidate_name)
+    ]
     trace.append(
         {
             "event_type": "enrichment",
@@ -317,6 +322,25 @@ async def _append_enrichment_success_event(
         }
     )
     job.agent_trace = trace[-100:]
+
+
+def _is_previous_failed_enrichment_event(
+    event: object,
+    *,
+    task: CrawlCandidateEnrichmentTask,
+    candidate_name: str,
+) -> bool:
+    if not isinstance(event, dict):
+        return False
+    if event.get("event_type") != "enrichment":
+        return False
+    raw = event.get("raw")
+    if isinstance(raw, dict) and raw.get("status") == "failed":
+        if raw.get("task_id") == task.id:
+            return True
+        if raw.get("candidate_id") == task.candidate_id:
+            return True
+    return event.get("message") == f"候选导师详情补全失败：{candidate_name}"
 
 
 async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:

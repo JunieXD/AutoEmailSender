@@ -761,6 +761,84 @@ class CrawlJobsApiTests(unittest.TestCase):
         statuses = self._list_v2_work_statuses(job_id)
         self.assertEqual(statuses["enrichment_tasks"], ["pending"])
 
+    def test_v2_enrich_requeues_succeeded_task_when_candidate_has_missing_fields(self) -> None:
+        profile_id = self._create_llm_profile("测试模型", "test-model")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_status(job_id, "needs_review")
+        self._seed_candidate_with_fields(
+            job_id,
+            name="刘德喜",
+            email="dexi@example.edu",
+            title=None,
+            department="计算机学院",
+            research_direction="自然语言处理",
+            recent_papers=["Paper A"],
+            profile_url="https://example.edu/liudexi",
+        )
+        candidate_id = self._latest_candidate_id(job_id)
+        self._seed_enrichment_task(candidate_id, status="succeeded", last_error="Connection error.")
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        body = response.json()
+        self.assertEqual(body["selected_count"], 1)
+        self.assertEqual(body["unchanged_count"], 0)
+        self.assertIn("入队 1 位", body["message"])
+        self.assertEqual(self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["pending"])
+
+    def test_v2_enrich_skips_succeeded_task_only_when_candidate_is_complete(self) -> None:
+        profile_id = self._create_llm_profile("测试模型", "test-model")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_status(job_id, "needs_review")
+        self._seed_candidate_with_fields(
+            job_id,
+            name="完整导师",
+            email="done@example.edu",
+            title="教授",
+            department="计算机学院",
+            research_direction="机器学习",
+            recent_papers=["Paper A"],
+            profile_url="https://example.edu/done",
+        )
+        candidate_id = self._latest_candidate_id(job_id)
+        self._seed_enrichment_task(candidate_id, status="succeeded", last_error=None)
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        body = response.json()
+        self.assertEqual(body["selected_count"], 1)
+        self.assertEqual(body["unchanged_count"], 1)
+        self.assertIn("已补全跳过 1 位", body["message"])
+        self.assertEqual(self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["succeeded"])
+
     def test_enrich_refreshes_job_llm_profile_before_running(self) -> None:
         old_profile_id = self._create_llm_profile("旧模型", "old-model")
         new_profile_id = self._create_llm_profile("新模型", "new-model")
@@ -1739,6 +1817,74 @@ class CrawlJobsApiTests(unittest.TestCase):
                 ) VALUES (?, ?, ?, 0.9, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (job_id, name, profile_url),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _seed_candidate_with_fields(
+        self,
+        job_id: int,
+        *,
+        name: str,
+        email: str | None,
+        title: str | None,
+        department: str | None,
+        research_direction: str | None,
+        recent_papers: list[str],
+        profile_url: str,
+    ) -> None:
+        import json
+        import sqlite3
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, email, title, university, school, department,
+                    research_direction, recent_papers, profile_url, confidence,
+                    review_status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, '示例大学', '计算机学院', ?, ?, ?, ?, 0.9, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    job_id,
+                    name,
+                    email,
+                    title,
+                    department,
+                    research_direction,
+                    json.dumps(recent_papers),
+                    profile_url,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _seed_enrichment_task(
+        self,
+        candidate_id: int,
+        *,
+        status: str,
+        last_error: str | None,
+    ) -> None:
+        import sqlite3
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT job_id FROM crawl_candidates WHERE id = ?",
+                (candidate_id,),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            connection.execute(
+                """
+                INSERT INTO crawl_candidate_enrichment_tasks (
+                    job_id, candidate_id, status, last_error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (int(row[0]), candidate_id, status, last_error),
             )
             connection.commit()
         finally:

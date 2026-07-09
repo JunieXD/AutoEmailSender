@@ -226,6 +226,45 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trace[-1]["raw"]["task_status"], CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value)
         self.assertIn("LLM 401", trace[-1]["raw"]["error_message"])
 
+    async def test_enrichment_success_clears_previous_failure_state_and_trace(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            task.last_error = "Connection error."
+            job = await session.get(CrawlJob, task.job_id)
+            assert job is not None
+            job.agent_trace = [
+                {
+                    "event_type": "enrichment",
+                    "message": "候选导师详情补全失败：张三",
+                    "created_at": "2026-07-09T00:00:00+00:00",
+                    "raw": {
+                        "candidate_id": candidate_id,
+                        "task_id": task_id,
+                        "status": "failed",
+                        "task_status": CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                        "error_message": "Connection error.",
+                    },
+                }
+            ]
+            await session.commit()
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu", title="教授", department="计算机系", research_direction="AI", recent_papers=[])
+
+        with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage", new=AsyncMock(return_value=(payload, None))):
+            processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            job = await session.get(CrawlJob, task.job_id)
+        assert job is not None
+        self.assertIsNone(task.last_error)
+        messages = [item.get("message") for item in job.agent_trace or [] if isinstance(item, dict)]
+        self.assertNotIn("候选导师详情补全失败：张三", messages)
+        self.assertIn("候选导师详情补全成功：张三", messages)
+
     async def test_enrichment_worker_writes_v2_debug_jsonl(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
         payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
