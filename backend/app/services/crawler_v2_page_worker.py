@@ -18,6 +18,7 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     browser_investigate,
     crawl_page_with_http,
+    looks_like_client_encrypted_profile_fields,
     looks_like_unrendered_dynamic_teacher_directory,
     save_candidate_payloads_shared,
 )
@@ -166,6 +167,8 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     if snapshot.suspicious_empty:
         return True
     if looks_like_unrendered_dynamic_teacher_directory(snapshot):
+        return True
+    if looks_like_client_encrypted_profile_fields(snapshot):
         return True
     if not text and len(html) < 80:
         return True

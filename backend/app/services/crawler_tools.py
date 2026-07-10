@@ -59,6 +59,7 @@ INVALID_PROFILE_PAGE_MARKERS = (
     "FineCMS error",
     "SQL syntax",
 )
+CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS = ("_tsites_encrypt_field",)
 DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
     "search_teacher.js",
     "_wp3services/generalquery?queryobj=articles",
@@ -1491,6 +1492,9 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     if looks_like_unrendered_dynamic_teacher_directory(snapshot):
         return True
 
+    if looks_like_client_encrypted_profile_fields(snapshot):
+        return True
+
     if _looks_like_unrendered_or_error_profile_page(snapshot):
         return True
 
@@ -1537,6 +1541,11 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
 def _looks_like_unrendered_or_error_profile_page(snapshot: PageSnapshot) -> bool:
     haystack = f"{snapshot.title or ''}\n{snapshot.text}\n{snapshot.html[:2000]}"
     return any(marker in haystack for marker in INVALID_PROFILE_PAGE_MARKERS)
+
+
+def looks_like_client_encrypted_profile_fields(snapshot: PageSnapshot) -> bool:
+    html = snapshot.html or ""
+    return any(marker in html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS)
 
 
 def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> bool:

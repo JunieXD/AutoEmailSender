@@ -982,6 +982,51 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
+    async def test_crawl_page_with_browser_fallback_renders_client_encrypted_profile_fields(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://ic.sdu.edu.cn/jcdlxy/szdw1/xysz.htm",
+            university="山东大学",
+            school="集成电路学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        profile_url = "https://faculty.sdu.edu.cn/wanglingyun1/zh_CN/index.htm"
+        encrypted_email = "72dafd1db91b8976288f94160a5e2779" * 8
+        http_snapshot = crawler_tools.html_to_snapshot(
+            profile_url,
+            (
+                "<html><head><title>山东大学教师主页 王凌云 首页 中文主页</title></head>"
+                f"<!--{'x' * 2500}--><body>王凌云 研究员 电子邮箱："
+                '<span _tsites_encrypt_field="_tsites_encrypt_field" '
+                'id="_tsites_encryp_tsteacher_tsemail" style="display:none;">'
+                f"{encrypted_email}</span><p>个人简介</p></body></html>"
+            ),
+            "http",
+        )
+        self.assertNotIn("_tsites_encrypt_field", http_snapshot.text)
+        self.assertNotIn("_tsites_encrypt_field", http_snapshot.html[:2000])
+        browser_snapshot = PageSnapshot(
+            url=profile_url,
+            title="山东大学教师主页 王凌云 首页 中文主页",
+            text="王凌云\n研究员\n电子邮箱：lingyunwang@sdu.edu.cn\n个人简介",
+            html="<html><body>王凌云 lingyunwang@sdu.edu.cn</body></html>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.services.crawler_tools.crawl_page_with_http",
+            new=AsyncMock(return_value=http_snapshot),
+        ), patch(
+            "app.services.crawler_tools.browser_investigate",
+            new=AsyncMock(return_value=browser_snapshot),
+        ) as browser:
+            actual = await crawl_page_with_browser_fallback(ctx, profile_url, intent="profile")
+
+        self.assertEqual(actual, browser_snapshot)
+        browser.assert_awaited_once()
+
     async def test_crawl_page_with_browser_fallback_retries_browser_for_dynamic_teacher_directory(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
