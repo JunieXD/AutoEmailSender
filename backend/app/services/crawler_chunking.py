@@ -213,12 +213,15 @@ def split_chunk_content(
     split_reason: str | None = None,
 ) -> list[PageChunkDraft]:
     selected_config = config or ChunkingConfig()
-    if estimate_tokens(content) <= selected_config.min_split_tokens:
+    lines = [line for line in content.splitlines() if line.strip()]
+    candidate_dense = _is_candidate_dense_split(split_reason)
+    if estimate_tokens(content) <= selected_config.min_split_tokens and (
+        not candidate_dense or len(lines) < 2
+    ):
         return []
-    lines = content.splitlines()
     child_groups = (
         _split_retry_candidate_dense_lines(lines, content, selected_config)
-        if _is_candidate_dense_split(split_reason)
+        if candidate_dense
         else _split_binary_lines(lines, content, selected_config)
     )
     drafts: list[PageChunkDraft] = []

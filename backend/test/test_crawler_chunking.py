@@ -148,6 +148,29 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertGreaterEqual(min(draft.token_estimate for draft in drafts), 150)
         self.assertLessEqual(max(draft.token_estimate for draft in drafts), 500)
 
+    def test_split_chunk_content_allows_small_candidate_dense_chunks(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        content = "\n".join(
+            f"[张{name}](https://faculty.x/p{i})"
+            for i, name in enumerate("一二三四五六七八九十甲乙")
+        )
+        config = ChunkingConfig(min_split_tokens=150, overlap_tokens=30)
+        self.assertLessEqual(estimate_tokens(content), config.min_split_tokens)
+
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="too_many_candidates",
+            config=config,
+        )
+
+        self.assertGreaterEqual(len(drafts), 2)
+        self.assertTrue(all(draft.parent_chunk_id == "c1" for draft in drafts))
+
     def test_split_chunk_content_caps_retry_overlap_at_thirty_tokens(self) -> None:
         from app.services.crawler_chunking import split_chunk_content
 

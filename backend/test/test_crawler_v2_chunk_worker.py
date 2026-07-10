@@ -522,6 +522,238 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([candidate.name for candidate in candidates], ["张三"])
         self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/faculty/list2.html"])
 
+    async def test_chunk_worker_splits_dense_hust_directory_when_model_misses_candidates(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        names = ["冯丹", "金海", "王蔚", "张瑞", "石宣化", "刘海坤", "陈汉华", "李国徽", "吕志鹏", "秦磊华", "姚德中", "郑渤龙"]
+        content = "\n".join(
+            f"[{name}](http://faculty.hust.edu.cn/teacher{i}/zh_CN/index.htm)"
+            for i, name in enumerate(names)
+        )
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert job is not None and chunk is not None
+            job.university = "华中科技大学"
+            job.school = "计算机科学与技术学院"
+            job.start_url = "https://cs.hust.edu.cn/szdw/jsml/axmpyszmlb.htm"
+            chunk.source_url = job.start_url
+            chunk.content = content
+            await session.commit()
+
+        payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            parent = await session.get(CrawlPageChunk, chunk_id)
+            children = list(
+                await session.scalars(
+                    select(CrawlPageChunk)
+                    .where(CrawlPageChunk.parent_chunk_id == "c1")
+                    .order_by(CrawlPageChunk.id)
+                )
+            )
+            candidates = list(
+                await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            )
+        assert parent is not None
+        self.assertEqual(parent.status, CrawlPageChunkStatus.SUPERSEDED.value)
+        self.assertEqual(parent.split_reason, "too_many_candidates")
+        self.assertGreaterEqual(len(children), 2)
+        self.assertTrue(all(child.status == CrawlPageChunkStatus.PENDING.value for child in children))
+        self.assertEqual(candidates, [])
+
+    async def test_chunk_worker_recovers_hust_profile_links_when_model_returns_no_candidates(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        expected = {
+            "冯丹": "http://faculty.hust.edu.cn/dfeng/zh_CN/index.htm",
+            "金海": "http://faculty.hust.edu.cn/jinhai/zh_CN/index.htm",
+            "王蔚": "http://faculty.hust.edu.cn/vivia_wangwei/zh_CN/index.htm",
+            "项翔": "http://faculty.hust.edu.cn/xex",
+        }
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert job is not None and chunk is not None
+            job.university = "华中科技大学"
+            job.school = "计算机科学与技术学院"
+            job.start_url = "https://cs.hust.edu.cn/szdw/jsml/axmpyszmlb.htm"
+            chunk.source_url = job.start_url
+            chunk.content = "\n".join(f"[{name}]({url})" for name, url in expected.items())
+            await session.commit()
+
+        payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(
+                await session.scalars(
+                    select(CrawlCandidate)
+                    .where(CrawlCandidate.job_id == job_id)
+                    .order_by(CrawlCandidate.name)
+                )
+            )
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
+        self.assertEqual({candidate.name: candidate.profile_url for candidate in candidates}, expected)
+
+    async def test_chunk_worker_ignores_malformed_profile_link_during_recovery(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "[张三](https://faculty.example.edu:bad/zh_CN/index.htm)"
+            await session.commit()
+
+        payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(
+                await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            )
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.NO_CANDIDATES.value)
+        self.assertEqual(candidates, [])
+
+    async def test_chunk_worker_does_not_recover_profile_navigation_as_people(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        content = "\n".join(
+            [
+                "[学术动态](https://faculty.hust.edu.cn/demo/zh_CN/news.htm)",
+                "[个人主页](https://faculty.hust.edu.cn/demo/zh_CN/index.htm)",
+                "[张三教授](https://faculty.hust.edu.cn/zhang/zh_CN/index.htm)",
+                "[查看详情](https://faculty.hust.edu.cn/demo/zh_CN/detail.htm)",
+                "[招生信息](https://faculty.hust.edu.cn/demo/zh_CN/admissions.htm)",
+                "[高端论坛](https://faculty.hust.edu.cn/demo/zh_CN/forum.htm)",
+                "[成果展示](https://faculty.hust.edu.cn/demo/zh_CN/showcase.htm)",
+                "[王者风范](https://faculty.hust.edu.cn/demo/zh_CN/culture.htm)",
+                "[班车路线](https://faculty.hust.edu.cn/demo/zh_CN/shuttle.htm)",
+                "[钱学森班](https://faculty.hust.edu.cn/demo/zh_CN/program.htm)",
+                "[陈列展览](https://faculty.hust.edu.cn/demo/zh_CN/exhibit.htm)",
+            ]
+        )
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert job is not None and chunk is not None
+            job.start_url = "https://cs.hust.edu.cn/szdw/jsml/axmpyszmlb.htm"
+            chunk.source_url = job.start_url
+            chunk.content = content
+            await session.commit()
+
+        payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(
+                await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            )
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.NO_CANDIDATES.value)
+        self.assertEqual(candidates, [])
+
+    async def test_chunk_worker_keeps_same_name_with_different_profile_urls(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        expected_urls = {
+            "https://faculty.hust.edu.cn/wangwei-a/zh_CN/index.htm",
+            "https://faculty.hust.edu.cn/wangwei-b/zh_CN/index.htm",
+        }
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert job is not None and chunk is not None
+            job.start_url = "https://cs.hust.edu.cn/szdw/jsml/axmpyszmlb.htm"
+            chunk.source_url = job.start_url
+            chunk.content = "\n".join(f"[王伟]({url})" for url in sorted(expected_urls))
+            await session.commit()
+
+        payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            candidates = list(
+                await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            )
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual({candidate.profile_url for candidate in candidates}, expected_urls)
+
+    async def test_chunk_worker_does_not_apply_hust_recovery_to_other_schools(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "[张三](https://faculty.example.edu/zh_CN/index.htm)"
+            await session.commit()
+
+        payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ):
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(
+                await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
+            )
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.NO_CANDIDATES.value)
+        self.assertEqual(candidates, [])
+
 
     async def test_complete_chunk_enqueues_worker_discovered_safe_same_domain_urls(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()

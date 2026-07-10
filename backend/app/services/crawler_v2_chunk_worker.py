@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.time import as_utc_aware, utc_now
 
@@ -37,6 +38,19 @@ from app.services.llm_runtime import format_llm_runtime_error_for_user, parse_st
 
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+_CJK_PERSON_NAME_PATTERN = re.compile(r"[\u3400-\u9fff]{2,6}(?:·[\u3400-\u9fff]{1,6})?")
+_COMMON_CHINESE_SURNAMES = frozenset(
+    "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄穆萧尹姚邵汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管卢莫房解应宗丁宣邓洪包左石崔吉龚程邢荣翁羊惠家储段焦侯秋宁甘武刘龙叶白蒲卓谭冉牛边尚温庄柴瞿阎慕连艾容向古易廖耿满匡文寇广欧利蔚师聂辛阚简饶曾沙关查游权盖益桓班付辜陆涂肖阳"
+)
+_COMPOUND_CHINESE_SURNAMES = ("欧阳", "司马", "上官", "诸葛", "夏侯", "东方", "皇甫", "尉迟", "公孙", "慕容", "司徒", "司空", "长孙", "宇文", "令狐")
+_NON_PERSON_LABEL_MARKERS = (
+    "首页", "更多", "学院", "学校", "学科", "专业", "教师", "教授", "师资", "团队", "中心", "研究所", "名录", "列表",
+    "主页", "详情", "动态", "信息", "招生", "新闻", "介绍", "简介", "科研", "教学", "学术", "个人",
+    "论坛", "成果", "展示", "路线", "风范", "展览", "通知", "公告", "活动", "项目", "课程", "下载", "联系",
+)
+_HUST_DIRECTORY_HOSTS = {"cs.hust.edu.cn", "www.cs.hust.edu.cn"}
+_HUST_PROFILE_HOST = "faculty.hust.edu.cn"
+_HUST_SHORT_PROFILE_PATHS = {"/xex/"}
 
 
 class V2ChunkAgentPayload(BaseModel):
@@ -214,14 +228,25 @@ async def run_crawler_v2_chunk_worker_once(
         )
         payload = _validate_chunk_agent_payload(payload)
         candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
+        candidates, chunk_status, recovered_count = _recover_hust_directory_candidates(
+            candidates,
+            chunk_status=str(payload.get("chunk_status") or "completed"),
+            chunk_content=chunk.content,
+            source_url=chunk.source_url,
+        )
         save_result = await complete_current_chunk(
             session_factory,
             chunk_id=chunk_id,
             worker_id=worker_id,
             candidates=candidates,
             discovered_urls=[str(url) for url in payload.get("discovered_urls", [])],
-            chunk_status=str(payload.get("chunk_status") or "completed"),
+            chunk_status=chunk_status,
         )
+        effective_payload = {
+            **payload,
+            "candidates": [candidate.model_dump() for candidate in candidates],
+            "chunk_status": chunk_status,
+        }
         append_crawler_v2_debug_event(
             job.id,
             worker_kind="chunk",
@@ -230,7 +255,8 @@ async def run_crawler_v2_chunk_worker_once(
             payload={
                 "chunk_id": chunk.chunk_id,
                 "source_url": chunk.source_url,
-                "parsed_payload": payload,
+                "parsed_payload": effective_payload,
+                "recovered_profile_link_count": recovered_count,
                 "save_result": save_result,
             },
         )
@@ -290,10 +316,143 @@ def _extract_markdown_profile_links(chunk_content: str, *, base_url: str) -> dic
         key = _normalize_person_name_for_link_match(match.group(1))
         if not key:
             continue
-        normalized = normalize_url(match.group(2), base_url=base_url)
-        if normalized:
+        normalized = _normalize_url_or_none(match.group(2), base_url=base_url)
+        if normalized is not None:
             links.setdefault(key, normalized)
     return links
+
+
+def _recover_hust_directory_candidates(
+    candidates: Sequence[ProfessorCandidatePayload],
+    *,
+    chunk_status: str,
+    chunk_content: str,
+    source_url: str,
+) -> tuple[list[ProfessorCandidatePayload], str, int]:
+    evident = _extract_hust_directory_candidates(chunk_content, base_url=source_url)
+    if len(evident) > MAX_CANDIDATES_PER_CHUNK_RESULT:
+        return [], "too_many_candidates", 0
+
+    merged = list(candidates)
+    seen_urls = {
+        normalized
+        for candidate in merged
+        if candidate.profile_url
+        if (normalized := _normalize_url_or_none(candidate.profile_url, base_url=source_url))
+    }
+    recovered_count = 0
+    for candidate in evident:
+        normalized_name = _normalize_person_name_for_link_match(candidate.name)
+        normalized_url = _normalize_url_or_none(candidate.profile_url or "", base_url=source_url)
+        if normalized_url is None:
+            continue
+        if normalized_url in seen_urls:
+            continue
+        matching_without_url = next(
+            (
+                candidate
+                for candidate in merged
+                if _normalize_person_name_for_link_match(candidate.name) == normalized_name
+                and not candidate.profile_url
+            ),
+            None,
+        )
+        if matching_without_url is not None:
+            matching_without_url.profile_url = normalized_url
+            seen_urls.add(normalized_url)
+            recovered_count += 1
+            continue
+        merged.append(candidate)
+        seen_urls.add(normalized_url)
+        recovered_count += 1
+
+    effective_status = chunk_status
+    if merged and effective_status == CrawlPageChunkStatus.NO_CANDIDATES.value:
+        effective_status = CrawlPageChunkStatus.COMPLETED.value
+    return merged, effective_status, recovered_count
+
+
+def _extract_hust_directory_candidates(
+    chunk_content: str,
+    *,
+    base_url: str,
+) -> list[ProfessorCandidatePayload]:
+    if not _is_hust_teacher_directory_url(base_url):
+        return []
+    candidates: list[ProfessorCandidatePayload] = []
+    seen_urls: set[str] = set()
+    for match in _MARKDOWN_LINK_PATTERN.finditer(chunk_content):
+        name = "".join(match.group(1).split())
+        if not _looks_like_person_name(name):
+            continue
+        profile_url = _normalize_url_or_none(match.group(2), base_url=base_url)
+        if profile_url is None or not _looks_like_hust_profile_page_url(profile_url):
+            continue
+        if profile_url in seen_urls:
+            continue
+        seen_urls.add(profile_url)
+        candidates.append(
+            ProfessorCandidatePayload(
+                name=name,
+                profile_url=profile_url,
+                source_url=base_url,
+                confidence=0.9,
+                field_confidence={"name": 0.95, "profile_url": 0.95},
+                evidence={"summary": "页面片段中存在明确的姓名与教师主页链接"},
+            )
+        )
+    return candidates
+
+
+def _looks_like_person_name(value: str) -> bool:
+    if not _CJK_PERSON_NAME_PATTERN.fullmatch(value):
+        return False
+    compact = value.replace("·", "")
+    if len(compact) < 2 or len(compact) > 4:
+        return False
+    if value.endswith("班") or any(marker in value for marker in _NON_PERSON_LABEL_MARKERS):
+        return False
+    return value[0] in _COMMON_CHINESE_SURNAMES or value.startswith(_COMPOUND_CHINESE_SURNAMES)
+
+
+def _looks_like_hust_profile_page_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or hostname.casefold() != _HUST_PROFILE_HOST
+        or parsed.path in {"", "/"}
+    ):
+        return False
+    path = f"/{parsed.path.strip('/').casefold()}/"
+    return "/zh_cn/" in path or path in _HUST_SHORT_PROFILE_PATHS
+
+
+def _is_hust_teacher_directory_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and hostname
+        and hostname.casefold() in _HUST_DIRECTORY_HOSTS
+        and parsed.path.casefold().startswith("/szdw/jsml/")
+    )
+
+
+def _normalize_url_or_none(value: str, *, base_url: str) -> str | None:
+    try:
+        return normalize_url(value, base_url=base_url)
+    except ValueError:
+        return None
 
 
 def _fill_candidate_profile_urls_from_chunk(
