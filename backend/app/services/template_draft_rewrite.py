@@ -393,8 +393,12 @@ def _split_text_by_local_styles(
 
 def _resolve_segment_style(element: Tag) -> DraftRewriteSegmentStyle:
     base_style = _resolve_declared_block_font_style(element)
-    if base_style.font_family is None and base_style.font_size is None:
-        base_style = _infer_segment_base_font_style(element)
+    if base_style.font_family is None or base_style.font_size is None:
+        inferred_style = _infer_segment_base_font_style(element)
+        base_style = DraftRewriteFontStyle(
+            font_family=base_style.font_family or inferred_style.font_family,
+            font_size=base_style.font_size or inferred_style.font_size,
+        )
     return DraftRewriteSegmentStyle(
         base_style=base_style,
         local_spans=_collect_local_style_spans(element, base_style),
@@ -408,7 +412,10 @@ def _resolve_declared_block_font_style(element: Tag) -> DraftRewriteFontStyle:
 
     for tag in _iter_segment_style_scope(element):
         if family is None:
-            families = _extract_font_family_candidates(tag)
+            families = _extract_font_family_candidates(
+                tag,
+                prefer_fareast=_contains_cjk_char(text),
+            )
             if families:
                 family = _choose_font_family_for_text(text, families)
         if size is None:
@@ -578,7 +585,10 @@ def _resolve_effective_font_family(text_node: NavigableString) -> str | None:
     for parent in text_node.parents:
         if not isinstance(parent, Tag):
             continue
-        families = _extract_font_family_candidates(parent)
+        families = _extract_font_family_candidates(
+            parent,
+            prefer_fareast=_contains_cjk_char(text),
+        )
         if families:
             return _choose_font_family_for_text(text, families)
     return None
@@ -594,18 +604,34 @@ def _resolve_effective_font_size(text_node: NavigableString) -> str | None:
     return None
 
 
-def _extract_font_family_candidates(tag: Tag) -> list[str]:
-    candidates: list[str] = []
-    if tag.name == "font":
-        face = str(tag.get("face", "")).strip()
-        if face:
-            candidates.extend(_split_font_family_stack(face))
-
-    style = str(tag.get("style", ""))
-    for key, value in _iter_style_declarations(style):
+def _extract_font_family_candidates(
+    tag: Tag,
+    *,
+    prefer_fareast: bool = False,
+) -> list[str]:
+    style_families: dict[str, list[str]] = {}
+    for key, value in _iter_style_declarations(str(tag.get("style", ""))):
         if key in FONT_FAMILY_STYLE_KEYS:
-            candidates.extend(_split_font_family_stack(value))
+            style_families.setdefault(key, []).extend(_split_font_family_stack(value))
 
+    if prefer_fareast and style_families.get("mso-fareast-font-family"):
+        return _dedupe_font_families(style_families["mso-fareast-font-family"])
+
+    candidates = list(style_families.get("font-family", []))
+    if tag.name == "font":
+        candidates.extend(_split_font_family_stack(str(tag.get("face", ""))))
+    for key in (
+        "mso-ascii-font-family",
+        "mso-hansi-font-family",
+        "mso-bidi-font-family",
+        "mso-fareast-font-family",
+    ):
+        candidates.extend(style_families.get(key, []))
+
+    return _dedupe_font_families(candidates)
+
+
+def _dedupe_font_families(candidates: list[str]) -> list[str]:
     deduped: list[str] = []
     for candidate in candidates:
         if candidate and candidate not in deduped:

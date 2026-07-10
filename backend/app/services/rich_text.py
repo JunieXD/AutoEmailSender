@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 ALLOWED_LINK_SCHEMES = {"http", "https", "mailto"}
 ALLOWED_HTML_TAGS = {
@@ -131,7 +132,7 @@ def html_to_text(value: str) -> str:
     for element in soup.find_all(["p", "li", "td", "th"]):
         if element.name in {"td", "th"} and element.find(["p", "li"]):
             continue
-        text = element.get_text("", strip=True)
+        text = _get_block_text(element)
         if not text:
             continue
         if element.name == "li":
@@ -142,6 +143,16 @@ def html_to_text(value: str) -> str:
     if lines:
         return "\n\n".join(lines).strip()
     return soup.get_text(" ", strip=True)
+
+
+def _get_block_text(element: Tag) -> str:
+    parts: list[str] = []
+    for descendant in element.descendants:
+        if isinstance(descendant, NavigableString):
+            parts.append(str(descendant))
+        elif isinstance(descendant, Tag) and descendant.name == "br":
+            parts.append(" ")
+    return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
 def _render_block(value: Any) -> tuple[str, str]:

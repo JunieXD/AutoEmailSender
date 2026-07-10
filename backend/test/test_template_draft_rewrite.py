@@ -185,6 +185,21 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(style.font_family, "宋体")
         self.assertEqual(style.font_size, "12pt")
 
+    def test_select_dominant_font_and_size_trusts_explicit_word_fareast_family(self) -> None:
+        for font_family in ("等线 Light", "微软雅黑"):
+            with self.subTest(font_family=font_family):
+                html = (
+                    '<p style="font-family:\'Times New Roman\';'
+                    f'mso-fareast-font-family:\'{font_family}\';font-size:12pt">'
+                    "这是一段来自 Word 模板的中文正文。"
+                    "</p>"
+                )
+
+                style = select_dominant_font_and_size(html)
+
+                self.assertEqual(style.font_family, font_family)
+                self.assertEqual(style.font_size, "12pt")
+
     def test_apply_draft_rewrite_replacements_renders_runs_and_keeps_table(self) -> None:
         identity = IdentityProfile(
             id=1,
@@ -422,6 +437,29 @@ class TemplateDraftRewriteTests(unittest.TestCase):
 
         self.assertIn('style="font-family:宋体;font-size:12pt"', result.html)
         self.assertIn('<span style="font-family:黑体">【江西财经大学计算机与人工智能学院】</span>', result.html)
+
+    def test_apply_draft_rewrite_replacements_fills_partial_block_font_from_inline_style(self) -> None:
+        cases = (
+            (
+                '<p style="font-size:12pt"><span style="font-family:宋体">原正文。</span></p>',
+                '<p style="font-family:宋体;font-size:12pt">改写后的正文。</p>',
+            ),
+            (
+                '<p style="font-family:宋体"><span style="font-size:12pt">原正文。</span></p>',
+                '<p style="font-family:宋体;font-size:12pt">改写后的正文。</p>',
+            ),
+        )
+
+        for source_html, expected_html in cases:
+            with self.subTest(source_html=source_html):
+                document = build_draft_rewrite_document(source_html, {})
+
+                result = apply_draft_rewrite_replacements(
+                    document,
+                    [{"segment_id": "seg_1", "runs": [{"text": "改写后的正文。"}]}],
+                )
+
+                self.assertEqual(result.html, expected_html)
 
     def test_apply_draft_rewrite_replacements_keeps_per_paragraph_base_font(self) -> None:
         identity = IdentityProfile(

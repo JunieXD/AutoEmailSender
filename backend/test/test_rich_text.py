@@ -117,3 +117,13 @@ class RichTextRenderingTest(unittest.TestCase):
         )
 
         self.assertEqual(result.text, "我是【江西财经大学计算机与人工智能学院】的学生。")
+
+    def test_html_to_text_preserves_authored_inline_spacing(self) -> None:
+        result = normalize_email_html("<p>Hello <span>world</span>.</p>")
+
+        self.assertEqual(result.text, "Hello world.")
+
+    def test_html_to_text_keeps_break_between_inline_runs(self) -> None:
+        result = normalize_email_html("<p>Hello<br>world.</p>")
+
+        self.assertEqual(result.text, "Hello world.")
