@@ -69,6 +69,18 @@ export type ProfessorManagementFilterOptions = {
 const normalize = (value: string | null | undefined): string =>
   value?.trim().toLowerCase() ?? "";
 
+const EMPTY_FIELD_SEARCH_KEYWORD = "无";
+
+const matchesKeywordValue = (
+  value: string | null | undefined,
+  keyword: string,
+): boolean => {
+  const normalizedValue = normalize(value);
+  return keyword === EMPTY_FIELD_SEARCH_KEYWORD
+    ? normalizedValue === ""
+    : normalizedValue.includes(keyword);
+};
+
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
 
@@ -240,7 +252,7 @@ export const filterManagementProfessors = (
     const keywordMatched =
       !keyword ||
       keywordSearchScopes.some((scope) =>
-        normalize(getManagementKeywordValue(professor, scope)).includes(keyword),
+        matchesKeywordValue(getManagementKeywordValue(professor, scope), keyword),
       );
 
     return (
