@@ -982,6 +982,159 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
+    async def test_crawl_page_with_browser_fallback_renders_client_encrypted_profile_fields(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://ic.sdu.edu.cn/jcdlxy/szdw1/xysz.htm",
+            university="山东大学",
+            school="集成电路学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        profile_url = "https://faculty.sdu.edu.cn/wanglingyun1/zh_CN/index.htm"
+        encrypted_email = "72dafd1db91b8976288f94160a5e2779" * 8
+        http_snapshot = crawler_tools.html_to_snapshot(
+            profile_url,
+            (
+                "<html><head><title>山东大学教师主页 王凌云 首页 中文主页</title></head>"
+                f"<!--{'x' * 2500}--><body>王凌云 研究员 电子邮箱："
+                '<span _tsites_encrypt_field="_tsites_encrypt_field" '
+                'id="_tsites_encryp_tsteacher_tsemail" style="display:none;">'
+                f"{encrypted_email}</span><p>个人简介</p></body></html>"
+            ),
+            "http",
+        )
+        self.assertNotIn("_tsites_encrypt_field", http_snapshot.text)
+        self.assertNotIn("_tsites_encrypt_field", http_snapshot.html[:2000])
+        browser_snapshot = PageSnapshot(
+            url=profile_url,
+            title="山东大学教师主页 王凌云 首页 中文主页",
+            text="王凌云\n研究员\n电子邮箱：lingyunwang@sdu.edu.cn\n个人简介",
+            html="<html><body>王凌云 lingyunwang@sdu.edu.cn</body></html>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.services.crawler_tools.crawl_page_with_http",
+            new=AsyncMock(return_value=http_snapshot),
+        ), patch(
+            "app.services.crawler_tools.browser_investigate",
+            new=AsyncMock(return_value=browser_snapshot),
+        ) as browser:
+            actual = await crawl_page_with_browser_fallback(ctx, profile_url, intent="profile")
+
+        self.assertEqual(actual, browser_snapshot)
+        browser.assert_awaited_once()
+
+    async def test_crawl_page_with_browser_fallback_keeps_http_snapshot_when_browser_fails(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.sdu.edu.cn/wanglingyun1/zh_CN/index.htm",
+            university="山东大学",
+            school="集成电路学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        http_snapshot = PageSnapshot(
+            url=ctx.start_url,
+            title="山东大学教师主页 王凌云 首页 中文主页",
+            text="王凌云 研究员 个人简介",
+            html='<span _tsites_encrypt_field="_tsites_encrypt_field">ciphertext</span>',
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+        browser_snapshot = PageSnapshot(
+            url=ctx.start_url,
+            links=[],
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch failed: timeout",
+            suspicious_empty=True,
+        )
+
+        async def fail_browser(*_args: object, **_kwargs: object) -> PageSnapshot:
+            ctx.remember_page_snapshot(browser_snapshot)
+            return browser_snapshot
+
+        with patch(
+            "app.services.crawler_tools.crawl_page_with_http",
+            new=AsyncMock(return_value=http_snapshot),
+        ), patch(
+            "app.services.crawler_tools.browser_investigate",
+            new=AsyncMock(side_effect=fail_browser),
+        ) as browser:
+            actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
+            cached = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
+
+        self.assertEqual(actual, http_snapshot)
+        self.assertEqual(cached, http_snapshot)
+        browser.assert_awaited_once()
+
+    async def test_browser_failure_after_http_redirect_does_not_poison_requested_url(self) -> None:
+        request_url = "https://faculty.example.edu/go"
+        final_url = "https://faculty.example.edu/wang"
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            direct = PageSnapshot(
+                url=final_url,
+                title="王老师",
+                text="王老师 研究员 个人简介",
+                html='<span _tsites_encrypt_field="_tsites_encrypt_field">ciphertext</span>',
+                links=[],
+                fetch_method="http",
+                status="succeeded",
+            )
+            browser = PageSnapshot(
+                url=request_url,
+                links=[],
+                fetch_method="browser",
+                status="failed",
+                error_message="Blocked by anti-bot protection",
+                suspicious_empty=True,
+            )
+            first_ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=request_url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            restarted_ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=request_url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            with patch(
+                "app.services.crawler_tools.crawl_page_with_http",
+                new=AsyncMock(return_value=direct),
+            ), patch(
+                "app.services.crawler_tools._crawl_page_with_browser",
+                new=AsyncMock(return_value=browser),
+            ):
+                first = await crawl_page_with_browser_fallback(first_ctx, request_url, intent="profile")
+                cached = await crawl_page_with_browser_fallback(first_ctx, request_url, intent="profile")
+                second = await crawl_page_with_browser_fallback(restarted_ctx, request_url, intent="profile")
+
+            async with harness.session_factory() as session:
+                requested_state = await session.scalar(
+                    select(CrawlPageFetchState).where(
+                        CrawlPageFetchState.job_id == job_id,
+                        CrawlPageFetchState.normalized_url == request_url,
+                    )
+                )
+
+        self.assertEqual(first, direct)
+        self.assertEqual(cached, direct)
+        self.assertEqual(second, direct)
+        assert requested_state is not None
+        self.assertEqual(requested_state.status, "succeeded")
+        self.assertEqual(requested_state.fetch_mode, "direct")
+        self.assertEqual(requested_state.browser_status, "failed")
+
     async def test_crawl_page_with_browser_fallback_retries_browser_for_dynamic_teacher_directory(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
