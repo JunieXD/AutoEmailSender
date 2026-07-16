@@ -2032,7 +2032,7 @@ export const ProfessorsPage = () => {
         <div
           data-testid="professor-table-header"
           className={clsx(
-            "hidden gap-4 border-b border-stone-100 px-6 py-4 text-xs font-medium uppercase tracking-[0.16em] text-stone-400 lg:grid",
+            "hidden gap-4 border-b border-stone-100 px-6 py-4 text-xs font-medium uppercase tracking-[0.16em] text-stone-400 lg:grid lg:items-center",
             managementTableColumns,
           )}
         >
