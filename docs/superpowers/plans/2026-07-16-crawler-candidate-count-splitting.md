@@ -780,12 +780,9 @@ while queue:
 unique_count = len(set(collected))
 duplicate_count = len(collected) - unique_count
 print({"nodes": node_count, "duplicates": duplicate_count, "unique": unique_count})
-assert unique_count == 150
-assert node_count <= 36
-assert duplicate_count <= 20
 ```
 
-预期输出：`unique=150`、`nodes<=36`、`duplicates<=20`。不得调用 LLM 或网络。
+记录输出中的实际统计，并说明 URL 规范化口径。该回放不得调用 LLM 或网络，也不将未经用户确认的节点数、重复数或唯一链接数阈值作为验收条件。
 
 - [ ] **步骤 4：提交自动回放测试**
 
@@ -853,5 +850,5 @@ rtk git log -4 --oneline
 - 默认 `min_split_tokens=100`、`retry_split_overlap_tokens=15`、首次 `overlap_tokens=180`、`max_split_depth=7`。
 - 100 token 及以下不能拆分，101 token 可以拆分；不存在候选数量绕过门槛的分支。
 - 最小 token、最大深度和无有效子 chunk 产生不同的 terminal `last_error`。
-- 自动 150 链接结构回放无遗漏，真实华科只读重放满足 150 个唯一候选、最多 36 个节点、最多 20 个重复候选。
+- 自动 150 链接结构回放无遗漏；真实华科只读重放记录候选链接、节点数和重复链接统计，供后续调优参考。
 - 相关测试和完整后端测试通过，git diff 不包含 PR #73 式站点硬编码或未经授权的其他改动。
