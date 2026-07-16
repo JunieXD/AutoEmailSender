@@ -255,7 +255,7 @@ class CrawlerChunkRuntimeTests(unittest.TestCase):
                 async with session_factory() as session:
                     row = (await session.scalars(select(CrawlPageChunk))).one()
                     self.assertEqual(row.status, CrawlPageChunkStatus.FAILED.value)
-                    self.assertIn("超过最大拆分深度", row.last_error or "")
+                    self.assertIn("chunk_split_max_depth_exceeded", row.last_error or "")
         asyncio.run(run())
 
     def test_submit_page_chunk_candidates_persists_source_metadata(self) -> None:
