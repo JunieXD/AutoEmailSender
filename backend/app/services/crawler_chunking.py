@@ -14,11 +14,11 @@ class ChunkingConfig:
     soft_max_tokens: int = 2800
     hard_max_tokens: int = 3200
     overlap_tokens: int = 180
-    min_split_tokens: int = 150
+    min_split_tokens: int = 100
     max_split_depth: int = 7
     retry_split_target_tokens: int = 200
     retry_split_max_parts: int = 10
-    retry_split_overlap_tokens: int = 30
+    retry_split_overlap_tokens: int = 15
     single_chunk_max_tokens: int = 2200
     min_balanced_target_tokens: int = 1200
     max_balanced_target_tokens: int = 2200
@@ -254,7 +254,10 @@ def _is_candidate_dense_split(split_reason: str | None) -> bool:
 def _split_binary_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:
     midpoint = max(1, len(lines) // 2)
     left_lines = lines[:midpoint]
-    overlap_tokens = _dynamic_overlap_tokens(content, config)
+    overlap_tokens = min(
+        _dynamic_overlap_tokens(content, config),
+        config.retry_split_overlap_tokens,
+    )
     return [left_lines, [*_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]]
 
 

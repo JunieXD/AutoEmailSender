@@ -277,24 +277,19 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
-    async def test_complete_chunk_marks_terminal_when_split_cannot_continue(self) -> None:
+    async def test_complete_chunk_marks_terminal_at_minimum_split_tokens(self) -> None:
         _, chunk_id = await self._seed_processing_chunk()
         async with self.session_factory() as session:
             chunk = await session.get(CrawlPageChunk, chunk_id)
             assert chunk is not None
-            chunk.content = "张三"
-            chunk.split_depth = 4
+            chunk.content = "\n".join(["甲" * 25] * 4)
             await session.commit()
-        candidates = [
-            ProfessorCandidatePayload(name=f"教师{i}", profile_url=f"https://example.edu/t{i}.html", confidence=0.9)
-            for i in range(11)
-        ]
 
         result = await complete_current_chunk(
             self.session_factory,
             chunk_id=chunk_id,
             worker_id="w1",
-            candidates=candidates,
+            candidates=[],
             discovered_urls=[],
             candidate_count=11,
         )
@@ -304,6 +299,65 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk = await session.get(CrawlPageChunk, chunk_id)
         assert chunk is not None
         self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        self.assertEqual(
+            chunk.last_error,
+            "chunk_split_min_tokens_reached token_estimate=100 min_split_tokens=100 reason=candidate_count_exceeded",
+        )
+
+    async def test_complete_chunk_marks_terminal_at_maximum_split_depth(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "\n".join(["甲" * 25] * 5)
+            chunk.split_depth = 7
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[],
+            discovered_urls=[],
+            candidate_count=11,
+        )
+
+        self.assertEqual(result["status"], CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        self.assertEqual(
+            chunk.last_error,
+            "chunk_split_max_depth_exceeded split_depth=7 max_split_depth=7 reason=candidate_count_exceeded",
+        )
+
+    async def test_complete_chunk_marks_terminal_when_normalization_removes_children(self) -> None:
+        _, chunk_id = await self._seed_processing_chunk()
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = " " * 500
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[],
+            discovered_urls=[],
+            candidate_count=11,
+        )
+
+        self.assertEqual(result["status"], CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_TERMINAL.value)
+        self.assertEqual(
+            chunk.last_error,
+            "chunk_split_no_valid_children token_estimate=125 split_depth=0 reason=candidate_count_exceeded",
+        )
     async def test_complete_chunk_candidate_count_exceeds_limit_triggers_backend_split(self) -> None:
         _, chunk_id = await self._seed_processing_chunk()
         async with self.session_factory() as session:
