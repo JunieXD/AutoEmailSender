@@ -75,8 +75,9 @@ async def run_crawler_v2_page_worker_once(
                 fallback_reason = _fallback_reason(direct_snapshot)
                 browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
                 browser_status = browser_snapshot.status
-                snapshot = browser_snapshot
-                fetch_mode = "browser"
+                if browser_snapshot.status == "succeeded" or direct_snapshot.status != "succeeded":
+                    snapshot = browser_snapshot
+                    fetch_mode = "browser"
         async with session_factory() as session:
             if not await ensure_job_active(session, task.job_id):
                 return 0

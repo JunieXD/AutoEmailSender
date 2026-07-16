@@ -218,6 +218,61 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert candidate is not None
         self.assertEqual(candidate.email, "lingyunwang@sdu.edu.cn")
 
+    async def test_profile_entry_keeps_direct_snapshot_when_browser_fallback_fails(self) -> None:
+        profile_url = "https://faculty.sdu.edu.cn/wanglingyun1/zh_CN/index.htm"
+        _, task_id = await self._seed_page_task(original_url=profile_url, entry_type="profile")
+        direct = PageSnapshot(
+            url=profile_url,
+            title="山东大学教师主页 王凌云 首页 中文主页",
+            text="王凌云 研究员 个人简介",
+            html='<span _tsites_encrypt_field="_tsites_encrypt_field">ciphertext</span>',
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+        browser = PageSnapshot(
+            url=profile_url,
+            links=[],
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch failed: timeout",
+        )
+        extraction = SimpleNamespace(
+            payload={"status": "candidate", "candidate": {"name": "王凌云"}},
+            usage=None,
+            attempts=[],
+            page_text_hash="hash",
+            page_text_length=len(direct.text),
+        )
+
+        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)), \
+            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch(
+                "app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent",
+                new=AsyncMock(return_value=extraction),
+            ) as extraction_mock:
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        extraction_mock.assert_awaited_once()
+        self.assertEqual(extraction_mock.await_args.kwargs["page_text"], direct.text)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            candidate = await session.scalar(
+                select(CrawlCandidate).where(CrawlCandidate.profile_url == profile_url)
+            )
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertEqual(task.fetch_mode, "direct")
+        self.assertEqual(task.browser_status, "failed")
+        assert candidate is not None
+        self.assertEqual(candidate.name, "王凌云")
+
     async def test_fetch_page_browser_accepts_profile_intent(self) -> None:
         ctx = object()
         browser_snapshot = PageSnapshot(url="https://example.edu/teacher/zhang.html", text="张三", html="", links=[], fetch_method="browser", status="succeeded")
