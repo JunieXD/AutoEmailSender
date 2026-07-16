@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import unittest
+from dataclasses import replace
 
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks, estimate_tokens, fingerprint_page
 
@@ -213,6 +215,60 @@ class CrawlerChunkingTests(unittest.TestCase):
             repeated_prefix.append(line)
         repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
         self.assertLessEqual(repeated_tokens, 15)
+
+    def test_replays_candidate_dense_markdown_with_limited_retry_overlap(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        source_url = "https://faculty.hust.edu.cn/teachers/index.htm"
+        markdown = "\n".join(
+            "[教师{index}](https://faculty.hust.edu.cn/teacher/{index}.htm) "
+            "研究方向：人工智能、计算机视觉与智能系统，本科教学与科研指导。".format(index=index)
+            for index in range(150)
+        )
+        link_pattern = re.compile(r"\]\((https://faculty\.hust\.edu\.cn/[^)]+)\)")
+
+        def replay(config: ChunkingConfig) -> tuple[int, int, int]:
+            pending = list(
+                build_page_chunks(
+                    source_url=source_url,
+                    html="",
+                    text=markdown,
+                    config=config,
+                )
+            )
+            saved_links: list[str] = []
+            node_count = 0
+
+            while pending:
+                chunk = pending.pop(0)
+                node_count += 1
+                links = link_pattern.findall(chunk.content)
+                if len(links) > 10:
+                    children = split_chunk_content(
+                        source_url=source_url,
+                        content=chunk.content,
+                        parent_chunk_id=chunk.chunk_id,
+                        page_fingerprint=chunk.page_fingerprint,
+                        split_depth=chunk.split_depth + 1,
+                        split_reason="candidate_count_exceeded",
+                        config=config,
+                    )
+                    if children:
+                        pending.extend(children)
+                        continue
+                saved_links.extend(links)
+
+            unique_count = len(set(saved_links))
+            return unique_count, node_count, len(saved_links) - unique_count
+
+        overlap_15 = replay(ChunkingConfig())
+        overlap_30 = replay(replace(ChunkingConfig(), retry_split_overlap_tokens=30))
+
+        self.assertEqual(overlap_15[0], 150)
+        self.assertEqual(overlap_30[0], 150)
+        self.assertLessEqual(overlap_15[1], overlap_30[1])
+        self.assertLessEqual(overlap_15[2], overlap_30[2])
+
     def test_fingerprint_page_is_stable(self) -> None:
         self.assertEqual(fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四"))
 
