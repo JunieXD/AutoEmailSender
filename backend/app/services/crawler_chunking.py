@@ -258,7 +258,7 @@ def _split_binary_lines(lines: list[str], content: str, config: ChunkingConfig) 
         _dynamic_overlap_tokens(content, config),
         config.retry_split_overlap_tokens,
     )
-    return [left_lines, [*_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]]
+    return [left_lines, [*_strict_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]]
 
 
 def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:

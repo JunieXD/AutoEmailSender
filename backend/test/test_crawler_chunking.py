@@ -189,6 +189,30 @@ class CrawlerChunkingTests(unittest.TestCase):
             repeated_prefix.append(line)
         repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
         self.assertLessEqual(repeated_tokens, 15)
+
+    def test_split_chunk_content_caps_binary_retry_overlap_when_a_line_exceeds_limit(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        content = "\n".join(chr(0x4E00 + index) * 20 for index in range(6))
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="retry_after_parse_error",
+            config=ChunkingConfig(),
+        )
+
+        self.assertEqual(len(drafts), 2)
+        first_lines = set(drafts[0].content.splitlines())
+        repeated_prefix: list[str] = []
+        for line in drafts[1].content.splitlines():
+            if line not in first_lines:
+                break
+            repeated_prefix.append(line)
+        repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        self.assertLessEqual(repeated_tokens, 15)
     def test_fingerprint_page_is_stable(self) -> None:
         self.assertEqual(fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四"))
 
