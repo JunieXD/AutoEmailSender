@@ -415,6 +415,13 @@ class ApiEndpointTests(unittest.TestCase):
             self.assertTrue(data["ok"])
             self.assertEqual(data["endpoint_kind"], "responses")
             self.assertEqual(data["request_url"], "https://responses-only.example.com/v1/responses")
+        self.assertEqual(
+            preview_response.json()["attempted_urls"],
+            [
+                "https://responses-only.example.com/v1/chat/completions",
+                "https://responses-only.example.com/v1/responses",
+            ],
+        )
         self.assertEqual(calls[0], "https://responses-only.example.com/v1/chat/completions")
         self.assertEqual(calls[1], "https://responses-only.example.com/v1/responses")
         self.assertTrue(all(url.endswith("/responses") for url in calls[1:]))

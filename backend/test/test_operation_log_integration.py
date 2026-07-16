@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+
+from app.services.llm_runtime import LLMRuntimeAdaptation
 
 
 class OperationLogIntegrationTests(unittest.TestCase):
@@ -166,8 +169,8 @@ class OperationLogIntegrationTests(unittest.TestCase):
             "app.api.llm_profiles.probe_llm_profile",
             AsyncMock(return_value=self._build_probe_result()),
         ), patch(
-            "app.api.llm_profiles.ensure_thinking_adaptation",
-            AsyncMock(return_value=None),
+            "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+            AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         ):
             response = self.client.post(f"/api/llm-profiles/{llm_profile_id}/test")
 
@@ -185,6 +188,99 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertNotIn("secret", str(metadata))
         self.assertNotIn("?api_key=", str(metadata))
         self.assertNotIn("#x", str(metadata))
+
+    def test_llm_profile_test_records_sanitized_endpoint_protocol_switch(self) -> None:
+        llm_profile_id = self._create_llm_profile(
+            "端点切换模型",
+            api_key="sk-endpoint-switch-secret",
+            api_base_url="https://llm-user:llm-password@switch.example.com/v1",
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO llm_endpoint_adaptation_cache
+                    (api_base_url, model_name, learned_endpoint_kind)
+                VALUES (?, ?, ?)
+                """,
+                ("https://llm-user:llm-password@switch.example.com/v1", "gpt-4o-mini", "chat_completions"),
+            )
+            connection.execute(
+                """
+                INSERT INTO thinking_adaptation_cache
+                    (api_base_url, model_name, endpoint_kind, learned_extra_body)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("https://llm-user:llm-password@switch.example.com/v1", "gpt-4o-mini", "chat_completions", None),
+            )
+            connection.commit()
+
+        class FakeResponse:
+            status_code = 200
+            text = "response body that must not appear in operation logs"
+
+            def json(self) -> dict[str, object]:
+                return {"output_text": "response body that must not appear in operation logs"}
+
+        class FakeAsyncClient:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeAsyncClient":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def post(self, url: str, **kwargs: object) -> FakeResponse:
+                return FakeResponse()
+
+        with patch("app.services.llm_runtime.httpx.AsyncClient", FakeAsyncClient):
+            response = self.client.post(f"/api/llm-profiles/{llm_profile_id}/test")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["endpoint_kind"], "responses")
+        self.assertEqual(
+            response.json()["request_url"],
+            "https://llm-user:llm-password@switch.example.com/v1/responses",
+        )
+        self.assertEqual(
+            response.json()["attempted_urls"],
+            [
+                "https://llm-user:llm-password@switch.example.com/v1/chat/completions",
+                "https://llm-user:llm-password@switch.example.com/v1/responses",
+            ],
+        )
+
+        logs = self._list_logs("llm.endpoint_protocol_switched", entity_id=str(llm_profile_id))
+        self.assertEqual(len(logs), 1)
+        metadata = logs[0]["metadata"]
+        self.assertEqual(metadata["old_endpoint_kind"], "chat_completions")
+        self.assertEqual(metadata["new_endpoint_kind"], "responses")
+        self.assertEqual(metadata["endpoint_kind"], "responses")
+        self.assertEqual(metadata["request_url"], "https://switch.example.com/v1/responses")
+        self.assertEqual(
+            metadata["attempted_urls"],
+            [
+                "https://switch.example.com/v1/chat/completions",
+                "https://switch.example.com/v1/responses",
+            ],
+        )
+        self.assertEqual(metadata["reason"], "other_endpoint")
+        self.assertTrue(metadata["retried"])
+        self.assertNotIn("sk-endpoint-switch-secret", str(metadata))
+        self.assertNotIn("llm-user", str(metadata))
+        self.assertNotIn("llm-password", str(metadata))
+        self.assertNotIn("response body that must not appear in operation logs", str(metadata))
+
+        request_logs_response = self.client.get(
+            "/api/diagnostics/operation-logs",
+            params={"request_id": response.headers["X-Request-ID"]},
+        )
+        self.assertEqual(request_logs_response.status_code, 200, msg=request_logs_response.text)
+        request_logs = request_logs_response.json()["items"]
+        self.assertGreaterEqual(len(request_logs), 2)
+        self.assertTrue(all("llm-user" not in str(log) for log in request_logs))
+        self.assertTrue(all("llm-password" not in str(log) for log in request_logs))
 
     def test_llm_profile_models_fetch_records_result_without_sensitive_urls(self) -> None:
         llm_profile_id = self._create_llm_profile(

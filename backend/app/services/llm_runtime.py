@@ -323,7 +323,18 @@ def _strip_url_query_and_fragment(url: str | None) -> str | None:
     if url is None:
         return None
     parsed = urlsplit(url)
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    hostname = parsed.hostname
+    if hostname is None:
+        netloc = parsed.netloc.rsplit("@", 1)[-1]
+    else:
+        netloc = f"[{hostname}]" if ":" in hostname else hostname
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        if port is not None:
+            netloc = f"{netloc}:{port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def _log_llm_http_exception(
@@ -350,6 +361,68 @@ def _log_llm_http_exception(
         "error_chain": _exception_chain_details(exc),
     }
     _append_llm_runtime_log(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _endpoint_protocol_switch_reason(error: "LLMEndpointProtocolError") -> str | int:
+    if error.response_envelope is not None:
+        return error.response_envelope
+    if error.status_code is not None:
+        return error.status_code
+    return "protocol_error"
+
+
+async def _record_endpoint_protocol_switch(
+    session: "AsyncSession",
+    *,
+    profile: LLMProfile,
+    protocol_error: "LLMEndpointProtocolError",
+    completion: "ChatCompletionResult",
+) -> None:
+    reason = _endpoint_protocol_switch_reason(protocol_error)
+    attempted_urls = [
+        sanitized
+        for url in completion.attempted_urls
+        if (sanitized := _strip_url_query_and_fragment(url)) is not None
+    ]
+    metadata = {
+        "old_endpoint_kind": protocol_error.failed_endpoint_kind,
+        "new_endpoint_kind": completion.endpoint_kind,
+        "reason": reason,
+        "retried": True,
+        "endpoint_kind": completion.endpoint_kind,
+        "request_url": _strip_url_query_and_fragment(completion.request_url),
+        "attempted_urls": attempted_urls,
+    }
+    _append_llm_runtime_log(
+        json.dumps(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "event": "llm_endpoint_protocol_switched",
+                "provider": profile.provider,
+                "model_name": profile.model_name,
+                "api_base_url": _strip_url_query_and_fragment(resolve_base_url(profile.api_base_url)),
+                **metadata,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+    )
+
+    from app.services.operation_logs import record_operation_log
+
+    try:
+        async with session.begin_nested():
+            await record_operation_log(
+                session,
+                category="llm",
+                event_name="llm.endpoint_protocol_switched",
+                entity_type="llm_profile",
+                entity_id=str(profile.id) if profile.id is not None else None,
+                metadata=metadata,
+            )
+    except Exception:
+        return
 
 
 def _build_tls12_context() -> ssl.SSLContext:
@@ -475,6 +548,7 @@ class LLMRuntimeAdaptation:
 
     endpoint_kind: Literal["chat_completions", "responses"]
     thinking_extra_body: dict[str, object] | None
+    endpoint_attempted_urls: tuple[str, ...] = field(default_factory=tuple, compare=False)
 
 
 @dataclass(slots=True)
@@ -1229,6 +1303,7 @@ async def ensure_llm_runtime_adaptation(
         api_base_url=api_base_url,
         model_name=profile.model_name,
     )
+    endpoint_attempted_urls: list[str] = []
     if endpoint_kind is None:
         async with endpoint_adaptation_lock(api_base_url, profile.model_name) as coordination:
             endpoint_kind = await get_cached_endpoint_kind(
@@ -1252,7 +1327,7 @@ async def ensure_llm_runtime_adaptation(
                         last_protocol_error: LLMEndpointProtocolError | None = None
                         for candidate in endpoint_candidates(failed_endpoint_kind):
                             try:
-                                await _request_completion_endpoint(
+                                completion = await _request_completion_endpoint(
                                     profile,
                                     probe_payload,
                                     endpoint_kind=candidate,
@@ -1260,7 +1335,15 @@ async def ensure_llm_runtime_adaptation(
                                 )
                             except LLMEndpointProtocolError as exc:
                                 last_protocol_error = exc
+                                endpoint_attempted_urls.extend(exc.attempted_urls)
                                 continue
+                            except LLMRuntimeError as exc:
+                                exc.attempted_urls = [
+                                    *endpoint_attempted_urls,
+                                    *exc.attempted_urls,
+                                ]
+                                raise
+                            endpoint_attempted_urls.extend(completion.attempted_urls)
                             endpoint_kind = candidate
                             await record_endpoint_adaptation(
                                 session,
@@ -1282,7 +1365,32 @@ async def ensure_llm_runtime_adaptation(
         profile,
         endpoint_kind=endpoint_kind,
     )
-    return LLMRuntimeAdaptation(endpoint_kind, thinking_extra_body)
+    return LLMRuntimeAdaptation(
+        endpoint_kind,
+        thinking_extra_body,
+        tuple(endpoint_attempted_urls),
+    )
+
+
+def _merge_attempted_urls(*url_lists: list[str] | tuple[str, ...]) -> list[str]:
+    merged: list[str] = []
+    for urls in url_lists:
+        for url in urls:
+            if url not in merged:
+                merged.append(url)
+    return merged
+
+
+def _merge_protocol_error_attempts(
+    protocol_error: LLMEndpointProtocolError,
+    error: LLMRuntimeError,
+    *additional_url_lists: list[str] | tuple[str, ...],
+) -> None:
+    error.attempted_urls = [
+        *protocol_error.attempted_urls,
+        *(url for urls in additional_url_lists for url in urls),
+        *error.attempted_urls,
+    ]
 
 
 async def request_chat_completion(
@@ -1297,14 +1405,19 @@ async def request_chat_completion(
     if session is not None:
         active_adaptation = adaptation or await ensure_llm_runtime_adaptation(session, profile)
         try:
-            return await _request_completion_endpoint(
+            completion = await _request_completion_endpoint(
                 profile,
                 payload,
                 endpoint_kind=active_adaptation.endpoint_kind,
                 extra_body=active_adaptation.thinking_extra_body,
                 allow_empty_content=allow_empty_content,
             )
-        except LLMEndpointProtocolError:
+            completion.attempted_urls = _merge_attempted_urls(
+                active_adaptation.endpoint_attempted_urls,
+                completion.attempted_urls,
+            )
+            return completion
+        except LLMEndpointProtocolError as protocol_error:
             from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
             from app.services.thinking_adaptation import invalidate_thinking_adaptation
 
@@ -1322,18 +1435,48 @@ async def request_chat_completion(
                 endpoint_kind=active_adaptation.endpoint_kind,
                 expected_extra_body=active_adaptation.thinking_extra_body,
             )
-            retry_adaptation = await ensure_llm_runtime_adaptation(
+            try:
+                retry_adaptation = await ensure_llm_runtime_adaptation(
+                    session,
+                    profile,
+                    failed_endpoint_kind=active_adaptation.endpoint_kind,
+                )
+            except LLMRuntimeError as retry_error:
+                _merge_protocol_error_attempts(protocol_error, retry_error)
+                raise
+            try:
+                completion = await _request_completion_endpoint(
+                    profile,
+                    payload,
+                    endpoint_kind=retry_adaptation.endpoint_kind,
+                    extra_body=retry_adaptation.thinking_extra_body,
+                    allow_empty_content=allow_empty_content,
+                )
+            except LLMRuntimeError as retry_error:
+                _merge_protocol_error_attempts(
+                    protocol_error,
+                    retry_error,
+                    retry_adaptation.endpoint_attempted_urls,
+                )
+                raise
+            completion.attempted_urls = _merge_attempted_urls(
+                protocol_error.attempted_urls,
+                retry_adaptation.endpoint_attempted_urls,
+                completion.attempted_urls,
+            )
+            await _record_endpoint_protocol_switch(
                 session,
-                profile,
-                failed_endpoint_kind=active_adaptation.endpoint_kind,
+                profile=profile,
+                protocol_error=protocol_error,
+                completion=completion,
             )
-            return await _request_completion_endpoint(
-                profile,
-                payload,
-                endpoint_kind=retry_adaptation.endpoint_kind,
-                extra_body=retry_adaptation.thinking_extra_body,
-                allow_empty_content=allow_empty_content,
-            )
+            return completion
+        except LLMRuntimeError as runtime_error:
+            runtime_error.attempted_urls = [
+                *active_adaptation.endpoint_attempted_urls,
+                *runtime_error.attempted_urls,
+            ]
+            raise
 
     if adaptation is not None:
         try:

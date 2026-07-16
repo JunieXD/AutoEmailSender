@@ -351,7 +351,18 @@ def _strip_url_query_and_fragment(url: str | None) -> str | None:
     if url is None:
         return None
     parsed = urlsplit(url)
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    hostname = parsed.hostname
+    if hostname is None:
+        netloc = parsed.netloc.rsplit("@", 1)[-1]
+    else:
+        netloc = f"[{hostname}]" if ":" in hostname else hostname
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        if port is not None:
+            netloc = f"{netloc}:{port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def _strip_url_list_query_and_fragment(urls: list[str]) -> list[str]:
