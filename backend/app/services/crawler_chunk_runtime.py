@@ -8,7 +8,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlPageChunk, CrawlPageChunkStatus
-from app.services.crawler_chunking import ChunkingConfig, PageChunkDraft, split_chunk_content
+from app.services.crawler_chunking import ChunkingConfig, PageChunkDraft, estimate_tokens, split_chunk_content
 from app.services.crawler_page_fetch_ledger import mark_page_chunks_processed
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_batch
 
@@ -324,7 +324,19 @@ async def _split_chunk_in_session(
     config = ChunkingConfig()
     if chunk.split_depth >= config.max_split_depth:
         chunk.status = CrawlPageChunkStatus.FAILED.value
-        chunk.last_error = f"超过最大拆分深度：{reason}"
+        chunk.last_error = (
+            "chunk_split_max_depth_exceeded "
+            f"split_depth={chunk.split_depth} max_split_depth={config.max_split_depth} reason={reason}"
+        )
+        return 0
+
+    token_estimate = estimate_tokens(chunk.content)
+    if token_estimate <= config.min_split_tokens:
+        chunk.status = CrawlPageChunkStatus.FAILED.value
+        chunk.last_error = (
+            "chunk_split_min_tokens_reached "
+            f"token_estimate={token_estimate} min_split_tokens={config.min_split_tokens} reason={reason}"
+        )
         return 0
 
     drafts = split_chunk_content(
@@ -338,7 +350,10 @@ async def _split_chunk_in_session(
     )
     if not drafts:
         chunk.status = CrawlPageChunkStatus.FAILED.value
-        chunk.last_error = f"chunk 太小，无法继续拆分：{reason}"
+        chunk.last_error = (
+            "chunk_split_no_valid_children "
+            f"token_estimate={token_estimate} split_depth={chunk.split_depth} reason={reason}"
+        )
         return 0
 
     chunk.status = CrawlPageChunkStatus.SUPERSEDED.value

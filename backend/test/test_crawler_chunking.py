@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import unittest
+from dataclasses import replace
 
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks, estimate_tokens, fingerprint_page
 
@@ -105,25 +107,40 @@ class CrawlerChunkingTests(unittest.TestCase):
     def test_default_recursive_split_config_supports_dense_small_chunks(self) -> None:
         config = ChunkingConfig()
 
-        self.assertEqual(config.min_split_tokens, 150)
+        self.assertEqual(config.min_split_tokens, 100)
+        self.assertEqual(config.retry_split_overlap_tokens, 15)
+        self.assertEqual(config.overlap_tokens, 180)
         self.assertEqual(config.max_split_depth, 7)
 
-    def test_split_chunk_content_reduces_overlap_for_small_chunks(self) -> None:
+    def test_split_chunk_content_only_splits_above_one_hundred_tokens(self) -> None:
         from app.services.crawler_chunking import split_chunk_content
 
-        content = "\n".join(f"教师{i} [详情](https://cs.example.edu/t{i}.htm)" for i in range(20))
-        drafts = split_chunk_content(
+        at_minimum = "\n".join(["甲" * 25] * 4)
+        above_minimum = "\n".join(["甲" * 25, "乙" * 25, "丙" * 25, "丁" * 26])
+        self.assertEqual(estimate_tokens(at_minimum), 100)
+        self.assertEqual(estimate_tokens(above_minimum), 101)
+
+        minimum_drafts = split_chunk_content(
             source_url="https://cs.example.edu/faculty",
-            content=content,
+            content=at_minimum,
             parent_chunk_id="c1",
             page_fingerprint="p",
             split_depth=1,
-            config=ChunkingConfig(min_split_tokens=150, overlap_tokens=180),
+            split_reason="candidate_count_exceeded",
+            config=ChunkingConfig(),
+        )
+        above_minimum_drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=above_minimum,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="candidate_count_exceeded",
+            config=ChunkingConfig(),
         )
 
-        self.assertEqual(len(drafts), 2)
-        self.assertLess(drafts[1].token_estimate, estimate_tokens(content))
-        self.assertLess(drafts[1].token_estimate - drafts[0].token_estimate, 80)
+        self.assertEqual(minimum_drafts, [])
+        self.assertGreaterEqual(len(above_minimum_drafts), 2)
 
     def test_split_chunk_content_uses_dynamic_fanout_for_too_many_candidates(self) -> None:
         from app.services.crawler_chunking import split_chunk_content
@@ -148,12 +165,12 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertGreaterEqual(min(draft.token_estimate for draft in drafts), 150)
         self.assertLessEqual(max(draft.token_estimate for draft in drafts), 500)
 
-    def test_split_chunk_content_caps_retry_overlap_at_thirty_tokens(self) -> None:
+    def test_split_chunk_content_caps_retry_overlap_at_fifteen_tokens(self) -> None:
         from app.services.crawler_chunking import split_chunk_content
 
         content = "\n".join(
-            f"教师{i} 研究方向 数据库 人工智能 [详情](https://cs.example.edu/t{i}.htm)"
-            for i in range(80)
+            chr(0x4E00 + index) * 5
+            for index in range(50)
         )
         drafts = split_chunk_content(
             source_url="https://cs.example.edu/faculty",
@@ -162,15 +179,96 @@ class CrawlerChunkingTests(unittest.TestCase):
             page_fingerprint="p",
             split_depth=1,
             split_reason="candidate_count_exceeded",
-            config=ChunkingConfig(min_split_tokens=150, overlap_tokens=180),
+            config=ChunkingConfig(),
         )
 
-        self.assertGreater(len(drafts), 2)
+        self.assertEqual(len(drafts), 2)
         first_lines = set(drafts[0].content.splitlines())
-        second_lines = drafts[1].content.splitlines()
-        repeated_prefix = [line for line in second_lines if line in first_lines]
+        repeated_prefix: list[str] = []
+        for line in drafts[1].content.splitlines():
+            if line not in first_lines:
+                break
+            repeated_prefix.append(line)
         repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
-        self.assertLessEqual(repeated_tokens, 35)
+        self.assertLessEqual(repeated_tokens, 15)
+
+    def test_split_chunk_content_caps_binary_retry_overlap_when_a_line_exceeds_limit(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        content = "\n".join(chr(0x4E00 + index) * 20 for index in range(6))
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="retry_after_parse_error",
+            config=ChunkingConfig(),
+        )
+
+        self.assertEqual(len(drafts), 2)
+        first_lines = set(drafts[0].content.splitlines())
+        repeated_prefix: list[str] = []
+        for line in drafts[1].content.splitlines():
+            if line not in first_lines:
+                break
+            repeated_prefix.append(line)
+        repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        self.assertLessEqual(repeated_tokens, 15)
+
+    def test_replays_candidate_dense_markdown_with_limited_retry_overlap(self) -> None:
+        from app.services.crawler_chunking import split_chunk_content
+
+        source_url = "https://faculty.hust.edu.cn/teachers/index.htm"
+        markdown = "\n".join(
+            "[教师{index}](https://faculty.hust.edu.cn/teacher/{index}.htm) "
+            "研究方向：人工智能、计算机视觉与智能系统，本科教学与科研指导。".format(index=index)
+            for index in range(150)
+        )
+        link_pattern = re.compile(r"\]\((https://faculty\.hust\.edu\.cn/[^)]+)\)")
+
+        def replay(config: ChunkingConfig) -> tuple[int, int, int]:
+            pending = list(
+                build_page_chunks(
+                    source_url=source_url,
+                    html="",
+                    text=markdown,
+                    config=config,
+                )
+            )
+            saved_links: list[str] = []
+            node_count = 0
+
+            while pending:
+                chunk = pending.pop(0)
+                node_count += 1
+                links = link_pattern.findall(chunk.content)
+                if len(links) > 10:
+                    children = split_chunk_content(
+                        source_url=source_url,
+                        content=chunk.content,
+                        parent_chunk_id=chunk.chunk_id,
+                        page_fingerprint=chunk.page_fingerprint,
+                        split_depth=chunk.split_depth + 1,
+                        split_reason="candidate_count_exceeded",
+                        config=config,
+                    )
+                    if children:
+                        pending.extend(children)
+                        continue
+                saved_links.extend(links)
+
+            unique_count = len(set(saved_links))
+            return unique_count, node_count, len(saved_links) - unique_count
+
+        overlap_15 = replay(ChunkingConfig())
+        overlap_30 = replay(replace(ChunkingConfig(), retry_split_overlap_tokens=30))
+
+        self.assertEqual(overlap_15[0], 150)
+        self.assertEqual(overlap_30[0], 150)
+        self.assertLessEqual(overlap_15[1], overlap_30[1])
+        self.assertLessEqual(overlap_15[2], overlap_30[2])
+
     def test_fingerprint_page_is_stable(self) -> None:
         self.assertEqual(fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四"))
 
