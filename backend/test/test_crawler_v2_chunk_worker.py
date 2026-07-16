@@ -111,6 +111,11 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_derive_chunk_status(10), CrawlPageChunkStatus.COMPLETED.value)
         self.assertEqual(_derive_chunk_status(11), CrawlPageChunkStatus.SPLIT_REQUIRED.value)
 
+    def test_worker_module_does_not_expose_unused_typed_agent_payload(self) -> None:
+        import app.services.crawler_v2_chunk_worker as module
+
+        self.assertFalse(hasattr(module, "V2ChunkAgentPayload"))
+
     async def test_complete_chunk_marks_no_candidates_from_zero_candidate_count(self) -> None:
         _, chunk_id = await self._seed_processing_chunk()
 
@@ -189,6 +194,48 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(save_result["contract_warning"], "candidate_count_candidates_conflict")
         self.assertEqual(save_result["candidate_count"], 11)
         self.assertEqual(save_result["candidate_payload_count"], 1)
+
+    async def test_worker_retries_real_llm_json_with_non_integer_candidate_count(self) -> None:
+        _, first_chunk_id = await self._seed_processing_chunk(with_profile=True)
+        for index, raw_count in enumerate(("true", "1.0", '"1"')):
+            with self.subTest(raw_count=raw_count):
+                if index == 0:
+                    chunk_id = first_chunk_id
+                else:
+                    _, chunk_id = await self._seed_processing_chunk()
+
+                class FakeResponse:
+                    content = f'{{"candidate_count": {raw_count}, "candidates": [], "discovered_urls": []}}'
+
+                fake_model = AsyncMock()
+                fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
+                with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model):
+                    processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+                self.assertEqual(processed, 1)
+                async with self.session_factory() as session:
+                    chunk = await session.get(CrawlPageChunk, chunk_id)
+                assert chunk is not None
+                self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+
+    async def test_worker_ignores_legacy_chunk_status_in_real_llm_json(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+
+        class FakeResponse:
+            content = '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "confidence": 0.9}], "discovered_urls": [], "chunk_status": "too_many_candidates"}'
+
+        fake_model = AsyncMock()
+        fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
+        with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model):
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
+        self.assertEqual([candidate.name for candidate in candidates], ["张三"])
 
     async def test_worker_marks_retryable_when_candidate_count_mismatches_payload(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)

@@ -39,14 +39,6 @@ MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 
-class V2ChunkAgentPayload(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    candidate_count: int = Field(strict=True, ge=0)
-    candidates: list[dict[str, Any]]
-    discovered_urls: list[str]
-
-
 class V2ChunkAgentRawPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
