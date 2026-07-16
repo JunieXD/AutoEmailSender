@@ -244,9 +244,62 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "match_analysis_runs",
                 "match_analysis_jobs",
                 "match_analysis_job_items",
+                "thinking_adaptation_cache",
+                "llm_endpoint_adaptation_cache",
             }.issubset(table_names),
         )
         self.assertNotIn("attachment_assets", table_names)
+
+        thinking_cache_columns = self._get_columns("thinking_adaptation_cache")
+        endpoint_cache_columns = self._get_columns("llm_endpoint_adaptation_cache")
+        self.assertTrue(
+            {
+                "id",
+                "api_base_url",
+                "model_name",
+                "learned_extra_body",
+                "endpoint_kind",
+                "probed_at",
+                "created_at",
+                "updated_at",
+            }.issubset(thinking_cache_columns),
+        )
+        self.assertTrue(
+            {
+                "id",
+                "api_base_url",
+                "model_name",
+                "learned_endpoint_kind",
+                "probed_at",
+                "created_at",
+                "updated_at",
+            }.issubset(endpoint_cache_columns),
+        )
+        self.assertEqual(
+            self._get_unique_index_columns("thinking_adaptation_cache"),
+            ["api_base_url", "model_name", "endpoint_kind"],
+        )
+        self.assertTrue(
+            self._is_column_not_null("thinking_adaptation_cache", "endpoint_kind"),
+        )
+        self.assertEqual(
+            self._get_unique_index_columns("llm_endpoint_adaptation_cache"),
+            ["api_base_url", "model_name"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "thinking_adaptation_cache",
+                "ix_thinking_adaptation_cache_model_name",
+            ),
+            ["model_name"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "llm_endpoint_adaptation_cache",
+                "ix_llm_endpoint_adaptation_cache_model_name",
+            ),
+            ["model_name"],
+        )
 
         identity_columns = self._get_columns("identity_profiles")
         batch_columns = self._get_columns("batch_tasks")
@@ -460,6 +513,113 @@ class DatabaseSchemaTests(unittest.TestCase):
             ),
             ["identity_id", "professor_id", "direction", "created_at", "id"],
         )
+
+    def test_llm_endpoint_adaptation_upgrade_discards_old_cache_and_is_recoverable(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "llm_endpoint_adaptation_upgrade.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "20260709_professor_dashboard_indexes")
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            connection.execute(
+                """
+                INSERT INTO thinking_adaptation_cache (
+                    api_base_url, model_name, learned_extra_body
+                )
+                VALUES ('https://api.example.test/v1', 'test-model', '{"thinking": false}')
+                """,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM thinking_adaptation_cache").fetchone()[0],
+                0,
+            )
+            connection.execute(
+                """
+                INSERT INTO thinking_adaptation_cache (
+                    api_base_url, model_name, learned_extra_body, endpoint_kind
+                )
+                VALUES (?, ?, NULL, ?), (?, ?, NULL, ?)
+                """,
+                (
+                    "https://api.example.test/v1",
+                    "test-model",
+                    "chat_completions",
+                    "https://api.example.test/v1",
+                    "test-model",
+                    "responses",
+                ),
+            )
+            connection.execute(
+                "UPDATE alembic_version SET version_num = '20260709_professor_dashboard_indexes'",
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        connection = sqlite3.connect(legacy_db_path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM thinking_adaptation_cache").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                connection.execute("SELECT version_num FROM alembic_version").fetchone()[0],
+                HEAD_REVISION,
+            )
+        finally:
+            connection.close()
+
+    def test_llm_endpoint_adaptation_downgrade_restores_legacy_thinking_cache(self) -> None:
+        database_path = Path(self.temp_dir.name) / "llm_endpoint_adaptation_downgrade.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+
+        self._run_alembic(env, "upgrade", "head")
+        self._run_alembic(env, "downgrade", "20260709_professor_dashboard_indexes")
+
+        connection = sqlite3.connect(database_path)
+        try:
+            table_names = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                ).fetchall()
+            }
+            self.assertNotIn("llm_endpoint_adaptation_cache", table_names)
+            self.assertNotIn(
+                "endpoint_kind",
+                {row[1] for row in connection.execute("PRAGMA table_info('thinking_adaptation_cache')")},
+            )
+            unique_indexes = [
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA index_list('thinking_adaptation_cache')",
+                ).fetchall()
+                if row[2]
+            ]
+            self.assertEqual(len(unique_indexes), 1)
+            self.assertEqual(
+                [
+                    row[2]
+                    for row in connection.execute(
+                        f"PRAGMA index_info('{unique_indexes[0]}')",
+                    ).fetchall()
+                ],
+                ["api_base_url", "model_name"],
+            )
+        finally:
+            connection.close()
 
     def test_email_tasks_contains_workspace_rewrite_fields(self) -> None:
         task_columns = self._get_columns("email_tasks")
@@ -2218,6 +2378,13 @@ class DatabaseSchemaTests(unittest.TestCase):
         rows = self.connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
         return {row[1] for row in rows}
 
+    def _is_column_not_null(self, table_name: str, column_name: str) -> bool:
+        rows = self.connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        for row in rows:
+            if row[1] == column_name:
+                return bool(row[3])
+        self.fail(f"{table_name}.{column_name} does not exist")
+
     def _get_index_columns(self, table_name: str, index_name: str) -> list[str]:
         index_names = {
             row[1]
@@ -2225,6 +2392,16 @@ class DatabaseSchemaTests(unittest.TestCase):
         }
         self.assertIn(index_name, index_names)
         rows = self.connection.execute(f"PRAGMA index_info('{index_name}')").fetchall()
+        return [row[2] for row in rows]
+
+    def _get_unique_index_columns(self, table_name: str) -> list[str]:
+        unique_indexes = [
+            row[1]
+            for row in self.connection.execute(f"PRAGMA index_list('{table_name}')").fetchall()
+            if row[2]
+        ]
+        self.assertEqual(len(unique_indexes), 1)
+        rows = self.connection.execute(f"PRAGMA index_info('{unique_indexes[0]}')").fetchall()
         return [row[2] for row in rows]
 
     @staticmethod

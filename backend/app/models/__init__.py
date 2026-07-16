@@ -38,6 +38,7 @@ from app.models.imap_sync import (
     ImapProfessorSyncState,
 )
 from app.models.llm_profile import LLMProfile
+from app.models.llm_endpoint_adaptation_cache import LLMEndpointAdaptationCache
 from app.models.match_analysis_job import (
     MatchAnalysisJob,
     MatchAnalysisJobItem,
@@ -90,6 +91,7 @@ __all__ = [
     "ImapProfessorHistoricalScanStatus",
     "ImapProfessorSyncState",
     "LLMProfile",
+    "LLMEndpointAdaptationCache",
     "MatchAnalysisJob",
     "MatchAnalysisJobItem",
     "MatchAnalysisJobItemStatus",

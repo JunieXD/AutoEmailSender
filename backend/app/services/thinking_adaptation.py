@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Thinking-mode adaptation: detect protocol errors and find the right extra_body per model.
+"""Thinking-mode adaptation: detect protocol errors and find the right extra_body per endpoint.
 
-The cache is keyed by (api_base_url, model_name) and stored in the
-``thinking_adaptation_cache`` table. See ``docs/database_table_design.md`` for
-field semantics.
+The cache is keyed by (api_base_url, model_name, endpoint_kind), so the same
+model can retain independent thinking adaptations for different endpoint
+protocols. Rows are stored in ``thinking_adaptation_cache``; see
+``docs/database_table_design.md`` for field semantics.
 """
 
 
@@ -98,8 +99,9 @@ async def get_cached_extra_body(
     *,
     api_base_url: str,
     model_name: str,
+    endpoint_kind: str = "chat_completions",
 ) -> tuple[bool, dict[str, object] | None]:
-    """Look up the cached extra_body for a (base_url, model_name) pair.
+    """Look up the cached extra_body for a (base_url, model_name, endpoint) target.
 
     Returns ``(hit, value)`` where ``hit`` is True if a row exists (even if the
     stored value is ``None``, which positively means "we tried and the model
@@ -110,6 +112,7 @@ async def get_cached_extra_body(
         select(ThinkingAdaptationCache).where(
             ThinkingAdaptationCache.api_base_url == api_base_url,
             ThinkingAdaptationCache.model_name == model_name,
+            ThinkingAdaptationCache.endpoint_kind == endpoint_kind,
         )
     )
     if row is None:
@@ -123,9 +126,10 @@ async def record_thinking_adaptation(
     *,
     api_base_url: str,
     model_name: str,
+    endpoint_kind: str = "chat_completions",
     learned_extra_body: dict[str, object] | None,
 ) -> None:
-    """Insert or update the cache row for ``(api_base_url, model_name)``.
+    """Insert or update the cache row for a ``(base_url, model_name, endpoint)`` target.
 
     The caller is responsible for committing the surrounding session.
     """
@@ -135,6 +139,7 @@ async def record_thinking_adaptation(
     statement = sqlite_insert(ThinkingAdaptationCache).values(
         api_base_url=api_base_url,
         model_name=model_name,
+        endpoint_kind=endpoint_kind,
         learned_extra_body=learned_value,
         probed_at=now,
         updated_at=now,
@@ -144,6 +149,7 @@ async def record_thinking_adaptation(
             index_elements=[
                 ThinkingAdaptationCache.api_base_url,
                 ThinkingAdaptationCache.model_name,
+                ThinkingAdaptationCache.endpoint_kind,
             ],
             set_={
                 "learned_extra_body": statement.excluded.learned_extra_body,
