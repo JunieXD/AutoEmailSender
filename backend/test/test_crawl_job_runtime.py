@@ -219,6 +219,38 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ensure_adaptation.await_count, 1)
         invalidate_endpoint.assert_not_awaited()
 
+    async def test_direct_structured_llm_uses_shared_endpoint_retry_wrapper(self) -> None:
+        profile = LLMProfile(
+            name="relay",
+            provider="openai",
+            api_base_url="https://relay.example/v1",
+            api_key="sk-test",
+            model_name="relay-model",
+        )
+        adaptation = LLMRuntimeAdaptation("chat_completions", None)
+        ctx = CrawlToolContext(
+            session_factory=self.session_factory,
+            job_id=1,
+            university="示例大学",
+            school="计算机学院",
+            start_url="https://example.edu/faculty",
+            llm_adaptation=adaptation,
+        )
+        response = type("FakeResponse", (), {"content": '{"name":"张三"}'})()
+
+        with patch(
+            "app.services.crawl_job_runtime.invoke_crawler_llm_with_endpoint_retry",
+            new=AsyncMock(return_value=(response, adaptation)),
+            create=True,
+        ) as invoke_mock:
+            candidate = await extract_profile_candidate_with_llm(ctx, profile, "张三 教授")
+
+        self.assertEqual(candidate.name, "张三")
+        invoke_mock.assert_awaited_once()
+        self.assertIs(invoke_mock.await_args.args[0], self.session_factory)
+        self.assertIs(invoke_mock.await_args.args[1], profile)
+        self.assertIs(invoke_mock.await_args.args[2], adaptation)
+
     async def test_crawl_job_has_pending_work_tracks_pending_chunks(self) -> None:
         async with self.session_factory() as session:
             job = CrawlJob(

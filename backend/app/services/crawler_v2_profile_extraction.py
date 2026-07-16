@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.crawl_job_runtime import build_faculty_crawler_model
 from app.services.llm_runtime import LLMRuntimeAdaptation, LLMRuntimeError, parse_structured_result
@@ -41,6 +43,7 @@ class V2ProfileExtractionResult:
 async def invoke_v2_profile_extraction_agent(
     llm_profile: Any,
     *,
+    session_factory: async_sessionmaker[AsyncSession],
     university: str,
     school: str,
     source_url: str,
@@ -50,7 +53,6 @@ async def invoke_v2_profile_extraction_agent(
     adaptation: LLMRuntimeAdaptation,
     max_attempts: int = DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS,
 ) -> V2ProfileExtractionResult:
-    model = build_faculty_crawler_model(llm_profile, adaptation=adaptation)
     base_prompt = build_v2_profile_extraction_prompt(
         university=university,
         school=school,
@@ -62,13 +64,20 @@ async def invoke_v2_profile_extraction_agent(
     attempts: list[V2ProfileExtractionAttempt] = []
     accumulated = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
     last_error: Exception | None = None
+    current_adaptation = adaptation
 
     for attempt_number in range(1, max_attempts + 1):
         prompt = base_prompt if attempt_number == 1 else _build_structured_retry_prompt(
             base_prompt,
             str(last_error or "模型未返回有效 JSON"),
         )
-        response = await model.ainvoke(prompt)
+        response, current_adaptation = await invoke_crawler_llm_with_endpoint_retry(
+            session_factory,
+            llm_profile,
+            current_adaptation,
+            prompt=prompt,
+            build_model=build_faculty_crawler_model,
+        )
         raw_text = _extract_message_text(response)
         usage = extract_token_usage_from_llm_response(response)
         if usage is not None:

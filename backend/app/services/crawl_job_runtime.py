@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.models import CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services.crawler_debug import append_crawler_debug_event
+from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
 from app.services.crawl_job_events import normalize_agent_trace_event
@@ -647,15 +648,18 @@ async def _invoke_direct_structured_llm(
     result_model: type[Any],
     empty_response_error: str,
 ) -> Any:
-    model = build_faculty_crawler_model(
-        llm_profile,
-        adaptation=ctx.llm_adaptation,
-    )
     current_prompt = prompt
     last_error: Exception | None = None
+    current_adaptation = ctx.llm_adaptation
 
     for attempt in range(DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS):
-        response = await model.ainvoke(current_prompt)
+        response, current_adaptation = await invoke_crawler_llm_with_endpoint_retry(
+            ctx.session_factory,
+            llm_profile,
+            current_adaptation,
+            prompt=current_prompt,
+            build_model=build_faculty_crawler_model,
+        )
         await _accumulate_direct_llm_response_tokens(ctx.session_factory, ctx.job_id, response)
         content = _extract_model_message_content(response)
         if not content:

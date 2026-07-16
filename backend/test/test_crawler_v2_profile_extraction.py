@@ -40,6 +40,7 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.crawler_v2_profile_extraction.build_faculty_crawler_model", return_value=model):
             result = await invoke_v2_profile_extraction_agent(
                 llm_profile,
+                session_factory=object(),  # type: ignore[arg-type]
                 university="示例大学",
                 school="计算机学院",
                 source_url="https://example.edu/teacher/zhang.html",
@@ -58,6 +59,37 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.usage["output_tokens"], 5)
         self.assertEqual(result.usage["cached_tokens"], 3)
         self.assertEqual(result.attempts[0].error is not None, True)
+
+    async def test_invoke_uses_shared_endpoint_retry_wrapper(self) -> None:
+        response = SimpleNamespace(
+            content='{"status":"no_candidate","candidate":null}',
+            usage_metadata={"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0},
+        )
+        llm_profile = SimpleNamespace(model_name="test-model")
+        adaptation = LLMRuntimeAdaptation("chat_completions", None)
+        session_factory = object()
+
+        with patch(
+            "app.services.crawler_v2_profile_extraction.invoke_crawler_llm_with_endpoint_retry",
+            new=AsyncMock(return_value=(response, adaptation)),
+            create=True,
+        ) as invoke_mock:
+            result = await invoke_v2_profile_extraction_agent(
+                llm_profile,
+                session_factory=session_factory,  # type: ignore[arg-type]
+                university="示例大学",
+                school="计算机学院",
+                source_url="https://example.edu/teacher/zhang.html",
+                title="张三",
+                page_text="张三 教授",
+                adaptation=adaptation,
+            )
+
+        self.assertEqual(result.payload["status"], "no_candidate")
+        invoke_mock.assert_awaited_once()
+        self.assertIs(invoke_mock.await_args.args[0], session_factory)
+        self.assertIs(invoke_mock.await_args.args[1], llm_profile)
+        self.assertIs(invoke_mock.await_args.args[2], adaptation)
 
     async def test_payload_accepts_no_candidate(self) -> None:
         payload = V2ProfileExtractionPayload.model_validate({"status": "no_candidate", "candidate": None})

@@ -325,6 +325,7 @@ async def _extract_profile_for_page_snapshot(
     )
     result = await invoke_v2_profile_extraction_agent(
         llm_profile,
+        session_factory=session_factory,
         university=university,
         school=school,
         source_url=source_url,

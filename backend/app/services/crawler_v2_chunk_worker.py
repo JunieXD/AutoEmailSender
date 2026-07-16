@@ -32,6 +32,7 @@ from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runtime import build_faculty_crawler_model
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
+from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.llm_runtime import (
     LLMRuntimeAdaptation,
     ensure_llm_runtime_adaptation,
@@ -52,20 +53,26 @@ class V2ChunkAgentPayload(BaseModel):
 async def invoke_v2_chunk_agent(
     llm_profile: Any,
     *,
+    session_factory: async_sessionmaker[AsyncSession],
     university: str,
     school: str,
     source_url: str,
     chunk_content: str,
     adaptation: LLMRuntimeAdaptation,
 ) -> tuple[dict[str, Any], dict[str, int | None] | None, str]:
-    model = build_faculty_crawler_model(llm_profile, adaptation=adaptation)
     prompt = build_v2_chunk_prompt(
         university=university,
         school=school,
         source_url=source_url,
         chunk_content=chunk_content,
     )
-    response = await model.ainvoke(prompt)
+    response, _ = await invoke_crawler_llm_with_endpoint_retry(
+        session_factory,
+        llm_profile,
+        adaptation,
+        prompt=prompt,
+        build_model=build_faculty_crawler_model,
+    )
     content = _extract_message_text(response)
     payload = parse_structured_result(content, V2ChunkAgentPayload)
     usage = extract_token_usage_from_llm_response(response)
@@ -173,6 +180,7 @@ async def run_crawler_v2_chunk_worker_once(
 
         chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
+            session_factory=session_factory,
             university=job.university,
             school=job.school,
             source_url=chunk.source_url,

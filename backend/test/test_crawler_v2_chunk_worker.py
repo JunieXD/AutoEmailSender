@@ -661,9 +661,14 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
         llm_profile = object()
 
-        with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model) as build_mock:
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_crawler_llm_with_endpoint_retry",
+            new=AsyncMock(return_value=(FakeResponse(), adaptation)),
+            create=True,
+        ) as invoke_mock:
             payload, usage, raw_model_text = await invoke_v2_chunk_agent(
                 llm_profile,
+                session_factory=self.session_factory,
                 university="示例大学",
                 school="计算机学院",
                 source_url="https://example.edu/faculty",
@@ -671,7 +676,11 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 adaptation=adaptation,
             )
 
-        build_mock.assert_called_once_with(llm_profile, adaptation=adaptation)
+        invoke_mock.assert_awaited_once()
+        self.assertIs(invoke_mock.await_args.args[0], self.session_factory)
+        self.assertIs(invoke_mock.await_args.args[1], llm_profile)
+        self.assertIs(invoke_mock.await_args.args[2], adaptation)
+        self.assertIs(invoke_mock.await_args.kwargs["build_model"], __import__("app.services.crawler_v2_chunk_worker", fromlist=["build_faculty_crawler_model"]).build_faculty_crawler_model)
         self.assertEqual(payload["chunk_status"], "no_candidates")
         self.assertEqual(usage["input_tokens"], 1)
         self.assertIn("no_candidates", raw_model_text)

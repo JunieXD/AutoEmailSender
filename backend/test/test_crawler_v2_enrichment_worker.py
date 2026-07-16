@@ -334,18 +334,21 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="张三 邮箱 zhang@example.edu")), \
             patch("app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=adaptation)) as adaptation_mock, \
-            patch("app.services.crawl_job_runtime.build_faculty_crawler_model") as build_mock:
-            fake_model = AsyncMock()
+            patch(
+                "app.services.crawler_v2_enrichment_worker.invoke_crawler_llm_with_endpoint_retry",
+                new=AsyncMock(),
+                create=True,
+            ) as invoke_mock:
             fake_response = type("FakeResponse", (), {"content": '{"email":"zhang@example.edu","department":"计算机系","research_direction":"AI","recent_papers":[],"confidence":0.8,"field_confidence":{}}', "usage_metadata": {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0}})()
-            fake_model.ainvoke = AsyncMock(return_value=fake_response)
-            build_mock.return_value = fake_model
+            invoke_mock.return_value = (fake_response, adaptation)
 
             result = await enrich_candidate_once(self.session_factory, candidate_id=candidate_id)
 
         self.assertEqual(result.email, "zhang@example.edu")
         adaptation_mock.assert_awaited_once()
-        build_mock.assert_called_once()
-        self.assertIs(build_mock.call_args.kwargs["adaptation"], adaptation)
+        invoke_mock.assert_awaited_once()
+        self.assertIs(invoke_mock.await_args.args[0], self.session_factory)
+        self.assertIs(invoke_mock.await_args.args[2], adaptation)
 
     async def test_enrichment_worker_records_llm_token_usage(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
