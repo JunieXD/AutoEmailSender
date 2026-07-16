@@ -102,32 +102,32 @@ export const ManagementProfessorRow = ({
         </div>
 
         <FieldCell
-        label="职称"
-        valueClassName="text-sm text-stone-600 lg:text-center"
-      >
+          label="职称"
+          valueClassName="text-sm text-stone-600 lg:text-center"
+        >
           {formatProfessorSearchField(normalizeProfessorTitleDisplay(professor.title))}
-      </FieldCell>
+        </FieldCell>
 
         <FieldCell
-        label="邮箱"
-        valueClassName="break-all text-sm text-stone-700 lg:text-center"
-      >
+          label="邮箱"
+          valueClassName="break-all text-sm text-stone-700 lg:text-center"
+        >
           {formatProfessorSearchField(professor.email)}
-      </FieldCell>
+        </FieldCell>
 
         <FieldCell
-        label="学校 / 学院"
-        valueClassName="break-words text-sm text-stone-600 lg:text-center"
-      >
+          label="学校 / 学院"
+          valueClassName="break-words text-sm text-stone-600 lg:text-center"
+        >
           {formatProfessorSearchField(schoolAndCollege)}
-      </FieldCell>
+        </FieldCell>
 
         <FieldCell
-        label="研究方向"
-        valueClassName="line-clamp-3 text-sm leading-6 text-stone-600 lg:text-center"
-      >
+          label="研究方向"
+          valueClassName="line-clamp-3 text-sm leading-6 text-stone-600 lg:text-center"
+        >
           {formatProfessorSearchField(professor.research_direction)}
-      </FieldCell>
+        </FieldCell>
 
         <FieldCell
           label="更新时间"

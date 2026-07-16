@@ -188,13 +188,24 @@ describe("ManagementProfessorRow", () => {
     expect(screen.getAllByText("无")).toHaveLength(4);
   });
 
-  it("keeps only existing school or college values when partially empty", () => {
+  it.each([
+    {
+      university: "  示例大学  ",
+      school: "   ",
+      expected: "示例大学",
+    },
+    {
+      university: "   ",
+      school: "  计算机学院  ",
+      expected: "计算机学院",
+    },
+  ])("keeps only the existing school or college value", ({ university, school, expected }) => {
     render(
       <ManagementProfessorRow
         professor={{
           ...professor,
-          university: "   ",
-          school: "  计算机学院  ",
+          university,
+          school,
         }}
         checked={false}
         selectable
@@ -206,7 +217,7 @@ describe("ManagementProfessorRow", () => {
       />,
     );
 
-    expect(screen.getByText("计算机学院")).toBeInTheDocument();
+    expect(screen.getByText(expected).textContent).toBe(expected);
     expect(screen.queryByText("无")).not.toBeInTheDocument();
   });
 });
