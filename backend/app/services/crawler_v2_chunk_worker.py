@@ -47,6 +47,14 @@ class V2ChunkAgentPayload(BaseModel):
     discovered_urls: list[str]
 
 
+class V2ChunkAgentRawPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    candidate_count: int = Field(strict=True, ge=0)
+    candidates: list[Any]
+    discovered_urls: list[str]
+
+
 async def invoke_v2_chunk_agent(
     llm_profile: Any,
     *,
@@ -65,7 +73,7 @@ async def invoke_v2_chunk_agent(
     )
     response = await model.ainvoke(prompt)
     content = _extract_message_text(response)
-    payload = parse_structured_result(content, V2ChunkAgentPayload)
+    payload = parse_structured_result(content, V2ChunkAgentRawPayload)
     usage = extract_token_usage_from_llm_response(response)
     return payload.model_dump(), usage, content
 
@@ -77,6 +85,7 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
         "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且链接文本像人名、URL 像个人主页时，这就是明确的姓名 + profile_url 候选证据。\n"
         "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
+        "candidate_count 必须是非负整数，禁止浮点数、字符串和布尔值。\n"
         "candidate_count 是当前 chunk 内明确候选的总数。candidate_count 为 0 时 candidates 必须为空；1 到 10 时 candidates 数组长度必须与 candidate_count 相等；candidate_count 必须为 11 或更大时 candidates 必须为空。\n"
         "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，candidate_count 必须为 11 或更大，不要输出前 10 个，也不要返回 0。\n"
         "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能把 candidate_count 填为 11 或更大。\n"

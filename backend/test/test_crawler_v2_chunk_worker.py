@@ -46,6 +46,8 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"candidate_count": 1', prompt)
         self.assertIn('"candidate_count": 11', prompt)
         self.assertIn("candidate_count", prompt)
+        self.assertIn("candidate_count 必须是非负整数", prompt)
+        self.assertIn("禁止浮点数、字符串和布尔值", prompt)
         self.assertIn('"candidates": []', prompt)
         self.assertIn('"discovered_urls": []', prompt)
     def test_chunk_prompt_treats_markdown_profile_links_as_candidates(self) -> None:
@@ -155,6 +157,38 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
         self.assertEqual(candidates, [])
         self.assertEqual(tasks, [])
+
+    async def test_worker_splits_real_llm_json_with_non_object_candidates_over_limit(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = "\n".join(f"教师{i} 研究方向 软件工程 人工智能 数据挖掘" for i in range(80))
+            await session.commit()
+
+        class FakeResponse:
+            content = '{"candidate_count": 11, "candidates": ["invalid candidate"], "discovered_urls": ["https://example.edu/faculty/list2.html"]}'
+
+        fake_model = AsyncMock()
+        fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
+        with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            parent = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
+            tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+        assert parent is not None
+        self.assertEqual(parent.status, CrawlPageChunkStatus.SUPERSEDED.value)
+        self.assertEqual(parent.split_reason, "candidate_count_exceeded")
+        self.assertEqual(candidates, [])
+        self.assertEqual(tasks, [])
+        completed_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "chunk_completed")
+        save_result = completed_call.kwargs["payload"]["save_result"]
+        self.assertEqual(save_result["contract_warning"], "candidate_count_candidates_conflict")
+        self.assertEqual(save_result["candidate_count"], 11)
+        self.assertEqual(save_result["candidate_payload_count"], 1)
 
     async def test_worker_marks_retryable_when_candidate_count_mismatches_payload(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
