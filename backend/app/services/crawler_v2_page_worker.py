@@ -18,6 +18,7 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     browser_investigate,
     crawl_page_with_http,
+    looks_like_client_encrypted_profile_fields,
     looks_like_unrendered_dynamic_teacher_directory,
     save_candidate_payloads_shared,
 )
@@ -74,8 +75,9 @@ async def run_crawler_v2_page_worker_once(
                 fallback_reason = _fallback_reason(direct_snapshot)
                 browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
                 browser_status = browser_snapshot.status
-                snapshot = browser_snapshot
-                fetch_mode = "browser"
+                if browser_snapshot.status == "succeeded" or direct_snapshot.status != "succeeded":
+                    snapshot = browser_snapshot
+                    fetch_mode = "browser"
         async with session_factory() as session:
             if not await ensure_job_active(session, task.job_id):
                 return 0
@@ -166,6 +168,8 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     if snapshot.suspicious_empty:
         return True
     if looks_like_unrendered_dynamic_teacher_directory(snapshot):
+        return True
+    if looks_like_client_encrypted_profile_fields(snapshot):
         return True
     if not text and len(html) < 80:
         return True

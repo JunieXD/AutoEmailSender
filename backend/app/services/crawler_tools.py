@@ -26,6 +26,7 @@ from app.services.crawler_page_fetch_ledger import (
     PageFetchDecision,
     get_page_fetch_decision,
     mark_page_fetch_result,
+    normalize_fetch_url,
     should_prefer_browser_for_fetch_domain,
 )
 from app.services.html_text import html_to_text
@@ -59,6 +60,7 @@ INVALID_PROFILE_PAGE_MARKERS = (
     "FineCMS error",
     "SQL syntax",
 )
+CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS = ("_tsites_encrypt_field",)
 DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
     "search_teacher.js",
     "_wp3services/generalquery?queryobj=articles",
@@ -613,6 +615,9 @@ class CrawlToolContext:
             self.page_snapshot_cache.move_to_end(normalized)
             while len(self.page_snapshot_cache) > MAX_PAGE_SNAPSHOT_CACHE_ENTRIES:
                 self.page_snapshot_cache.popitem(last=False)
+
+    def forget_page_snapshot(self, url: str) -> None:
+        self.page_snapshot_cache.pop(_normalize_page_cache_url(url), None)
 
 
 class CrawlJobPaused(RuntimeError):
@@ -1332,23 +1337,43 @@ async def crawl_page_with_browser_fallback(
             goal="",
             intent=intent,
         )
-        processed_browser_snapshot = _apply_runtime_url_denylist_after_fetch(
+        selected_snapshot = browser_snapshot
+        fetch_mode = "browser"
+        if browser_snapshot.status != "succeeded" and http_snapshot.status == "succeeded":
+            selected_snapshot = http_snapshot
+            fetch_mode = "direct"
+        processed_snapshot = _apply_runtime_url_denylist_after_fetch(
             ctx,
             requested_url=absolute_url,
-            snapshot=browser_snapshot,
+            snapshot=selected_snapshot,
         )
-        await mark_page_fetch_result(
-            ctx.session_factory,
-            job_id=ctx.job_id,
-            original_url=absolute_url,
-            snapshot=processed_browser_snapshot,
-            fetch_mode="browser",
-            direct_status=http_snapshot.status,
-            fallback_reason=http_snapshot.error_message or "direct_fetch_unusable",
-            browser_status=processed_browser_snapshot.status,
-        )
+        ledger_urls = [processed_snapshot.url]
+        if fetch_mode == "direct":
+            ledger_urls.extend((absolute_url, browser_snapshot.url))
+        recorded_urls: set[str] = set()
+        for ledger_url in ledger_urls:
+            normalized_ledger_url = normalize_fetch_url(ledger_url)
+            if normalized_ledger_url in recorded_urls:
+                continue
+            recorded_urls.add(normalized_ledger_url)
+            ledger_snapshot = processed_snapshot.model_copy(update={"url": ledger_url})
+            await mark_page_fetch_result(
+                ctx.session_factory,
+                job_id=ctx.job_id,
+                original_url=absolute_url,
+                snapshot=ledger_snapshot,
+                fetch_mode=fetch_mode,
+                direct_status=http_snapshot.status,
+                fallback_reason=http_snapshot.error_message or "direct_fetch_unusable",
+                browser_status=browser_snapshot.status,
+            )
+        if fetch_mode == "direct":
+            ctx.forget_page_snapshot(absolute_url)
+            ctx.forget_page_snapshot(browser_snapshot.url)
+            if _should_remember_page_snapshot(processed_snapshot):
+                ctx.remember_page_snapshot(processed_snapshot)
         await _ensure_crawl_job_can_continue_for_context(ctx)
-        return processed_browser_snapshot
+        return processed_snapshot
     processed_snapshot = _apply_runtime_url_denylist_after_fetch(
         ctx,
         requested_url=absolute_url,
@@ -1491,6 +1516,9 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     if looks_like_unrendered_dynamic_teacher_directory(snapshot):
         return True
 
+    if looks_like_client_encrypted_profile_fields(snapshot):
+        return True
+
     if _looks_like_unrendered_or_error_profile_page(snapshot):
         return True
 
@@ -1537,6 +1565,11 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
 def _looks_like_unrendered_or_error_profile_page(snapshot: PageSnapshot) -> bool:
     haystack = f"{snapshot.title or ''}\n{snapshot.text}\n{snapshot.html[:2000]}"
     return any(marker in haystack for marker in INVALID_PROFILE_PAGE_MARKERS)
+
+
+def looks_like_client_encrypted_profile_fields(snapshot: PageSnapshot) -> bool:
+    html = snapshot.html or ""
+    return any(marker in html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS)
 
 
 def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> bool:
