@@ -21,7 +21,7 @@ from app.models import (
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
@@ -40,9 +40,11 @@ _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 
 class V2ChunkAgentPayload(BaseModel):
-    candidates: list[dict[str, Any]] = Field(default_factory=list)
-    discovered_urls: list[str] = Field(default_factory=list)
-    chunk_status: str = "completed"
+    model_config = ConfigDict(extra="ignore")
+
+    candidate_count: int = Field(strict=True, ge=0)
+    candidates: list[dict[str, Any]]
+    discovered_urls: list[str]
 
 
 async def invoke_v2_chunk_agent(
@@ -71,14 +73,13 @@ async def invoke_v2_chunk_agent(
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
     return (
         "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
-        "只输出一个 JSON 对象，字段为 candidates、discovered_urls、chunk_status。不要输出解释文字。\n"
-        "chunk_status 只能是 completed、no_candidates 或 too_many_candidates。\n"
+        "只输出一个 JSON 对象，字段为 candidate_count、candidates、discovered_urls。不要输出解释文字，也不能输出 chunk_status。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
         "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且链接文本像人名、URL 像个人主页时，这就是明确的姓名 + profile_url 候选证据。\n"
         "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
-        "candidates 最多 10 个候选；只有当前 chunk 正文内明确可见超过 10 个导师候选时，chunk_status 才能是 too_many_candidates，且 candidates 必须为空。\n"
-        "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，必须返回 too_many_candidates，不要输出前 10 个，也不要返回 no_candidates。\n"
-        "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能使用 too_many_candidates。\n"
+        "candidate_count 是当前 chunk 内明确候选的总数。candidate_count 为 0 时 candidates 必须为空；1 到 10 时 candidates 数组长度必须与 candidate_count 相等；candidate_count 必须为 11 或更大时 candidates 必须为空。\n"
+        "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，candidate_count 必须为 11 或更大，不要输出前 10 个，也不要返回 0。\n"
+        "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能把 candidate_count 填为 11 或更大。\n"
         "缺少 email 且缺少 profile_url 的候选不可提交；但有姓名 + profile_url 的候选即使缺少 email 也可提交。\n"
         "no_candidates 只允许在当前 chunk 内没有任何姓名+邮箱、姓名+profile_url、教师卡片或教师表格行时使用。\n"
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
@@ -87,11 +88,11 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "每个候选字段使用英文键：name、email、title、university、school、department、research_direction、recent_papers、profile_url、source_url、confidence、field_confidence、evidence。\n"
         "confidence 和 field_confidence 必须是 0 到 1 的数字；evidence 只写简短摘要，不复制大段原文。\n"
         "输出示例（正常保存）：\n"
-        '{"chunk_status": "completed", "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": {"name": 0.95, "email": 0.9, "profile_url": 0.95}, "evidence": {"summary": "当前 chunk 中姓名链接和邮箱明确出现"}}], "discovered_urls": []}\n'
+        '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": {"name": 0.95, "email": 0.9, "profile_url": 0.95}, "evidence": {"summary": "当前 chunk 中姓名链接和邮箱明确出现"}}], "discovered_urls": []}\n'
         "输出示例（当前 chunk 明确超过 10 个候选）：\n"
-        '{"chunk_status": "too_many_candidates", "candidates": [], "discovered_urls": []}\n'
+        '{"candidate_count": 11, "candidates": [], "discovered_urls": []}\n'
         "输出示例（无候选）：\n"
-        '{"chunk_status": "no_candidates", "candidates": [], "discovered_urls": []}\n'
+        '{"candidate_count": 0, "candidates": [], "discovered_urls": []}\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"来源 URL：{source_url}\n"
@@ -127,16 +128,29 @@ def _extract_message_text(response: object) -> str:
 def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Chunk Worker 返回结构不是 JSON 对象")
-    required = {"candidates", "discovered_urls", "chunk_status"}
+    required = {"candidate_count", "candidates", "discovered_urls"}
     missing = required.difference(payload)
     if missing:
         raise ValueError(f"Chunk Worker 返回缺少字段：{', '.join(sorted(missing))}")
-    chunk_status = str(payload.get("chunk_status") or "")
-    if chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
-        raise ValueError("Chunk Worker 返回了已废弃的 split_required；只有当前 chunk 明确超过 10 个候选时才能返回 too_many_candidates")
-    if chunk_status not in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value, "too_many_candidates"}:
-        raise ValueError(f"Chunk Worker 返回了不支持的 chunk_status：{chunk_status}")
+    candidate_count = payload["candidate_count"]
+    if isinstance(candidate_count, bool) or not isinstance(candidate_count, int) or candidate_count < 0:
+        raise ValueError("Chunk Worker 返回的 candidate_count 必须是大于等于 0 的整数")
+    candidates = payload["candidates"]
+    if not isinstance(candidates, list):
+        raise ValueError("Chunk Worker 返回的 candidates 必须是数组")
+    if not isinstance(payload["discovered_urls"], list):
+        raise ValueError("Chunk Worker 返回的 discovered_urls 必须是数组")
+    if candidate_count <= MAX_CANDIDATES_PER_CHUNK_RESULT and len(candidates) != candidate_count:
+        raise ValueError("Chunk Worker 返回的 candidate_count 与 candidates 数量不一致")
     return payload
+
+
+def _derive_chunk_status(candidate_count: int) -> str:
+    if candidate_count == 0:
+        return CrawlPageChunkStatus.NO_CANDIDATES.value
+    if candidate_count <= MAX_CANDIDATES_PER_CHUNK_RESULT:
+        return CrawlPageChunkStatus.COMPLETED.value
+    return CrawlPageChunkStatus.SPLIT_REQUIRED.value
 
 async def run_crawler_v2_chunk_worker_once(
     session_factory: async_sessionmaker[AsyncSession],
@@ -213,15 +227,26 @@ async def run_crawler_v2_chunk_worker_once(
             },
         )
         payload = _validate_chunk_agent_payload(payload)
-        candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload.get("candidates", [])]
+        candidate_count = payload["candidate_count"]
+        candidate_payload_count = len(payload["candidates"])
+        derived_chunk_status = _derive_chunk_status(candidate_count)
+        candidates: list[ProfessorCandidatePayload]
+        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
+            candidates = []
+        else:
+            candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload["candidates"]]
         save_result = await complete_current_chunk(
             session_factory,
             chunk_id=chunk_id,
             worker_id=worker_id,
             candidates=candidates,
-            discovered_urls=[str(url) for url in payload.get("discovered_urls", [])],
-            chunk_status=str(payload.get("chunk_status") or "completed"),
+            discovered_urls=[str(url) for url in payload["discovered_urls"]],
+            candidate_count=candidate_count,
         )
+        save_result["candidate_count"] = candidate_count
+        save_result["candidate_payload_count"] = candidate_payload_count
+        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value and candidate_payload_count:
+            save_result["contract_warning"] = "candidate_count_candidates_conflict"
         append_crawler_v2_debug_event(
             job.id,
             worker_kind="chunk",
@@ -324,7 +349,7 @@ async def complete_current_chunk(
     worker_id: str,
     candidates: Sequence[ProfessorCandidatePayload],
     discovered_urls: Sequence[str],
-    chunk_status: str,
+    candidate_count: int,
 ) -> dict[str, int | str]:
     async with session_factory() as session:
         chunk = await session.get(CrawlPageChunk, chunk_id)
@@ -340,13 +365,13 @@ async def complete_current_chunk(
         if job is None:
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
 
-        if chunk_status == "too_many_candidates" or len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT:
-            reason = "candidate_count_exceeded" if len(candidates) > MAX_CANDIDATES_PER_CHUNK_RESULT else "too_many_candidates"
+        derived_chunk_status = _derive_chunk_status(candidate_count)
+        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
             split_result = await split_page_chunk_for_retry(
                 session_factory,
                 job_id=chunk.job_id,
                 chunk_pk=chunk.id,
-                reason=reason,
+                reason="candidate_count_exceeded",
             )
             return {
                 "status": split_result["status"],
@@ -355,6 +380,7 @@ async def complete_current_chunk(
                 "enrichment_count": 0,
                 "rejected_count": 0,
                 "child_count": split_result["child_count"],
+                "derived_chunk_status": derived_chunk_status,
             }
         discovered_listing_urls = {
             normalized
@@ -416,7 +442,7 @@ async def complete_current_chunk(
                 continue
             url_count += 1
 
-        chunk.status = _normalize_chunk_status(chunk_status)
+        chunk.status = derived_chunk_status
         chunk.worker_id = None
         chunk.claimed_at = None
         chunk.lease_expires_at = None
@@ -429,6 +455,7 @@ async def complete_current_chunk(
             "rejected_count": save_result["rejected_count"],
             "merged_count": save_result["merged_count"],
             "skipped_duplicate_count": save_result["skipped_duplicate_count"],
+            "derived_chunk_status": derived_chunk_status,
         }
 
 
@@ -436,12 +463,6 @@ def _lease_expired(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:
         return False
     return as_utc_aware(lease_expires_at) <= utc_now()
-
-
-def _normalize_chunk_status(chunk_status: str) -> str:
-    if chunk_status in {CrawlPageChunkStatus.COMPLETED.value, CrawlPageChunkStatus.NO_CANDIDATES.value}:
-        return chunk_status
-    return CrawlPageChunkStatus.COMPLETED.value
 
 
 def _clean(value: str | None) -> str | None:
