@@ -3,6 +3,7 @@ import { Loader2, Sparkles } from "lucide-react";
 import { ProfessorNoteButton } from "@/components/molecules/ProfessorNoteButton";
 import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
+import { formatProfessorSearchField } from "@/lib/professorSearchField";
 import type { ProfessorDashboardItemDTO } from "@/types";
 
 export type DashboardProfessorRowTimeHighlight = "sent" | "replied" | null;
@@ -29,8 +30,11 @@ const formatMatchLabel = (score: number | null) =>
 const formatSentLabel = (sentCount: number) =>
   sentCount === 0 ? "未发送" : `已发送 ${sentCount} 次`;
 
-const joinNonEmpty = (values: Array<string | null>) =>
-  values.filter(Boolean).join(" / ");
+const joinNonEmpty = (values: Array<string | null | undefined>) =>
+  values
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join(" / ");
 
 const getRowBackgroundClass = (
   selected: boolean,
@@ -96,11 +100,12 @@ export const DashboardProfessorRow = ({
           />
         </div>
         <div className="mt-1 text-sm text-stone-500">
-          {joinNonEmpty([professor.title, professor.university, professor.school]) ||
-            "未填写学校 / 学院"}
+          {formatProfessorSearchField(
+            joinNonEmpty([professor.title, professor.university, professor.school]),
+          )}
         </div>
         <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">
-          {professor.research_direction || "未填写研究方向"}
+          {formatProfessorSearchField(professor.research_direction)}
         </p>
       </div>
     </div>
