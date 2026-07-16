@@ -14,6 +14,7 @@
 
 - 创建 `frontend/src/lib/professorSearchField.ts`：定义 `无` 常量、搜索文本归一化、空值判断、关键词匹配和单字段显示格式化。
 - 创建 `frontend/src/lib/professorSearchField.test.ts`：锁定共享空值语义与“无人机”回归行为。
+- 修改 `frontend/vite.config.ts`：把新增的 node 环境 helper 测试加入显式 Vitest 白名单。
 - 修改 `frontend/src/features/home-dashboard/client/filterDashboardProfessors.ts`：删除本地重复 helper，改用共享搜索字段工具。
 - 修改 `frontend/src/features/professor-management/client/filterManagementProfessors.ts`：删除本地重复 helper，改用共享搜索字段工具。
 - 修改 `frontend/src/components/molecules/DashboardProfessorRow.tsx`：整段摘要和研究方向为空时显示 `无`。
@@ -26,6 +27,7 @@
 **文件：**
 - 创建：`frontend/src/lib/professorSearchField.test.ts`
 - 创建：`frontend/src/lib/professorSearchField.ts`
+- 修改：`frontend/vite.config.ts:8-20`
 
 - [ ] **步骤 1：编写失败的共享 helper 测试**
 
@@ -84,6 +86,14 @@ describe("professorSearchField", () => {
 });
 ```
 
+在 `frontend/vite.config.ts` 的 `nodeTestFiles` 中、`src/lib/professorTitle.test.ts` 之后加入：
+
+```ts
+"src/lib/professorSearchField.test.ts",
+```
+
+这一步只让新测试进入现有 node 测试项目，不改变 Vite 或 Vitest 的其他配置。
+
 - [ ] **步骤 2：运行测试并确认因模块不存在而失败**
 
 运行：
@@ -137,7 +147,7 @@ rtk npm run test -- --run src/lib/professorSearchField.test.ts
 - [ ] **步骤 5：提交共享语义**
 
 ```bash
-rtk git add frontend/src/lib/professorSearchField.ts frontend/src/lib/professorSearchField.test.ts
+rtk git add frontend/src/lib/professorSearchField.ts frontend/src/lib/professorSearchField.test.ts frontend/vite.config.ts
 rtk git commit -m "refactor(frontend): 共享导师空字段语义"
 ```
 
