@@ -16,6 +16,7 @@ const nodeTestFiles = [
   "src/lib/charting.test.ts",
   "src/lib/pagination.test.ts",
   "src/lib/professorTitle.test.ts",
+  "src/lib/professorSearchField.test.ts",
   "src/pages/ProfilePage.test.ts",
   "test/BatchTasksApi.test.ts",
   "test/CrawlJobsApi.test.ts",

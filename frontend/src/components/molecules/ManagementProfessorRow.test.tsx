@@ -158,8 +158,66 @@ describe("ManagementProfessorRow", () => {
     );
 
     expect(screen.queryByText("暂无标签")).not.toBeInTheDocument();
+    expect(screen.queryByText("无")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "给导师添加标签" }));
 
     expect(handleAddTag).toHaveBeenCalled();
+  });
+
+  it("shows 无 for entirely empty management display cells", () => {
+    render(
+      <ManagementProfessorRow
+        professor={{
+          ...professor,
+          title: "   ",
+          email: "\t",
+          university: null,
+          school: "",
+          research_direction: " \n ",
+        }}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("无")).toHaveLength(4);
+  });
+
+  it.each([
+    {
+      university: "  示例大学  ",
+      school: "   ",
+      expected: "示例大学",
+    },
+    {
+      university: "   ",
+      school: "  计算机学院  ",
+      expected: "计算机学院",
+    },
+  ])("keeps only the existing school or college value", ({ university, school, expected }) => {
+    render(
+      <ManagementProfessorRow
+        professor={{
+          ...professor,
+          university,
+          school,
+        }}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(expected).textContent).toBe(expected);
+    expect(screen.queryByText("无")).not.toBeInTheDocument();
   });
 });

@@ -93,6 +93,7 @@ describe("DashboardProfessorRow", () => {
     );
 
     expect(screen.queryByText("暂无标签")).not.toBeInTheDocument();
+    expect(screen.queryByText("无")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "给导师添加标签" }));
 
     expect(handleAddTag).toHaveBeenCalled();
@@ -172,5 +173,57 @@ describe("DashboardProfessorRow", () => {
       "draggable",
       "true",
     );
+  });
+
+  it("shows 无 when existing homepage display cells are entirely empty", () => {
+    render(
+      <DashboardProfessorRow
+        professor={{
+          ...professor,
+          title: "   ",
+          university: null,
+          school: "",
+          research_direction: " \t ",
+        }}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("无")).toHaveLength(2);
+  });
+
+  it("keeps only existing homepage summary values when fields are partially empty", () => {
+    render(
+      <DashboardProfessorRow
+        professor={{
+          ...professor,
+          title: "   ",
+          university: "  示例大学  ",
+          school: null,
+        }}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("示例大学")).toBeInTheDocument();
+    expect(screen.queryByText("无")).not.toBeInTheDocument();
   });
 });

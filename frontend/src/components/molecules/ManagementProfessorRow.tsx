@@ -5,6 +5,7 @@ import { ProfessorNoteButton } from "@/components/molecules/ProfessorNoteButton"
 import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { formatApiDateTime } from "@/lib/dateTime";
+import { formatProfessorSearchField } from "@/lib/professorSearchField";
 import { normalizeProfessorTitleDisplay } from "@/lib/professorTitle";
 import type { ProfessorManagementItemDTO } from "@/types";
 
@@ -51,6 +52,7 @@ export const ManagementProfessorRow = ({
   onAddTag,
 }: ManagementProfessorRowProps) => {
   const schoolAndCollege = [professor.university, professor.school]
+    .map((value) => value?.trim() ?? "")
     .filter(Boolean)
     .join(" / ");
 
@@ -103,28 +105,28 @@ export const ManagementProfessorRow = ({
           label="职称"
           valueClassName="text-sm text-stone-600 lg:text-center"
         >
-          {normalizeProfessorTitleDisplay(professor.title) || "未填写职称"}
+          {formatProfessorSearchField(normalizeProfessorTitleDisplay(professor.title))}
         </FieldCell>
 
         <FieldCell
           label="邮箱"
           valueClassName="break-all text-sm text-stone-700 lg:text-center"
         >
-          {professor.email || "未填写邮箱"}
+          {formatProfessorSearchField(professor.email)}
         </FieldCell>
 
         <FieldCell
           label="学校 / 学院"
           valueClassName="break-words text-sm text-stone-600 lg:text-center"
         >
-          {schoolAndCollege || "未填写学校 / 学院"}
+          {formatProfessorSearchField(schoolAndCollege)}
         </FieldCell>
 
         <FieldCell
           label="研究方向"
           valueClassName="line-clamp-3 text-sm leading-6 text-stone-600 lg:text-center"
         >
-          {professor.research_direction || "未填写研究方向"}
+          {formatProfessorSearchField(professor.research_direction)}
         </FieldCell>
 
         <FieldCell

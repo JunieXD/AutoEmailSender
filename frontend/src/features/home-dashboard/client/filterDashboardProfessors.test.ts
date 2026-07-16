@@ -124,6 +124,39 @@ describe("filterDashboardProfessors", () => {
     ).toEqual(["Alice", "Bob", "Carol"]);
   });
 
+  it("uses the exact keyword 无 to match missing selected fields", () => {
+    const candidates = [
+      buildProfessor({
+        id: 4,
+        name: "Missing direction",
+        research_direction: null,
+      }),
+      buildProfessor({
+        id: 5,
+        name: "Blank direction",
+        research_direction: "   ",
+      }),
+      buildProfessor({
+        id: 6,
+        name: "Drone research",
+        research_direction: "无人机系统",
+      }),
+    ];
+
+    expect(
+      namesFor(candidates, {
+        keyword: " 无 ",
+        keywordSearchScopes: ["researchDirection"],
+      }),
+    ).toEqual(["Missing direction", "Blank direction"]);
+    expect(
+      namesFor(candidates, {
+        keyword: "无人机",
+        keywordSearchScopes: ["researchDirection"],
+      }),
+    ).toEqual(["Drone research"]);
+  });
+
   it("drops invalid dashboard search scopes and keeps valid selections", () => {
     const fields = normalizeDashboardKeywordSearchScopes([
       "researchDirection",

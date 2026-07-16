@@ -11,6 +11,7 @@ import {
   NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
+  type ProfessorManagementKeywordSearchScope,
 } from "./filterManagementProfessors";
 
 const buildProfessor = (
@@ -132,6 +133,84 @@ describe("filterManagementProfessors", () => {
         keywordSearchScopes: ["name"],
       }),
     ).toEqual([]);
+  });
+
+  it("uses the exact keyword 无 to match missing selected fields", () => {
+    const missingFieldCases: Array<
+      [
+        ProfessorManagementKeywordSearchScope,
+        Partial<ProfessorManagementItemDTO>,
+        Partial<ProfessorManagementItemDTO>,
+      ]
+    > = [
+      ["email", { email: null }, { email: "filled@example.edu" }],
+      ["university", { university: null }, { university: "MIT" }],
+      ["school", { school: null }, { school: "Engineering" }],
+      ["department", { department: null }, { department: "EECS" }],
+      ["title", { title: null }, { title: "教授" }],
+      [
+        "researchDirection",
+        { research_direction: null },
+        { research_direction: "AI systems" },
+      ],
+      [
+        "tag",
+        { tags: [] },
+        {
+          tags: [
+            {
+              id: 1,
+              name: "重点跟进",
+              text_color: "#166534",
+              background_color: "#dcfce7",
+            },
+          ],
+        },
+      ],
+    ];
+
+    missingFieldCases.forEach(([scope, missingField, filledField], index) => {
+      const missingName = `Missing ${scope}`;
+      const candidates = [
+        buildProfessor({ id: index * 2 + 10, name: missingName, ...missingField }),
+        buildProfessor({ id: index * 2 + 11, name: `Filled ${scope}`, ...filledField }),
+      ];
+
+      expect(
+        namesFor(candidates, {
+          keyword: " 无 ",
+          keywordSearchScopes: [scope],
+        }),
+      ).toEqual([missingName]);
+    });
+  });
+
+  it("treats 无 as an empty-field query without changing longer keyword searches", () => {
+    const candidates = [
+      buildProfessor({
+        id: 30,
+        name: "Missing direction",
+        research_direction: "   ",
+      }),
+      buildProfessor({
+        id: 31,
+        name: "Drone research",
+        research_direction: "无人机系统",
+      }),
+    ];
+
+    expect(
+      namesFor(candidates, {
+        keyword: "无",
+        keywordSearchScopes: ["researchDirection"],
+      }),
+    ).toEqual(["Missing direction"]);
+    expect(
+      namesFor(candidates, {
+        keyword: "无人机",
+        keywordSearchScopes: ["researchDirection"],
+      }),
+    ).toEqual(["Drone research"]);
   });
 
   it("drops invalid management search scopes and keeps valid selections", () => {

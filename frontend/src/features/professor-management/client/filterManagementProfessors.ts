@@ -1,5 +1,9 @@
-import type { ProfessorManagementItemDTO } from "@/types";
+import {
+  matchesProfessorSearchField,
+  normalizeProfessorSearchText,
+} from "@/lib/professorSearchField";
 import { extractProfessorTitleTags } from "@/lib/professorTitle";
+import type { ProfessorManagementItemDTO } from "@/types";
 
 export const MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS = [
   { value: "name", label: "姓名" },
@@ -65,9 +69,6 @@ export type ProfessorManagementFilterOptions = {
   titles: string[];
   tags: { id: number; name: string }[];
 };
-
-const normalize = (value: string | null | undefined): string =>
-  value?.trim().toLowerCase() ?? "";
 
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
@@ -231,7 +232,7 @@ export const filterManagementProfessors = (
   professors: ProfessorManagementItemDTO[],
   filters: ProfessorManagementFilterState,
 ): ProfessorManagementItemDTO[] => {
-  const keyword = normalize(filters.keyword);
+  const keyword = normalizeProfessorSearchText(filters.keyword);
   const keywordSearchScopes = normalizeManagementKeywordSearchScopes(
     filters.keywordSearchScopes,
   );
@@ -240,7 +241,10 @@ export const filterManagementProfessors = (
     const keywordMatched =
       !keyword ||
       keywordSearchScopes.some((scope) =>
-        normalize(getManagementKeywordValue(professor, scope)).includes(keyword),
+        matchesProfessorSearchField(
+          getManagementKeywordValue(professor, scope),
+          keyword,
+        ),
       );
 
     return (

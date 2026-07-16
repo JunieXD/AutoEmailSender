@@ -1,3 +1,7 @@
+import {
+  matchesProfessorSearchField,
+  normalizeProfessorSearchText,
+} from "@/lib/professorSearchField";
 import type { ProfessorDashboardItemDTO, ProfessorDashboardStatus } from "@/types";
 
 export const DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS = [
@@ -75,9 +79,6 @@ export const createDefaultDashboardFilters = (): DashboardFilterState => ({
   tagIds: [],
   minMatchScore: "",
 });
-
-const normalize = (value: string | null | undefined): string =>
-  value?.trim().toLowerCase() ?? "";
 
 const sortByChinese = (values: Iterable<string>): string[] =>
   Array.from(values).sort((left, right) => left.localeCompare(right, "zh-CN"));
@@ -275,7 +276,7 @@ export const filterDashboardProfessors = (
   professors: ProfessorDashboardItemDTO[],
   filters: DashboardFilterState,
 ): ProfessorDashboardItemDTO[] => {
-  const keyword = normalize(filters.keyword);
+  const keyword = normalizeProfessorSearchText(filters.keyword);
   const keywordSearchScopes = normalizeDashboardKeywordSearchScopes(
     filters.keywordSearchScopes,
   );
@@ -285,7 +286,10 @@ export const filterDashboardProfessors = (
     const keywordMatched =
       !keyword ||
       keywordSearchScopes.some((scope) =>
-        normalize(getDashboardKeywordValue(professor, scope)).includes(keyword),
+        matchesProfessorSearchField(
+          getDashboardKeywordValue(professor, scope),
+          keyword,
+        ),
       );
 
     const matchScoreMatched =
