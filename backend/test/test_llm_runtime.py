@@ -28,6 +28,7 @@ from app.services.llm_runtime import (
     generate_draft_content,
     generate_match_evaluation,
     LLMEndpointProtocolError,
+    LLMRuntimeAdaptation,
     LLMRuntimeError,
     parse_completion_usage,
     probe_llm_profile,
@@ -2399,11 +2400,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         # 只发一次 HTTP，不做多轮探活
         self.assertEqual(len(calls), 1)
 
-    async def test_probe_llm_profile_session_kwarg_does_not_trigger_learning(self) -> None:
-        # session 形参保留以兼容路由层，但测活路径不再触发 ensure_thinking_adaptation。
-        # 保证测试连接行为简单可预测。
-        from unittest.mock import AsyncMock
-
+    async def test_probe_llm_profile_uses_provided_runtime_adaptation_with_session(self) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2419,21 +2416,18 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        fake_session = object()
-        with (
-            patch(
-                "app.services.llm_runtime.httpx.AsyncClient",
-                side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
-            ),
-            patch(
-                "app.services.thinking_adaptation.ensure_thinking_adaptation",
-                AsyncMock(),
-            ) as ensure_mock,
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
-            result = await probe_llm_profile(profile, session=fake_session)
+            result = await probe_llm_profile(
+                profile,
+                session=object(),
+                adaptation=LLMRuntimeAdaptation("chat_completions", None),
+            )
 
         self.assertTrue(result.ok)
-        ensure_mock.assert_not_awaited()
+        self.assertEqual(calls[0][0], "https://api.acme.ai/v1/chat/completions")
 
     async def test_fetch_llm_profile_models_uses_models_endpoint(self) -> None:
         profile = LLMProfile(

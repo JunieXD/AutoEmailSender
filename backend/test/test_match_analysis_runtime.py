@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
     AppSetting,
@@ -42,14 +42,14 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
         self._run_async(self._create_schema())
         self.email_task_id = self._run_async(self._create_email_task())
-        self.thinking_adaptation_patcher = patch(
-            "app.services.task_runtime.ensure_thinking_adaptation",
-            new=AsyncMock(return_value=None),
+        self.runtime_adaptation_patcher = patch(
+            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)),
         )
-        self.thinking_adaptation_patcher.start()
+        self.runtime_adaptation_patcher.start()
 
     def tearDown(self) -> None:
-        self.thinking_adaptation_patcher.stop()
+        self.runtime_adaptation_patcher.stop()
         self._run_async(self.engine.dispose())
         self.temp_dir.cleanup()
 
@@ -160,6 +160,47 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(runs[0].cached_tokens, 64)
         self.assertIsNotNone(runs[0].started_at)
         self.assertIsNotNone(runs[0].finished_at)
+
+    def test_calculate_match_passes_workflow_session_and_runtime_adaptation(self) -> None:
+        adaptation = llm_runtime.LLMRuntimeAdaptation("responses", {"enable_thinking": False})
+        workflow_sessions: list[AsyncSession] = []
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=91,
+                match_reason="研究方向接近",
+                fit_points=["信息抽取"],
+                risk_points=[],
+                keywords=["信息抽取"],
+            ),
+            usage=None,
+        )
+
+        async def fake_ensure(session: AsyncSession, _profile: object) -> llm_runtime.LLMRuntimeAdaptation:
+            self.assertIsInstance(session, AsyncSession)
+            workflow_sessions.append(session)
+            return adaptation
+
+        async def fake_generate(**kwargs: object) -> llm_runtime.GeneratedMatchEvaluation:
+            self.assertEqual(len(workflow_sessions), 1)
+            self.assertIs(kwargs["session"], workflow_sessions[0])
+            self.assertIs(kwargs["adaptation"], adaptation)
+            return generation
+
+        with (
+            patch(
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                new=AsyncMock(side_effect=fake_ensure),
+            ) as adaptation_mock,
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                new=AsyncMock(side_effect=fake_generate),
+            ) as generate_mock,
+        ):
+            result = self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+
+        self.assertIsNotNone(result.run_id)
+        adaptation_mock.assert_awaited_once()
+        generate_mock.assert_awaited_once()
 
     def test_calculate_match_uses_identity_current_primary_material(self) -> None:
         alt_material_id = self._run_async(self._switch_identity_default_material())

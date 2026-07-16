@@ -16,7 +16,9 @@ from unittest.mock import AsyncMock, patch
 from openpyxl import Workbook, load_workbook
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.migrations import get_alembic_config, get_head_revision
+from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services.professor_management import PROFESSOR_TEMPLATE_COLUMNS
 from test.migrated_database import create_migrated_sqlite_database
 
@@ -44,20 +46,20 @@ class ApiEndpointTests(unittest.TestCase):
         get_settings.cache_clear()
 
         self.client = TestClient(create_app())
-        self._task_thinking_adaptation_patch = patch(
-            "app.services.task_runtime.ensure_thinking_adaptation",
-            new=AsyncMock(return_value=None),
+        self._task_runtime_adaptation_patch = patch(
+            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
-        self._test_compose_thinking_adaptation_patch = patch(
-            "app.services.test_compose_runtime.ensure_thinking_adaptation",
-            new=AsyncMock(return_value=None),
+        self._test_compose_runtime_adaptation_patch = patch(
+            "app.services.test_compose_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
-        self._task_thinking_adaptation_patch.start()
-        self._test_compose_thinking_adaptation_patch.start()
+        self._task_runtime_adaptation_patch.start()
+        self._test_compose_runtime_adaptation_patch.start()
 
     def tearDown(self) -> None:
-        self._test_compose_thinking_adaptation_patch.stop()
-        self._task_thinking_adaptation_patch.stop()
+        self._test_compose_runtime_adaptation_patch.stop()
+        self._task_runtime_adaptation_patch.stop()
         self.client.close()
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
@@ -80,8 +82,8 @@ class ApiEndpointTests(unittest.TestCase):
             patch("app.api.identities.test_smtp_connection", AsyncMock(return_value=(True, "SMTP 连接测试成功"))),
             patch("app.api.identities.test_imap_connection", AsyncMock(return_value=(True, "IMAP 连接测试成功"))),
             patch(
-                "app.api.llm_profiles.ensure_thinking_adaptation",
-                AsyncMock(return_value={"enable_thinking": False}),
+                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
             ),
             patch(
                 "app.api.llm_profiles.probe_llm_profile",
@@ -307,9 +309,9 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ) as probe_mock,
             patch(
-                "app.api.llm_profiles.ensure_thinking_adaptation",
-                AsyncMock(return_value={"enable_thinking": False}),
-            ) as thinking_mock,
+                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
+            ) as adaptation_mock,
         ):
             models_response = self.client.post("/api/llm-profiles/preview/models", json=payload)
             test_response = self.client.post("/api/llm-profiles/preview/test", json=payload)
@@ -318,7 +320,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(test_response.status_code, 200, msg=test_response.text)
         fetch_mock.assert_awaited_once()
         probe_mock.assert_awaited_once()
-        thinking_mock.assert_awaited_once()
+        adaptation_mock.assert_awaited_once()
         self.assertEqual(fetch_mock.await_args.args[0].api_base_url, payload["api_base_url"])
         self.assertEqual(fetch_mock.await_args.args[0].api_key, payload["api_key"])
         self.assertEqual(probe_mock.await_args.args[0].api_base_url, payload["api_base_url"])
@@ -337,11 +339,11 @@ class ApiEndpointTests(unittest.TestCase):
                 model_name=profile.model_name,
                 learned_extra_body={"enable_thinking": False},
             )
-            return {"enable_thinking": False}
+            return LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})
 
         with (
             patch(
-                "app.api.llm_profiles.ensure_thinking_adaptation",
+                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
                 side_effect=record_adaptation,
             ),
             patch(
@@ -371,6 +373,73 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(json.loads(row[0]), {"enable_thinking": False})
 
+    def test_llm_profile_test_detects_responses_protocol_and_commits_both_adaptation_caches(self) -> None:
+        payload = self._build_llm_payload(api_base_url="https://responses-only.example.com/v1")
+        payload["model_name"] = "responses-only-model"
+        calls: list[str] = []
+
+        class FakeResponse:
+            status_code = 200
+
+            def __init__(self, body: dict[str, object]) -> None:
+                self._body = body
+                self.text = json.dumps(body)
+
+            def json(self) -> dict[str, object]:
+                return self._body
+
+        class FakeAsyncClient:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeAsyncClient":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def post(self, url: str, **kwargs: object) -> FakeResponse:
+                calls.append(url)
+                return FakeResponse({"output_text": "OK"})
+
+        with patch("app.services.llm_runtime.httpx.AsyncClient", FakeAsyncClient):
+            preview_response = self.client.post("/api/llm-profiles/preview/test", json=payload)
+            created_response = self.client.post("/api/llm-profiles", json=payload)
+            profile_id = created_response.json()["id"]
+            saved_response = self.client.post(f"/api/llm-profiles/{profile_id}/test")
+
+        self.assertEqual(preview_response.status_code, 200, msg=preview_response.text)
+        self.assertEqual(saved_response.status_code, 200, msg=saved_response.text)
+        for response in (preview_response, saved_response):
+            data = response.json()
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["endpoint_kind"], "responses")
+            self.assertEqual(data["request_url"], "https://responses-only.example.com/v1/responses")
+        self.assertEqual(calls[0], "https://responses-only.example.com/v1/chat/completions")
+        self.assertEqual(calls[1], "https://responses-only.example.com/v1/responses")
+        self.assertTrue(all(url.endswith("/responses") for url in calls[1:]))
+
+        with sqlite3.connect(self.db_path) as connection:
+            endpoint_row = connection.execute(
+                """
+                SELECT learned_endpoint_kind
+                FROM llm_endpoint_adaptation_cache
+                WHERE api_base_url = ? AND model_name = ?
+                """,
+                ("https://responses-only.example.com/v1", "responses-only-model"),
+            ).fetchone()
+            thinking_row = connection.execute(
+                """
+                SELECT learned_extra_body
+                FROM thinking_adaptation_cache
+                WHERE api_base_url = ? AND model_name = ? AND endpoint_kind = ?
+                """,
+                ("https://responses-only.example.com/v1", "responses-only-model", "responses"),
+            ).fetchone()
+        self.assertEqual(endpoint_row, ("responses",))
+        self.assertIsNotNone(thinking_row)
+        self.assertIsNone(json.loads(thinking_row[0]))
+
     def test_llm_profile_preview_test_returns_failure_when_thinking_adaptation_fails(self) -> None:
         from app.services.llm_runtime import LLMRuntimeError
 
@@ -385,7 +454,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.api.llm_profiles.ensure_thinking_adaptation",
+                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
                 AsyncMock(side_effect=error),
             ),
             patch("app.api.llm_profiles.probe_llm_profile", AsyncMock()) as probe_mock,
@@ -2065,6 +2134,42 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(match_payload["thread"]["current_task"]["match_score"], 91)
         self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
 
+    def test_generate_draft_passes_workflow_session_and_runtime_adaptation(self) -> None:
+        task_id = self._create_rewrite_ready_task()
+        adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
+        workflow_sessions: list[AsyncSession] = []
+
+        async def fake_ensure(session: AsyncSession, _profile: object) -> LLMRuntimeAdaptation:
+            self.assertIsInstance(session, AsyncSession)
+            workflow_sessions.append(session)
+            return adaptation
+
+        async def fake_generate_draft_content(**kwargs: object):
+            self.assertEqual(len(workflow_sessions), 1)
+            self.assertIs(kwargs["session"], workflow_sessions[0])
+            self.assertIs(kwargs["adaptation"], adaptation)
+            return self._build_draft_generation_result(
+                subject="适配后的草稿主题",
+                body_text="适配后的草稿正文",
+                body_html="<p>适配后的草稿正文</p>",
+            )
+
+        with (
+            patch(
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(side_effect=fake_ensure),
+            ) as adaptation_mock,
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                AsyncMock(side_effect=fake_generate_draft_content),
+            ) as generate_mock,
+        ):
+            response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft", json={})
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        adaptation_mock.assert_awaited_once()
+        generate_mock.assert_awaited_once()
+
     def test_rewrite_draft_uses_request_body_as_llm_input(self) -> None:
         task_id = self._create_rewrite_ready_task()
 
@@ -2082,8 +2187,8 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.ensure_thinking_adaptation",
-                AsyncMock(return_value=None),
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
             ),
             patch(
                 "app.services.task_runtime.llm_runtime.generate_draft_content",
@@ -2112,7 +2217,8 @@ class ApiEndpointTests(unittest.TestCase):
         extra_body = {"thinking": {"type": "disabled"}}
 
         async def fake_generate_draft_content(**kwargs):
-            self.assertEqual(kwargs["thinking_extra_body"], extra_body)
+            self.assertEqual(kwargs["adaptation"], LLMRuntimeAdaptation("chat_completions", extra_body))
+            self.assertIsNotNone(kwargs["session"])
             return self._build_draft_generation_result(
                 subject="AI 改写主题",
                 body_text="AI 改写正文",
@@ -2123,9 +2229,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.ensure_thinking_adaptation",
-                AsyncMock(return_value=extra_body),
-            ) as thinking_mock,
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", extra_body)),
+            ) as adaptation_mock,
             patch(
                 "app.services.task_runtime.llm_runtime.generate_draft_content",
                 AsyncMock(side_effect=fake_generate_draft_content),
@@ -2143,7 +2249,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        thinking_mock.assert_awaited_once()
+        adaptation_mock.assert_awaited_once()
         generate_mock.assert_awaited_once()
 
     def test_rewrite_draft_rejects_empty_body_without_calling_llm(self) -> None:
@@ -2202,8 +2308,8 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.ensure_thinking_adaptation",
-                AsyncMock(return_value=None),
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
             ),
             patch(
                 "app.services.task_runtime.llm_runtime.generate_draft_content",
@@ -2235,8 +2341,8 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.ensure_thinking_adaptation",
-                AsyncMock(return_value=None),
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
             ),
             patch(
                 "app.services.task_runtime.llm_runtime.generate_draft_content",

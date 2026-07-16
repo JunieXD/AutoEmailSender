@@ -15,6 +15,7 @@ from test.schema_database import create_schema_sqlite_database
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_v2_chunk_worker import complete_current_chunk, invoke_v2_chunk_agent, run_crawler_v2_chunk_worker_once
 from app.services.crawler_tools import ProfessorCandidatePayload
+from app.services.llm_runtime import LLMRuntimeAdaptation
 
 
 class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -67,14 +68,14 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         create_schema_sqlite_database(Path(self.db_path))
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
-        self._thinking_adaptation_patch = patch(
-            "app.services.crawler_v2_chunk_worker.ensure_thinking_adaptation",
-            new=AsyncMock(return_value=None),
+        self._runtime_adaptation_patch = patch(
+            "app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
-        self._thinking_adaptation_patch.start()
+        self._runtime_adaptation_patch.start()
 
     async def asyncTearDown(self) -> None:
-        self._thinking_adaptation_patch.stop()
+        self._runtime_adaptation_patch.stop()
         await self.engine.dispose()
         try:
             os.unlink(self.db_path)
@@ -681,7 +682,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         usage = {"input_tokens": 10, "output_tokens": 2, "cached_tokens": 0}
         extra_body = {"enable_thinking": False}
 
-        with patch("app.services.crawler_v2_chunk_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=extra_body), create=True) as adapt_mock, patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, '{"chunk_status":"no_candidates","candidates":[],"discovered_urls":[]}'))) as invoke_mock:
+        with patch("app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", extra_body))) as adapt_mock, patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, '{"chunk_status":"no_candidates","candidates":[],"discovered_urls":[]}'))) as invoke_mock:
             processed = await run_crawler_v2_chunk_worker_once(
                 self.session_factory,
                 chunk_id=chunk_id,
@@ -697,7 +698,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
 
         with patch(
-            "app.services.crawler_v2_chunk_worker.ensure_thinking_adaptation",
+            "app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation",
             new=AsyncMock(side_effect=RuntimeError("模型服务连接失败，请检查系统代理或网络后重试")),
         ):
             processed = await run_crawler_v2_chunk_worker_once(

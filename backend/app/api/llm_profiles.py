@@ -20,12 +20,13 @@ from app.schemas.llm_profile import (
 from app.services.llm_runtime import (
     LLMProbeResult,
     LLMRuntimeError,
+    ensure_llm_runtime_adaptation,
     fetch_llm_profile_models,
     probe_llm_profile,
     resolve_base_url,
 )
 from app.services.operation_logs import record_operation_log
-from app.services.thinking_adaptation import ThinkingAdaptationFailed, ensure_thinking_adaptation
+from app.services.thinking_adaptation import ThinkingAdaptationFailed
 
 
 router = APIRouter(prefix="/api/llm-profiles", tags=["llm-profiles"])
@@ -151,13 +152,14 @@ async def preview_llm_profile_test(
 ) -> LLMProfileTestResult:
     profile = LLMProfile(**payload.model_dump())
     try:
-        thinking_extra_body = await ensure_thinking_adaptation(session, profile)
+        adaptation = await ensure_llm_runtime_adaptation(session, profile)
     except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
         result = _build_adaptation_failure_probe_result(profile, exc)
     else:
         result = await probe_llm_profile(
             profile,
-            thinking_extra_body=thinking_extra_body,
+            session=session,
+            adaptation=adaptation,
         )
     if result.ok:
         await session.commit()
@@ -226,14 +228,14 @@ async def test_llm_profile(
 ) -> LLMProfileTestResult:
     profile = await _get_profile(session, profile_id)
     try:
-        thinking_extra_body = await ensure_thinking_adaptation(session, profile)
+        adaptation = await ensure_llm_runtime_adaptation(session, profile)
     except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
         result = _build_adaptation_failure_probe_result(profile, exc)
     else:
         result = await probe_llm_profile(
             profile,
             session=session,
-            thinking_extra_body=thinking_extra_body,
+            adaptation=adaptation,
         )
     await _record_llm_profile_log(
         session,

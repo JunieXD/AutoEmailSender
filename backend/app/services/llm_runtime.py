@@ -653,6 +653,8 @@ async def generate_match_evaluation(
     available_materials: list[IdentityMaterial],
     intended_research_direction: str | None = None,
     thinking_extra_body: dict[str, object] | None = None,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> GeneratedMatchEvaluation:
     prompt_parts = build_match_prompt_parts(
         identity=identity,
@@ -684,6 +686,8 @@ async def generate_match_evaluation(
         llm_profile,
         payload,
         extra_body=thinking_extra_body,
+        session=session,
+        adaptation=adaptation,
     )
     result = parse_structured_result(completion.content, MatchEvaluationResult)
     return GeneratedMatchEvaluation(
@@ -714,6 +718,8 @@ async def generate_draft_content(
     max_tokens: int | None = None,
     rewrite_preferences: DraftRewritePreferences | None = None,
     thinking_extra_body: dict[str, object] | None = None,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> GeneratedDraftContent:
     template_html = custom_body_html
     if not template_html and custom_body:
@@ -755,6 +761,8 @@ async def generate_draft_content(
             llm_profile,
             payload,
             extra_body=thinking_extra_body,
+            session=session,
+            adaptation=adaptation,
         )
         rewrite_result = parse_structured_result(completion.content, DraftRewriteResult)
         try:
@@ -805,6 +813,8 @@ async def generate_draft_content(
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         },
         extra_body=thinking_extra_body,
+        session=session,
+        adaptation=adaptation,
     )
     result = parse_structured_result(completion.content, DraftGenerationResult)
     return GeneratedDraftContent(result=result, usage=completion.usage)
@@ -871,18 +881,14 @@ async def probe_llm_profile(
     *,
     session: "AsyncSession | None" = None,
     thinking_extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> LLMProbeResult:
     """Test that the model is reachable. Single-turn ping only.
 
-    The ``session`` keyword is kept for backward compatibility with the route
-    layer, but it is intentionally unused: thinking-mode adaptation now happens
-    only on crawl-job startup (see :func:`ensure_thinking_adaptation`). The
-    probe path stays minimal and predictable so users don't see surprising
-    "empty content" errors when their model returns thoughts via
-    ``reasoning_content`` instead of ``content``.
+    Session-owning callers provide a pre-resolved ``adaptation`` so endpoint
+    protocol cache misses can be learned and committed with the probe result.
     """
 
-    _ = session  # retained for API stability; see docstring
     base_url = resolve_base_url(profile.api_base_url)
     payload = {
         "model": profile.model_name,
@@ -902,6 +908,8 @@ async def probe_llm_profile(
             payload,
             extra_body=thinking_extra_body,
             allow_empty_content=True,
+            session=session,
+            adaptation=adaptation,
         )
     except LLMRuntimeError as exc:
         return LLMProbeResult(

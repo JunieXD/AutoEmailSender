@@ -14,6 +14,7 @@ from test.schema_database import create_schema_sqlite_database
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_tools import PageSnapshot
+from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 
 
@@ -90,7 +91,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value={"thinking": {"type": "disabled"}})), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"thinking": {"type": "disabled"}}))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -129,7 +130,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -160,7 +161,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
             patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -204,7 +205,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
             patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -247,7 +248,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
             patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)), \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch(
                 "app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent",
                 new=AsyncMock(return_value=extraction),
@@ -305,7 +306,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(side_effect=pause_then_return)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -329,7 +330,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -361,7 +362,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)), \
             patch("app.services.crawler_v2_page_worker.append_crawler_v2_debug_event") as debug_mock:
             await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")

@@ -26,7 +26,7 @@ from app.services.crawler_v2_profile_extraction import invoke_v2_profile_extract
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_scheduler import ensure_job_active
-from app.services.thinking_adaptation import ensure_thinking_adaptation
+from app.services.llm_runtime import ensure_llm_runtime_adaptation
 
 
 
@@ -306,7 +306,7 @@ async def _extract_profile_for_page_snapshot(
             _mark_page_failed(task, "缺少可用的 LLM Profile")
             await session.commit()
             return
-        thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
+        adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
         job_id = job.id
         university = job.university
         school = job.school
@@ -330,7 +330,7 @@ async def _extract_profile_for_page_snapshot(
         title=snapshot.title,
         page_text=snapshot.text,
         page_html_excerpt=snapshot.html,
-        thinking_extra_body=thinking_extra_body,
+        thinking_extra_body=adaptation.thinking_extra_body,
     )
     for attempt in result.attempts:
         append_crawler_v2_debug_event(

@@ -13,6 +13,7 @@ from test.schema_database import create_schema_sqlite_database
 
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload
+from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services import crawler_v2_enrichment_worker
 from app.services.crawler_v2_enrichment_worker import enrich_candidate_once, run_crawler_v2_enrichment_worker_once
 
@@ -75,7 +76,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         candidate_id, _ = await self._seed_task(profile_url="https://example.edu/zhang.html")
         payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
 
-        with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="张三 邮箱 zhang@example.edu")) as fetch_mock, patch("app.services.crawler_v2_enrichment_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage", new=AsyncMock(return_value=(payload, None))) as enrich_mock:
+        with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="张三 邮箱 zhang@example.edu")) as fetch_mock, patch("app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage", new=AsyncMock(return_value=(payload, None))) as enrich_mock:
             result = await enrich_candidate_once(self.session_factory, candidate_id=candidate_id)
 
         self.assertEqual(result.email, "zhang@example.edu")
@@ -160,7 +161,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("LLM 401")
 
         with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(side_effect=fake_fetch)) as fetch_mock, \
-            patch("app.services.crawler_v2_enrichment_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage", new=AsyncMock(side_effect=fail_llm)):
             processed_first = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
             async with self.session_factory() as session:
@@ -189,7 +190,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("LLM empty")
 
         with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="")) as fetch_mock, \
-            patch("app.services.crawler_v2_enrichment_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=None)), \
+            patch("app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage", new=AsyncMock(side_effect=fail_llm)):
             processed_first = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
             async with self.session_factory() as session:
@@ -291,7 +292,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         extra_body = {"enable_thinking": False}
 
         with patch("app.services.crawler_v2_enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="张三 邮箱 zhang@example.edu")), \
-            patch("app.services.crawler_v2_enrichment_worker.ensure_thinking_adaptation", new=AsyncMock(return_value=extra_body)) as thinking_mock, \
+            patch("app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", extra_body))) as adaptation_mock, \
             patch("app.services.crawl_job_runtime.build_faculty_crawler_model") as build_mock:
             fake_model = AsyncMock()
             fake_response = type("FakeResponse", (), {"content": '{"email":"zhang@example.edu","department":"计算机系","research_direction":"AI","recent_papers":[],"confidence":0.8,"field_confidence":{}}', "usage_metadata": {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0}})()
@@ -301,7 +302,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             result = await enrich_candidate_once(self.session_factory, candidate_id=candidate_id)
 
         self.assertEqual(result.email, "zhang@example.edu")
-        thinking_mock.assert_awaited_once()
+        adaptation_mock.assert_awaited_once()
         build_mock.assert_called_once()
         self.assertEqual(build_mock.call_args.kwargs["extra_body"], extra_body)
 

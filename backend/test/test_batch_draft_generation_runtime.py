@@ -36,11 +36,11 @@ from app.services.batch_draft_generation_runtime import (
 
 class BatchDraftGenerationRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._thinking_adaptation_patch = patch(
-            "app.services.task_runtime.ensure_thinking_adaptation",
-            new=AsyncMock(return_value=None),
+        self._runtime_adaptation_patch = patch(
+            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)),
         )
-        self._thinking_adaptation_patch.start()
+        self._runtime_adaptation_patch.start()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "batch_draft_generation_test.db"
         create_schema_sqlite_database(self.db_path)
@@ -56,7 +56,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self._run_async(self._create_schema())
 
     def tearDown(self) -> None:
-        self._thinking_adaptation_patch.stop()
+        self._runtime_adaptation_patch.stop()
         self._run_async(self.engine.dispose())
         self.temp_dir.cleanup()
 
@@ -119,6 +119,44 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         self.assertEqual(sum(processed_counts), 1)
         mocked_generate.assert_awaited_once()
+
+    def test_batch_draft_passes_workflow_session_and_runtime_adaptation(self) -> None:
+        self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
+        adaptation = llm_runtime.LLMRuntimeAdaptation("responses", {"enable_thinking": False})
+        workflow_sessions: list[AsyncSession] = []
+
+        async def fake_ensure(session: AsyncSession, _profile: object) -> llm_runtime.LLMRuntimeAdaptation:
+            self.assertIsInstance(session, AsyncSession)
+            workflow_sessions.append(session)
+            return adaptation
+
+        async def fake_generate(**kwargs: object) -> llm_runtime.GeneratedDraftContent:
+            self.assertEqual(len(workflow_sessions), 1)
+            self.assertIs(kwargs["session"], workflow_sessions[0])
+            self.assertIs(kwargs["adaptation"], adaptation)
+            return self._build_draft_generation_result()
+
+        with (
+            patch(
+                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                new=AsyncMock(side_effect=fake_ensure),
+            ) as adaptation_mock,
+            patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                new=AsyncMock(side_effect=fake_generate),
+            ) as generate_mock,
+        ):
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=1,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                ),
+            )
+
+        self.assertEqual(processed, 1)
+        adaptation_mock.assert_awaited_once()
+        generate_mock.assert_awaited_once()
 
     def test_recover_stale_generating_draft_restores_previous_status(self) -> None:
         task_ids = self._run_async(
