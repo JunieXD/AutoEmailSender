@@ -282,26 +282,43 @@ LLM 配置表。
   - 数据库已有同邮箱导师时执行覆盖更新，不跳过
   - 如果旧导师处于归档状态，会在导入后自动恢复
 
-## 14. `thinking_adaptation_cache`
+## 14. `llm_endpoint_adaptation_cache`
 
-思考模式 LLM 协议自适应缓存表。按 `(api_base_url, model_name)` 维度记录每个具体模型一次性"学到"的请求方式，避免每次抓取都被「思考模式协议错」（`reasoning_content must be passed back`）打断。
+LLM 端点协议自适应缓存表。按 `(api_base_url, model_name)` 维度记录一个模型已探测到的端点协议类型，使同一模型的后续请求可以直接使用正确端点。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | INTEGER PK | 自增主键 |
 | `api_base_url` | VARCHAR(500) NOT NULL | 模型 API 入口（已 strip 末尾 `/`） |
 | `model_name` | VARCHAR(255) NOT NULL | 模型 ID（如 `deepseek-chat`、`qwen3-32b`） |
-| `learned_extra_body` | JSON NULL | 探活成功时使用的 `extra_body` 字典；NULL 表示该模型无需 `extra_body`（已确认） |
-| `probed_at` | DATETIME NOT NULL | 上次探活完成的时间 |
+| `learned_endpoint_kind` | VARCHAR(32) NOT NULL | 已探测到的端点协议类型 |
+| `probed_at` | DATETIME NOT NULL | 上次端点探测完成的时间 |
 | `created_at` | DATETIME NOT NULL | 行创建时间 |
 | `updated_at` | DATETIME NOT NULL | 最后一次更新时间，行更新时由 ORM 自动写 |
 
 唯一约束：`(api_base_url, model_name)`，索引：`model_name`。
 
+## 15. `thinking_adaptation_cache`
+
+思考模式 LLM 协议自适应缓存表。按 `(api_base_url, model_name, endpoint_kind)` 维度记录每个具体模型在特定端点协议下学到的请求方式，避免每次抓取都被「思考模式协议错」（`reasoning_content must be passed back`）打断。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | INTEGER PK | 自增主键 |
+| `api_base_url` | VARCHAR(500) NOT NULL | 模型 API 入口（已 strip 末尾 `/`） |
+| `model_name` | VARCHAR(255) NOT NULL | 模型 ID（如 `deepseek-chat`、`qwen3-32b`） |
+| `endpoint_kind` | VARCHAR(32) NOT NULL | 对应的端点协议类型 |
+| `learned_extra_body` | JSON NULL | 探活成功时使用的 `extra_body` 字典；NULL 表示该模型无需 `extra_body`（已确认） |
+| `probed_at` | DATETIME NOT NULL | 上次探活完成的时间 |
+| `created_at` | DATETIME NOT NULL | 行创建时间 |
+| `updated_at` | DATETIME NOT NULL | 最后一次更新时间，行更新时由 ORM 自动写 |
+
+唯一约束：`(api_base_url, model_name, endpoint_kind)`，索引：`model_name`。
+
 ### 维护策略
 
 - 缓存由后端自动维护，不暴露给前端。
-- 学习成果按"模型本身"持久化，与具体的 `LLMProfile` 行解耦：
+- 学习成果按“模型 + 端点协议”持久化，与具体的 `LLMProfile` 行解耦：
   - 用户在同一 `LLMProfile` 里改 `model_name` 到新模型 → 老模型缓存保留，新模型独立探活。
   - 用户改回老 `model_name` → 直接命中老缓存，零成本。
   - 多个 `LLMProfile` 用同一个模型 → 共享同一行缓存。

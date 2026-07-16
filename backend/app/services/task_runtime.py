@@ -78,7 +78,6 @@ from app.services.outreach_templates import (
 )
 from app.services.rich_text import normalize_email_html, text_to_email_html
 from app.services.runtime_settings import get_runtime_settings
-from app.services.thinking_adaptation import ensure_thinking_adaptation
 
 
 TASK_RELATION_OPTIONS = (
@@ -820,7 +819,7 @@ async def generate_task_draft(
                 runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
                 task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
                 runtime_settings = await get_runtime_settings(session)
-                thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
+                adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, runtime_llm_profile)
                 rewrite_preferences = llm_runtime.DraftRewritePreferences(
                     draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
                     draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
@@ -841,7 +840,8 @@ async def generate_task_draft(
                     custom_body_html=template_body_html,
                     max_tokens=runtime_settings.draft_max_tokens,
                     rewrite_preferences=rewrite_preferences,
-                    thinking_extra_body=thinking_extra_body,
+                    session=session,
+                    adaptation=adaptation,
                 )
                 subject = generation.result.subject
                 body_text = generation.result.body_text
@@ -1003,7 +1003,7 @@ async def calculate_task_match(
 
         task.llm_profile_id = runtime_llm_profile.id
         runtime_settings = await get_runtime_settings(session)
-        thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
+        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, runtime_llm_profile)
         run = await _create_running_match_analysis_run(session, task, match_material)
         await session.commit()
         try:
@@ -1014,7 +1014,8 @@ async def calculate_task_match(
                 professor=task.professor,
                 available_materials=list(task.identity.materials),
                 intended_research_direction=runtime_settings.intended_research_direction,
-                thinking_extra_body=thinking_extra_body,
+                session=session,
+                adaptation=adaptation,
             )
         except asyncio.CancelledError:
             _mark_match_analysis_run_failed(
@@ -1151,7 +1152,7 @@ async def rewrite_task_draft(
         ensure_material_extracted_text(task.primary_material)
 
         runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, payload.llm_profile_id)
-        thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
+        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, runtime_llm_profile)
         runtime_settings = await get_runtime_settings(session)
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
@@ -1209,7 +1210,8 @@ async def rewrite_task_draft(
                     custom_body_html=source_body_html or None,
                     max_tokens=runtime_settings.draft_max_tokens,
                     rewrite_preferences=rewrite_preferences,
-                    thinking_extra_body=thinking_extra_body,
+                    session=session,
+                    adaptation=adaptation,
                 ),
                 timeout=WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS,
             )
@@ -1326,7 +1328,7 @@ async def preview_task_draft(
             raise ValueError(detail)
 
         runtime_settings = await get_runtime_settings(session)
-        thinking_extra_body = await ensure_thinking_adaptation(session, runtime_llm_profile)
+        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, runtime_llm_profile)
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
             draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
@@ -1346,7 +1348,8 @@ async def preview_task_draft(
             custom_body=template_body,
             custom_body_html=template_body_html,
             rewrite_preferences=rewrite_preferences,
-            thinking_extra_body=thinking_extra_body,
+            session=session,
+            adaptation=adaptation,
         )
 
 

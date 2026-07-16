@@ -4,34 +4,29 @@ from datetime import datetime
 
 from app.core.time import utc_now
 
-from sqlalchemy import DateTime, JSON, String, UniqueConstraint, text
+from sqlalchemy import String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 from app.models.types import UTCDateTime
 
 
-class ThinkingAdaptationCache(Base):
-    """Per-endpoint cache of the extra_body needed to bypass thinking-mode protocol errors."""
+class LLMEndpointAdaptationCache(Base):
+    """Per-(base_url, model_name) cache of the learned LLM endpoint protocol."""
 
-    __tablename__ = "thinking_adaptation_cache"
+    __tablename__ = "llm_endpoint_adaptation_cache"
     __table_args__ = (
         UniqueConstraint(
             "api_base_url",
             "model_name",
-            "endpoint_kind",
-            name="uq_thinking_adaptation_cache_endpoint",
+            name="uq_llm_endpoint_adaptation_cache_target",
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     api_base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    endpoint_kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    learned_extra_body: Mapped[dict[str, object] | None] = mapped_column(
-        JSON,
-        nullable=True,
-    )
+    learned_endpoint_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     probed_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

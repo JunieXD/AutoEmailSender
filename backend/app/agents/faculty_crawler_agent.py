@@ -33,6 +33,7 @@ from app.services.crawler_tools import (
 )
 from app.services.llm_runtime import (
     DEFAULT_LLM_TEMPERATURE,
+    LLMRuntimeAdaptation,
     resolve_base_url,
 )
 
@@ -266,20 +267,18 @@ def build_trace_event(event: Any) -> dict[str, object]:
 def build_faculty_crawler_model(
     llm_profile: LLMProfile,
     *,
-    extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation,
 ) -> ChatOpenAI:
     """Build the OpenAI-compatible chat model configured by an LLM profile.
 
-    The crawler runs as a multi-turn tool-call loop. Models that default to
-    thinking mode require model-specific ``extra_body`` to be carried on every
-    turn, which LangChain's ``ChatOpenAI`` does not learn on its own. We rely
-    on the upstream caller to pass the resolved ``extra_body`` (typically from
-    ``app.services.thinking_adaptation.ensure_thinking_adaptation``).
+    The crawler runs as a multi-turn tool-call loop. The upstream caller passes
+    the full resolved runtime adaptation, so both endpoint protocol and thinking
+    override stay paired for this model.
     """
 
     model_kwargs: dict[str, object] = {}
-    if extra_body:
-        model_kwargs["extra_body"] = dict(extra_body)
+    if adaptation.thinking_extra_body:
+        model_kwargs["extra_body"] = dict(adaptation.thinking_extra_body)
 
     return ChatOpenAI(
         model=llm_profile.model_name,
@@ -290,6 +289,7 @@ def build_faculty_crawler_model(
             if llm_profile.temperature is not None
             else DEFAULT_LLM_TEMPERATURE
         ),
+        use_responses_api=adaptation.endpoint_kind == "responses",
         **model_kwargs,
     )
 
@@ -298,7 +298,7 @@ def create_faculty_crawler_agent(
     ctx: CrawlToolContext,
     llm_profile: LLMProfile,
     *,
-    extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ):
     """Create a DeepAgents graph with only the controlled crawler tools bound."""
 
@@ -425,7 +425,10 @@ def create_faculty_crawler_agent(
         )
 
 
-    model = build_faculty_crawler_model(llm_profile, extra_body=extra_body)
+    model = build_faculty_crawler_model(
+        llm_profile,
+        adaptation=adaptation or ctx.llm_adaptation,
+    )
     return create_deep_agent(
         model=model,
         tools=[
@@ -448,11 +451,15 @@ async def run_faculty_crawler_agent(
     llm_profile: LLMProfile,
     trace_callback: TraceCallback | None = None,
     *,
-    extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
     run_budget: CrawlerAgentRunBudget | None = None,
 ) -> Any:
     """Run the faculty crawler agent and optionally forward stream events."""
-    agent = create_faculty_crawler_agent(ctx, llm_profile, extra_body=extra_body)
+    agent = create_faculty_crawler_agent(
+        ctx,
+        llm_profile,
+        adaptation=adaptation or ctx.llm_adaptation,
+    )
     if await crawl_job_has_pending_work(ctx.session_factory, job_id=ctx.job_id):
         prompt = (
             "当前任务已有待处理页面片段，请不要重新抓取入口页。\n"

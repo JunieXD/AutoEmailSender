@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from math import ceil
 from time import perf_counter
 from textwrap import dedent
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -323,7 +323,18 @@ def _strip_url_query_and_fragment(url: str | None) -> str | None:
     if url is None:
         return None
     parsed = urlsplit(url)
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    hostname = parsed.hostname
+    if hostname is None:
+        netloc = parsed.netloc.rsplit("@", 1)[-1]
+    else:
+        netloc = f"[{hostname}]" if ":" in hostname else hostname
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        if port is not None:
+            netloc = f"{netloc}:{port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def _log_llm_http_exception(
@@ -350,6 +361,68 @@ def _log_llm_http_exception(
         "error_chain": _exception_chain_details(exc),
     }
     _append_llm_runtime_log(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _endpoint_protocol_switch_reason(error: "LLMEndpointProtocolError") -> str | int:
+    if error.response_envelope is not None:
+        return error.response_envelope
+    if error.status_code is not None:
+        return error.status_code
+    return "protocol_error"
+
+
+async def _record_endpoint_protocol_switch(
+    session: "AsyncSession",
+    *,
+    profile: LLMProfile,
+    protocol_error: "LLMEndpointProtocolError",
+    completion: "ChatCompletionResult",
+) -> None:
+    reason = _endpoint_protocol_switch_reason(protocol_error)
+    attempted_urls = [
+        sanitized
+        for url in completion.attempted_urls
+        if (sanitized := _strip_url_query_and_fragment(url)) is not None
+    ]
+    metadata = {
+        "old_endpoint_kind": protocol_error.failed_endpoint_kind,
+        "new_endpoint_kind": completion.endpoint_kind,
+        "reason": reason,
+        "retried": True,
+        "endpoint_kind": completion.endpoint_kind,
+        "request_url": _strip_url_query_and_fragment(completion.request_url),
+        "attempted_urls": attempted_urls,
+    }
+    _append_llm_runtime_log(
+        json.dumps(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "event": "llm_endpoint_protocol_switched",
+                "provider": profile.provider,
+                "model_name": profile.model_name,
+                "api_base_url": _strip_url_query_and_fragment(resolve_base_url(profile.api_base_url)),
+                **metadata,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+    )
+
+    from app.services.operation_logs import record_operation_log
+
+    try:
+        async with session.begin_nested():
+            await record_operation_log(
+                session,
+                category="llm",
+                event_name="llm.endpoint_protocol_switched",
+                entity_type="llm_profile",
+                entity_id=str(profile.id) if profile.id is not None else None,
+                metadata=metadata,
+            )
+    except Exception:
+        return
 
 
 def _build_tls12_context() -> ssl.SSLContext:
@@ -425,6 +498,30 @@ class LLMRuntimeError(RuntimeError):
         self.duration_ms = duration_ms
 
 
+class LLMEndpointProtocolError(LLMRuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        failed_endpoint_kind: Literal["chat_completions", "responses"],
+        response_envelope: Literal["other_endpoint", "invalid"] | None,
+        request_url: str | None = None,
+        attempted_urls: list[str] | None = None,
+        status_code: int | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            request_url=request_url,
+            attempted_urls=attempted_urls,
+            endpoint_kind=failed_endpoint_kind,
+            status_code=status_code,
+            duration_ms=duration_ms,
+        )
+        self.failed_endpoint_kind = failed_endpoint_kind
+        self.response_envelope = response_envelope
+
+
 @dataclass(slots=True)
 class ChatCompletionUsage:
     prompt_tokens: int | None = None
@@ -443,6 +540,15 @@ class ChatCompletionResult:
     endpoint_kind: str | None = None
     status_code: int | None = None
     duration_ms: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LLMRuntimeAdaptation:
+    """The endpoint protocol and thinking override learned for one model."""
+
+    endpoint_kind: Literal["chat_completions", "responses"]
+    thinking_extra_body: dict[str, object] | None
+    endpoint_attempted_urls: tuple[str, ...] = field(default_factory=tuple, compare=False)
 
 
 @dataclass(slots=True)
@@ -621,6 +727,8 @@ async def generate_match_evaluation(
     available_materials: list[IdentityMaterial],
     intended_research_direction: str | None = None,
     thinking_extra_body: dict[str, object] | None = None,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> GeneratedMatchEvaluation:
     prompt_parts = build_match_prompt_parts(
         identity=identity,
@@ -652,6 +760,8 @@ async def generate_match_evaluation(
         llm_profile,
         payload,
         extra_body=thinking_extra_body,
+        session=session,
+        adaptation=adaptation,
     )
     result = parse_structured_result(completion.content, MatchEvaluationResult)
     return GeneratedMatchEvaluation(
@@ -682,6 +792,8 @@ async def generate_draft_content(
     max_tokens: int | None = None,
     rewrite_preferences: DraftRewritePreferences | None = None,
     thinking_extra_body: dict[str, object] | None = None,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> GeneratedDraftContent:
     template_html = custom_body_html
     if not template_html and custom_body:
@@ -723,6 +835,8 @@ async def generate_draft_content(
             llm_profile,
             payload,
             extra_body=thinking_extra_body,
+            session=session,
+            adaptation=adaptation,
         )
         rewrite_result = parse_structured_result(completion.content, DraftRewriteResult)
         try:
@@ -773,6 +887,8 @@ async def generate_draft_content(
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         },
         extra_body=thinking_extra_body,
+        session=session,
+        adaptation=adaptation,
     )
     result = parse_structured_result(completion.content, DraftGenerationResult)
     return GeneratedDraftContent(result=result, usage=completion.usage)
@@ -834,126 +950,19 @@ def estimate_draft_content_tokens(
     )
 
 
-async def _legacy_request_chat_completion(
-    profile: LLMProfile,
-    payload: dict[str, object],
-) -> ChatCompletionResult:
-    base_url = resolve_base_url(profile.api_base_url)
-    timeout_seconds = get_settings().llm_request_timeout_seconds
-    timeout = httpx.Timeout(timeout_seconds)
-    headers = {
-        "Authorization": f"Bearer {profile.api_key}",
-        "Content-Type": "application/json",
-    }
-    attempts = [
-        (
-            "chat_completions",
-            build_endpoint_url(base_url, "chat/completions"),
-            payload,
-            extract_chat_completion_content,
-        ),
-        (
-            "responses",
-            build_endpoint_url(base_url, "responses"),
-            build_responses_payload(payload),
-            extract_responses_content,
-        ),
-    ]
-    attempted_urls: list[str] = []
-    previous_failures: list[str] = []
-
-    for index, (endpoint_kind, url, request_body, content_extractor) in enumerate(attempts):
-        attempted_urls.append(url)
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=request_body)
-        except (ImportError, ValueError) as exc:
-            raise LLMRuntimeError(
-                format_llm_client_initialization_error(exc),
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise LLMRuntimeError(
-                f"模型请求超时（{timeout_seconds} 秒）",
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise LLMRuntimeError(
-                format_llm_runtime_error_for_user(f"模型请求失败: {exc}"),
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-            ) from exc
-
-        if response.status_code == 404 and index < len(attempts) - 1:
-            previous_failures.append(format_http_error(response.status_code, response.text, url))
-            continue
-
-        if response.status_code >= 400:
-            message = format_http_error(response.status_code, response.text, url)
-            if previous_failures:
-                message = f"{message}；此前已尝试：{'；'.join(previous_failures)}"
-            raise LLMRuntimeError(
-                message,
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-            )
-
-        try:
-            data = response.json()
-            content = content_extractor(data)
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise LLMRuntimeError(
-                "模型响应缺少可解析的文本内容",
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-            ) from exc
-
-        if not isinstance(content, str) or not content.strip():
-            raise LLMRuntimeError(
-                "模型返回了空内容",
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-            )
-
-        return ChatCompletionResult(
-            content=content,
-            usage=parse_completion_usage(data.get("usage")),
-            request_url=url,
-            endpoint_kind=endpoint_kind,
-        )
-
-    raise LLMRuntimeError(
-        "模型请求失败",
-        request_url=attempted_urls[-1] if attempted_urls else None,
-        attempted_urls=attempted_urls,
-    )
-
-
 async def probe_llm_profile(
     profile: LLMProfile,
     *,
     session: "AsyncSession | None" = None,
     thinking_extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> LLMProbeResult:
     """Test that the model is reachable. Single-turn ping only.
 
-    The ``session`` keyword is kept for backward compatibility with the route
-    layer, but it is intentionally unused: thinking-mode adaptation now happens
-    only on crawl-job startup (see :func:`ensure_thinking_adaptation`). The
-    probe path stays minimal and predictable so users don't see surprising
-    "empty content" errors when their model returns thoughts via
-    ``reasoning_content`` instead of ``content``.
+    Session-owning callers provide a pre-resolved ``adaptation`` so endpoint
+    protocol cache misses can be learned and committed with the probe result.
     """
 
-    _ = session  # retained for API stability; see docstring
     base_url = resolve_base_url(profile.api_base_url)
     payload = {
         "model": profile.model_name,
@@ -973,6 +982,8 @@ async def probe_llm_profile(
             payload,
             extra_body=thinking_extra_body,
             allow_empty_content=True,
+            session=session,
+            adaptation=adaptation,
         )
     except LLMRuntimeError as exc:
         return LLMProbeResult(
@@ -1114,10 +1125,11 @@ async def fetch_llm_profile_models(profile: LLMProfile) -> LLMModelCatalogResult
     )
 
 
-async def request_chat_completion(
+async def _request_completion_endpoint(
     profile: LLMProfile,
     payload: dict[str, object],
     *,
+    endpoint_kind: Literal["chat_completions", "responses"],
     extra_body: dict[str, object] | None = None,
     allow_empty_content: bool = False,
 ) -> ChatCompletionResult:
@@ -1125,128 +1137,397 @@ async def request_chat_completion(
 
     chat_payload = merge_extra_body(payload, extra_body)
     base_url = resolve_base_url(profile.api_base_url)
+    if endpoint_kind == "chat_completions":
+        url = build_endpoint_url(base_url, "chat/completions")
+        request_body = chat_payload
+        content_extractor = extract_chat_completion_content
+    else:
+        url = build_endpoint_url(base_url, "responses")
+        request_body = build_responses_payload(chat_payload)
+        content_extractor = extract_responses_content
+
     timeout_seconds = get_settings().llm_request_timeout_seconds
     timeout = httpx.Timeout(timeout_seconds)
     headers = {
         "Authorization": f"Bearer {profile.api_key}",
         "Content-Type": "application/json",
     }
-    attempts = [
-        (
-            "chat_completions",
-            build_endpoint_url(base_url, "chat/completions"),
-            chat_payload,
-            extract_chat_completion_content,
-        ),
-        (
-            "responses",
-            build_endpoint_url(base_url, "responses"),
-            build_responses_payload(chat_payload),
-            extract_responses_content,
-        ),
-    ]
-    attempted_urls: list[str] = []
-    previous_failures: list[str] = []
-
-    for index, (endpoint_kind, url, request_body, content_extractor) in enumerate(attempts):
-        attempted_urls.append(url)
-        start = perf_counter()
-        try:
-            response = await _send_llm_http_request(
-                method="POST",
-                profile=profile,
-                url=url,
-                endpoint_kind=endpoint_kind,
-                headers=headers,
-                timeout=timeout,
-                json_body=request_body,
-            )
-        except (ImportError, ValueError) as exc:
-            raise LLMRuntimeError(
-                format_llm_client_initialization_error(exc),
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-                duration_ms=compute_duration_ms(start),
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise LLMRuntimeError(
-                f"模型请求超时（{timeout_seconds} 秒）",
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-                duration_ms=compute_duration_ms(start),
-            ) from exc
-        except (httpx.HTTPError, ssl.SSLError) as exc:
-            raise LLMRuntimeError(
-                format_llm_runtime_error_for_user(f"模型请求失败: {exc}"),
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-                duration_ms=compute_duration_ms(start),
-            ) from exc
-
-        duration_ms = compute_duration_ms(start)
-        if response.status_code == 404 and index < len(attempts) - 1:
-            previous_failures.append(format_http_error(response.status_code, response.text, url))
-            continue
-
-        if response.status_code >= 400:
-            message = format_http_error(response.status_code, response.text, url)
-            if previous_failures:
-                message = f"{message}；此前已尝试：{'；'.join(previous_failures)}"
-            raise LLMRuntimeError(
-                message,
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-                status_code=response.status_code,
-                duration_ms=duration_ms,
-            )
-
-        try:
-            data = response.json()
-            content = content_extractor(data)
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise LLMRuntimeError(
-                "模型响应缺少可解析的文本内容",
-                request_url=url,
-                attempted_urls=attempted_urls.copy(),
-                endpoint_kind=endpoint_kind,
-                status_code=response.status_code,
-                duration_ms=duration_ms,
-            ) from exc
-
-        if not isinstance(content, str) or not content.strip():
-            if allow_empty_content:
-                # 测活路径用：思考模型可能把回答放在 reasoning_content 字段，
-                # content 为空字符串。这种情况视为"模型可达"，不抛错。
-                content = "" if not isinstance(content, str) else content
-            else:
-                raise LLMRuntimeError(
-                    "模型返回了空内容",
-                    request_url=url,
-                    attempted_urls=attempted_urls.copy(),
-                    endpoint_kind=endpoint_kind,
-                    status_code=response.status_code,
-                    duration_ms=duration_ms,
-                )
-
-        return ChatCompletionResult(
-            content=content,
-            usage=parse_completion_usage(data.get("usage")),
+    start = perf_counter()
+    try:
+        response = await _send_llm_http_request(
+            method="POST",
+            profile=profile,
+            url=url,
+            endpoint_kind=endpoint_kind,
+            headers=headers,
+            timeout=timeout,
+            json_body=request_body,
+        )
+    except (ImportError, ValueError) as exc:
+        raise LLMRuntimeError(
+            format_llm_client_initialization_error(exc),
             request_url=url,
-            attempted_urls=attempted_urls.copy(),
+            endpoint_kind=endpoint_kind,
+            duration_ms=compute_duration_ms(start),
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise LLMRuntimeError(
+            f"模型请求超时（{timeout_seconds} 秒）",
+            request_url=url,
+            endpoint_kind=endpoint_kind,
+            duration_ms=compute_duration_ms(start),
+        ) from exc
+    except (httpx.HTTPError, ssl.SSLError) as exc:
+        raise LLMRuntimeError(
+            format_llm_runtime_error_for_user(f"模型请求失败: {exc}"),
+            request_url=url,
+            endpoint_kind=endpoint_kind,
+            duration_ms=compute_duration_ms(start),
+        ) from exc
+
+    duration_ms = compute_duration_ms(start)
+    if response.status_code in (404, 405, 501):
+        raise LLMEndpointProtocolError(
+            format_http_error(response.status_code, response.text, url),
+            failed_endpoint_kind=endpoint_kind,
+            response_envelope=None,
+            request_url=url,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+    if not 200 <= response.status_code < 300:
+        raise LLMRuntimeError(
+            format_http_error(response.status_code, response.text, url),
+            request_url=url,
             endpoint_kind=endpoint_kind,
             status_code=response.status_code,
             duration_ms=duration_ms,
         )
 
-    raise LLMRuntimeError(
-        "模型请求失败",
-        request_url=attempted_urls[-1] if attempted_urls else None,
-        attempted_urls=attempted_urls,
+    try:
+        data = response.json()
+    except (TypeError, ValueError) as exc:
+        raise LLMEndpointProtocolError(
+            "模型响应缺少有效的 JSON 外壳",
+            failed_endpoint_kind=endpoint_kind,
+            response_envelope="invalid",
+            request_url=url,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        ) from exc
+
+    from app.services.llm_endpoint_adaptation import classify_response_envelope
+
+    response_envelope = classify_response_envelope(endpoint_kind, data)
+    if response_envelope != "valid":
+        raise LLMEndpointProtocolError(
+            "模型响应与请求端点协议不匹配"
+            if response_envelope == "other_endpoint"
+            else "模型响应缺少有效的端点外壳",
+            failed_endpoint_kind=endpoint_kind,
+            response_envelope=response_envelope,
+            request_url=url,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+
+    if not isinstance(data, dict):
+        raise LLMEndpointProtocolError(
+            "模型响应缺少有效的端点外壳",
+            failed_endpoint_kind=endpoint_kind,
+            response_envelope="invalid",
+            request_url=url,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+
+    try:
+        content = content_extractor(data)
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise LLMRuntimeError(
+            "模型响应缺少可解析的文本内容",
+            request_url=url,
+            endpoint_kind=endpoint_kind,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        ) from exc
+
+    if not isinstance(content, str) or not content.strip():
+        if allow_empty_content:
+            # 测活路径用：思考模型可能把回答放在 reasoning_content 字段，
+            # content 为空字符串。这种情况视为"模型可达"，不抛错。
+            content = "" if not isinstance(content, str) else content
+        else:
+            raise LLMRuntimeError(
+                "模型返回了空内容",
+                request_url=url,
+                endpoint_kind=endpoint_kind,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+            )
+
+    return ChatCompletionResult(
+        content=content,
+        usage=parse_completion_usage(data.get("usage")),
+        request_url=url,
+        attempted_urls=[url],
+        endpoint_kind=endpoint_kind,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
     )
+
+
+async def ensure_llm_runtime_adaptation(
+    session: "AsyncSession",
+    profile: LLMProfile,
+    *,
+    failed_endpoint_kind: Literal["chat_completions", "responses"] | None = None,
+) -> LLMRuntimeAdaptation:
+    """Load or learn the endpoint and thinking adaptation for ``profile``.
+
+    Endpoint discovery is serialized per target. The second cache read under
+    the lock prevents concurrent requests from issuing duplicate probes.
+    """
+
+    from app.services.llm_endpoint_adaptation import (
+        endpoint_adaptation_lock,
+        endpoint_candidates,
+        get_cached_endpoint_kind,
+        record_endpoint_adaptation,
+    )
+    from app.services.thinking_adaptation import ensure_thinking_adaptation
+
+    api_base_url = resolve_base_url(profile.api_base_url)
+    endpoint_kind = await get_cached_endpoint_kind(
+        session,
+        api_base_url=api_base_url,
+        model_name=profile.model_name,
+    )
+    endpoint_attempted_urls: list[str] = []
+    if endpoint_kind is None:
+        async with endpoint_adaptation_lock(api_base_url, profile.model_name) as coordination:
+            endpoint_kind = await get_cached_endpoint_kind(
+                session,
+                api_base_url=api_base_url,
+                model_name=profile.model_name,
+            )
+            if endpoint_kind is None:
+                if coordination.learned_endpoint_kind is not None:
+                    endpoint_kind = coordination.learned_endpoint_kind
+                elif coordination.probe_error is not None:
+                    raise coordination.probe_error
+                else:
+                    try:
+                        probe_payload = {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "只回复 OK"}],
+                            "temperature": 0,
+                            "max_tokens": min(profile.max_tokens or DEFAULT_LLM_MAX_TOKENS, 8),
+                        }
+                        last_protocol_error: LLMEndpointProtocolError | None = None
+                        for candidate in endpoint_candidates(failed_endpoint_kind):
+                            try:
+                                completion = await _request_completion_endpoint(
+                                    profile,
+                                    probe_payload,
+                                    endpoint_kind=candidate,
+                                    allow_empty_content=True,
+                                )
+                            except LLMEndpointProtocolError as exc:
+                                last_protocol_error = exc
+                                endpoint_attempted_urls.extend(exc.attempted_urls)
+                                continue
+                            except LLMRuntimeError as exc:
+                                exc.attempted_urls = [
+                                    *endpoint_attempted_urls,
+                                    *exc.attempted_urls,
+                                ]
+                                raise
+                            endpoint_attempted_urls.extend(completion.attempted_urls)
+                            endpoint_kind = candidate
+                            await record_endpoint_adaptation(
+                                session,
+                                api_base_url=api_base_url,
+                                model_name=profile.model_name,
+                                endpoint_kind=endpoint_kind,
+                            )
+                            coordination.learned_endpoint_kind = endpoint_kind
+                            break
+                        if endpoint_kind is None:
+                            assert last_protocol_error is not None
+                            raise last_protocol_error
+                    except Exception as exc:
+                        coordination.probe_error = exc
+                        raise
+
+    thinking_extra_body = await ensure_thinking_adaptation(
+        session,
+        profile,
+        endpoint_kind=endpoint_kind,
+    )
+    return LLMRuntimeAdaptation(
+        endpoint_kind,
+        thinking_extra_body,
+        tuple(endpoint_attempted_urls),
+    )
+
+
+def _merge_attempted_urls(*url_lists: list[str] | tuple[str, ...]) -> list[str]:
+    merged: list[str] = []
+    for urls in url_lists:
+        for url in urls:
+            if url not in merged:
+                merged.append(url)
+    return merged
+
+
+def _merge_protocol_error_attempts(
+    protocol_error: LLMEndpointProtocolError,
+    error: LLMRuntimeError,
+    *additional_url_lists: list[str] | tuple[str, ...],
+) -> None:
+    error.attempted_urls = [
+        *protocol_error.attempted_urls,
+        *(url for urls in additional_url_lists for url in urls),
+        *error.attempted_urls,
+    ]
+
+
+async def request_chat_completion(
+    profile: LLMProfile,
+    payload: dict[str, object],
+    *,
+    extra_body: dict[str, object] | None = None,
+    allow_empty_content: bool = False,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
+) -> ChatCompletionResult:
+    if session is not None:
+        active_adaptation = adaptation or await ensure_llm_runtime_adaptation(session, profile)
+        try:
+            completion = await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=active_adaptation.endpoint_kind,
+                extra_body=active_adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+            completion.attempted_urls = _merge_attempted_urls(
+                active_adaptation.endpoint_attempted_urls,
+                completion.attempted_urls,
+            )
+            return completion
+        except LLMEndpointProtocolError as protocol_error:
+            from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
+            from app.services.thinking_adaptation import invalidate_thinking_adaptation
+
+            api_base_url = resolve_base_url(profile.api_base_url)
+            await invalidate_endpoint_adaptation(
+                session,
+                api_base_url=api_base_url,
+                model_name=profile.model_name,
+                failed_endpoint_kind=active_adaptation.endpoint_kind,
+            )
+            await invalidate_thinking_adaptation(
+                session,
+                api_base_url=api_base_url,
+                model_name=profile.model_name,
+                endpoint_kind=active_adaptation.endpoint_kind,
+                expected_extra_body=active_adaptation.thinking_extra_body,
+            )
+            try:
+                retry_adaptation = await ensure_llm_runtime_adaptation(
+                    session,
+                    profile,
+                    failed_endpoint_kind=active_adaptation.endpoint_kind,
+                )
+            except LLMRuntimeError as retry_error:
+                _merge_protocol_error_attempts(protocol_error, retry_error)
+                raise
+            try:
+                completion = await _request_completion_endpoint(
+                    profile,
+                    payload,
+                    endpoint_kind=retry_adaptation.endpoint_kind,
+                    extra_body=retry_adaptation.thinking_extra_body,
+                    allow_empty_content=allow_empty_content,
+                )
+            except LLMRuntimeError as retry_error:
+                _merge_protocol_error_attempts(
+                    protocol_error,
+                    retry_error,
+                    retry_adaptation.endpoint_attempted_urls,
+                )
+                raise
+            completion.attempted_urls = _merge_attempted_urls(
+                protocol_error.attempted_urls,
+                retry_adaptation.endpoint_attempted_urls,
+                completion.attempted_urls,
+            )
+            await _record_endpoint_protocol_switch(
+                session,
+                profile=profile,
+                protocol_error=protocol_error,
+                completion=completion,
+            )
+            return completion
+        except LLMRuntimeError as runtime_error:
+            runtime_error.attempted_urls = [
+                *active_adaptation.endpoint_attempted_urls,
+                *runtime_error.attempted_urls,
+            ]
+            raise
+
+    if adaptation is not None:
+        try:
+            return await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=adaptation.endpoint_kind,
+                extra_body=adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+        except LLMEndpointProtocolError:
+            from app.services.llm_endpoint_adaptation import endpoint_candidates
+
+            fallback_kind = endpoint_candidates(adaptation.endpoint_kind)[0]
+            return await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=fallback_kind,
+                extra_body=adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+
+    chat_error: LLMEndpointProtocolError | None = None
+    try:
+        return await _request_completion_endpoint(
+            profile,
+            payload,
+            endpoint_kind="chat_completions",
+            extra_body=extra_body,
+            allow_empty_content=allow_empty_content,
+        )
+    except LLMEndpointProtocolError as exc:
+        chat_error = exc
+
+    assert chat_error is not None
+
+    try:
+        completion = await _request_completion_endpoint(
+            profile,
+            payload,
+            endpoint_kind="responses",
+            extra_body=extra_body,
+            allow_empty_content=allow_empty_content,
+        )
+    except LLMRuntimeError as responses_error:
+        responses_error.attempted_urls = [*chat_error.attempted_urls, *responses_error.attempted_urls]
+        responses_error.args = (f"{responses_error}；此前已尝试：{chat_error}",)
+        raise
+
+    completion.attempted_urls = [*chat_error.attempted_urls, *completion.attempted_urls]
+    return completion
 
 
 def build_match_prompt(

@@ -30,6 +30,7 @@ from app.services.crawler_page_fetch_ledger import (
     should_prefer_browser_for_fetch_domain,
 )
 from app.services.html_text import html_to_text
+from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services.professor_field_normalization import (
     RECENT_PAPERS_MAX_ITEMS,
     normalize_recent_papers,
@@ -578,7 +579,9 @@ class CrawlToolContext:
     duplicate_save_loop: DuplicateSaveLoopState = field(default_factory=DuplicateSaveLoopState)
     page_snapshot_cache: OrderedDict[str, PageSnapshot] = field(default_factory=OrderedDict)
     known_listing_urls: set[str] = field(default_factory=set)
-    thinking_extra_body: dict[str, object] | None = None
+    llm_adaptation: LLMRuntimeAdaptation = field(
+        default_factory=lambda: LLMRuntimeAdaptation("chat_completions", None)
+    )
     entry_type: str | None = None
 
     def mark_http_blocked(self, url: str) -> None:

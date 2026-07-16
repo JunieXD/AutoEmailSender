@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.models import LLMProfile
 from app.services.llm_runtime import (
@@ -23,9 +27,12 @@ from app.services.llm_runtime import (
     fetch_llm_profile_models,
     generate_draft_content,
     generate_match_evaluation,
+    LLMEndpointProtocolError,
+    LLMRuntimeAdaptation,
     LLMRuntimeError,
     parse_completion_usage,
     probe_llm_profile,
+    _request_completion_endpoint,
     request_chat_completion,
     resolve_base_url,
 )
@@ -1694,6 +1701,372 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "https://ark.cn-beijing.volces.com/api/v3",
         )
 
+    async def test_request_completion_endpoint_sends_chat_payload_to_chat_url(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "OK"}}]},
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            result = await _request_completion_endpoint(
+                profile,
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 32,
+                },
+                endpoint_kind="chat_completions",
+                extra_body={"thinking": {"type": "disabled"}},
+                allow_empty_content=False,
+            )
+
+        self.assertEqual(calls, [
+            (
+                "https://api.acme.ai/v1/chat/completions",
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 32,
+                    "thinking": {"type": "disabled"},
+                },
+            ),
+        ])
+        self.assertEqual(result.endpoint_kind, "chat_completions")
+        self.assertEqual(result.attempted_urls, ["https://api.acme.ai/v1/chat/completions"])
+
+    async def test_request_completion_endpoint_converts_responses_payload(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"output_text": "OK"},
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            result = await _request_completion_endpoint(
+                profile,
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 32,
+                },
+                endpoint_kind="responses",
+                extra_body={"reasoning_effort": "low"},
+                allow_empty_content=False,
+            )
+
+        self.assertEqual(calls[0][0], "https://api.acme.ai/v1/responses")
+        self.assertEqual(
+            calls[0][1],
+            {
+                "model": profile.model_name,
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "ping"}],
+                    },
+                ],
+                "max_output_tokens": 32,
+                "reasoning_effort": "low",
+            },
+        )
+        self.assertEqual(result.endpoint_kind, "responses")
+
+    async def test_request_completion_endpoint_marks_protocol_statuses(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        for status_code in (404, 405, 501):
+            with self.subTest(status_code=status_code):
+                calls: list[tuple[str, dict[str, object] | None]] = []
+                responses = [_FakeResponse(status_code=status_code, text="unsupported")]
+                with patch(
+                    "app.services.llm_runtime.httpx.AsyncClient",
+                    side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+                ):
+                    with self.assertRaises(LLMEndpointProtocolError) as context:
+                        await _request_completion_endpoint(
+                            profile,
+                            {"model": profile.model_name, "messages": []},
+                            endpoint_kind="responses",
+                            extra_body=None,
+                            allow_empty_content=False,
+                        )
+
+                error = context.exception
+                self.assertEqual(error.failed_endpoint_kind, "responses")
+                self.assertIsNone(error.response_envelope)
+                self.assertEqual(error.request_url, "https://api.acme.ai/v1/responses")
+                self.assertEqual(error.attempted_urls, ["https://api.acme.ai/v1/responses"])
+                self.assertEqual(error.status_code, status_code)
+                self.assertIsNotNone(error.duration_ms)
+                self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_marks_other_endpoint_envelope(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        responses = [_FakeResponse(status_code=200, payload={"output_text": "OK"})]
+        calls: list[tuple[str, dict[str, object] | None]] = []
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            with self.assertRaises(LLMEndpointProtocolError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                    extra_body=None,
+                    allow_empty_content=False,
+                )
+
+        error = context.exception
+        self.assertEqual(error.failed_endpoint_kind, "chat_completions")
+        self.assertEqual(error.response_envelope, "other_endpoint")
+        self.assertEqual(error.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_marks_invalid_envelope(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        responses = [_FakeResponse(status_code=200, payload={"unexpected": "shape"})]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            with self.assertRaises(LLMEndpointProtocolError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="responses",
+                    extra_body=None,
+                    allow_empty_content=False,
+                )
+
+        self.assertEqual(context.exception.response_envelope, "invalid")
+
+    async def test_request_completion_endpoint_keeps_non_protocol_http_errors_generic(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        for status_code in (101, 302, 401, 403, 429, 500):
+            with self.subTest(status_code=status_code):
+                responses = [_FakeResponse(status_code=status_code, text="request failed")]
+                with patch(
+                    "app.services.llm_runtime.httpx.AsyncClient",
+                    side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+                ):
+                    with self.assertRaises(LLMRuntimeError) as context:
+                        await _request_completion_endpoint(
+                            profile,
+                            {"model": profile.model_name, "messages": []},
+                            endpoint_kind="chat_completions",
+                            extra_body=None,
+                            allow_empty_content=False,
+                        )
+                self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+
+    async def test_request_completion_endpoint_keeps_network_http_error_generic(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            httpx.ConnectError("network unavailable"),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+        self.assertEqual(context.exception.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_keeps_final_tls_error_generic(self) -> None:
+        profile = LLMProfile(
+            name="deepseek",
+            provider="openai",
+            api_base_url="https://api.deepseek.com",
+            api_key="test-key",
+            model_name="deepseek-v4-flash",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"),
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"),
+        ]
+
+        with (
+            patch(
+                "app.services.llm_runtime.httpx.AsyncClient",
+                side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+            ),
+            patch("app.services.llm_runtime._append_llm_runtime_log"),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+        self.assertEqual(context.exception.request_url, "https://api.deepseek.com/chat/completions")
+        self.assertEqual(len(calls), 2)
+        self.assertIsInstance(calls[1]["client_kwargs"].get("verify"), ssl.SSLContext)
+
+    async def test_request_completion_endpoint_keeps_timeout_error_generic(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            httpx.ReadTimeout("request timed out"),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+        self.assertEqual(context.exception.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_allows_empty_chat_content_with_reasoning(self) -> None:
+        profile = LLMProfile(
+            name="thinking",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="thinking-v1",
+        )
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {"message": {"content": "", "reasoning_content": "internal reasoning"}},
+                    ],
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            result = await _request_completion_endpoint(
+                profile,
+                {"model": profile.model_name, "messages": []},
+                endpoint_kind="chat_completions",
+                extra_body=None,
+                allow_empty_content=True,
+            )
+
+        self.assertEqual(result.content, "")
+
+    async def test_request_completion_endpoint_keeps_none_chat_content_with_reasoning_generic(self) -> None:
+        profile = LLMProfile(
+            name="thinking",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="thinking-v1",
+        )
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {"message": {"content": None, "reasoning_content": "internal reasoning"}},
+                    ],
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                    extra_body=None,
+                    allow_empty_content=True,
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+
     async def test_request_chat_completion_falls_back_to_responses(self) -> None:
         profile = LLMProfile(
             name="ark",
@@ -2027,11 +2400,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         # 只发一次 HTTP，不做多轮探活
         self.assertEqual(len(calls), 1)
 
-    async def test_probe_llm_profile_session_kwarg_does_not_trigger_learning(self) -> None:
-        # session 形参保留以兼容路由层，但测活路径不再触发 ensure_thinking_adaptation。
-        # 保证测试连接行为简单可预测。
-        from unittest.mock import AsyncMock
-
+    async def test_probe_llm_profile_uses_provided_runtime_adaptation_with_session(self) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2047,21 +2416,18 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        fake_session = object()
-        with (
-            patch(
-                "app.services.llm_runtime.httpx.AsyncClient",
-                side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
-            ),
-            patch(
-                "app.services.thinking_adaptation.ensure_thinking_adaptation",
-                AsyncMock(),
-            ) as ensure_mock,
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
-            result = await probe_llm_profile(profile, session=fake_session)
+            result = await probe_llm_profile(
+                profile,
+                session=object(),
+                adaptation=LLMRuntimeAdaptation("chat_completions", None),
+            )
 
         self.assertTrue(result.ok)
-        ensure_mock.assert_not_awaited()
+        self.assertEqual(calls[0][0], "https://api.acme.ai/v1/chat/completions")
 
     async def test_fetch_llm_profile_models_uses_models_endpoint(self) -> None:
         profile = LLMProfile(
@@ -2386,6 +2752,487 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         sent = calls[0][1]
         assert sent is not None
         self.assertNotIn("thinking", sent)
+
+
+class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        from app.models import Base
+
+        self.engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        self.session_factory = async_sessionmaker(
+            self.engine,
+            autoflush=False,
+            expire_on_commit=False,
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.engine.dispose()
+
+    @staticmethod
+    def _profile() -> LLMProfile:
+        return LLMProfile(
+            name="responses-only",
+            provider="openai",
+            api_base_url="https://api.example.test/v1",
+            api_key="test-key",
+            model_name="responses-only-v1",
+        )
+
+    async def test_ensure_runtime_adaptation_learns_responses_and_hits_cache(self) -> None:
+        from app.services.llm_runtime import ensure_llm_runtime_adaptation
+
+        profile = self._profile()
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "7"}),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                learned = await ensure_llm_runtime_adaptation(session, profile)
+                await session.commit()
+            async with self.session_factory() as session:
+                cached = await ensure_llm_runtime_adaptation(session, profile)
+
+        self.assertEqual(learned.endpoint_kind, "responses")
+        self.assertIsNone(learned.thinking_extra_body)
+        self.assertEqual(cached, learned)
+        self.assertEqual(
+            [url for url, _ in calls],
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+
+    async def test_ensure_runtime_adaptation_reports_chat_and_responses_urls_when_responses_probe_fails(self) -> None:
+        from app.services.llm_runtime import ensure_llm_runtime_adaptation
+
+        profile = self._profile()
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=500, text="responses probe failed"),
+        ]
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError) as context:
+                    await ensure_llm_runtime_adaptation(session, profile)
+
+        error = context.exception
+        self.assertEqual(error.endpoint_kind, "responses")
+        self.assertEqual(error.request_url, "https://api.example.test/v1/responses")
+        self.assertEqual(
+            error.attempted_urls,
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+
+    async def test_concurrent_uncommitted_sessions_share_one_endpoint_probe(self) -> None:
+        from app.models import Base
+        from app.services import llm_endpoint_adaptation
+        from app.services.llm_runtime import (
+            ChatCompletionResult,
+            ensure_llm_runtime_adaptation,
+        )
+
+        profile = self._profile()
+        probe_started = asyncio.Event()
+        release_probe = asyncio.Event()
+        endpoint_recorded = asyncio.Event()
+        release_recording = asyncio.Event()
+        probe_count = 0
+
+        async def probe_endpoint(*args, **kwargs) -> ChatCompletionResult:
+            nonlocal probe_count
+            probe_count += 1
+            probe_started.set()
+            await release_probe.wait()
+            return ChatCompletionResult(
+                content="OK",
+                usage=None,
+                request_url="https://api.example.test/v1/chat/completions",
+                attempted_urls=["https://api.example.test/v1/chat/completions"],
+                endpoint_kind="chat_completions",
+                status_code=200,
+                duration_ms=0,
+            )
+
+        async with asyncio.timeout(3):
+            with tempfile.TemporaryDirectory() as directory:
+                engine = create_async_engine(
+                    f"sqlite+aiosqlite:///{directory}/runtime-adaptation.db",
+                )
+                async with engine.begin() as connection:
+                    await connection.run_sync(Base.metadata.create_all)
+                session_factory = async_sessionmaker(
+                    engine,
+                    autoflush=False,
+                    expire_on_commit=False,
+                )
+
+                async def ensure_from_own_session():
+                    async with session_factory() as session:
+                        return await ensure_llm_runtime_adaptation(session, profile)
+
+                llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
+                original_record = llm_endpoint_adaptation.record_endpoint_adaptation
+
+                async def record_then_hold(*args, **kwargs):
+                    await original_record(*args, **kwargs)
+                    endpoint_recorded.set()
+                    await release_recording.wait()
+
+                try:
+                    with (
+                        patch(
+                            "app.services.llm_runtime._request_completion_endpoint",
+                            side_effect=probe_endpoint,
+                        ),
+                        patch(
+                            "app.services.llm_endpoint_adaptation.record_endpoint_adaptation",
+                            side_effect=record_then_hold,
+                        ),
+                        patch(
+                            "app.services.thinking_adaptation.ensure_thinking_adaptation",
+                            new=AsyncMock(return_value=None),
+                        ) as ensure_thinking,
+                    ):
+                        first = asyncio.create_task(ensure_from_own_session())
+                        await probe_started.wait()
+                        release_probe.set()
+                        await endpoint_recorded.wait()
+                        second = asyncio.create_task(ensure_from_own_session())
+                        for _ in range(100):
+                            state = llm_endpoint_adaptation._endpoint_adaptation_locks.get(
+                                ("https://api.example.test/v1", profile.model_name),
+                            )
+                            if state is not None and state.users == 2:
+                                break
+                            await asyncio.sleep(0.01)
+                        else:
+                            self.fail("第二个独立会话未进入 endpoint 协调锁")
+                        release_recording.set()
+                        first_adaptation, second_adaptation = await asyncio.gather(first, second)
+
+                    self.assertEqual(probe_count, 1)
+                    self.assertEqual(first_adaptation.endpoint_kind, "chat_completions")
+                    self.assertEqual(second_adaptation.endpoint_kind, "chat_completions")
+                    self.assertEqual(ensure_thinking.await_count, 2)
+                finally:
+                    llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
+                    await engine.dispose()
+
+    async def test_protocol_error_invalidates_once_relearns_other_endpoint_and_retries(self) -> None:
+        from app.services.llm_endpoint_adaptation import (
+            get_cached_endpoint_kind,
+            record_endpoint_adaptation,
+        )
+        from app.services.llm_runtime import (
+            LLMRuntimeAdaptation,
+            request_chat_completion,
+        )
+        from app.services.thinking_adaptation import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=200, payload={"output_text": "OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "recovered"}),
+        ]
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await request_chat_completion(
+                    profile,
+                    {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                    session=session,
+                    adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                )
+                await session.commit()
+
+        self.assertEqual(result.content, "recovered")
+        self.assertEqual(result.endpoint_kind, "responses")
+        self.assertEqual(result.request_url, "https://api.example.test/v1/responses")
+        self.assertEqual(
+            result.attempted_urls,
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+        async with self.session_factory() as session:
+            self.assertEqual(
+                await get_cached_endpoint_kind(
+                    session,
+                    api_base_url=profile.api_base_url or "",
+                    model_name=profile.model_name,
+                ),
+                "responses",
+            )
+        self.assertEqual(
+            [url for url, _ in calls],
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+
+    async def test_non_protocol_error_keeps_learned_endpoint(self) -> None:
+        from app.services.llm_endpoint_adaptation import get_cached_endpoint_kind, record_endpoint_adaptation
+        from app.services.llm_runtime import LLMRuntimeAdaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await session.commit()
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient([_FakeResponse(500, text="upstream error")], []),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError):
+                    await request_chat_completion(
+                        profile,
+                        {"model": profile.model_name, "messages": []},
+                        session=session,
+                        adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                    )
+                self.assertEqual(
+                    await get_cached_endpoint_kind(
+                        session,
+                        api_base_url=profile.api_base_url or "",
+                        model_name=profile.model_name,
+                    ),
+                    "chat_completions",
+                )
+
+    async def test_first_adaptation_merges_probe_urls_into_final_non_protocol_error(self) -> None:
+        from app.services.thinking_adaptation import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=200, payload={"output_text": "endpoint probe OK"}),
+            _FakeResponse(status_code=500, text="final responses request failed"),
+        ]
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError) as context:
+                    await request_chat_completion(
+                        profile,
+                        {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                        session=session,
+                    )
+
+        error = context.exception
+        self.assertEqual(error.endpoint_kind, "responses")
+        self.assertEqual(error.request_url, "https://api.example.test/v1/responses")
+        self.assertEqual(
+            error.attempted_urls,
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+
+    async def test_protocol_retry_reports_all_attempted_urls_when_responses_probe_fails(self) -> None:
+        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await session.commit()
+
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=500, text="responses probe failed"),
+        ]
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError) as context:
+                    await request_chat_completion(
+                        profile,
+                        {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                        session=session,
+                        adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                    )
+
+        error = context.exception
+        self.assertEqual(error.endpoint_kind, "responses")
+        self.assertEqual(error.request_url, "https://api.example.test/v1/responses")
+        self.assertEqual(
+            error.attempted_urls,
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+        self.assertEqual(len(calls), 2)
+
+    async def test_protocol_retry_reports_all_attempted_urls_when_final_responses_request_fails(self) -> None:
+        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
+        from app.services.thinking_adaptation import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=200, payload={"output_text": "endpoint probe OK"}),
+            _FakeResponse(status_code=500, text="final responses request failed"),
+        ]
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError) as context:
+                    await request_chat_completion(
+                        profile,
+                        {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                        session=session,
+                        adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                    )
+
+        error = context.exception
+        self.assertEqual(error.endpoint_kind, "responses")
+        self.assertEqual(error.request_url, "https://api.example.test/v1/responses")
+        self.assertEqual(
+            error.attempted_urls,
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+        self.assertEqual(len(calls), 3)
+
+    async def test_protocol_retry_returns_success_when_operation_log_write_fails(self) -> None:
+        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
+        from app.services.thinking_adaptation import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=200, payload={"output_text": "endpoint probe OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "recovered"}),
+        ]
+        with (
+            patch(
+                "app.services.llm_runtime.httpx.AsyncClient",
+                side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+            ),
+            patch(
+                "app.services.operation_logs.record_operation_log",
+                new=AsyncMock(side_effect=RuntimeError("operation log unavailable")),
+            ),
+        ):
+            async with self.session_factory() as session:
+                result = await request_chat_completion(
+                    profile,
+                    {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                    session=session,
+                    adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                )
+
+        self.assertEqual(result.content, "recovered")
 
 
 if __name__ == "__main__":

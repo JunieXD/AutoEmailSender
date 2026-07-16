@@ -35,11 +35,13 @@ class ThinkingAdaptationCacheModelTests(unittest.TestCase):
         row = ThinkingAdaptationCache(
             api_base_url="https://api.deepseek.com/v1",
             model_name="deepseek-chat",
+            endpoint_kind="chat_completions",
             learned_extra_body={"thinking": {"type": "disabled"}},
             probed_at=datetime(2026, 5, 14, tzinfo=UTC),
         )
         self.assertEqual(row.api_base_url, "https://api.deepseek.com/v1")
         self.assertEqual(row.model_name, "deepseek-chat")
+        self.assertEqual(row.endpoint_kind, "chat_completions")
         self.assertEqual(
             row.learned_extra_body,
             {"thinking": {"type": "disabled"}},
@@ -51,6 +53,7 @@ class ThinkingAdaptationCacheModelTests(unittest.TestCase):
         row = ThinkingAdaptationCache(
             api_base_url="https://api.openai.com/v1",
             model_name="gpt-4o-mini",
+            endpoint_kind="chat_completions",
             learned_extra_body=None,
             probed_at=datetime(2026, 5, 14, tzinfo=UTC),
         )
@@ -179,10 +182,12 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(value)
 
     async def test_record_then_get_returns_hit_with_value(self) -> None:
+        from app.models import ThinkingAdaptationCache
         from app.services.thinking_adaptation import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
+        from sqlalchemy import select
 
         async with self.session_factory() as session:
             await record_thinking_adaptation(
@@ -199,8 +204,51 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
                 api_base_url="https://api.deepseek.com/v1",
                 model_name="deepseek-chat",
             )
+            row = await session.scalar(select(ThinkingAdaptationCache))
         self.assertTrue(hit)
         self.assertEqual(value, {"thinking": {"type": "disabled"}})
+        self.assertIsNotNone(row)
+        self.assertEqual(row.endpoint_kind, "chat_completions")
+
+    async def test_explicit_endpoint_kind_isolated_from_default_cache(self) -> None:
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            record_thinking_adaptation,
+        )
+
+        async with self.session_factory() as session:
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.example.test/v1",
+                model_name="test-model",
+                learned_extra_body={"enable_thinking": False},
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.example.test/v1",
+                model_name="test-model",
+                endpoint_kind="responses",
+                learned_extra_body={"thinking": {"type": "disabled"}},
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            default_hit, default_value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.example.test/v1",
+                model_name="test-model",
+            )
+            responses_hit, responses_value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.example.test/v1",
+                model_name="test-model",
+                endpoint_kind="responses",
+            )
+
+        self.assertTrue(default_hit)
+        self.assertEqual(default_value, {"enable_thinking": False})
+        self.assertTrue(responses_hit)
+        self.assertEqual(responses_value, {"thinking": {"type": "disabled"}})
 
     async def test_record_with_none_persists_known_no_extra_body(self) -> None:
         from app.services.thinking_adaptation import (
@@ -604,6 +652,44 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(hit)
         self.assertEqual(value, {"thinking": {"type": "disabled"}})
 
+    async def test_responses_probe_stays_on_responses_endpoint_and_cache(self) -> None:
+        from unittest.mock import patch
+
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            probe_and_learn_extra_body,
+        )
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(
+                [_FakeResponse(status_code=200, payload={"output_text": "7"})],
+                calls,
+            ),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(
+                    session,
+                    self._profile(),
+                    endpoint_kind="responses",
+                )
+                await session.commit()
+
+        self.assertIsNone(result)
+        self.assertEqual([url for url, _ in calls], ["https://api.acme.ai/v1/responses"])
+        async with self.session_factory() as session:
+            hit, cached = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-think-v1",
+                endpoint_kind="responses",
+            )
+        self.assertTrue(hit)
+        self.assertIsNone(cached)
+
     async def test_thinking_model_walks_candidates_until_success(self) -> None:
         from unittest.mock import patch
 
@@ -885,6 +971,162 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 result = await ensure_thinking_adaptation(session, profile)
 
         self.assertEqual(result, cached_value)
+
+    async def test_invalidate_removes_only_current_endpoint_triple(self) -> None:
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            invalidate_thinking_adaptation,
+            record_thinking_adaptation,
+        )
+
+        async with self.session_factory() as session:
+            for endpoint_kind, value in (
+                ("chat_completions", {"enable_thinking": False}),
+                ("responses", {"thinking": {"type": "disabled"}}),
+            ):
+                await record_thinking_adaptation(
+                    session,
+                    api_base_url="https://api.acme.ai/v1",
+                    model_name="acme-think-v1",
+                    endpoint_kind=endpoint_kind,
+                    learned_extra_body=value,
+                )
+            self.assertFalse(
+                await invalidate_thinking_adaptation(
+                    session,
+                    api_base_url="https://api.acme.ai/v1",
+                    model_name="acme-think-v1",
+                    endpoint_kind="responses",
+                    expected_extra_body={"enable_thinking": False},
+                )
+            )
+            self.assertTrue(
+                await invalidate_thinking_adaptation(
+                    session,
+                    api_base_url="https://api.acme.ai/v1",
+                    model_name="acme-think-v1",
+                    endpoint_kind="responses",
+                    expected_extra_body={"thinking": {"type": "disabled"}},
+                )
+            )
+            self.assertTrue(
+                (await get_cached_extra_body(
+                    session,
+                    api_base_url="https://api.acme.ai/v1",
+                    model_name="acme-think-v1",
+                    endpoint_kind="chat_completions",
+                ))[0]
+            )
+            self.assertFalse(
+                (await get_cached_extra_body(
+                    session,
+                    api_base_url="https://api.acme.ai/v1",
+                    model_name="acme-think-v1",
+                    endpoint_kind="responses",
+                ))[0]
+            )
+
+    async def test_invalidate_matches_cached_json_null(self) -> None:
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            invalidate_thinking_adaptation,
+            record_thinking_adaptation,
+        )
+
+        async with self.session_factory() as session:
+            await record_thinking_adaptation(
+                session,
+                api_base_url="https://api.null.ai/v1",
+                model_name="null-think-v1",
+                learned_extra_body=None,
+            )
+            self.assertTrue(
+                await invalidate_thinking_adaptation(
+                    session,
+                    api_base_url="https://api.null.ai/v1",
+                    model_name="null-think-v1",
+                    endpoint_kind="chat_completions",
+                    expected_extra_body=None,
+                )
+            )
+            self.assertFalse(
+                (await get_cached_extra_body(
+                    session,
+                    api_base_url="https://api.null.ai/v1",
+                    model_name="null-think-v1",
+                ))[0]
+            )
+
+    async def test_invalidate_keeps_value_refreshed_between_check_and_delete(self) -> None:
+        from unittest.mock import patch
+
+        from app.services.thinking_adaptation import (
+            get_cached_extra_body,
+            invalidate_thinking_adaptation,
+            record_thinking_adaptation,
+        )
+
+        api_base_url = "https://api.concurrent.ai/v1"
+        model_name = "concurrent-think-v1"
+        stale_value = {"enable_thinking": False}
+        refreshed_value = {"thinking": {"type": "disabled"}}
+
+        async with self.session_factory() as session:
+            await record_thinking_adaptation(
+                session,
+                api_base_url=api_base_url,
+                model_name=model_name,
+                learned_extra_body=stale_value,
+            )
+            await session.commit()
+
+        async with self.session_factory() as stale_session:
+            original_execute = stale_session.execute
+            refreshed = False
+
+            async def refresh_before_delete(statement, *args, **kwargs):
+                nonlocal refreshed
+                if not refreshed and getattr(statement, "is_delete", False):
+                    refreshed = True
+                    async with self.session_factory() as refresh_session:
+                        await record_thinking_adaptation(
+                            refresh_session,
+                            api_base_url=api_base_url,
+                            model_name=model_name,
+                            learned_extra_body=refreshed_value,
+                        )
+                        await refresh_session.commit()
+                return await original_execute(statement, *args, **kwargs)
+
+            with patch.object(stale_session, "execute", side_effect=refresh_before_delete):
+                self.assertFalse(
+                    await invalidate_thinking_adaptation(
+                        stale_session,
+                        api_base_url=api_base_url,
+                        model_name=model_name,
+                        endpoint_kind="chat_completions",
+                        expected_extra_body=stale_value,
+                    )
+                )
+
+        async with self.session_factory() as session:
+            self.assertEqual(
+                await get_cached_extra_body(
+                    session,
+                    api_base_url=api_base_url,
+                    model_name=model_name,
+                ),
+                (True, refreshed_value),
+            )
+            self.assertTrue(
+                await invalidate_thinking_adaptation(
+                    session,
+                    api_base_url=api_base_url,
+                    model_name=model_name,
+                    endpoint_kind="chat_completions",
+                    expected_extra_body=refreshed_value,
+                )
+            )
 
 
 class AdaptFailureMessageTests(unittest.TestCase):

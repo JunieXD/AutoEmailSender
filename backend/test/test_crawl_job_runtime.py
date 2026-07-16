@@ -37,9 +37,220 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     save_candidates,
 )
+from app.services.llm_runtime import LLMRuntimeAdaptation
 
 
 class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    def test_agent_endpoint_protocol_error_classifier_is_limited_to_protocol_failures(self) -> None:
+        from openai import APIResponseValidationError, APIStatusError
+
+        request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
+        for status_code in (404, 405, 501):
+            with self.subTest(status_code=status_code):
+                error = APIStatusError(
+                    "endpoint mismatch",
+                    response=httpx.Response(status_code, request=request),
+                    body=None,
+                )
+                self.assertTrue(crawl_job_runtime._is_agent_endpoint_protocol_error(error))
+
+        for status_code in (401, 429, 500):
+            with self.subTest(status_code=status_code):
+                error = APIStatusError(
+                    "upstream failure",
+                    response=httpx.Response(status_code, request=request),
+                    body=None,
+                )
+                self.assertFalse(crawl_job_runtime._is_agent_endpoint_protocol_error(error))
+
+        validation_error = APIResponseValidationError(
+            httpx.Response(200, request=request),
+            body={"unexpected": "envelope"},
+        )
+        self.assertTrue(crawl_job_runtime._is_agent_endpoint_protocol_error(validation_error))
+
+    async def test_agent_protocol_error_relearns_endpoint_and_retries_once(self) -> None:
+        from openai import APIStatusError
+
+        await self._create_default_profile_and_job()
+        learned_adaptations = [
+            LLMRuntimeAdaptation("chat_completions", None),
+            LLMRuntimeAdaptation("responses", {"thinking": {"type": "disabled"}}),
+        ]
+        used_adaptations: list[LLMRuntimeAdaptation] = []
+        response = httpx.Response(404, request=httpx.Request("POST", "https://relay.example/v1/chat/completions"))
+
+        async def fake_run_agent(
+            ctx: CrawlToolContext,
+            llm_profile: LLMProfile,
+            trace_callback=None,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            _ = llm_profile, trace_callback
+            used_adaptations.append(ctx.llm_adaptation)
+            self.assertIs(kwargs["adaptation"], ctx.llm_adaptation)
+            if len(used_adaptations) == 1:
+                raise APIStatusError("not found", response=response, body=None)
+            return {"event_type": "agent_context_budget_reached"}
+
+        with (
+            patch(
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(side_effect=learned_adaptations),
+                create=True,
+            ) as ensure_adaptation,
+            patch(
+                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                AsyncMock(return_value=True),
+                create=True,
+            ) as invalidate_endpoint,
+            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+        ):
+            processed = await run_queued_crawl_jobs_once(self.session_factory)
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(used_adaptations, learned_adaptations)
+        self.assertEqual(ensure_adaptation.await_count, 2)
+        self.assertEqual(invalidate_endpoint.await_count, 1)
+        self.assertEqual(
+            invalidate_endpoint.await_args.kwargs["failed_endpoint_kind"],
+            "chat_completions",
+        )
+
+    async def test_agent_response_validation_error_relearns_endpoint_and_retries_once(self) -> None:
+        from openai import APIResponseValidationError
+
+        await self._create_default_profile_and_job()
+        learned_adaptations = [
+            LLMRuntimeAdaptation("chat_completions", None),
+            LLMRuntimeAdaptation("responses", None),
+        ]
+        calls = 0
+        request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
+
+        async def fake_run_agent(*args: object, **kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise APIResponseValidationError(
+                    httpx.Response(200, request=request),
+                    body={"output": []},
+                )
+            return {"event_type": "agent_context_budget_reached"}
+
+        with (
+            patch(
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(side_effect=learned_adaptations),
+            ) as ensure_adaptation,
+            patch(
+                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                AsyncMock(return_value=True),
+            ) as invalidate_endpoint,
+            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+        ):
+            processed = await run_queued_crawl_jobs_once(self.session_factory)
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(calls, 2)
+        self.assertEqual(ensure_adaptation.await_count, 2)
+        invalidate_endpoint.assert_awaited_once()
+
+    async def test_second_agent_protocol_error_is_not_retried_again(self) -> None:
+        from openai import APIStatusError
+
+        await self._create_default_profile_and_job()
+        adaptations = [
+            LLMRuntimeAdaptation("chat_completions", None),
+            LLMRuntimeAdaptation("responses", None),
+        ]
+        calls = 0
+        response = httpx.Response(404, request=httpx.Request("POST", "https://relay.example/v1/chat/completions"))
+
+        async def fake_run_agent(*args: object, **kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            raise APIStatusError("not found", response=response, body=None)
+
+        with (
+            patch(
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(side_effect=adaptations),
+            ) as ensure_adaptation,
+            patch(
+                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                AsyncMock(return_value=True),
+            ) as invalidate_endpoint,
+            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+        ):
+            processed = await run_queued_crawl_jobs_once(self.session_factory)
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(calls, 2)
+        self.assertEqual(ensure_adaptation.await_count, 2)
+        invalidate_endpoint.assert_awaited_once()
+
+    async def test_agent_authentication_error_does_not_relearn_endpoint(self) -> None:
+        from openai import APIStatusError
+
+        await self._create_default_profile_and_job()
+        adaptation = LLMRuntimeAdaptation("chat_completions", None)
+        response = httpx.Response(401, request=httpx.Request("POST", "https://relay.example/v1/chat/completions"))
+
+        async def fake_run_agent(*args: object, **kwargs: object) -> dict[str, object]:
+            raise APIStatusError("unauthorized", response=response, body=None)
+
+        with (
+            patch(
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=adaptation),
+                create=True,
+            ) as ensure_adaptation,
+            patch(
+                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                AsyncMock(return_value=True),
+                create=True,
+            ) as invalidate_endpoint,
+            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+        ):
+            processed = await run_queued_crawl_jobs_once(self.session_factory)
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(ensure_adaptation.await_count, 1)
+        invalidate_endpoint.assert_not_awaited()
+
+    async def test_direct_structured_llm_uses_shared_endpoint_retry_wrapper(self) -> None:
+        profile = LLMProfile(
+            name="relay",
+            provider="openai",
+            api_base_url="https://relay.example/v1",
+            api_key="sk-test",
+            model_name="relay-model",
+        )
+        adaptation = LLMRuntimeAdaptation("chat_completions", None)
+        ctx = CrawlToolContext(
+            session_factory=self.session_factory,
+            job_id=1,
+            university="示例大学",
+            school="计算机学院",
+            start_url="https://example.edu/faculty",
+            llm_adaptation=adaptation,
+        )
+        response = type("FakeResponse", (), {"content": '{"name":"张三"}'})()
+
+        with patch(
+            "app.services.crawl_job_runtime.invoke_crawler_llm_with_endpoint_retry",
+            new=AsyncMock(return_value=(response, adaptation)),
+            create=True,
+        ) as invoke_mock:
+            candidate = await extract_profile_candidate_with_llm(ctx, profile, "张三 教授")
+
+        self.assertEqual(candidate.name, "张三")
+        invoke_mock.assert_awaited_once()
+        self.assertIs(invoke_mock.await_args.args[0], self.session_factory)
+        self.assertIs(invoke_mock.await_args.args[1], profile)
+        self.assertIs(invoke_mock.await_args.args[2], adaptation)
+
     async def test_crawl_job_has_pending_work_tracks_pending_chunks(self) -> None:
         async with self.session_factory() as session:
             job = CrawlJob(
@@ -167,17 +378,16 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             autoflush=False,
             expire_on_commit=False,
         )
-        # Stub thinking adaptation so legacy tests don't hit the network.
-        # Behaviour matches a non-thinking model (no extra_body required), preserving
-        # pre-task-8 semantics for tests written before the adaptation hook.
-        self._thinking_adaptation_patch = patch(
-            "app.services.crawl_job_runtime.ensure_thinking_adaptation",
-            AsyncMock(return_value=None),
+        # Stub runtime adaptation so legacy tests don't hit the network.
+        # This models a Chat Completions endpoint without a thinking override.
+        self._llm_adaptation_patch = patch(
+            "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+            AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
-        self._thinking_adaptation_patch.start()
+        self._llm_adaptation_patch.start()
 
     async def asyncTearDown(self) -> None:
-        self._thinking_adaptation_patch.stop()
+        self._llm_adaptation_patch.stop()
         await self.engine.dispose()
         os.environ.pop("CRAWLER_DEBUG", None)
         os.environ.pop("CRAWLER_DEBUG_DIR", None)
@@ -1949,6 +2159,77 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(selected.email, "selected@example.edu")
             self.assertIsNone(unselected.email)
 
+    async def test_enrich_selected_crawl_candidates_passes_runtime_adaptation_to_context(self) -> None:
+        from app.services.llm_endpoint_adaptation import (
+            get_cached_endpoint_kind,
+            record_endpoint_adaptation,
+        )
+
+        job_id = await self._create_default_profile_and_job()
+        llm_profile = await self._get_default_llm_profile()
+        adaptation = LLMRuntimeAdaptation(
+            "responses",
+            {"thinking": {"type": "disabled"}},
+        )
+        captured: dict[str, object] = {}
+
+        async def fake_ensure(
+            session: AsyncSession,
+            profile: LLMProfile,
+        ) -> LLMRuntimeAdaptation:
+            captured["ensure_session"] = session
+            self.assertIs(profile, llm_profile)
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+            )
+            return adaptation
+
+        async def fake_enrich(
+            session_factory: async_sessionmaker[AsyncSession],
+            ctx: CrawlToolContext,
+            *,
+            candidate_ids: list[int],
+            llm_profile: LLMProfile,
+            trace_callback=None,
+        ) -> object:
+            _ = session_factory, candidate_ids, llm_profile, trace_callback
+            captured["ctx"] = ctx
+            return crawl_job_runtime.SelectedCandidateEnrichmentSummary(0, 0, 0, 0)
+
+        with (
+            patch(
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                new=AsyncMock(side_effect=fake_ensure),
+            ) as ensure_mock,
+            patch(
+                "app.services.crawl_job_runtime._enrich_selected_candidates_concurrent",
+                new=fake_enrich,
+            ),
+        ):
+            result = await enrich_selected_crawl_candidates(
+                self.session_factory,
+                job_id=job_id,
+                candidate_ids=[],
+                llm_profile=llm_profile,
+            )
+
+        self.assertEqual(result.selected_count, 0)
+        ensure_mock.assert_awaited_once()
+        self.assertIsInstance(captured["ensure_session"], AsyncSession)
+        self.assertIs(captured["ctx"].llm_adaptation, adaptation)
+        async with self.session_factory() as session:
+            self.assertEqual(
+                await get_cached_endpoint_kind(
+                    session,
+                    api_base_url=llm_profile.api_base_url or "",
+                    model_name=llm_profile.model_name,
+                ),
+                "responses",
+            )
+
     async def test_enrich_selected_crawl_candidates_enriches_complete_candidates_when_user_selected(self) -> None:
         job_id = await self._create_default_profile_and_job()
         await self._seed_candidates(job_id, count=1, host="example.edu")
@@ -2277,13 +2558,17 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
         except FileNotFoundError:
             pass
 
-    async def test_run_queued_crawl_jobs_calls_ensure_thinking_adaptation(self) -> None:
+    async def test_run_queued_crawl_jobs_calls_ensure_runtime_adaptation(self) -> None:
         await _seed_queued_crawl_job_with_default_profile(self.session_factory)
+        adaptation = LLMRuntimeAdaptation(
+            "responses",
+            {"thinking": {"type": "disabled"}},
+        )
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_thinking_adaptation",
-                AsyncMock(return_value={"thinking": {"type": "disabled"}}),
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=adaptation),
             ) as ensure_mock,
             patch(
                 "app.services.crawl_job_runtime.run_faculty_crawler_agent",
@@ -2295,7 +2580,8 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
         ensure_mock.assert_awaited_once()
         run_mock.assert_awaited_once()
         kwargs = run_mock.call_args.kwargs
-        self.assertEqual(kwargs.get("extra_body"), {"thinking": {"type": "disabled"}})
+        self.assertIs(kwargs.get("adaptation"), adaptation)
+        self.assertIs(run_mock.call_args.args[0].llm_adaptation, adaptation)
 
     async def test_thinking_adaptation_failure_marks_job_failed_and_skips_run(self) -> None:
         from app.services.thinking_adaptation import ThinkingAdaptationFailed
@@ -2304,7 +2590,7 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_thinking_adaptation",
+                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(
                     side_effect=ThinkingAdaptationFailed(
                         "已尝试全部候选 extra_body，仍无法绕开思考模式协议错。",

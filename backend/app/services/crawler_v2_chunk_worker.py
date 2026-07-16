@@ -31,9 +31,14 @@ from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runtime import build_faculty_crawler_model
-from app.services.thinking_adaptation import ensure_thinking_adaptation
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.llm_runtime import format_llm_runtime_error_for_user, parse_structured_result
+from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+from app.services.llm_runtime import (
+    LLMRuntimeAdaptation,
+    ensure_llm_runtime_adaptation,
+    format_llm_runtime_error_for_user,
+    parse_structured_result,
+)
 
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
@@ -50,20 +55,26 @@ class V2ChunkAgentRawPayload(BaseModel):
 async def invoke_v2_chunk_agent(
     llm_profile: Any,
     *,
+    session_factory: async_sessionmaker[AsyncSession],
     university: str,
     school: str,
     source_url: str,
     chunk_content: str,
-    thinking_extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation,
 ) -> tuple[dict[str, Any], dict[str, int | None] | None, str]:
-    model = build_faculty_crawler_model(llm_profile, extra_body=thinking_extra_body)
     prompt = build_v2_chunk_prompt(
         university=university,
         school=school,
         source_url=source_url,
         chunk_content=chunk_content,
     )
-    response = await model.ainvoke(prompt)
+    response, _ = await invoke_crawler_llm_with_endpoint_retry(
+        session_factory,
+        llm_profile,
+        adaptation,
+        prompt=prompt,
+        build_model=build_faculty_crawler_model,
+    )
     content = _extract_message_text(response)
     payload = parse_structured_result(content, V2ChunkAgentRawPayload)
     usage = extract_token_usage_from_llm_response(response)
@@ -179,16 +190,17 @@ async def run_crawler_v2_chunk_worker_once(
                 )
                 await session.commit()
                 return 1
-            thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
+            adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
             await session.commit()
 
         chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
+            session_factory=session_factory,
             university=job.university,
             school=job.school,
             source_url=chunk.source_url,
             chunk_content=chunk.content,
-            thinking_extra_body=thinking_extra_body,
+            adaptation=adaptation,
         )
         raw_model_text = None
         if isinstance(chunk_agent_result, tuple):

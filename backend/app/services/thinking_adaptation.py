@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-"""Thinking-mode adaptation: detect protocol errors and find the right extra_body per model.
+"""Thinking-mode adaptation: detect protocol errors and find the right extra_body per endpoint.
 
-The cache is keyed by (api_base_url, model_name) and stored in the
-``thinking_adaptation_cache`` table. See ``docs/database_table_design.md`` for
-field semantics.
+The cache is keyed by (api_base_url, model_name, endpoint_kind), so the same
+model can retain independent thinking adaptations for different endpoint
+protocols. Rows are stored in ``thinking_adaptation_cache``; see
+``docs/database_table_design.md`` for field semantics.
 """
 
 
 from app.core.time import utc_now
 
-from typing import Final
+from typing import Final, Literal
+
+
+EndpointKind = Literal["chat_completions", "responses"]
 
 
 THINKING_PROTOCOL_ERROR_KEYWORDS: Final[tuple[str, ...]] = (
@@ -83,14 +87,14 @@ def merge_extra_body(
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import JSON, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ThinkingAdaptationCache
 from app.models import LLMProfile
-from app.services.llm_runtime import LLMRuntimeError, request_chat_completion
+from app.services.llm_runtime import LLMRuntimeError
 
 
 async def get_cached_extra_body(
@@ -98,8 +102,9 @@ async def get_cached_extra_body(
     *,
     api_base_url: str,
     model_name: str,
+    endpoint_kind: EndpointKind = "chat_completions",
 ) -> tuple[bool, dict[str, object] | None]:
-    """Look up the cached extra_body for a (base_url, model_name) pair.
+    """Look up the cached extra_body for a (base_url, model_name, endpoint) target.
 
     Returns ``(hit, value)`` where ``hit`` is True if a row exists (even if the
     stored value is ``None``, which positively means "we tried and the model
@@ -110,6 +115,7 @@ async def get_cached_extra_body(
         select(ThinkingAdaptationCache).where(
             ThinkingAdaptationCache.api_base_url == api_base_url,
             ThinkingAdaptationCache.model_name == model_name,
+            ThinkingAdaptationCache.endpoint_kind == endpoint_kind,
         )
     )
     if row is None:
@@ -123,9 +129,10 @@ async def record_thinking_adaptation(
     *,
     api_base_url: str,
     model_name: str,
+    endpoint_kind: str = "chat_completions",
     learned_extra_body: dict[str, object] | None,
 ) -> None:
-    """Insert or update the cache row for ``(api_base_url, model_name)``.
+    """Insert or update the cache row for a ``(base_url, model_name, endpoint)`` target.
 
     The caller is responsible for committing the surrounding session.
     """
@@ -135,6 +142,7 @@ async def record_thinking_adaptation(
     statement = sqlite_insert(ThinkingAdaptationCache).values(
         api_base_url=api_base_url,
         model_name=model_name,
+        endpoint_kind=endpoint_kind,
         learned_extra_body=learned_value,
         probed_at=now,
         updated_at=now,
@@ -144,6 +152,7 @@ async def record_thinking_adaptation(
             index_elements=[
                 ThinkingAdaptationCache.api_base_url,
                 ThinkingAdaptationCache.model_name,
+                ThinkingAdaptationCache.endpoint_kind,
             ],
             set_={
                 "learned_extra_body": statement.excluded.learned_extra_body,
@@ -152,6 +161,35 @@ async def record_thinking_adaptation(
             },
         )
     )
+
+
+async def invalidate_thinking_adaptation(
+    session: AsyncSession,
+    *,
+    api_base_url: str,
+    model_name: str,
+    endpoint_kind: EndpointKind,
+    expected_extra_body: dict[str, object] | None,
+) -> bool:
+    """Delete one cache row only when its learned value still matches.
+
+    A single conditional DELETE avoids deleting a newer adaptation written by
+    a concurrent request after the failing request read its stale value.
+    """
+
+    # The model stores ``None`` as JSON null rather than SQL NULL.
+    expected_value: object = (
+        JSON.NULL if expected_extra_body is None else expected_extra_body
+    )
+    result = await session.execute(
+        delete(ThinkingAdaptationCache).where(
+            ThinkingAdaptationCache.api_base_url == api_base_url,
+            ThinkingAdaptationCache.model_name == model_name,
+            ThinkingAdaptationCache.endpoint_kind == endpoint_kind,
+            ThinkingAdaptationCache.learned_extra_body == expected_value,
+        )
+    )
+    return result.rowcount > 0
 
 
 class ThinkingAdaptationFailed(RuntimeError):
@@ -242,6 +280,8 @@ def resolve_base_url_for_cache(api_base_url: str | None) -> str:
 async def probe_and_learn_extra_body(
     session: AsyncSession,
     profile: LLMProfile,
+    *,
+    endpoint_kind: EndpointKind = "chat_completions",
 ) -> dict[str, object] | None:
     """Send a multi-turn probe and learn which extra_body the model needs.
 
@@ -254,15 +294,18 @@ async def probe_and_learn_extra_body(
     On other 4xx/5xx: re-raises ``LLMRuntimeError`` (caller decides what to do).
     """
 
+    from app.services.llm_runtime import _request_completion_endpoint
+
     payload = _build_probe_payload(profile)
     attempts: list[dict[str, object] | None] = [None, *THINKING_DISABLE_CANDIDATES]
     last_error: LLMRuntimeError | None = None
 
     for index, candidate in enumerate(attempts):
         try:
-            completion = await request_chat_completion(
+            completion = await _request_completion_endpoint(
                 profile,
                 payload,
+                endpoint_kind=endpoint_kind,
                 extra_body=candidate,
             )
         except LLMRuntimeError as exc:
@@ -295,9 +338,10 @@ async def probe_and_learn_extra_body(
             best_completion = completion
             for disable_candidate in THINKING_DISABLE_CANDIDATES:
                 try:
-                    disable_completion = await request_chat_completion(
+                    disable_completion = await _request_completion_endpoint(
                         profile,
                         payload,
+                        endpoint_kind=endpoint_kind,
                         extra_body=disable_candidate,
                     )
                 except LLMRuntimeError:
@@ -315,6 +359,7 @@ async def probe_and_learn_extra_body(
                 session,
                 api_base_url=resolve_base_url_for_cache(profile.api_base_url),
                 model_name=profile.model_name,
+                endpoint_kind=endpoint_kind,
                 learned_extra_body=best_candidate,
             )
             return dict(best_candidate) if best_candidate else None
@@ -323,6 +368,7 @@ async def probe_and_learn_extra_body(
             session,
             api_base_url=resolve_base_url_for_cache(profile.api_base_url),
             model_name=profile.model_name,
+            endpoint_kind=endpoint_kind,
             learned_extra_body=candidate,
         )
         return dict(candidate) if candidate else None
@@ -334,6 +380,8 @@ async def probe_and_learn_extra_body(
 async def ensure_thinking_adaptation(
     session: AsyncSession,
     profile: LLMProfile,
+    *,
+    endpoint_kind: EndpointKind = "chat_completions",
 ) -> dict[str, object] | None:
     """Return the extra_body to use for ``profile``, probing on cache miss.
 
@@ -347,17 +395,23 @@ async def ensure_thinking_adaptation(
         session,
         api_base_url=api_base_url,
         model_name=profile.model_name,
+        endpoint_kind=endpoint_kind,
     )
     if hit:
         return value
     try:
-        return await probe_and_learn_extra_body(session, profile)
+        return await probe_and_learn_extra_body(
+            session,
+            profile,
+            endpoint_kind=endpoint_kind,
+        )
     except IntegrityError:
         await session.rollback()
         hit, value = await get_cached_extra_body(
             session,
             api_base_url=api_base_url,
             model_name=profile.model_name,
+            endpoint_kind=endpoint_kind,
         )
         if hit:
             return value
