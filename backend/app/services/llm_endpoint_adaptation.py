@@ -181,6 +181,8 @@ async def invalidate_endpoint_adaptation(
 class _EndpointAdaptationLockState:
     lock: asyncio.Lock
     users: int = 0
+    learned_endpoint_kind: EndpointKind | None = None
+    probe_error: Exception | None = None
 
 
 _endpoint_adaptation_locks: dict[tuple[str, str], _EndpointAdaptationLockState] = {}
@@ -190,8 +192,8 @@ _endpoint_adaptation_locks: dict[tuple[str, str], _EndpointAdaptationLockState] 
 async def endpoint_adaptation_lock(
     api_base_url: str,
     model_name: str,
-) -> AsyncIterator[None]:
-    """Serialize adaptation probes for one normalized ``(base_url, model)`` key."""
+) -> AsyncIterator[_EndpointAdaptationLockState]:
+    """Serialize and share one adaptation probe per normalized target."""
 
     key = _cache_key(api_base_url, model_name)
     state = _endpoint_adaptation_locks.get(key)
@@ -201,7 +203,7 @@ async def endpoint_adaptation_lock(
     state.users += 1
     try:
         async with state.lock:
-            yield
+            yield state
     finally:
         state.users -= 1
         if state.users == 0 and _endpoint_adaptation_locks.get(key) is state:

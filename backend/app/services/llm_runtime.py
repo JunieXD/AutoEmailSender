@@ -469,6 +469,14 @@ class ChatCompletionResult:
     duration_ms: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class LLMRuntimeAdaptation:
+    """The endpoint protocol and thinking override learned for one model."""
+
+    endpoint_kind: Literal["chat_completions", "responses"]
+    thinking_extra_body: dict[str, object] | None
+
+
 @dataclass(slots=True)
 class DraftTokenEstimate:
     estimated_prompt_tokens: int
@@ -1187,13 +1195,159 @@ async def _request_completion_endpoint(
     )
 
 
+async def ensure_llm_runtime_adaptation(
+    session: "AsyncSession",
+    profile: LLMProfile,
+    *,
+    failed_endpoint_kind: Literal["chat_completions", "responses"] | None = None,
+) -> LLMRuntimeAdaptation:
+    """Load or learn the endpoint and thinking adaptation for ``profile``.
+
+    Endpoint discovery is serialized per target. The second cache read under
+    the lock prevents concurrent requests from issuing duplicate probes.
+    """
+
+    from app.services.llm_endpoint_adaptation import (
+        endpoint_adaptation_lock,
+        endpoint_candidates,
+        get_cached_endpoint_kind,
+        record_endpoint_adaptation,
+    )
+    from app.services.thinking_adaptation import ensure_thinking_adaptation
+
+    api_base_url = resolve_base_url(profile.api_base_url)
+    endpoint_kind = await get_cached_endpoint_kind(
+        session,
+        api_base_url=api_base_url,
+        model_name=profile.model_name,
+    )
+    if endpoint_kind is None:
+        async with endpoint_adaptation_lock(api_base_url, profile.model_name) as coordination:
+            endpoint_kind = await get_cached_endpoint_kind(
+                session,
+                api_base_url=api_base_url,
+                model_name=profile.model_name,
+            )
+            if endpoint_kind is None:
+                if coordination.learned_endpoint_kind is not None:
+                    endpoint_kind = coordination.learned_endpoint_kind
+                elif coordination.probe_error is not None:
+                    raise coordination.probe_error
+                else:
+                    try:
+                        probe_payload = {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "只回复 OK"}],
+                            "temperature": 0,
+                            "max_tokens": min(profile.max_tokens or DEFAULT_LLM_MAX_TOKENS, 8),
+                        }
+                        last_protocol_error: LLMEndpointProtocolError | None = None
+                        for candidate in endpoint_candidates(failed_endpoint_kind):
+                            try:
+                                await _request_completion_endpoint(
+                                    profile,
+                                    probe_payload,
+                                    endpoint_kind=candidate,
+                                    allow_empty_content=True,
+                                )
+                            except LLMEndpointProtocolError as exc:
+                                last_protocol_error = exc
+                                continue
+                            endpoint_kind = candidate
+                            await record_endpoint_adaptation(
+                                session,
+                                api_base_url=api_base_url,
+                                model_name=profile.model_name,
+                                endpoint_kind=endpoint_kind,
+                            )
+                            coordination.learned_endpoint_kind = endpoint_kind
+                            break
+                        if endpoint_kind is None:
+                            assert last_protocol_error is not None
+                            raise last_protocol_error
+                    except Exception as exc:
+                        coordination.probe_error = exc
+                        raise
+
+    thinking_extra_body = await ensure_thinking_adaptation(
+        session,
+        profile,
+        endpoint_kind=endpoint_kind,
+    )
+    return LLMRuntimeAdaptation(endpoint_kind, thinking_extra_body)
+
+
 async def request_chat_completion(
     profile: LLMProfile,
     payload: dict[str, object],
     *,
     extra_body: dict[str, object] | None = None,
     allow_empty_content: bool = False,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
 ) -> ChatCompletionResult:
+    if session is not None:
+        active_adaptation = adaptation or await ensure_llm_runtime_adaptation(session, profile)
+        try:
+            return await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=active_adaptation.endpoint_kind,
+                extra_body=active_adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+        except LLMEndpointProtocolError:
+            from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
+            from app.services.thinking_adaptation import invalidate_thinking_adaptation
+
+            api_base_url = resolve_base_url(profile.api_base_url)
+            await invalidate_endpoint_adaptation(
+                session,
+                api_base_url=api_base_url,
+                model_name=profile.model_name,
+                failed_endpoint_kind=active_adaptation.endpoint_kind,
+            )
+            await invalidate_thinking_adaptation(
+                session,
+                api_base_url=api_base_url,
+                model_name=profile.model_name,
+                endpoint_kind=active_adaptation.endpoint_kind,
+                expected_extra_body=active_adaptation.thinking_extra_body,
+            )
+            retry_adaptation = await ensure_llm_runtime_adaptation(
+                session,
+                profile,
+                failed_endpoint_kind=active_adaptation.endpoint_kind,
+            )
+            return await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=retry_adaptation.endpoint_kind,
+                extra_body=retry_adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+
+    if adaptation is not None:
+        try:
+            return await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=adaptation.endpoint_kind,
+                extra_body=adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+        except LLMEndpointProtocolError:
+            from app.services.llm_endpoint_adaptation import endpoint_candidates
+
+            fallback_kind = endpoint_candidates(adaptation.endpoint_kind)[0]
+            return await _request_completion_endpoint(
+                profile,
+                payload,
+                endpoint_kind=fallback_kind,
+                extra_body=adaptation.thinking_extra_body,
+                allow_empty_content=allow_empty_content,
+            )
+
     chat_error: LLMEndpointProtocolError | None = None
     try:
         return await _request_completion_endpoint(
@@ -1204,8 +1358,6 @@ async def request_chat_completion(
             allow_empty_content=allow_empty_content,
         )
     except LLMEndpointProtocolError as exc:
-        if exc.status_code != 404:
-            raise
         chat_error = exc
 
     assert chat_error is not None

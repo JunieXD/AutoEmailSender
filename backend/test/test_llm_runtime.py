@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.models import LLMProfile
 from app.services.llm_runtime import (
@@ -2754,6 +2758,267 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         sent = calls[0][1]
         assert sent is not None
         self.assertNotIn("thinking", sent)
+
+
+class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        from app.models import Base
+
+        self.engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        self.session_factory = async_sessionmaker(
+            self.engine,
+            autoflush=False,
+            expire_on_commit=False,
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.engine.dispose()
+
+    @staticmethod
+    def _profile() -> LLMProfile:
+        return LLMProfile(
+            name="responses-only",
+            provider="openai",
+            api_base_url="https://api.example.test/v1",
+            api_key="test-key",
+            model_name="responses-only-v1",
+        )
+
+    async def test_ensure_runtime_adaptation_learns_responses_and_hits_cache(self) -> None:
+        from app.services.llm_runtime import ensure_llm_runtime_adaptation
+
+        profile = self._profile()
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "7"}),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                learned = await ensure_llm_runtime_adaptation(session, profile)
+                await session.commit()
+            async with self.session_factory() as session:
+                cached = await ensure_llm_runtime_adaptation(session, profile)
+
+        self.assertEqual(learned.endpoint_kind, "responses")
+        self.assertIsNone(learned.thinking_extra_body)
+        self.assertEqual(cached, learned)
+        self.assertEqual(
+            [url for url, _ in calls],
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+
+    async def test_concurrent_uncommitted_sessions_share_one_endpoint_probe(self) -> None:
+        from app.models import Base
+        from app.services import llm_endpoint_adaptation
+        from app.services.llm_runtime import (
+            ChatCompletionResult,
+            ensure_llm_runtime_adaptation,
+        )
+
+        profile = self._profile()
+        probe_started = asyncio.Event()
+        release_probe = asyncio.Event()
+        endpoint_recorded = asyncio.Event()
+        release_recording = asyncio.Event()
+        probe_count = 0
+
+        async def probe_endpoint(*args, **kwargs) -> ChatCompletionResult:
+            nonlocal probe_count
+            probe_count += 1
+            probe_started.set()
+            await release_probe.wait()
+            return ChatCompletionResult(
+                content="OK",
+                usage=None,
+                request_url="https://api.example.test/v1/chat/completions",
+                attempted_urls=["https://api.example.test/v1/chat/completions"],
+                endpoint_kind="chat_completions",
+                status_code=200,
+                duration_ms=0,
+            )
+
+        async with asyncio.timeout(3):
+            with tempfile.TemporaryDirectory() as directory:
+                engine = create_async_engine(
+                    f"sqlite+aiosqlite:///{directory}/runtime-adaptation.db",
+                )
+                async with engine.begin() as connection:
+                    await connection.run_sync(Base.metadata.create_all)
+                session_factory = async_sessionmaker(
+                    engine,
+                    autoflush=False,
+                    expire_on_commit=False,
+                )
+
+                async def ensure_from_own_session():
+                    async with session_factory() as session:
+                        return await ensure_llm_runtime_adaptation(session, profile)
+
+                llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
+                original_record = llm_endpoint_adaptation.record_endpoint_adaptation
+
+                async def record_then_hold(*args, **kwargs):
+                    await original_record(*args, **kwargs)
+                    endpoint_recorded.set()
+                    await release_recording.wait()
+
+                try:
+                    with (
+                        patch(
+                            "app.services.llm_runtime._request_completion_endpoint",
+                            side_effect=probe_endpoint,
+                        ),
+                        patch(
+                            "app.services.llm_endpoint_adaptation.record_endpoint_adaptation",
+                            side_effect=record_then_hold,
+                        ),
+                        patch(
+                            "app.services.thinking_adaptation.ensure_thinking_adaptation",
+                            new=AsyncMock(return_value=None),
+                        ) as ensure_thinking,
+                    ):
+                        first = asyncio.create_task(ensure_from_own_session())
+                        await probe_started.wait()
+                        release_probe.set()
+                        await endpoint_recorded.wait()
+                        second = asyncio.create_task(ensure_from_own_session())
+                        for _ in range(100):
+                            state = llm_endpoint_adaptation._endpoint_adaptation_locks.get(
+                                ("https://api.example.test/v1", profile.model_name),
+                            )
+                            if state is not None and state.users == 2:
+                                break
+                            await asyncio.sleep(0.01)
+                        else:
+                            self.fail("第二个独立会话未进入 endpoint 协调锁")
+                        release_recording.set()
+                        first_adaptation, second_adaptation = await asyncio.gather(first, second)
+
+                    self.assertEqual(probe_count, 1)
+                    self.assertEqual(first_adaptation.endpoint_kind, "chat_completions")
+                    self.assertEqual(second_adaptation.endpoint_kind, "chat_completions")
+                    self.assertEqual(ensure_thinking.await_count, 2)
+                finally:
+                    llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
+                    await engine.dispose()
+
+    async def test_protocol_error_invalidates_once_relearns_other_endpoint_and_retries(self) -> None:
+        from app.services.llm_endpoint_adaptation import (
+            get_cached_endpoint_kind,
+            record_endpoint_adaptation,
+        )
+        from app.services.llm_runtime import (
+            LLMRuntimeAdaptation,
+            request_chat_completion,
+        )
+        from app.services.thinking_adaptation import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
+            _FakeResponse(status_code=200, payload={"output_text": "OK"}),
+            _FakeResponse(status_code=200, payload={"output_text": "recovered"}),
+        ]
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await request_chat_completion(
+                    profile,
+                    {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                    session=session,
+                    adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                )
+                await session.commit()
+
+        self.assertEqual(result.content, "recovered")
+        self.assertEqual(result.endpoint_kind, "responses")
+        async with self.session_factory() as session:
+            self.assertEqual(
+                await get_cached_endpoint_kind(
+                    session,
+                    api_base_url=profile.api_base_url or "",
+                    model_name=profile.model_name,
+                ),
+                "responses",
+            )
+        self.assertEqual(
+            [url for url, _ in calls],
+            [
+                "https://api.example.test/v1/chat/completions",
+                "https://api.example.test/v1/responses",
+                "https://api.example.test/v1/responses",
+            ],
+        )
+
+    async def test_non_protocol_error_keeps_learned_endpoint(self) -> None:
+        from app.services.llm_endpoint_adaptation import get_cached_endpoint_kind, record_endpoint_adaptation
+        from app.services.llm_runtime import LLMRuntimeAdaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await session.commit()
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient([_FakeResponse(500, text="upstream error")], []),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError):
+                    await request_chat_completion(
+                        profile,
+                        {"model": profile.model_name, "messages": []},
+                        session=session,
+                        adaptation=LLMRuntimeAdaptation("chat_completions", None),
+                    )
+                self.assertEqual(
+                    await get_cached_endpoint_kind(
+                        session,
+                        api_base_url=profile.api_base_url or "",
+                        model_name=profile.model_name,
+                    ),
+                    "chat_completions",
+                )
 
 
 if __name__ == "__main__":
