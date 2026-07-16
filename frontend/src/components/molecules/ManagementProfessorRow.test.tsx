@@ -158,8 +158,55 @@ describe("ManagementProfessorRow", () => {
     );
 
     expect(screen.queryByText("暂无标签")).not.toBeInTheDocument();
+    expect(screen.queryByText("无")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "给导师添加标签" }));
 
     expect(handleAddTag).toHaveBeenCalled();
+  });
+
+  it("shows 无 for entirely empty management display cells", () => {
+    render(
+      <ManagementProfessorRow
+        professor={{
+          ...professor,
+          title: "   ",
+          email: "\t",
+          university: null,
+          school: "",
+          research_direction: " \n ",
+        }}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("无")).toHaveLength(4);
+  });
+
+  it("keeps only existing school or college values when partially empty", () => {
+    render(
+      <ManagementProfessorRow
+        professor={{
+          ...professor,
+          university: "   ",
+          school: "  计算机学院  ",
+        }}
+        checked={false}
+        selectable
+        tableColumns="lg:grid-cols-8"
+        onToggleSelection={vi.fn()}
+        onEdit={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("计算机学院")).toBeInTheDocument();
+    expect(screen.queryByText("无")).not.toBeInTheDocument();
   });
 });
