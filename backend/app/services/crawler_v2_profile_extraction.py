@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.crawl_job_runtime import build_faculty_crawler_model
-from app.services.llm_runtime import LLMRuntimeError, parse_structured_result
+from app.services.llm_runtime import LLMRuntimeAdaptation, LLMRuntimeError, parse_structured_result
 
 DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS = 3
 MAX_PROFILE_PAGE_TEXT_CHARS = 12000
@@ -47,10 +47,10 @@ async def invoke_v2_profile_extraction_agent(
     title: str | None,
     page_text: str,
     page_html_excerpt: str | None = None,
-    thinking_extra_body: dict[str, object] | None = None,
+    adaptation: LLMRuntimeAdaptation,
     max_attempts: int = DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS,
 ) -> V2ProfileExtractionResult:
-    model = build_faculty_crawler_model(llm_profile, extra_body=thinking_extra_body)
+    model = build_faculty_crawler_model(llm_profile, adaptation=adaptation)
     base_prompt = build_v2_profile_extraction_prompt(
         university=university,
         school=school,
@@ -170,4 +170,3 @@ def _extract_message_text(response: object) -> str:
 
 def _hash_text(value: str) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
-

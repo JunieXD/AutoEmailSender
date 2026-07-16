@@ -19,6 +19,59 @@ from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_d
 
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_profile_extraction_adaptation_cache_is_committed_before_session_closes(self) -> None:
+        from app.services.llm_endpoint_adaptation import (
+            get_cached_endpoint_kind,
+            record_endpoint_adaptation,
+        )
+
+        _, task_id = await self._seed_page_task(
+            original_url="https://example.edu/teacher/zhang.html",
+            entry_type="profile",
+        )
+        snapshot = PageSnapshot(
+            url="https://example.edu/teacher/zhang.html",
+            title="张三",
+            text="张三 教授",
+            html="<h1>张三</h1>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+        extraction = SimpleNamespace(
+            payload={"status": "no_candidate", "candidate": None},
+            usage=None,
+            attempts=[],
+            page_text_hash="hash",
+            page_text_length=len(snapshot.text),
+        )
+
+        async def fake_ensure(session, profile):
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="responses",
+            )
+            return LLMRuntimeAdaptation("responses", None)
+
+        with (
+            patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)),
+            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(side_effect=fake_ensure)),
+            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)),
+        ):
+            await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
+
+        async with self.session_factory() as session:
+            self.assertEqual(
+                await get_cached_endpoint_kind(
+                    session,
+                    api_base_url="https://api.openai.com/v1",
+                    model_name="test-model",
+                ),
+                "responses",
+            )
+
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)

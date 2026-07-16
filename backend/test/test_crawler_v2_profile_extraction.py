@@ -9,6 +9,7 @@ from app.services.crawler_v2_profile_extraction import (
     build_v2_profile_extraction_prompt,
     invoke_v2_profile_extraction_agent,
 )
+from app.services.llm_runtime import LLMRuntimeAdaptation
 
 
 class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
@@ -45,7 +46,10 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
                 title="张三",
                 page_text="张三 教授",
                 page_html_excerpt="<h1>张三</h1>",
-                thinking_extra_body={"thinking": {"type": "disabled"}},
+                adaptation=LLMRuntimeAdaptation(
+                    "responses",
+                    {"thinking": {"type": "disabled"}},
+                ),
             )
 
         self.assertEqual(result.payload["status"], "candidate")
@@ -64,4 +68,3 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

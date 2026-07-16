@@ -10,6 +10,7 @@ from app.core.time import utc_now
 from urllib.parse import urlparse
 
 import httpx
+from openai import APIResponseValidationError, APIStatusError
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,11 +29,17 @@ from app.services.crawl_job_runs import (
     mark_crawl_job_run_running,
 )
 from app.services.runtime_settings import get_runtime_settings
-from app.services.llm_runtime import LLMRuntimeError, parse_structured_result
+from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
+from app.services.llm_runtime import (
+    LLMRuntimeAdaptation,
+    LLMRuntimeError,
+    ensure_llm_runtime_adaptation,
+    parse_structured_result,
+    resolve_base_url,
+)
 from app.services.thinking_adaptation import (
     ThinkingAdaptationFailed,
     adapt_failure_message_for_thinking_error,
-    ensure_thinking_adaptation,
 )
 from app.services.crawler_tools import (
     CrawlJobCanceled,
@@ -227,7 +234,7 @@ async def run_queued_crawl_jobs_once(
             return 1
 
         try:
-            thinking_extra_body = await ensure_thinking_adaptation(session, llm_profile)
+            adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
         except ThinkingAdaptationFailed as exc:
             failed_at = utc_now()
             job.status = CrawlJobStatus.FAILED.value
@@ -273,7 +280,7 @@ async def run_queued_crawl_jobs_once(
             university=job.university,
             school=job.school,
             session_factory=session_factory,
-            thinking_extra_body=thinking_extra_body,
+            llm_adaptation=adaptation,
             entry_type=job.entry_type,
         )
 
@@ -293,11 +300,11 @@ async def run_queued_crawl_jobs_once(
                         trace_callback=trace_callback,
                     )
                 else:
-                    agent_result = await run_faculty_crawler_agent(
+                    agent_result = await _run_crawler_agent_with_endpoint_retry(
+                        session_factory,
                         entry_ctx,
                         llm_profile,
                         trace_callback=trace_callback,
-                        extra_body=entry_ctx.thinking_extra_body,
                         run_budget=agent_run_budget,
                     )
                     if _is_agent_context_budget_reached(agent_result):
@@ -362,6 +369,58 @@ async def run_queued_crawl_jobs_once(
         _ACTIVE_CRAWL_JOB_IDS.discard(job_id)
 
     return 1
+
+
+def _is_agent_endpoint_protocol_error(exc: Exception) -> bool:
+    if isinstance(exc, APIResponseValidationError):
+        return True
+    return isinstance(exc, APIStatusError) and exc.status_code in {404, 405, 501}
+
+
+async def _run_crawler_agent_with_endpoint_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+    ctx: CrawlToolContext,
+    llm_profile: LLMProfile,
+    *,
+    trace_callback: Any | None,
+    run_budget: Any,
+) -> Any:
+    """Rebuild the final Agent once when its endpoint protocol is rejected."""
+
+    try:
+        return await run_faculty_crawler_agent(
+            ctx,
+            llm_profile,
+            trace_callback=trace_callback,
+            adaptation=ctx.llm_adaptation,
+            run_budget=run_budget,
+        )
+    except Exception as exc:
+        if not _is_agent_endpoint_protocol_error(exc):
+            raise
+
+    async with session_factory() as session:
+        await invalidate_endpoint_adaptation(
+            session,
+            api_base_url=resolve_base_url(llm_profile.api_base_url),
+            model_name=llm_profile.model_name,
+            failed_endpoint_kind=ctx.llm_adaptation.endpoint_kind,
+        )
+        retry_adaptation = await ensure_llm_runtime_adaptation(
+            session,
+            llm_profile,
+            failed_endpoint_kind=ctx.llm_adaptation.endpoint_kind,
+        )
+        await session.commit()
+
+    retry_ctx = replace(ctx, llm_adaptation=retry_adaptation)
+    return await run_faculty_crawler_agent(
+        retry_ctx,
+        llm_profile,
+        trace_callback=trace_callback,
+        adaptation=retry_adaptation,
+        run_budget=run_budget,
+    )
 
 
 async def recover_interrupted_crawl_jobs(
@@ -590,7 +649,7 @@ async def _invoke_direct_structured_llm(
 ) -> Any:
     model = build_faculty_crawler_model(
         llm_profile,
-        extra_body=ctx.thinking_extra_body,
+        adaptation=ctx.llm_adaptation,
     )
     current_prompt = prompt
     last_error: Exception | None = None
@@ -700,12 +759,15 @@ async def enrich_selected_crawl_candidates(
         job = await session.get(CrawlJob, job_id)
         if job is None:
             raise ValueError("未找到抓取任务")
+        adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
+        await session.commit()
         ctx = CrawlToolContext(
             job_id=job.id,
             start_url=job.start_url,
             university=job.university,
             school=job.school,
             session_factory=session_factory,
+            llm_adaptation=adaptation,
             entry_type=job.entry_type,
         )
 

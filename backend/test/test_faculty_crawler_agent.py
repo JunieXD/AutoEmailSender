@@ -20,6 +20,7 @@ from app.agents.faculty_crawler_agent import (
 from app.models import LLMProfile
 from app.services.crawler_tools import CrawlToolContext
 from app.services.crawler_tools import PageSnapshot
+from app.services.llm_runtime import LLMRuntimeAdaptation
 
 
 class FacultyCrawlerAgentSaveResultTests(unittest.TestCase):
@@ -625,7 +626,27 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
 
 
 class FacultyCrawlerAgentModelTests(unittest.TestCase):
-    def test_crawler_model_passes_extra_body_when_provided(self) -> None:
+    def test_crawler_model_uses_responses_endpoint_from_runtime_adaptation(self) -> None:
+        profile = LLMProfile(
+            name="Responses relay",
+            provider="openai",
+            api_base_url="https://relay.example/v1",
+            api_key="sk-test",
+            model_name="relay-model",
+        )
+        adaptation = LLMRuntimeAdaptation(
+            endpoint_kind="responses",
+            thinking_extra_body={"thinking": {"type": "disabled"}},
+        )
+
+        with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
+            build_faculty_crawler_model(profile, adaptation=adaptation)
+
+        kwargs = chat_openai.call_args.kwargs
+        self.assertTrue(kwargs["use_responses_api"])
+        self.assertEqual(kwargs["extra_body"], adaptation.thinking_extra_body)
+
+    def test_crawler_model_passes_thinking_override_from_runtime_adaptation(self) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -637,7 +658,10 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
         with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
             build_faculty_crawler_model(
                 profile,
-                extra_body={"thinking": {"type": "disabled"}},
+                adaptation=LLMRuntimeAdaptation(
+                    "chat_completions",
+                    {"thinking": {"type": "disabled"}},
+                ),
             )
 
         kwargs = chat_openai.call_args.kwargs
@@ -653,9 +677,13 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
         )
 
         with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
-            build_faculty_crawler_model(profile, extra_body=None)
+            build_faculty_crawler_model(
+                profile,
+                adaptation=LLMRuntimeAdaptation("chat_completions", None),
+            )
 
         self.assertNotIn("extra_body", chat_openai.call_args.kwargs)
+        self.assertFalse(chat_openai.call_args.kwargs["use_responses_api"])
 
     def test_crawler_model_no_longer_relies_on_is_deepseek_profile(self) -> None:
         # Even an unmistakeably DeepSeek profile must not implicitly enable any extra_body
@@ -669,7 +697,10 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
         )
 
         with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
-            build_faculty_crawler_model(profile)
+            build_faculty_crawler_model(
+                profile,
+                adaptation=LLMRuntimeAdaptation("chat_completions", None),
+            )
 
         self.assertNotIn("extra_body", chat_openai.call_args.kwargs)
 

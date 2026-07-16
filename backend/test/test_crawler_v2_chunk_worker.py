@@ -651,14 +651,14 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.status, CrawlPageChunkStatus.PROCESSING.value)
         self.assertEqual(len(candidates), 0)
         self.assertEqual(len(page_tasks), 0)
-    async def test_invoke_chunk_agent_passes_thinking_extra_body_to_model(self) -> None:
+    async def test_invoke_chunk_agent_passes_runtime_adaptation_to_model(self) -> None:
         class FakeResponse:
             content = '{"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}'
             usage_metadata = {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0, "total_tokens": 2}
 
         fake_model = AsyncMock()
         fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
-        extra_body = {"enable_thinking": False}
+        adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
         llm_profile = object()
 
         with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model) as build_mock:
@@ -668,10 +668,10 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 school="计算机学院",
                 source_url="https://example.edu/faculty",
                 chunk_content="张三",
-                thinking_extra_body=extra_body,
+                adaptation=adaptation,
             )
 
-        build_mock.assert_called_once_with(llm_profile, extra_body=extra_body)
+        build_mock.assert_called_once_with(llm_profile, adaptation=adaptation)
         self.assertEqual(payload["chunk_status"], "no_candidates")
         self.assertEqual(usage["input_tokens"], 1)
         self.assertIn("no_candidates", raw_model_text)
@@ -680,9 +680,9 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
         payload = {"candidates": [], "discovered_urls": [], "chunk_status": "no_candidates"}
         usage = {"input_tokens": 10, "output_tokens": 2, "cached_tokens": 0}
-        extra_body = {"enable_thinking": False}
+        adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
 
-        with patch("app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", extra_body))) as adapt_mock, patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, '{"chunk_status":"no_candidates","candidates":[],"discovered_urls":[]}'))) as invoke_mock:
+        with patch("app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=adaptation)) as adapt_mock, patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, '{"chunk_status":"no_candidates","candidates":[],"discovered_urls":[]}'))) as invoke_mock:
             processed = await run_crawler_v2_chunk_worker_once(
                 self.session_factory,
                 chunk_id=chunk_id,
@@ -692,7 +692,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processed, 1)
         adapt_mock.assert_awaited_once()
         invoke_mock.assert_awaited_once()
-        self.assertEqual(invoke_mock.await_args.kwargs["thinking_extra_body"], extra_body)
+        self.assertIs(invoke_mock.await_args.kwargs["adaptation"], adaptation)
 
     async def test_chunk_worker_records_thinking_adaptation_failure_on_chunk(self) -> None:
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)

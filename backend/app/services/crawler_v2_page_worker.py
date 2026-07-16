@@ -307,6 +307,7 @@ async def _extract_profile_for_page_snapshot(
             await session.commit()
             return
         adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
+        await session.commit()
         job_id = job.id
         university = job.university
         school = job.school
@@ -330,7 +331,7 @@ async def _extract_profile_for_page_snapshot(
         title=snapshot.title,
         page_text=snapshot.text,
         page_html_excerpt=snapshot.html,
-        thinking_extra_body=adaptation.thinking_extra_body,
+        adaptation=adaptation,
     )
     for attempt in result.attempts:
         append_crawler_v2_debug_event(

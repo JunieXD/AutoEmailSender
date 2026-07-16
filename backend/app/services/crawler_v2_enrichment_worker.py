@@ -174,13 +174,14 @@ async def enrich_candidate_once_with_usage(
         if llm_profile is None:
             raise ValueError("缺少可用的 LLM Profile")
         adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
+        await session.commit()
         ctx = CrawlToolContext(
             session_factory=session_factory,
             job_id=job.id,
             university=job.university,
             school=job.school,
             start_url=job.start_url,
-            thinking_extra_body=adaptation.thinking_extra_body,
+            llm_adaptation=adaptation,
         )
         profile_url = candidate.profile_url or ""
     page_text = await get_or_fetch_profile_text(ctx, candidate.id, profile_url)
@@ -198,7 +199,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
     from app.services.crawl_job_runtime import build_faculty_crawler_model
     from app.services.llm_runtime import LLMRuntimeError, parse_structured_result
 
-    model = build_faculty_crawler_model(llm_profile, extra_body=ctx.thinking_extra_body)
+    model = build_faculty_crawler_model(llm_profile, adaptation=ctx.llm_adaptation)
     prompt = build_candidate_enrichment_prompt(candidate, page_text)
     current_prompt = prompt
     last_error: Exception | None = None
