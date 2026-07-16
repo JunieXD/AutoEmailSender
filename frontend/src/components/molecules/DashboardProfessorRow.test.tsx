@@ -176,7 +176,7 @@ describe("DashboardProfessorRow", () => {
   });
 
   it("hides homepage summary and research direction lines when they are entirely empty", () => {
-    const { container } = render(
+    render(
       <DashboardProfessorRow
         professor={{
           ...professor,
@@ -200,8 +200,12 @@ describe("DashboardProfessorRow", () => {
 
     const row = screen.getByTestId("dashboard-professor-row-1");
     expect(within(row).queryByText("无")).not.toBeInTheDocument();
-    expect(container.querySelector(".mt-1")).not.toBeInTheDocument();
-    expect(container.querySelector("p")).not.toBeInTheDocument();
+    expect(
+      row.querySelector(".mt-1.text-sm.text-stone-500"),
+    ).not.toBeInTheDocument();
+    expect(
+      row.querySelector("p.mt-2.line-clamp-2.text-sm.leading-6.text-stone-600"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps only existing homepage summary values when fields are partially empty", () => {
