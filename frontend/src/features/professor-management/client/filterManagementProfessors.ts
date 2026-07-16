@@ -1,5 +1,9 @@
-import type { ProfessorManagementItemDTO } from "@/types";
+import {
+  matchesProfessorSearchField,
+  normalizeProfessorSearchText,
+} from "@/lib/professorSearchField";
 import { extractProfessorTitleTags } from "@/lib/professorTitle";
+import type { ProfessorManagementItemDTO } from "@/types";
 
 export const MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS = [
   { value: "name", label: "姓名" },
@@ -64,21 +68,6 @@ export type ProfessorManagementFilterOptions = {
   departments: string[];
   titles: string[];
   tags: { id: number; name: string }[];
-};
-
-const normalize = (value: string | null | undefined): string =>
-  value?.trim().toLowerCase() ?? "";
-
-const EMPTY_FIELD_SEARCH_KEYWORD = "无";
-
-const matchesKeywordValue = (
-  value: string | null | undefined,
-  keyword: string,
-): boolean => {
-  const normalizedValue = normalize(value);
-  return keyword === EMPTY_FIELD_SEARCH_KEYWORD
-    ? normalizedValue === ""
-    : normalizedValue.includes(keyword);
 };
 
 const sortByChinese = (values: Iterable<string>): string[] =>
@@ -243,7 +232,7 @@ export const filterManagementProfessors = (
   professors: ProfessorManagementItemDTO[],
   filters: ProfessorManagementFilterState,
 ): ProfessorManagementItemDTO[] => {
-  const keyword = normalize(filters.keyword);
+  const keyword = normalizeProfessorSearchText(filters.keyword);
   const keywordSearchScopes = normalizeManagementKeywordSearchScopes(
     filters.keywordSearchScopes,
   );
@@ -252,7 +241,10 @@ export const filterManagementProfessors = (
     const keywordMatched =
       !keyword ||
       keywordSearchScopes.some((scope) =>
-        matchesKeywordValue(getManagementKeywordValue(professor, scope), keyword),
+        matchesProfessorSearchField(
+          getManagementKeywordValue(professor, scope),
+          keyword,
+        ),
       );
 
     return (
