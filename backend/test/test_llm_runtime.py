@@ -23,9 +23,11 @@ from app.services.llm_runtime import (
     fetch_llm_profile_models,
     generate_draft_content,
     generate_match_evaluation,
+    LLMEndpointProtocolError,
     LLMRuntimeError,
     parse_completion_usage,
     probe_llm_profile,
+    _request_completion_endpoint,
     request_chat_completion,
     resolve_base_url,
 )
@@ -1693,6 +1695,372 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             resolve_base_url("https://ark.cn-beijing.volces.com/api/v3"),
             "https://ark.cn-beijing.volces.com/api/v3",
         )
+
+    async def test_request_completion_endpoint_sends_chat_payload_to_chat_url(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "OK"}}]},
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            result = await _request_completion_endpoint(
+                profile,
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 32,
+                },
+                endpoint_kind="chat_completions",
+                extra_body={"thinking": {"type": "disabled"}},
+                allow_empty_content=False,
+            )
+
+        self.assertEqual(calls, [
+            (
+                "https://api.acme.ai/v1/chat/completions",
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 32,
+                    "thinking": {"type": "disabled"},
+                },
+            ),
+        ])
+        self.assertEqual(result.endpoint_kind, "chat_completions")
+        self.assertEqual(result.attempted_urls, ["https://api.acme.ai/v1/chat/completions"])
+
+    async def test_request_completion_endpoint_converts_responses_payload(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"output_text": "OK"},
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            result = await _request_completion_endpoint(
+                profile,
+                {
+                    "model": profile.model_name,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 32,
+                },
+                endpoint_kind="responses",
+                extra_body={"reasoning_effort": "low"},
+                allow_empty_content=False,
+            )
+
+        self.assertEqual(calls[0][0], "https://api.acme.ai/v1/responses")
+        self.assertEqual(
+            calls[0][1],
+            {
+                "model": profile.model_name,
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "ping"}],
+                    },
+                ],
+                "max_output_tokens": 32,
+                "reasoning_effort": "low",
+            },
+        )
+        self.assertEqual(result.endpoint_kind, "responses")
+
+    async def test_request_completion_endpoint_marks_protocol_statuses(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        for status_code in (404, 405, 501):
+            with self.subTest(status_code=status_code):
+                calls: list[tuple[str, dict[str, object] | None]] = []
+                responses = [_FakeResponse(status_code=status_code, text="unsupported")]
+                with patch(
+                    "app.services.llm_runtime.httpx.AsyncClient",
+                    side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+                ):
+                    with self.assertRaises(LLMEndpointProtocolError) as context:
+                        await _request_completion_endpoint(
+                            profile,
+                            {"model": profile.model_name, "messages": []},
+                            endpoint_kind="responses",
+                            extra_body=None,
+                            allow_empty_content=False,
+                        )
+
+                error = context.exception
+                self.assertEqual(error.failed_endpoint_kind, "responses")
+                self.assertIsNone(error.response_envelope)
+                self.assertEqual(error.request_url, "https://api.acme.ai/v1/responses")
+                self.assertEqual(error.attempted_urls, ["https://api.acme.ai/v1/responses"])
+                self.assertEqual(error.status_code, status_code)
+                self.assertIsNotNone(error.duration_ms)
+                self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_marks_other_endpoint_envelope(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        responses = [_FakeResponse(status_code=200, payload={"output_text": "OK"})]
+        calls: list[tuple[str, dict[str, object] | None]] = []
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            with self.assertRaises(LLMEndpointProtocolError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                    extra_body=None,
+                    allow_empty_content=False,
+                )
+
+        error = context.exception
+        self.assertEqual(error.failed_endpoint_kind, "chat_completions")
+        self.assertEqual(error.response_envelope, "other_endpoint")
+        self.assertEqual(error.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_marks_invalid_envelope(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        responses = [_FakeResponse(status_code=200, payload={"unexpected": "shape"})]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            with self.assertRaises(LLMEndpointProtocolError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="responses",
+                    extra_body=None,
+                    allow_empty_content=False,
+                )
+
+        self.assertEqual(context.exception.response_envelope, "invalid")
+
+    async def test_request_completion_endpoint_keeps_non_protocol_http_errors_generic(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        for status_code in (101, 302, 401, 403, 429, 500):
+            with self.subTest(status_code=status_code):
+                responses = [_FakeResponse(status_code=status_code, text="request failed")]
+                with patch(
+                    "app.services.llm_runtime.httpx.AsyncClient",
+                    side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+                ):
+                    with self.assertRaises(LLMRuntimeError) as context:
+                        await _request_completion_endpoint(
+                            profile,
+                            {"model": profile.model_name, "messages": []},
+                            endpoint_kind="chat_completions",
+                            extra_body=None,
+                            allow_empty_content=False,
+                        )
+                self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+
+    async def test_request_completion_endpoint_keeps_network_http_error_generic(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            httpx.ConnectError("network unavailable"),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+        self.assertEqual(context.exception.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_keeps_final_tls_error_generic(self) -> None:
+        profile = LLMProfile(
+            name="deepseek",
+            provider="openai",
+            api_base_url="https://api.deepseek.com",
+            api_key="test-key",
+            model_name="deepseek-v4-flash",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"),
+            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"),
+        ]
+
+        with (
+            patch(
+                "app.services.llm_runtime.httpx.AsyncClient",
+                side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+            ),
+            patch("app.services.llm_runtime._append_llm_runtime_log"),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+        self.assertEqual(context.exception.request_url, "https://api.deepseek.com/chat/completions")
+        self.assertEqual(len(calls), 2)
+        self.assertIsInstance(calls[1]["client_kwargs"].get("verify"), ssl.SSLContext)
+
+    async def test_request_completion_endpoint_keeps_timeout_error_generic(self) -> None:
+        profile = LLMProfile(
+            name="acme",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="acme-v1",
+        )
+        calls: list[dict[str, object]] = []
+        outcomes: list[_FakeResponse | BaseException] = [
+            httpx.ReadTimeout("request timed out"),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+        self.assertEqual(context.exception.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(len(calls), 1)
+
+    async def test_request_completion_endpoint_allows_empty_chat_content_with_reasoning(self) -> None:
+        profile = LLMProfile(
+            name="thinking",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="thinking-v1",
+        )
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {"message": {"content": "", "reasoning_content": "internal reasoning"}},
+                    ],
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            result = await _request_completion_endpoint(
+                profile,
+                {"model": profile.model_name, "messages": []},
+                endpoint_kind="chat_completions",
+                extra_body=None,
+                allow_empty_content=True,
+            )
+
+        self.assertEqual(result.content, "")
+
+    async def test_request_completion_endpoint_keeps_none_chat_content_with_reasoning_generic(self) -> None:
+        profile = LLMProfile(
+            name="thinking",
+            provider="openai",
+            api_base_url="https://api.acme.ai/v1",
+            api_key="test-key",
+            model_name="thinking-v1",
+        )
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {"message": {"content": None, "reasoning_content": "internal reasoning"}},
+                    ],
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
+        ):
+            with self.assertRaises(LLMRuntimeError) as context:
+                await _request_completion_endpoint(
+                    profile,
+                    {"model": profile.model_name, "messages": []},
+                    endpoint_kind="chat_completions",
+                    extra_body=None,
+                    allow_empty_content=True,
+                )
+
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
 
     async def test_request_chat_completion_falls_back_to_responses(self) -> None:
         profile = LLMProfile(
