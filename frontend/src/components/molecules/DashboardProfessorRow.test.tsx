@@ -175,8 +175,8 @@ describe("DashboardProfessorRow", () => {
     );
   });
 
-  it("shows 无 when existing homepage display cells are entirely empty", () => {
-    render(
+  it("hides homepage summary and research direction lines when they are entirely empty", () => {
+    const { container } = render(
       <DashboardProfessorRow
         professor={{
           ...professor,
@@ -198,7 +198,10 @@ describe("DashboardProfessorRow", () => {
       />,
     );
 
-    expect(screen.getAllByText("无")).toHaveLength(2);
+    const row = screen.getByTestId("dashboard-professor-row-1");
+    expect(within(row).queryByText("无")).not.toBeInTheDocument();
+    expect(container.querySelector(".mt-1")).not.toBeInTheDocument();
+    expect(container.querySelector("p")).not.toBeInTheDocument();
   });
 
   it("keeps only existing homepage summary values when fields are partially empty", () => {
