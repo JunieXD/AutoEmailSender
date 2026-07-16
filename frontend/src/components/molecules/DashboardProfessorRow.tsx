@@ -3,7 +3,10 @@ import { Loader2, Sparkles } from "lucide-react";
 import { ProfessorNoteButton } from "@/components/molecules/ProfessorNoteButton";
 import { ProfessorTagChips } from "@/components/molecules/ProfessorTagChips";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
-import { formatProfessorSearchField } from "@/lib/professorSearchField";
+import {
+  formatProfessorSearchField,
+  isProfessorSearchFieldEmpty,
+} from "@/lib/professorSearchField";
 import type { ProfessorDashboardItemDTO } from "@/types";
 
 export type DashboardProfessorRowTimeHighlight = "sent" | "replied" | null;
@@ -99,14 +102,20 @@ export const DashboardProfessorRow = ({
             onAddTag={onAddTag}
           />
         </div>
-        <div className="mt-1 text-sm text-stone-500">
-          {formatProfessorSearchField(
-            joinNonEmpty([professor.title, professor.university, professor.school]),
-          )}
-        </div>
-        <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">
-          {formatProfessorSearchField(professor.research_direction)}
-        </p>
+        {isProfessorSearchFieldEmpty(
+          joinNonEmpty([professor.title, professor.university, professor.school]),
+        ) ? null : (
+          <div className="mt-1 text-sm text-stone-500">
+            {formatProfessorSearchField(
+              joinNonEmpty([professor.title, professor.university, professor.school]),
+            )}
+          </div>
+        )}
+        {isProfessorSearchFieldEmpty(professor.research_direction) ? null : (
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">
+            {formatProfessorSearchField(professor.research_direction)}
+          </p>
+        )}
       </div>
     </div>
 
