@@ -83,4 +83,10 @@ GPL-3.0
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=JunieXD/AutoEmailSender&type=Date)](https://www.star-history.com/#JunieXD/AutoEmailSender&Date)
+<a href="https://www.star-history.com/?repos=JunieXD%2FAutoEmailSender&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&theme=dark&legend=top-left&sealed_token=j-U7ERD8ZvkWZ-pMmPYWRYfrH9PrtKje1b6tDOQIjX8VneS8yycq6bHCU6RMRx1fbHTn7PTsbSDldjzCO_9TQPqPWfFAPW952tDvN7ixyqW1QmmdmM4XQ9y1c1_oh6gmAW5W-EE8rsFYmPJGRdp3hlgewFNtnmbxlWmF8SkUdRzkudl1Vxw7Q_fXePXZ" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&legend=top-left&sealed_token=j-U7ERD8ZvkWZ-pMmPYWRYfrH9PrtKje1b6tDOQIjX8VneS8yycq6bHCU6RMRx1fbHTn7PTsbSDldjzCO_9TQPqPWfFAPW952tDvN7ixyqW1QmmdmM4XQ9y1c1_oh6gmAW5W-EE8rsFYmPJGRdp3hlgewFNtnmbxlWmF8SkUdRzkudl1Vxw7Q_fXePXZ" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&legend=top-left&sealed_token=j-U7ERD8ZvkWZ-pMmPYWRYfrH9PrtKje1b6tDOQIjX8VneS8yycq6bHCU6RMRx1fbHTn7PTsbSDldjzCO_9TQPqPWfFAPW952tDvN7ixyqW1QmmdmM4XQ9y1c1_oh6gmAW5W-EE8rsFYmPJGRdp3hlgewFNtnmbxlWmF8SkUdRzkudl1Vxw7Q_fXePXZ" />
+ </picture>
+</a>
