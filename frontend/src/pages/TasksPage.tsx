@@ -4023,7 +4023,7 @@ export const TasksPage = () => {
                             }
                             className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            全选可导入
+                            全选候选
                           </button>
                           <button
                             type="button"
