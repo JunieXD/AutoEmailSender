@@ -1803,7 +1803,9 @@ async def save_candidates(
         )
         for candidate in candidates
     ]
-    persistence = await _save_normalized_candidate_payloads(ctx, payloads)
+    await _normalize_candidate_profile_urls_for_save(ctx, payloads)
+    accepted_payloads, _ = _filter_accepted_candidate_payloads(payloads)
+    persistence = await _save_normalized_candidate_payloads(ctx, accepted_payloads)
     await _ensure_crawl_job_can_continue_for_context(ctx)
     return persistence.saved
 
@@ -1855,6 +1857,37 @@ def _filter_accepted_candidate_payloads(
     return accepted_payloads, rejected_items
 
 
+async def _normalize_candidate_profile_urls_for_save(
+    ctx: CrawlToolContext,
+    payloads: Sequence[dict[str, Any]],
+) -> None:
+    """Normalize candidate profile URLs before contact-path validation."""
+
+    known_listing_urls: set[str] = set(ctx.known_listing_urls)
+    if ctx.entry_type != "profile":
+        async with ctx.session_factory() as session:
+            known_listing_urls.update(
+                await _known_listing_urls_for_job(
+                    session,
+                    job_id=ctx.job_id,
+                    start_url=ctx.start_url,
+                )
+            )
+
+    for payload in payloads:
+        normalized_profile_url = normalize_candidate_profile_url(
+            payload.get("profile_url"),
+            base_url=ctx.start_url,
+        )
+        if _candidate_profile_url_matches_known_listing_url(
+            normalized_profile_url,
+            known_listing_urls,
+        ):
+            _clear_listing_profile_url(payload, normalized_profile_url or "")
+        else:
+            payload["profile_url"] = normalized_profile_url
+
+
 async def save_candidate_payloads_shared(
     ctx: CrawlToolContext,
     candidates: Sequence[ProfessorCandidatePayload | dict[str, Any]],
@@ -1870,6 +1903,7 @@ async def save_candidate_payloads_shared(
             "rejected_items": failed_items,
             "saved": [],
         }
+    await _normalize_candidate_profile_urls_for_save(ctx, payloads)
     accepted_payloads, rejected_items = _filter_accepted_candidate_payloads(payloads)
     persistence = await _save_normalized_candidate_payloads(ctx, accepted_payloads)
     return {
@@ -1910,6 +1944,7 @@ async def save_candidate_batch(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return result
 
+    await _normalize_candidate_profile_urls_for_save(ctx, payloads)
     accepted_payloads, rejected_items = _filter_accepted_candidate_payloads(payloads)
 
 
@@ -1971,27 +2006,10 @@ async def _save_normalized_candidate_payloads(
         if await _is_crawl_job_stopped(session, ctx.job_id):
             return CandidatePersistenceResult(saved=[])
 
-        known_listing_urls: set[str] = set()
-        if ctx.entry_type != "profile":
-            known_listing_urls = await _known_listing_urls_for_job(
-                session,
-                job_id=ctx.job_id,
-                start_url=ctx.start_url,
-            )
-        known_listing_urls.update(ctx.known_listing_urls)
-
         for payload in payloads:
             email = payload["email"]
             normalized_email = str(email).lower() if email else None
-            normalized_profile_url = normalize_candidate_profile_url(
-                payload.get("profile_url"),
-                base_url=ctx.start_url,
-            )
-            if _candidate_profile_url_matches_known_listing_url(normalized_profile_url, known_listing_urls):
-                _clear_listing_profile_url(payload, normalized_profile_url or "")
-                normalized_profile_url = None
-            elif normalized_profile_url:
-                payload["profile_url"] = normalized_profile_url
+            normalized_profile_url = payload.get("profile_url")
 
             existing = await _find_existing_candidate_for_payload(
                 session,
