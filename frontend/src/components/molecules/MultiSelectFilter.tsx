@@ -7,19 +7,24 @@ type MultiSelectFilterProps = {
   allLabel: string;
   selectedValues: string[];
   options: string[];
+  optionLabels?: Record<string, string>;
   disabled?: boolean;
   onToggle: (value: string) => void;
   onClear: () => void;
 };
 
-const getSummary = (selectedValues: string[], allLabel: string): string => {
+const getSummary = (
+  selectedValues: string[],
+  allLabel: string,
+  optionLabels: Record<string, string>,
+): string => {
   if (selectedValues.length === 0) {
     return allLabel;
   }
   if (selectedValues.length === 1) {
-    return selectedValues[0];
+    return optionLabels[selectedValues[0]] ?? selectedValues[0];
   }
-  return `${selectedValues[0]} 等 ${selectedValues.length} 项`;
+  return `${optionLabels[selectedValues[0]] ?? selectedValues[0]} 等 ${selectedValues.length} 项`;
 };
 
 export const MultiSelectFilter = ({
@@ -27,6 +32,7 @@ export const MultiSelectFilter = ({
   allLabel,
   selectedValues,
   options,
+  optionLabels = {},
   disabled = false,
   onToggle,
   onClear,
@@ -36,7 +42,7 @@ export const MultiSelectFilter = ({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const listboxId = useId();
   const selectedSet = new Set(selectedValues);
-  const summary = getSummary(selectedValues, allLabel);
+  const summary = getSummary(selectedValues, allLabel, optionLabels);
 
   useEffect(() => {
     if (!open) {
@@ -137,7 +143,9 @@ export const MultiSelectFilter = ({
                           : "text-stone-700 hover:bg-stone-100/90 hover:text-stone-900",
                       )}
                     >
-                      <span className="truncate">{option}</span>
+                      <span className="truncate">
+                        {optionLabels[option] ?? option}
+                      </span>
                       {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
                     </button>
                   );

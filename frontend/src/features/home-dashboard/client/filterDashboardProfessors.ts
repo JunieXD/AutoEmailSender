@@ -47,6 +47,8 @@ const dashboardKeywordFieldByScope: Record<
 };
 
 export const NO_TAG_FILTER_VALUE = "__no_tag__";
+export const NO_FIELD_FILTER_VALUE = "__no_field__";
+export const NO_MATCH_SCORE_FILTER_VALUE = "__no_match_score__";
 
 export type DashboardFilterState = {
   keyword: string;
@@ -161,17 +163,12 @@ export const buildDashboardFilterOptions = (
 
   professors.forEach((professor) => {
     addNonEmpty(universities, professor.university);
-    if (
-      selectedUniversities.length === 0 ||
-      selectedUniversities.includes(professor.university?.trim() ?? "")
-    ) {
+    if (matchesAny(professor.university, selectedUniversities)) {
       addNonEmpty(schools, professor.school);
     }
     if (
-      (selectedUniversities.length === 0 ||
-        selectedUniversities.includes(professor.university?.trim() ?? "")) &&
-      (selectedSchools.length === 0 ||
-        selectedSchools.includes(professor.school?.trim() ?? ""))
+      matchesAny(professor.university, selectedUniversities) &&
+      matchesAny(professor.school, selectedSchools)
     ) {
       addNonEmpty(departments, professor.department);
     }
@@ -194,11 +191,20 @@ export const buildDashboardFilterOptions = (
   };
 };
 
-const matchesAny = (
+function matchesAny(
   value: string | null | undefined,
   selectedValues: string[],
-): boolean =>
-  selectedValues.length === 0 || selectedValues.includes(value?.trim() ?? "");
+): boolean {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+
+  const normalizedValue = value?.trim() ?? "";
+  return (
+    selectedValues.includes(normalizedValue) ||
+    (!normalizedValue && selectedValues.includes(NO_FIELD_FILTER_VALUE))
+  );
+}
 
 const matchesAnyTitle = (
   title: string | null | undefined,
@@ -208,7 +214,10 @@ const matchesAnyTitle = (
     return true;
   }
   const tags = extractDashboardTitleTags(title);
-  return selectedValues.some((value) => tags.includes(value));
+  return (
+    (!title?.trim() && selectedValues.includes(NO_FIELD_FILTER_VALUE)) ||
+    selectedValues.some((value) => tags.includes(value))
+  );
 };
 
 const matchesAnyStatus = (
@@ -293,8 +302,10 @@ export const filterDashboardProfessors = (
       );
 
     const matchScoreMatched =
-      minMatchScore === null ||
-      (professor.match_score !== null && professor.match_score >= minMatchScore);
+      filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
+        ? professor.match_score === null
+        : minMatchScore === null ||
+          (professor.match_score !== null && professor.match_score >= minMatchScore);
 
     return (
       keywordMatched &&
@@ -314,22 +325,28 @@ export const pruneDashboardFilters = (
   filters: DashboardFilterState,
 ): DashboardFilterState => {
   const allOptions = buildDashboardFilterOptions(professors);
-  const universities = filters.universities.filter((value) =>
-    allOptions.universities.includes(value),
+  const universities = filters.universities.filter(
+    (value) =>
+      value === NO_FIELD_FILTER_VALUE || allOptions.universities.includes(value),
   );
   const schoolOptions = buildDashboardFilterOptions(professors, {
     universities,
     schools: [],
   }).schools;
-  const schools = filters.schools.filter((value) => schoolOptions.includes(value));
+  const schools = filters.schools.filter(
+    (value) => value === NO_FIELD_FILTER_VALUE || schoolOptions.includes(value),
+  );
   const departmentOptions = buildDashboardFilterOptions(professors, {
     universities,
     schools,
   }).departments;
-  const departments = filters.departments.filter((value) =>
-    departmentOptions.includes(value),
+  const departments = filters.departments.filter(
+    (value) =>
+      value === NO_FIELD_FILTER_VALUE || departmentOptions.includes(value),
   );
-  const titles = filters.titles.filter((value) => allOptions.titles.includes(value));
+  const titles = filters.titles.filter(
+    (value) => value === NO_FIELD_FILTER_VALUE || allOptions.titles.includes(value),
+  );
   const validTagIds = new Set([
     ...allOptions.tags.map((tag) => String(tag.id)),
     NO_TAG_FILTER_VALUE,

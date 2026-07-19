@@ -8,6 +8,8 @@ import {
   filterDashboardProfessors,
   getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
+  NO_FIELD_FILTER_VALUE,
+  NO_MATCH_SCORE_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
   pruneDashboardFilters,
   type DashboardFilterState,
@@ -303,6 +305,44 @@ describe("filterDashboardProfessors", () => {
     expect(namesFor(professors, { minMatchScore: "80" })).toEqual(["Alice"]);
   });
 
+  it("filters nullable fields and unscored professors with the no-value options", () => {
+    const sparselyProfiledProfessor = buildProfessor({
+      id: 4,
+      name: "Missing",
+      title: null,
+      university: null,
+      school: null,
+      department: null,
+      match_score: null,
+    });
+    const completeProfessor = buildProfessor({
+      id: 5,
+      name: "Complete",
+      title: "教授",
+      university: "MIT",
+      school: "School of Engineering",
+      department: "EECS",
+      match_score: 90,
+    });
+    const profs = [sparselyProfiledProfessor, completeProfessor];
+
+    expect(namesFor(profs, { universities: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(namesFor(profs, { schools: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(namesFor(profs, { departments: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(namesFor(profs, { titles: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(
+      namesFor(profs, { minMatchScore: NO_MATCH_SCORE_FILTER_VALUE }),
+    ).toEqual(["Missing"]);
+  });
+
   it("keeps unscored professors when minimum match score is empty", () => {
     expect(namesFor(professors, { minMatchScore: "" })).toEqual([
       "Alice",
@@ -377,6 +417,24 @@ describe("filterDashboardProfessors", () => {
     });
 
     expect(schoolPruned.departments).toEqual(["Robotics"]);
+  });
+
+  it("keeps no-value selections while pruning dependent options", () => {
+    const pruned = pruneDashboardFilters(
+      [buildProfessor({ id: 4, name: "Missing" })],
+      {
+        ...createDefaultDashboardFilters(),
+        universities: [NO_FIELD_FILTER_VALUE],
+        schools: [NO_FIELD_FILTER_VALUE],
+        departments: [NO_FIELD_FILTER_VALUE],
+        titles: [NO_FIELD_FILTER_VALUE],
+      },
+    );
+
+    expect(pruned.universities).toEqual([NO_FIELD_FILTER_VALUE]);
+    expect(pruned.schools).toEqual([NO_FIELD_FILTER_VALUE]);
+    expect(pruned.departments).toEqual([NO_FIELD_FILTER_VALUE]);
+    expect(pruned.titles).toEqual([NO_FIELD_FILTER_VALUE]);
   });
 
   it("matches selected options against trimmed dashboard fields", () => {

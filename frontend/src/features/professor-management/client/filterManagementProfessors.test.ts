@@ -8,6 +8,7 @@ import {
   getManagementKeywordSearchPlaceholder,
   getActiveManagementAdvancedFilterCount,
   normalizeManagementKeywordSearchScopes,
+  NO_FIELD_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementFilterState,
@@ -352,6 +353,39 @@ describe("filterManagementProfessors", () => {
     ).toEqual(["Carol"]);
   });
 
+  it("filters nullable fields with the no-value option", () => {
+    const sparselyProfiledProfessor = buildProfessor({
+      id: 4,
+      name: "Missing",
+      title: null,
+      university: null,
+      school: null,
+      department: null,
+    });
+    const completeProfessor = buildProfessor({
+      id: 5,
+      name: "Complete",
+      title: "教授",
+      university: "MIT",
+      school: "School of Engineering",
+      department: "EECS",
+    });
+    const profs = [sparselyProfiledProfessor, completeProfessor];
+
+    expect(namesFor(profs, { universities: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(namesFor(profs, { schools: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(namesFor(profs, { departments: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+    expect(namesFor(profs, { titles: [NO_FIELD_FILTER_VALUE] })).toEqual([
+      "Missing",
+    ]);
+  });
+
   it("builds sorted non-empty options and limits schools to selected universities", () => {
     const options = buildManagementFilterOptions([
       ...professors,
@@ -457,6 +491,24 @@ describe("filterManagementProfessors", () => {
     expect(schoolPruned.departments).toEqual(["Robotics"]);
     expect(pruned.titles).toEqual(["教授"]);
     expect(pruned.tagIds).toEqual([]);
+  });
+
+  it("keeps no-value selections while pruning dependent options", () => {
+    const pruned = pruneManagementFilters(
+      [buildProfessor({ id: 4, name: "Missing" })],
+      {
+        ...createDefaultManagementFilters(),
+        universities: [NO_FIELD_FILTER_VALUE],
+        schools: [NO_FIELD_FILTER_VALUE],
+        departments: [NO_FIELD_FILTER_VALUE],
+        titles: [NO_FIELD_FILTER_VALUE],
+      },
+    );
+
+    expect(pruned.universities).toEqual([NO_FIELD_FILTER_VALUE]);
+    expect(pruned.schools).toEqual([NO_FIELD_FILTER_VALUE]);
+    expect(pruned.departments).toEqual([NO_FIELD_FILTER_VALUE]);
+    expect(pruned.titles).toEqual([NO_FIELD_FILTER_VALUE]);
   });
 
   it("does not mutate the input array", () => {

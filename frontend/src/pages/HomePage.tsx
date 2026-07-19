@@ -37,6 +37,8 @@ import {
   getActiveDashboardFilterCount,
   getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
+  NO_FIELD_FILTER_VALUE,
+  NO_MATCH_SCORE_FILTER_VALUE,
   pruneDashboardFilters,
   NO_TAG_FILTER_VALUE,
   type DashboardFilterState,
@@ -95,6 +97,7 @@ import type {
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
+const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "无" };
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -731,7 +734,7 @@ export const HomePage = () => {
         value: String(tag.id),
         label: tag.name,
       })),
-      { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+      { value: NO_TAG_FILTER_VALUE, label: "无" },
     ],
     [filterOptions.tags],
   );
@@ -1350,7 +1353,8 @@ export const HomePage = () => {
                   label="学校"
                   allLabel="全部学校"
                   selectedValues={filters.universities}
-                  options={filterOptions.universities}
+                  options={[...filterOptions.universities, NO_FIELD_FILTER_VALUE]}
+                  optionLabels={noFieldOptionLabels}
                   onToggle={(value) =>
                     toggleStringFilterValue("universities", value)
                   }
@@ -1360,7 +1364,8 @@ export const HomePage = () => {
                   label="学院"
                   allLabel="全部学院"
                   selectedValues={filters.schools}
-                  options={filterOptions.schools}
+                  options={[...filterOptions.schools, NO_FIELD_FILTER_VALUE]}
+                  optionLabels={noFieldOptionLabels}
                   onToggle={(value) =>
                     toggleStringFilterValue("schools", value)
                   }
@@ -1370,7 +1375,8 @@ export const HomePage = () => {
                   label="系所"
                   allLabel="全部系所"
                   selectedValues={filters.departments}
-                  options={filterOptions.departments}
+                  options={[...filterOptions.departments, NO_FIELD_FILTER_VALUE]}
+                  optionLabels={noFieldOptionLabels}
                   onToggle={(value) =>
                     toggleStringFilterValue("departments", value)
                   }
@@ -1380,7 +1386,8 @@ export const HomePage = () => {
                   label="职称"
                   allLabel="全部职称"
                   selectedValues={filters.titles}
-                  options={filterOptions.titles}
+                  options={[...filterOptions.titles, NO_FIELD_FILTER_VALUE]}
+                  optionLabels={noFieldOptionLabels}
                   onToggle={(value) => toggleStringFilterValue("titles", value)}
                   onClear={() => updateFilters({ titles: [] })}
                 />
@@ -1414,7 +1421,7 @@ export const HomePage = () => {
                   }}
                   onClear={() => updateFilters({ tagIds: [] })}
                 />
-                <label className="block">
+                <div className="block">
                   <div className="mb-2 text-sm font-medium text-stone-800">
                     最低匹配度
                   </div>
@@ -1422,14 +1429,37 @@ export const HomePage = () => {
                     type="number"
                     min={0}
                     max={100}
-                    value={filters.minMatchScore}
+                    value={
+                      filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
+                        ? ""
+                        : filters.minMatchScore
+                    }
                     onChange={(event) =>
                       handleMinMatchScoreChange(event.target.value)
+                    }
+                    disabled={
+                      filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
                     }
                     placeholder="例如 80"
                     className="ui-select-shell w-full"
                   />
-                </label>
+                  <label className="mt-2 flex items-center gap-2 text-sm text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
+                      }
+                      onChange={(event) =>
+                        updateFilters({
+                          minMatchScore: event.target.checked
+                            ? NO_MATCH_SCORE_FILTER_VALUE
+                            : "",
+                        })
+                      }
+                    />
+                    无匹配度
+                  </label>
+                </div>
               </div>
             </div>
           ) : null}

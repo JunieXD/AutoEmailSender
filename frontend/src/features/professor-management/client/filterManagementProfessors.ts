@@ -51,6 +51,7 @@ const managementKeywordFieldByScope: Record<
 };
 
 export const NO_TAG_FILTER_VALUE = "__no_tag__";
+export const NO_FIELD_FILTER_VALUE = "__no_field__";
 
 export type ProfessorManagementFilterState = {
   keyword: string;
@@ -112,11 +113,20 @@ const addNonEmpty = (set: Set<string>, value: string | null | undefined) => {
 const getProfessorTags = (professor: ProfessorManagementItemDTO) =>
   professor.tags ?? [];
 
-const matchesAny = (
+function matchesAny(
   value: string | null | undefined,
   selectedValues: string[],
-): boolean =>
-  selectedValues.length === 0 || selectedValues.includes(value?.trim() ?? "");
+): boolean {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+
+  const normalizedValue = value?.trim() ?? "";
+  return (
+    selectedValues.includes(normalizedValue) ||
+    (!normalizedValue && selectedValues.includes(NO_FIELD_FILTER_VALUE))
+  );
+}
 
 const filterTitleMatches = (
   title: string | null | undefined,
@@ -127,7 +137,10 @@ const filterTitleMatches = (
   }
 
   const tags = extractProfessorTitleTags(title);
-  return selectedValues.some((value) => tags.includes(value));
+  return (
+    (!title?.trim() && selectedValues.includes(NO_FIELD_FILTER_VALUE)) ||
+    selectedValues.some((value) => tags.includes(value))
+  );
 };
 
 const filterTagMatches = (
@@ -186,17 +199,12 @@ export const buildManagementFilterOptions = (
 
   professors.forEach((professor) => {
     addNonEmpty(universities, professor.university);
-    if (
-      selectedUniversities.length === 0 ||
-      selectedUniversities.includes(professor.university?.trim() ?? "")
-    ) {
+    if (matchesAny(professor.university, selectedUniversities)) {
       addNonEmpty(schools, professor.school);
     }
     if (
-      (selectedUniversities.length === 0 ||
-        selectedUniversities.includes(professor.university?.trim() ?? "")) &&
-      (selectedSchools.length === 0 ||
-        selectedSchools.includes(professor.school?.trim() ?? ""))
+      matchesAny(professor.university, selectedUniversities) &&
+      matchesAny(professor.school, selectedSchools)
     ) {
       addNonEmpty(departments, professor.department);
     }
@@ -263,14 +271,17 @@ export const pruneManagementFilters = (
   filters: ProfessorManagementFilterState,
 ): ProfessorManagementFilterState => {
   const allOptions = buildManagementFilterOptions(professors);
-  const universities = filters.universities.filter((value) =>
-    allOptions.universities.includes(value),
+  const universities = filters.universities.filter(
+    (value) =>
+      value === NO_FIELD_FILTER_VALUE || allOptions.universities.includes(value),
   );
   const schoolOptions = buildManagementFilterOptions(professors, {
     universities,
     schools: [],
   }).schools;
-  const schools = filters.schools.filter((value) => schoolOptions.includes(value));
+  const schools = filters.schools.filter(
+    (value) => value === NO_FIELD_FILTER_VALUE || schoolOptions.includes(value),
+  );
   const departmentOptions = buildManagementFilterOptions(professors, {
     universities,
     schools,
@@ -284,10 +295,13 @@ export const pruneManagementFilters = (
     ...filters,
     universities,
     schools,
-    departments: filters.departments.filter((value) =>
-      departmentOptions.includes(value),
+    departments: filters.departments.filter(
+      (value) =>
+        value === NO_FIELD_FILTER_VALUE || departmentOptions.includes(value),
     ),
-    titles: filters.titles.filter((value) => allOptions.titles.includes(value)),
+    titles: filters.titles.filter(
+      (value) => value === NO_FIELD_FILTER_VALUE || allOptions.titles.includes(value),
+    ),
     tagIds: (filters.tagIds ?? []).filter((value) => validTagIds.has(value)),
   };
 };

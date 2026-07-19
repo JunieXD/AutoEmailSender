@@ -94,6 +94,7 @@ import {
   getActiveManagementAdvancedFilterCount,
   getManagementKeywordSearchPlaceholder,
   normalizeManagementKeywordSearchScopes,
+  NO_FIELD_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
   pruneManagementFilters,
   type ProfessorManagementKeywordSearchScope,
@@ -112,6 +113,7 @@ import {
 } from "@/features/professor-management/client/sortManagementProfessors";
 
 type ArchiveFilter = "active" | "archived" | "all";
+const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "无" };
 type ProfessorFormState = {
   name: string;
   email: string;
@@ -873,7 +875,7 @@ export const ProfessorsPage = () => {
         value: String(tag.id),
         label: tag.name,
       })),
-      { value: NO_TAG_FILTER_VALUE, label: "暂无标签" },
+      { value: NO_TAG_FILTER_VALUE, label: "无" },
     ],
     [filterOptions.tags],
   );
@@ -1948,7 +1950,11 @@ export const ProfessorsPage = () => {
                     label="学校"
                     allLabel="全部学校"
                     selectedValues={filters.universities}
-                    options={filterOptions.universities}
+                    options={[
+                      ...filterOptions.universities,
+                      NO_FIELD_FILTER_VALUE,
+                    ]}
+                    optionLabels={noFieldOptionLabels}
                     onToggle={(value) =>
                       toggleFilterValue("universities", value)
                     }
@@ -1958,7 +1964,8 @@ export const ProfessorsPage = () => {
                     label="学院"
                     allLabel="全部学院"
                     selectedValues={filters.schools}
-                    options={filterOptions.schools}
+                    options={[...filterOptions.schools, NO_FIELD_FILTER_VALUE]}
+                    optionLabels={noFieldOptionLabels}
                     onToggle={(value) => toggleFilterValue("schools", value)}
                     onClear={() => updateFilters({ schools: [] })}
                   />
@@ -1966,7 +1973,11 @@ export const ProfessorsPage = () => {
                     label="系所"
                     allLabel="全部系所"
                     selectedValues={filters.departments}
-                    options={filterOptions.departments}
+                    options={[
+                      ...filterOptions.departments,
+                      NO_FIELD_FILTER_VALUE,
+                    ]}
+                    optionLabels={noFieldOptionLabels}
                     onToggle={(value) =>
                       toggleFilterValue("departments", value)
                     }
@@ -1976,7 +1987,8 @@ export const ProfessorsPage = () => {
                     label="职称 / 导师资格"
                     allLabel="全部职称 / 导师资格"
                     selectedValues={filters.titles}
-                    options={filterOptions.titles}
+                    options={[...filterOptions.titles, NO_FIELD_FILTER_VALUE]}
+                    optionLabels={noFieldOptionLabels}
                     onToggle={(value) => toggleFilterValue("titles", value)}
                     onClear={() => updateFilters({ titles: [] })}
                   />
