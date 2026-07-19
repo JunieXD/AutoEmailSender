@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import JSON, ForeignKey, Index, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, inspect, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -45,6 +45,12 @@ class Professor(Base):
     )
     skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     personal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    communication_sync_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+        default=1,
+    )
     archived_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
@@ -74,6 +80,24 @@ class Professor(Base):
         order_by="ProfessorTagLink.sort_order, ProfessorTag.name",
         lazy="selectin",
     )
+
+
+@event.listens_for(Professor, "before_update")
+def _bump_communication_sync_version_for_address_changes(
+    _mapper: object,
+    _connection: object,
+    professor: Professor,
+) -> None:
+    state = inspect(professor)
+    if not (
+        state.attrs.email.history.has_changes()
+        or state.attrs.archived_at.history.has_changes()
+    ):
+        return
+    professor.communication_sync_version = max(
+        1,
+        professor.communication_sync_version or 1,
+    ) + 1
 
 
 class ProfessorTagLink(Base):

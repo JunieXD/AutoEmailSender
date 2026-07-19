@@ -42,16 +42,16 @@ from app.services.imap_errors import is_account_level_throttle_error as _is_acco
 from app.services.imap_errors import is_provider_throttle_error
 from app.services.imap_message_fetcher import ImapFetchedMessage
 from app.services.imap_sync_state import (
-    claim_next_mailbox_history_scans,
+    RECENT_V2_STRATEGY_VERSION,
     claim_next_professor_scans,
+    claim_recent_v2_professor_scans,
     clear_identity_sent_folder_discovery_cache,
-    ensure_professor_scan_states_if_needed,
-    ensure_recent_history_professor_scan_states,
-    mark_mailbox_history_scan_failed,
-    mark_mailbox_history_scan_progress,
+    ensure_recent_v2_professor_scan_states,
+    get_recent_v2_due_summary,
     mark_professor_scan_completed,
     mark_professor_scan_failed,
-    reset_mailbox_history_scans_to_pending,
+    mark_recent_v2_batch_completed,
+    prepare_recent_v2_bulk_sent_batch,
     reset_professor_scans_to_pending,
 )
 from app.services.batch_schedule import (
@@ -96,7 +96,7 @@ VALID_IMAP_FOLDER_ROLES = {"inbox", "sent"}
 IMAP_HISTORY_THROTTLE_PREFIX = "history:"
 IMAP_ACCOUNT_THROTTLE_PREFIX = "account:"
 IMAP_HISTORY_BODY_FETCH_COMMANDS_PER_MESSAGE = 6
-RECENT_HISTORY_STRATEGY_NAME = "recent-v1"
+RECENT_HISTORY_STRATEGY_NAME = RECENT_V2_STRATEGY_VERSION
 logger = logging.getLogger(__name__)
 
 
@@ -111,7 +111,7 @@ def build_recent_history_window(now: datetime | None = None) -> RecentHistoryWin
     start_year = current.year - 1
     return RecentHistoryWindow(
         start_date=date(start_year, 1, 1),
-        strategy_version=f"{RECENT_HISTORY_STRATEGY_NAME}-{start_year}",
+        strategy_version=RECENT_HISTORY_STRATEGY_NAME,
     )
 
 
@@ -142,8 +142,8 @@ class _MailboxHistoryHeaderMatch:
 @dataclass(slots=True)
 class _RecentSentDiscoveryResult:
     detected: int
-    professor_candidates: set[tuple[int, str]]
     command_count: int
+    completed: bool = False
 
 
 DISPATCHABLE_EMAIL_TASK_STATUSES = (
@@ -2209,11 +2209,6 @@ async def _sync_identity_incremental_once_unlocked(
     if await is_imap_incremental_paused(session_factory, identity_id):
         return 0
 
-    await ensure_professor_scan_states_if_needed(
-        session_factory,
-        identity_id=identity_id,
-        sent_folder=sent_folder,
-    )
     inbox_detected = 0
     if not incremental_paused:
         inbox_detected = await sync_identity_incremental_once(
@@ -2255,22 +2250,45 @@ async def sync_identity_history_once(
         return 0
 
     window = build_recent_history_window()
+    await ensure_recent_v2_professor_scan_states(
+        session_factory,
+        identity_id=identity_id,
+        sent_folder=sent_folder,
+        history_start_date=window.start_date,
+        settle_seconds=_int_setting(settings, "imap_history_queue_settle_seconds", 0),
+    )
+    queue_summary = await get_recent_v2_due_summary(session_factory, identity_id)
+    if queue_summary.professor_count <= 0:
+        return 0
+
     command_budget = settings.imap_history_command_budget_per_minute
     sent_discovery = _RecentSentDiscoveryResult(
         detected=0,
-        professor_candidates=set(),
         command_count=0,
     )
-    if sent_folder and command_budget > 0:
+    bulk_probe: mail_runtime.ImapMailboxUidSearchResult | None = None
+    use_bulk_sent = queue_summary.bulk_sent_state_count > 0
+    if (
+        not use_bulk_sent
+        and sent_folder
+        and queue_summary.sent_state_count > 0
+        and command_budget > 0
+        and queue_summary.professor_count > _recent_v2_targeted_professor_limit(settings)
+    ):
         try:
-            sent_discovery = await _sync_recent_sent_history_once(
-                session_factory,
+            probe = await mail_runtime.search_mailbox_uids_since_date(
                 identity,
-                identity_id=identity_id,
-                sent_folder=sent_folder,
-                window=window,
-                command_budget=command_budget,
+                sent_folder,
+                window.start_date,
             )
+            command_budget = max(0, command_budget - probe.command_count)
+            use_bulk_sent = _should_use_recent_v2_bulk_sent(
+                professor_count=queue_summary.professor_count,
+                recent_sent_uid_count=probe.uid_count,
+                settings=settings,
+            )
+            if use_bulk_sent:
+                bulk_probe = probe
         except Exception as exc:
             if is_provider_throttle_error(exc):
                 await mark_imap_throttled(
@@ -2279,38 +2297,106 @@ async def sync_identity_history_once(
                     reason=str(exc),
                     account_level=_is_account_level_throttle_error(exc),
                 )
-            await _mark_recent_sent_history_failed(
-                session_factory,
-                identity_id=identity_id,
-                sent_folder=sent_folder,
-                error=exc,
+                return 0
+            logger.warning(
+                "imap recent-v2 sent probe failed; falling back to targeted sync identity_id=%s error=%s",
+                identity_id,
+                exc,
             )
-            await log_imap_history_progress(session_factory, identity_id, folders=[("inbox", "INBOX")])
-            return 0
-        command_budget = max(0, command_budget - sent_discovery.command_count)
 
-    inbox_candidates = await _load_recent_history_inbox_candidates(
-        session_factory,
-        identity_id=identity_id,
-        sent_candidates=sent_discovery.professor_candidates,
-    )
-    await ensure_recent_history_professor_scan_states(
-        session_factory,
-        identity_id=identity_id,
-        candidates=inbox_candidates,
-        strategy_version=window.strategy_version,
-        folder="INBOX",
-    )
-    inbox_detected = await _sync_identity_targeted_history_once(
+    if use_bulk_sent and sent_folder and command_budget > 0:
+        batch_id, _state_ids = await prepare_recent_v2_bulk_sent_batch(
+            session_factory,
+            identity_id,
+        )
+        if batch_id:
+            try:
+                sent_discovery = await _sync_recent_sent_history_once(
+                    session_factory,
+                    identity,
+                    identity_id=identity_id,
+                    sent_folder=sent_folder,
+                    window=window,
+                    command_budget=command_budget,
+                    batch_id=batch_id,
+                    known_uids=(
+                        bulk_probe.uids
+                        if bulk_probe is not None
+                        and len(bulk_probe.uids) == bulk_probe.uid_count
+                        else None
+                    ),
+                    known_uidvalidity=(
+                        bulk_probe.uidvalidity if bulk_probe is not None else None
+                    ),
+                )
+                if sent_discovery.completed:
+                    await mark_recent_v2_batch_completed(
+                        session_factory,
+                        batch_id=batch_id,
+                        folder_role="sent",
+                    )
+            except Exception as exc:
+                if is_provider_throttle_error(exc):
+                    await mark_imap_throttled(
+                        session_factory,
+                        identity_id,
+                        reason=str(exc),
+                        account_level=_is_account_level_throttle_error(exc),
+                    )
+                await _mark_recent_sent_history_failed(
+                    session_factory,
+                    identity_id=identity_id,
+                    sent_folder=sent_folder,
+                    error=exc,
+                )
+                await log_imap_history_progress(
+                    session_factory,
+                    identity_id,
+                    folders=[("inbox", "INBOX")],
+                )
+                return 0
+            command_budget = max(0, command_budget - sent_discovery.command_count)
+
+    targeted_detected = await _sync_identity_targeted_history_once(
         session_factory,
         identity_id,
-        mailbox_folders=[("inbox", "INBOX")],
+        mailbox_folders=_mailbox_history_folder_specs(sent_folder),
         since_date=window.start_date,
         strategy_version=window.strategy_version,
         command_budget=command_budget,
     )
     await log_imap_history_progress(session_factory, identity_id, folders=[("inbox", "INBOX")])
-    return sent_discovery.detected + inbox_detected
+    return sent_discovery.detected + targeted_detected
+
+
+def _recent_v2_targeted_professor_limit(settings) -> int:
+    effective_rate = min(
+        _int_setting(settings, "imap_history_command_budget_per_minute", 120),
+        _int_setting(settings, "imap_history_command_rate_per_minute", 40),
+    )
+    reserved_search_budget = max(1, effective_rate * 75 // 100)
+    return max(1, reserved_search_budget // 2)
+
+
+def _should_use_recent_v2_bulk_sent(
+    *,
+    professor_count: int,
+    recent_sent_uid_count: int,
+    settings,
+) -> bool:
+    if professor_count <= _recent_v2_targeted_professor_limit(settings):
+        return False
+    if recent_sent_uid_count > _int_setting(settings, "imap_history_bulk_header_limit", 5000):
+        return False
+    header_batch_size = max(1, _int_setting(settings, "imap_fetch_batch_size", 20))
+    bulk_command_cost = 1 + (recent_sent_uid_count + header_batch_size - 1) // header_batch_size
+    targeted_sent_command_cost = professor_count
+    return bulk_command_cost < targeted_sent_command_cost
+
+
+def _int_setting(settings, name: str, default: int) -> int:
+    value = getattr(settings, name, default)
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
 async def _sync_recent_sent_history_once(
@@ -2321,12 +2407,15 @@ async def _sync_recent_sent_history_once(
     sent_folder: str,
     window: RecentHistoryWindow,
     command_budget: int,
+    batch_id: str,
+    known_uids: tuple[int, ...] | None = None,
+    known_uidvalidity: int | None = None,
 ) -> _RecentSentDiscoveryResult:
     if command_budget <= 0:
         return _RecentSentDiscoveryResult(
             detected=0,
-            professor_candidates=set(),
             command_count=0,
+            completed=False,
         )
 
     async with session_factory() as session:
@@ -2336,8 +2425,12 @@ async def _sync_recent_sent_history_once(
             folder_role="sent",
             folder=sent_folder,
         )
-        if state.history_strategy_version != window.strategy_version:
+        if (
+            state.history_strategy_version != window.strategy_version
+            or state.history_batch_id != batch_id
+        ):
             state.history_strategy_version = window.strategy_version
+            state.history_batch_id = batch_id
             state.history_high_water_uid = None
             state.history_next_before_uid = None
             state.history_scan_status = "sent_recent_discovery_pending"
@@ -2348,18 +2441,30 @@ async def _sync_recent_sent_history_once(
         expected_uidvalidity = state.uidvalidity
         await session.commit()
 
-    header_result = await mail_runtime.fetch_recent_mailbox_message_headers_since(
-        identity,
-        sent_folder,
-        window.start_date,
-        min_uid=min_uid,
-        max_fetch_batches=max(0, command_budget - 1),
-        expected_uidvalidity=expected_uidvalidity,
-    )
+    if known_uids is None:
+        header_result = await mail_runtime.fetch_recent_mailbox_message_headers_since(
+            identity,
+            sent_folder,
+            window.start_date,
+            min_uid=min_uid,
+            max_fetch_batches=max(0, command_budget - 1),
+            expected_uidvalidity=expected_uidvalidity,
+        )
+    else:
+        header_result = await mail_runtime.fetch_recent_mailbox_message_headers_since(
+            identity,
+            sent_folder,
+            window.start_date,
+            min_uid=min_uid,
+            max_fetch_batches=max(0, command_budget - 1),
+            expected_uidvalidity=expected_uidvalidity,
+            known_uids=known_uids,
+            known_uidvalidity=known_uidvalidity,
+        )
     if header_result.command_count > command_budget:
         raise RuntimeError("IMAP history command budget exhausted during recent sent header fetch")
     remaining_command_budget = command_budget - header_result.command_count
-    matched_headers, professor_candidates = await _match_recent_sent_headers(
+    matched_headers = await _match_recent_sent_headers(
         session_factory,
         header_result.messages,
     )
@@ -2397,10 +2502,11 @@ async def _sync_recent_sent_history_once(
         state.history_high_water_uid = high_water_uid
         state.history_next_before_uid = None
         state.history_scan_status = (
-            "inbox_recent_replies_pending"
+            "completed"
             if covered_recent_headers
             else "sent_recent_discovery_running"
         )
+        state.history_scan_completed_at = utc_now() if covered_recent_headers else None
         state.history_scanned_count = (state.history_scanned_count or 0) + safe_scanned_count
         state.history_matched_count = (state.history_matched_count or 0) + safe_matched_count
         state.history_last_error = None
@@ -2408,8 +2514,8 @@ async def _sync_recent_sent_history_once(
 
     return _RecentSentDiscoveryResult(
         detected=detected,
-        professor_candidates=professor_candidates,
         command_count=header_result.command_count + body_result.command_count,
+        completed=covered_recent_headers,
     )
 
 
@@ -2435,15 +2541,14 @@ async def _mark_recent_sent_history_failed(
 async def _match_recent_sent_headers(
     session_factory: async_sessionmaker[AsyncSession],
     header_messages: list[ImapFetchedMessage],
-) -> tuple[list[_MailboxHistoryHeaderMatch], set[tuple[int, str]]]:
+) -> list[_MailboxHistoryHeaderMatch]:
     if not header_messages:
-        return [], set()
+        return []
     professor_ids_by_email = await _load_active_professor_ids_by_email(session_factory)
     if not professor_ids_by_email:
-        return [], set()
+        return []
 
     matches: list[_MailboxHistoryHeaderMatch] = []
-    professor_candidates: set[tuple[int, str]] = set()
     for message in header_messages:
         candidate_emails = normalize_email_list(
             [*message.to_emails, *message.cc_emails, *message.bcc_emails],
@@ -2456,14 +2561,9 @@ async def _match_recent_sent_headers(
                 for professor_id in professor_ids_by_email.get(email, [])
             ),
         )
-        for email in candidate_emails:
-            if not email:
-                continue
-            for professor_id in professor_ids_by_email.get(email, []):
-                professor_candidates.add((professor_id, email))
         if professor_ids:
             matches.append(_MailboxHistoryHeaderMatch(message=message, professor_ids=professor_ids))
-    return matches, professor_candidates
+    return matches
 
 
 async def _fetch_recent_sent_message_bodies(
@@ -2579,116 +2679,11 @@ def _recent_sent_safe_scan_progress(
     return high_water_uid, scanned_count, matched_count
 
 
-async def _load_recent_history_inbox_candidates(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    identity_id: int,
-    sent_candidates: set[tuple[int, str]],
-) -> set[tuple[int, str]]:
-    candidates = {
-        (professor_id, normalized_email)
-        for professor_id, email in sent_candidates
-        if professor_id is not None
-        and professor_id > 0
-        and (normalized_email := normalize_email_address(email))
-    }
-    async with session_factory() as session:
-        log_rows = (
-            await session.execute(
-                select(Professor.id, Professor.email)
-                .join(EmailLog, EmailLog.professor_id == Professor.id)
-                .where(
-                    EmailLog.identity_id == identity_id,
-                    Professor.archived_at.is_(None),
-                    Professor.email.is_not(None),
-                    EmailLog.direction.in_(
-                        [
-                            EmailDirection.SENT.value,
-                            EmailDirection.RECEIVED.value,
-                        ],
-                    ),
-                    or_(
-                        EmailLog.direction == EmailDirection.RECEIVED.value,
-                        EmailLog.failure_summary.is_(None),
-                    ),
-                )
-                .distinct(),
-            )
-        ).all()
-        task_rows = (
-            await session.execute(
-                select(Professor.id, Professor.email)
-                .join(EmailTask, EmailTask.professor_id == Professor.id)
-                .where(
-                    EmailTask.identity_id == identity_id,
-                    Professor.archived_at.is_(None),
-                    Professor.email.is_not(None),
-                    or_(
-                        EmailTask.status.in_(
-                            [
-                                EmailTaskStatus.SENT.value,
-                                EmailTaskStatus.REPLY_DETECTED.value,
-                            ],
-                        ),
-                        EmailTask.sent_at.is_not(None),
-                        EmailTask.is_replied.is_(True),
-                        EmailTask.last_rfc_message_id.is_not(None),
-                    ),
-                )
-                .distinct(),
-            )
-        ).all()
-    for professor_id, email in [*log_rows, *task_rows]:
-        normalized_email = normalize_email_address(email)
-        if professor_id and normalized_email:
-            candidates.add((professor_id, normalized_email))
-    return candidates
-
-
-async def _ensure_mailbox_history_scan_states(
-    session_factory: async_sessionmaker[AsyncSession],
-    identity_id: int,
-    folder_specs: list[tuple[str, str]],
-) -> None:
-    async with session_factory() as session:
-        for folder_role, folder in folder_specs:
-            await _get_or_create_mailbox_state(
-                session,
-                identity_id,
-                folder_role=folder_role,
-                folder=folder,
-            )
-        await session.commit()
-
-
 def _mailbox_history_folder_specs(sent_folder: str | None) -> list[tuple[str, str]]:
     specs = [("inbox", "INBOX")]
     if sent_folder:
         specs.append(("sent", sent_folder))
     return specs
-
-
-async def _mailbox_history_scans_completed(
-    session_factory: async_sessionmaker[AsyncSession],
-    identity_id: int,
-    folder_specs: list[tuple[str, str]],
-) -> bool:
-    if not folder_specs:
-        return False
-    async with session_factory() as session:
-        for folder_role, folder in folder_specs:
-            state = await session.scalar(
-                select(ImapMailboxSyncState).where(
-                    ImapMailboxSyncState.identity_id == identity_id,
-                    ImapMailboxSyncState.folder_role == folder_role,
-                    ImapMailboxSyncState.folder == folder,
-                ),
-            )
-            if state is None:
-                return False
-            if state.history_scan_status != ImapMailboxHistoricalScanStatus.COMPLETED.value:
-                return False
-    return True
 
 
 async def _load_mailbox_uidvalidity(
@@ -2778,12 +2773,19 @@ async def _sync_identity_targeted_history_once(
     )
     if claim_limit <= 0:
         return 0
-    states = await claim_next_professor_scans(
-        session_factory,
-        identity_id,
-        limit=claim_limit,
-        strategy_version=strategy_version,
-    )
+    if strategy_version == RECENT_V2_STRATEGY_VERSION:
+        states = await claim_recent_v2_professor_scans(
+            session_factory,
+            identity_id,
+            limit=claim_limit,
+        )
+    else:
+        states = await claim_next_professor_scans(
+            session_factory,
+            identity_id,
+            limit=claim_limit,
+            strategy_version=strategy_version,
+        )
     if not states:
         return 0
     if mailbox_folders is not None:
@@ -2836,7 +2838,7 @@ async def _sync_identity_targeted_history_once(
                 folder_role=state.folder_role,
                 min_uid=state.last_scanned_uid,
                 max_fetch_batches=header_fetch_budget,
-                since_date=since_date if state.folder_role == "inbox" else None,
+                since_date=since_date,
                 expected_uidvalidity=expected_uidvalidity,
             )
             if header_result.command_count > command_budget:

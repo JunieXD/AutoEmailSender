@@ -25,6 +25,7 @@ from app.services.mail_runtime import (
     format_imap_login_error,
     _test_imap_connection_sync,
     parse_received_email,
+    search_mailbox_uids_since_date,
     send_email_to_recipient,
 )
 
@@ -1108,6 +1109,46 @@ class MailRuntimeTestCase(unittest.TestCase):
             any(re.fullmatch(r"\d+:\*|\d+:\d+", criterion) for criterion in client.search_criteria),
         )
 
+    def test_recent_mailbox_headers_reuse_probe_uids_when_uidvalidity_matches(self) -> None:
+        client = _FakeImapClient(
+            headers_by_uid={
+                7: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: first cached uid\r\n"
+                    b"Message-ID: <cached-7@example.com>\r\n\r\n"
+                ),
+                9: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: second cached uid\r\n"
+                    b"Message-ID: <cached-9@example.com>\r\n\r\n"
+                ),
+            },
+        )
+        client.response = lambda code: ("UIDVALIDITY", [b"777"])
+
+        with (
+            patch("app.services.mail_runtime._open_imap_client", return_value=client),
+            patch("app.services.mail_runtime.get_settings") as settings_mock,
+        ):
+            settings_mock.return_value.imap_fetch_batch_size = 1
+            result = asyncio.run(
+                fetch_recent_mailbox_message_headers_since(
+                    _build_identity(),
+                    "Sent",
+                    date(2025, 1, 1),
+                    min_uid=None,
+                    max_fetch_batches=None,
+                    known_uids=(7, 9),
+                    known_uidvalidity=777,
+                ),
+            )
+
+        self.assertEqual([message.uid for message in result.messages], [7, 9])
+        self.assertEqual(result.command_count, 2)
+        self.assertEqual(client.search_criteria, [])
+
     def test_recent_mailbox_headers_reset_min_uid_when_uidvalidity_changes(self) -> None:
         client = _FakeImapClient(
             search_data_by_criterion={"SINCE 01-Jan-2025": b"7"},
@@ -1136,6 +1177,8 @@ class MailRuntimeTestCase(unittest.TestCase):
                     min_uid=900,
                     max_fetch_batches=None,
                     expected_uidvalidity=111,
+                    known_uids=(900,),
+                    known_uidvalidity=111,
                 ),
             )
 
@@ -1266,6 +1309,78 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual([message.uid for message in result.messages], [4])
         self.assertEqual(result.messages[0].uidvalidity, 888)
         self.assertIn('(FROM "teacher@example.edu" SINCE 01-Jan-2025)', client.search_criteria)
+
+    def test_professor_history_headers_accept_since_date_for_sent_search(self) -> None:
+        combined = (
+            '(SINCE 01-Jan-2025 OR (OR (TO "teacher@example.edu") '
+            '(CC "teacher@example.edu")) (BCC "teacher@example.edu"))'
+        )
+        client = _FakeImapClient(search_data_by_criterion={combined: b""})
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            result = asyncio.run(
+                fetch_professor_history_mailbox_message_headers_with_command_count(
+                    _build_identity(),
+                    "Sent",
+                    "teacher@example.edu",
+                    folder_role="sent",
+                    since_date=date(2025, 1, 1),
+                ),
+            )
+
+        self.assertEqual(result.messages, [])
+        self.assertEqual(client.search_criteria, [combined])
+
+    def test_professor_history_sent_fallback_keeps_since_date(self) -> None:
+        combined = (
+            '(SINCE 01-Jan-2025 OR (OR (TO "teacher@example.edu") '
+            '(CC "teacher@example.edu")) (BCC "teacher@example.edu"))'
+        )
+        fallback_criteria = [
+            '(TO "teacher@example.edu" SINCE 01-Jan-2025)',
+            '(CC "teacher@example.edu" SINCE 01-Jan-2025)',
+            '(BCC "teacher@example.edu" SINCE 01-Jan-2025)',
+        ]
+        client = _FakeImapClient(
+            search_status_by_criterion={combined: "NO"},
+            search_data_by_criterion={criterion: b"" for criterion in fallback_criteria},
+        )
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            result = asyncio.run(
+                fetch_professor_history_mailbox_message_headers_with_command_count(
+                    _build_identity(),
+                    "Sent",
+                    "teacher@example.edu",
+                    folder_role="sent",
+                    since_date=date(2025, 1, 1),
+                ),
+            )
+
+        self.assertEqual(result.messages, [])
+        self.assertEqual(result.command_count, 4)
+        self.assertEqual(client.search_criteria, [combined, *fallback_criteria])
+
+    def test_recent_uid_probe_does_not_fetch_headers(self) -> None:
+        client = _FakeImapClient(
+            search_data_by_criterion={"SINCE 01-Jan-2025": b"7 9 11"},
+        )
+        client.response = lambda code: ("UIDVALIDITY", [b"777"])
+
+        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+            result = asyncio.run(
+                search_mailbox_uids_since_date(
+                    _build_identity(),
+                    "Sent",
+                    date(2025, 1, 1),
+                ),
+            )
+
+        self.assertEqual(result.uid_count, 3)
+        self.assertEqual(result.command_count, 1)
+        self.assertEqual(result.uidvalidity, 777)
+        self.assertEqual(result.uids, (7, 9, 11))
+        self.assertFalse(any("FETCH" in command for command in client.commands))
 
     def test_mailbox_history_header_fetch_scans_uid_window_without_search_or_body(self) -> None:
         client = _RangeHeaderImapClient()

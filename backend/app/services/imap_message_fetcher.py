@@ -266,31 +266,66 @@ def search_uids_from_sender_since(client: object, from_email: str, since_date: d
     return _parse_uid_search_payload(status, payload)
 
 
-def search_uids_to_recipient(client: object, to_email: str) -> list[int]:
+def search_uids_to_recipient(
+    client: object,
+    to_email: str,
+    since_date: date | None = None,
+) -> list[int]:
     escaped = _escape_imap_search_value(to_email)
-    status, payload = client.uid("SEARCH", None, f'(TO "{escaped}")')
+    criterion = _recipient_search_criterion("TO", escaped, since_date)
+    status, payload = client.uid("SEARCH", None, criterion)
     return _parse_uid_search_payload(status, payload)
 
 
-def search_uids_cc_recipient(client: object, cc_email: str) -> list[int]:
+def search_uids_cc_recipient(
+    client: object,
+    cc_email: str,
+    since_date: date | None = None,
+) -> list[int]:
     escaped = _escape_imap_search_value(cc_email)
-    status, payload = client.uid("SEARCH", None, f'(CC "{escaped}")')
+    criterion = _recipient_search_criterion("CC", escaped, since_date)
+    status, payload = client.uid("SEARCH", None, criterion)
     return _parse_uid_search_payload(status, payload)
 
 
-def search_uids_bcc_recipient(client: object, bcc_email: str) -> list[int]:
+def search_uids_bcc_recipient(
+    client: object,
+    bcc_email: str,
+    since_date: date | None = None,
+) -> list[int]:
     escaped = _escape_imap_search_value(bcc_email)
-    status, payload = client.uid("SEARCH", None, f'(BCC "{escaped}")')
+    criterion = _recipient_search_criterion("BCC", escaped, since_date)
+    status, payload = client.uid("SEARCH", None, criterion)
     return _parse_uid_search_payload(status, payload)
 
 
-def search_uids_combined_sent_recipient(client: object, recipient_email: str) -> ImapSearchResult:
+def search_uids_combined_sent_recipient(
+    client: object,
+    recipient_email: str,
+    since_date: date | None = None,
+) -> ImapSearchResult:
     escaped = _escape_imap_search_value(recipient_email)
-    criterion = f'(OR (OR (TO "{escaped}") (CC "{escaped}")) (BCC "{escaped}"))'
+    recipient_criterion = f'OR (OR (TO "{escaped}") (CC "{escaped}")) (BCC "{escaped}")'
+    criterion = (
+        f'({recipient_criterion})'
+        if since_date is None
+        else f'(SINCE {_format_imap_search_date(since_date)} {recipient_criterion})'
+    )
     status, payload = client.uid("SEARCH", None, criterion)
     if status != "OK":
         return ImapSearchResult(ok=False, uids=[])
     return ImapSearchResult(ok=True, uids=sorted(set(_parse_uid_search_payload(status, payload))))
+
+
+def _recipient_search_criterion(
+    field: str,
+    escaped_email: str,
+    since_date: date | None,
+) -> str:
+    field_criterion = f'{field} "{escaped_email}"'
+    if since_date is None:
+        return f"({field_criterion})"
+    return f'({field_criterion} SINCE {_format_imap_search_date(since_date)})'
 
 
 def _escape_imap_search_value(value: str) -> str:

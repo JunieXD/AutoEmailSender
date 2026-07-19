@@ -24,6 +24,8 @@ class Settings:
     imap_history_command_budget_per_minute: int
     imap_history_command_rate_per_minute: int
     imap_history_command_burst: int
+    imap_history_queue_settle_seconds: int
+    imap_history_bulk_header_limit: int
     imap_fetch_batch_size: int
     imap_sent_folder_failure_ttl_seconds: int
     imap_throttle_backoff_seconds: int
@@ -111,6 +113,14 @@ def get_settings() -> Settings:
             40,
         ),
         imap_history_command_burst=_get_int_env("IMAP_HISTORY_COMMAND_BURST", 3),
+        imap_history_queue_settle_seconds=max(
+            0,
+            _get_int_env("IMAP_HISTORY_QUEUE_SETTLE_SECONDS", 10),
+        ),
+        imap_history_bulk_header_limit=max(
+            1,
+            _get_int_env("IMAP_HISTORY_BULK_HEADER_LIMIT", 5000),
+        ),
         imap_fetch_batch_size=_get_int_env("IMAP_FETCH_BATCH_SIZE", 20),
         imap_sent_folder_failure_ttl_seconds=_get_int_env(
             "IMAP_SENT_FOLDER_FAILURE_TTL_SECONDS",

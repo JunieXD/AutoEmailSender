@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from app.core.time import utc_now
 
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Date, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -124,6 +124,7 @@ class ImapMailboxSyncState(Base):
         nullable=False,
         server_default=text("'folder-v1'"),
     )
+    history_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,
@@ -145,6 +146,15 @@ class ImapProfessorSyncState(Base):
             "identity_id",
             "historical_scan_status",
             "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_imap_professor_sync_recent_due",
+            "identity_id",
+            "history_strategy_version",
+            "historical_scan_status",
+            "available_at",
+            "priority",
             "id",
         ),
         UniqueConstraint(
@@ -198,6 +208,20 @@ class ImapProfessorSyncState(Base):
         String(32),
         nullable=False,
         server_default=text("'legacy'"),
+    )
+    history_start_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    trigger_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    available_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    professor_sync_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
     )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),

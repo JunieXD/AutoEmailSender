@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import Iterable, Iterator
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import date, timedelta
 
 from app.core.config import get_settings
 from app.core.time import utc_now
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
@@ -27,7 +29,18 @@ STALE_RUNNING_SCAN_AFTER = timedelta(hours=1)
 STALE_RUNNING_MAILBOX_HISTORY_AFTER = timedelta(hours=1)
 SCAN_STATE_KEY_LOOKUP_CHUNK_SIZE = 400
 TARGETED_BASELINE_STRATEGY_VERSION = "folder-v1-targeted-baseline"
-RECENT_HISTORY_STRATEGY_PREFIX = "recent-v1"
+RECENT_V2_STRATEGY_VERSION = "recent-v2"
+RECENT_V2_OBSOLETE_STRATEGY_VERSION = "recent-v2-obsolete"
+RECENT_V2_PRIORITY_REPAIR = 10
+RECENT_V2_PRIORITY_ACTIVE = 100
+
+
+@dataclass(frozen=True, slots=True)
+class RecentV2QueueSummary:
+    professor_count: int
+    sent_state_count: int
+    inbox_state_count: int
+    bulk_sent_state_count: int
 
 
 async def ensure_professor_scan_states(
@@ -151,6 +164,335 @@ async def ensure_recent_history_professor_scan_states(
             created += 1
         await session.commit()
     return created
+
+
+async def ensure_recent_v2_professor_scan_states(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    identity_id: int,
+    sent_folder: str | None,
+    history_start_date: date,
+    settle_seconds: int,
+) -> int:
+    now = utc_now()
+    settle = timedelta(seconds=max(0, settle_seconds))
+    touched = 0
+    batch_id = f"queue:{uuid.uuid4().hex}"
+    async with session_factory() as session:
+        professors = list(
+            (
+                await session.execute(
+                    select(Professor).where(
+                        Professor.archived_at.is_(None),
+                        Professor.email.is_not(None),
+                        func.trim(Professor.email) != "",
+                    ),
+                )
+            ).scalars(),
+        )
+        if not professors:
+            return 0
+
+        existing_states = list(
+            (
+                await session.execute(
+                    select(ImapProfessorSyncState).where(
+                        ImapProfessorSyncState.identity_id == identity_id,
+                    ),
+                )
+            ).scalars(),
+        )
+        for state in existing_states:
+            if (
+                state.folder_role == "sent"
+                and state.history_strategy_version == RECENT_V2_STRATEGY_VERSION
+                and state.folder != sent_folder
+            ):
+                state.history_strategy_version = RECENT_V2_OBSOLETE_STRATEGY_VERSION
+                state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
+                state.historical_scan_started_at = None
+                state.historical_scan_completed_at = now
+                state.last_error = None
+        existing_by_key = {
+            (
+                state.professor_id,
+                _normalize_email(state.professor_email),
+                state.folder_role,
+                state.folder,
+            ): state
+            for state in existing_states
+        }
+
+        for professor in professors:
+            professor_email = _normalize_email(professor.email)
+            if not professor_email:
+                continue
+            professor_version = max(1, professor.communication_sync_version or 1)
+            requested_at = professor.updated_at or professor.created_at or now
+            recently_changed = now - requested_at < settle
+            trigger_reason = "professor_activated" if recently_changed else "upgrade_repair"
+            priority = RECENT_V2_PRIORITY_ACTIVE if recently_changed else RECENT_V2_PRIORITY_REPAIR
+            available_at = max(now, requested_at + settle) if recently_changed else now
+            folder_specs = [("inbox", "INBOX")]
+            if sent_folder:
+                folder_specs.insert(0, ("sent", sent_folder))
+
+            for folder_role, folder in folder_specs:
+                state_trigger_reason = trigger_reason
+                state_priority = priority
+                state_available_at = available_at
+                key = (professor.id, professor_email, folder_role, folder)
+                state = existing_by_key.get(key)
+                if state is None:
+                    state = ImapProfessorSyncState(
+                        identity_id=identity_id,
+                        professor_id=professor.id,
+                        professor_email=professor_email,
+                        folder_role=folder_role,
+                        folder=folder,
+                    )
+                    session.add(state)
+                    existing_by_key[key] = state
+                    needs_reset = True
+                else:
+                    needs_reset = (
+                        state.history_strategy_version != RECENT_V2_STRATEGY_VERSION
+                        or state.professor_sync_version != professor_version
+                        or state.history_start_date is None
+                        or state.history_start_date > history_start_date
+                    )
+                if not needs_reset:
+                    continue
+
+                if state.history_strategy_version == RECENT_V2_STRATEGY_VERSION:
+                    state_trigger_reason = "reconcile"
+                    state_priority = RECENT_V2_PRIORITY_ACTIVE
+                    state_available_at = max(now, requested_at + settle)
+                state.history_strategy_version = RECENT_V2_STRATEGY_VERSION
+                state.history_start_date = history_start_date
+                state.trigger_reason = state_trigger_reason
+                state.batch_id = batch_id
+                state.available_at = state_available_at
+                state.priority = state_priority
+                state.professor_sync_version = professor_version
+                state.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
+                state.last_scanned_uid = None
+                state.historical_scan_started_at = None
+                state.historical_scan_completed_at = None
+                state.last_error = None
+                touched += 1
+
+        inbox_state = await _get_or_create_ensure_mailbox_state(session, identity_id)
+        inbox_state.professor_state_fingerprint = _build_recent_v2_professor_fingerprint(
+            professors,
+            sent_folder,
+        )
+        inbox_state.last_professor_state_ensure_at = now
+        await session.commit()
+    return touched
+
+
+async def get_recent_v2_due_summary(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> RecentV2QueueSummary:
+    async with session_factory() as session:
+        conditions = _recent_v2_due_conditions(identity_id, utc_now())
+        rows = (
+            await session.execute(
+                select(
+                    func.count(func.distinct(ImapProfessorSyncState.professor_id)),
+                    func.sum(
+                        case(
+                            (ImapProfessorSyncState.folder_role == "sent", 1),
+                            else_=0,
+                        ),
+                    ),
+                    func.sum(
+                        case(
+                            (ImapProfessorSyncState.folder_role == "inbox", 1),
+                            else_=0,
+                        ),
+                    ),
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    ImapProfessorSyncState.folder_role == "sent",
+                                    ImapProfessorSyncState.batch_id.like("bulk:%"),
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        ),
+                    ),
+                )
+                .select_from(ImapProfessorSyncState)
+                .join(Professor, Professor.id == ImapProfessorSyncState.professor_id)
+                .where(*conditions),
+            )
+        ).one()
+    professor_count, sent_count, inbox_count, bulk_sent_count = rows
+    return RecentV2QueueSummary(
+        professor_count=int(professor_count or 0),
+        sent_state_count=int(sent_count or 0),
+        inbox_state_count=int(inbox_count or 0),
+        bulk_sent_state_count=int(bulk_sent_count or 0),
+    )
+
+
+async def claim_recent_v2_professor_scans(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    *,
+    limit: int,
+) -> list[ImapProfessorSyncState]:
+    if limit <= 0:
+        return []
+    async with session_factory() as session:
+        states = list(
+            (
+                await session.execute(
+                    select(ImapProfessorSyncState)
+                    .join(Professor, Professor.id == ImapProfessorSyncState.professor_id)
+                    .where(
+                        *_recent_v2_due_conditions(identity_id, utc_now()),
+                        or_(
+                            ImapProfessorSyncState.batch_id.is_(None),
+                            ~ImapProfessorSyncState.batch_id.like("bulk:%"),
+                        ),
+                    )
+                    .order_by(
+                        ImapProfessorSyncState.priority.desc(),
+                        ImapProfessorSyncState.available_at.asc(),
+                        ImapProfessorSyncState.id.asc(),
+                    )
+                    .limit(limit),
+                )
+            ).scalars(),
+        )
+        now = utc_now()
+        for state in states:
+            state.historical_scan_status = ImapProfessorHistoricalScanStatus.RUNNING.value
+            state.historical_scan_started_at = now
+            state.last_error = None
+        await session.commit()
+        for state in states:
+            await session.refresh(state)
+        return states
+
+
+async def prepare_recent_v2_bulk_sent_batch(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> tuple[str | None, list[int]]:
+    async with session_factory() as session:
+        now = utc_now()
+        states = list(
+            (
+                await session.execute(
+                    select(ImapProfessorSyncState)
+                    .join(Professor, Professor.id == ImapProfessorSyncState.professor_id)
+                    .where(
+                        *_recent_v2_due_conditions(identity_id, now),
+                        ImapProfessorSyncState.folder_role == "sent",
+                    )
+                    .order_by(
+                        ImapProfessorSyncState.priority.desc(),
+                        ImapProfessorSyncState.id.asc(),
+                    ),
+                )
+            ).scalars(),
+        )
+        if not states:
+            return None, []
+        existing_batch_id = next(
+            (
+                state.batch_id
+                for state in states
+                if state.batch_id and state.batch_id.startswith("bulk:")
+            ),
+            None,
+        )
+        batch_id = existing_batch_id or f"bulk:{uuid.uuid4().hex}"
+        selected = [
+            state
+            for state in states
+            if existing_batch_id is None or state.batch_id == existing_batch_id
+        ]
+        if existing_batch_id is None:
+            for state in selected:
+                state.batch_id = batch_id
+                if state.historical_scan_status == ImapProfessorHistoricalScanStatus.FAILED.value:
+                    state.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
+                    state.last_error = None
+        await session.commit()
+        return batch_id, [state.id for state in selected]
+
+
+async def mark_recent_v2_batch_completed(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    batch_id: str,
+    folder_role: str,
+) -> int:
+    completed = 0
+    async with session_factory() as session:
+        states = list(
+            (
+                await session.execute(
+                    select(ImapProfessorSyncState).where(
+                        ImapProfessorSyncState.history_strategy_version
+                        == RECENT_V2_STRATEGY_VERSION,
+                        ImapProfessorSyncState.batch_id == batch_id,
+                        ImapProfessorSyncState.folder_role == folder_role,
+                        ImapProfessorSyncState.historical_scan_status
+                        != ImapProfessorHistoricalScanStatus.COMPLETED.value,
+                    ),
+                )
+            ).scalars(),
+        )
+        now = utc_now()
+        for state in states:
+            state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
+            state.historical_scan_completed_at = now
+            state.historical_scan_started_at = None
+            state.last_error = None
+            completed += 1
+        await session.commit()
+    return completed
+
+
+def _recent_v2_due_conditions(identity_id: int, now) -> list[object]:
+    stale_running_cutoff = now - STALE_RUNNING_SCAN_AFTER
+    return [
+        ImapProfessorSyncState.identity_id == identity_id,
+        ImapProfessorSyncState.history_strategy_version == RECENT_V2_STRATEGY_VERSION,
+        Professor.archived_at.is_(None),
+        Professor.email.is_not(None),
+        func.lower(func.trim(Professor.email)) == ImapProfessorSyncState.professor_email,
+        Professor.communication_sync_version == ImapProfessorSyncState.professor_sync_version,
+        or_(
+            ImapProfessorSyncState.available_at.is_(None),
+            ImapProfessorSyncState.available_at <= now,
+        ),
+        or_(
+            ImapProfessorSyncState.historical_scan_status.in_(
+                [
+                    ImapProfessorHistoricalScanStatus.PENDING.value,
+                    ImapProfessorHistoricalScanStatus.FAILED.value,
+                ],
+            ),
+            (
+                ImapProfessorSyncState.historical_scan_status
+                == ImapProfessorHistoricalScanStatus.RUNNING.value
+            )
+            & or_(
+                ImapProfessorSyncState.historical_scan_started_at.is_(None),
+                ImapProfessorSyncState.historical_scan_started_at <= stale_running_cutoff,
+            ),
+        ),
+    ]
 
 
 async def ensure_professor_scan_states_if_needed(
@@ -707,6 +1049,23 @@ def _build_professor_state_fingerprint(
     ]
     parts.sort()
     payload = "\n".join([sent_folder or "", *parts])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _build_recent_v2_professor_fingerprint(
+    professors: Iterable[Professor],
+    sent_folder: str | None,
+) -> str:
+    parts = [
+        (
+            f"{professor.id}:{_normalize_email(professor.email)}:"
+            f"{max(1, professor.communication_sync_version or 1)}"
+        )
+        for professor in professors
+        if _normalize_email(professor.email)
+    ]
+    parts.sort()
+    payload = "\n".join([RECENT_V2_STRATEGY_VERSION, sent_folder or "", *parts])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

@@ -9,6 +9,7 @@ from app.services.imap_message_fetcher import (
     fetch_message_headers_by_uid,
     fetch_text_part_sections_by_uid,
     parse_text_parts_from_message,
+    search_uids_combined_sent_recipient,
     search_uids_from_sender,
     search_uids_from_sender_since,
     search_uids_since,
@@ -111,6 +112,23 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
         serialized = " ".join(str(item) for item in client.commands)
         self.assertIn('FROM "prof@example.edu"', serialized)
         self.assertIn("SINCE 01-Jan-2025", serialized)
+
+    def test_search_sent_recipient_since_combines_addresses_and_date(self) -> None:
+        client = FakeImapClient(search_payload=b"10 11")
+
+        result = search_uids_combined_sent_recipient(
+            client,
+            "prof@example.edu",
+            date(2025, 1, 1),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.uids, [10, 11])
+        serialized = " ".join(str(item) for item in client.commands)
+        self.assertIn("SINCE 01-Jan-2025", serialized)
+        self.assertIn('TO "prof@example.edu"', serialized)
+        self.assertIn('CC "prof@example.edu"', serialized)
+        self.assertIn('BCC "prof@example.edu"', serialized)
 
 
 class LocaleSensitiveDate:

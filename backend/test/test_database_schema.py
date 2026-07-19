@@ -53,6 +53,111 @@ class MigrationScriptTests(unittest.TestCase):
 
         self.assertEqual({}, duplicates)
 
+    def test_professor_history_queue_migration_upgrades_and_downgrades(self) -> None:
+        database_path = Path(self.temp_dir.name) / "professor_history_queue.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+
+        previous_revision = "20260716_llm_endpoint_adaptation"
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "existing-before-queue@example.edu",
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            professor_columns = {
+                row[1] for row in upgraded.execute("PRAGMA table_info(professors)").fetchall()
+            }
+            mailbox_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(imap_mailbox_sync_states)",
+                ).fetchall()
+            }
+            professor_state_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(imap_professor_sync_states)",
+                ).fetchall()
+            }
+            professor_state_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list(imap_professor_sync_states)",
+                ).fetchall()
+            }
+            sync_version = upgraded.execute(
+                "SELECT communication_sync_version FROM professors WHERE id = ?",
+                (professor_id,),
+            ).fetchone()[0]
+        finally:
+            upgraded.close()
+
+        self.assertIn("communication_sync_version", professor_columns)
+        self.assertIn("history_batch_id", mailbox_columns)
+        self.assertTrue(
+            {
+                "history_start_date",
+                "trigger_reason",
+                "batch_id",
+                "available_at",
+                "priority",
+                "professor_sync_version",
+            }.issubset(professor_state_columns),
+        )
+        self.assertIn("ix_imap_professor_sync_recent_due", professor_state_indexes)
+        self.assertEqual(sync_version, 1)
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            downgraded_professor_columns = {
+                row[1] for row in downgraded.execute("PRAGMA table_info(professors)").fetchall()
+            }
+            downgraded_mailbox_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(imap_mailbox_sync_states)",
+                ).fetchall()
+            }
+            downgraded_professor_state_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(imap_professor_sync_states)",
+                ).fetchall()
+            }
+            downgraded_indexes = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA index_list(imap_professor_sync_states)",
+                ).fetchall()
+            }
+        finally:
+            downgraded.close()
+
+        self.assertNotIn("communication_sync_version", downgraded_professor_columns)
+        self.assertNotIn("history_batch_id", downgraded_mailbox_columns)
+        self.assertNotIn("history_start_date", downgraded_professor_state_columns)
+        self.assertNotIn("ix_imap_professor_sync_recent_due", downgraded_indexes)
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded_again = sqlite3.connect(database_path)
+        try:
+            version = upgraded_again.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+        finally:
+            upgraded_again.close()
+        self.assertEqual(version, HEAD_REVISION)
+
     def test_unified_email_history_upgrade_skips_normalized_message_duplicates(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "unified_email_duplicate_messages.db"
         env = os.environ.copy()

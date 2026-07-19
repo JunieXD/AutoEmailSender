@@ -169,6 +169,14 @@ class ImapHistoryHeaderFetchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ImapMailboxUidSearchResult:
+    uid_count: int
+    command_count: int
+    uidvalidity: int | None = None
+    uids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ImapMailboxHistoryHeaderFetchResult:
     messages: list[ImapFetchedMessage]
     command_count: int
@@ -464,6 +472,8 @@ async def fetch_recent_mailbox_message_headers_since(
     min_uid: int | None,
     max_fetch_batches: int | None,
     expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
+    known_uids: tuple[int, ...] | None = None,
+    known_uidvalidity: int | None = None,
 ) -> ImapHistoryHeaderFetchResult:
     if not identity.imap_host or not identity.imap_username or not identity.imap_password:
         return ImapHistoryHeaderFetchResult(messages=[], command_count=0)
@@ -475,6 +485,23 @@ async def fetch_recent_mailbox_message_headers_since(
         min_uid,
         max_fetch_batches,
         expected_uidvalidity,
+        known_uids,
+        known_uidvalidity,
+    )
+
+
+async def search_mailbox_uids_since_date(
+    identity: IdentityProfile,
+    folder: str,
+    since_date: date,
+) -> ImapMailboxUidSearchResult:
+    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+        return ImapMailboxUidSearchResult(uid_count=0, command_count=0)
+    return await asyncio.to_thread(
+        _search_mailbox_uids_since_date_sync,
+        identity,
+        folder,
+        since_date,
     )
 
 
@@ -873,6 +900,8 @@ def _fetch_recent_mailbox_message_headers_since_sync(
     min_uid: int | None,
     max_fetch_batches: int | None,
     expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
+    known_uids: tuple[int, ...] | None = None,
+    known_uidvalidity: int | None = None,
 ) -> ImapHistoryHeaderFetchResult:
     client: IMAP4 | IMAP4_SSL | None = None
     messages: list[ImapFetchedMessage] = []
@@ -887,9 +916,17 @@ def _fetch_recent_mailbox_message_headers_since_sync(
             and uidvalidity != expected_uidvalidity
         )
         effective_min_uid = None if uidvalidity_changed else min_uid
-        acquire_history_imap_command_slot_sync(identity, "SEARCH")
-        uids = search_uids_since_date(client, since_date)
-        command_count += 1
+        can_reuse_known_uids = (
+            known_uids is not None
+            and known_uidvalidity is not None
+            and uidvalidity == known_uidvalidity
+        )
+        if can_reuse_known_uids:
+            uids = list(known_uids)
+        else:
+            acquire_history_imap_command_slot_sync(identity, "SEARCH")
+            uids = search_uids_since_date(client, since_date)
+            command_count += 1
         if effective_min_uid is not None:
             uids = [uid for uid in uids if uid > effective_min_uid]
         batches = _chunked(uids, max(1, get_settings().imap_fetch_batch_size))
@@ -950,6 +987,31 @@ def _fetch_recent_mailbox_message_headers_since_sync(
         uidvalidity=uidvalidity,
         uidvalidity_changed=uidvalidity_changed,
     )
+
+
+def _search_mailbox_uids_since_date_sync(
+    identity: IdentityProfile,
+    folder: str,
+    since_date: date,
+) -> ImapMailboxUidSearchResult:
+    client: IMAP4 | IMAP4_SSL | None = None
+    try:
+        client = _open_logged_in_imap_client(identity, folder=folder)
+        uidvalidity = _get_selected_mailbox_uidvalidity(client)
+        acquire_history_imap_command_slot_sync(identity, "SEARCH")
+        uids = search_uids_since_date(client, since_date)
+        return ImapMailboxUidSearchResult(
+            uid_count=len(uids),
+            command_count=1,
+            uidvalidity=uidvalidity,
+            uids=tuple(uids),
+        )
+    except MailRuntimeError:
+        raise
+    except OSError as exc:
+        raise MailRuntimeError(f"IMAP 近期 UID 搜索失败: {exc}") from exc
+    finally:
+        _logout_imap_client(client)
 
 
 def _fetch_history_mailbox_message_headers_before_uid_sync(
@@ -1148,15 +1210,19 @@ def _search_professor_history_uids(
         )
     if folder_role == "sent":
         acquire_history_imap_command_slot_sync(identity, "SEARCH")
-        combined_result = search_uids_combined_sent_recipient(client, professor_email)
+        combined_result = search_uids_combined_sent_recipient(
+            client,
+            professor_email,
+            since_date,
+        )
         if combined_result.ok:
             return _ImapHistorySearchResult(uids=combined_result.uids, command_count=1)
         acquire_history_imap_command_slot_sync(identity, "SEARCH")
-        to_uids = search_uids_to_recipient(client, professor_email)
+        to_uids = search_uids_to_recipient(client, professor_email, since_date)
         acquire_history_imap_command_slot_sync(identity, "SEARCH")
-        cc_uids = search_uids_cc_recipient(client, professor_email)
+        cc_uids = search_uids_cc_recipient(client, professor_email, since_date)
         acquire_history_imap_command_slot_sync(identity, "SEARCH")
-        bcc_uids = search_uids_bcc_recipient(client, professor_email)
+        bcc_uids = search_uids_bcc_recipient(client, professor_email, since_date)
         return _ImapHistorySearchResult(
             uids=sorted(set(to_uids) | set(cc_uids) | set(bcc_uids)),
             command_count=4,
