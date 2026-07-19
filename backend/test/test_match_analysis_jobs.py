@@ -26,6 +26,7 @@ from app.models import (
     OperationLog,
     Professor,
 )
+from app.services import llm_runtime
 from app.services.match_analysis_job_runtime import (
     create_match_analysis_job,
     request_match_analysis_job_cancel,
@@ -35,11 +36,13 @@ from app.services.match_analysis_job_runtime import (
 
 class MatchAnalysisJobRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._thinking_adaptation_patch = patch(
-            "app.services.task_runtime.ensure_thinking_adaptation",
-            new=AsyncMock(return_value=None),
+        self._runtime_adaptation_patch = patch(
+            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            new=AsyncMock(
+                return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None),
+            ),
         )
-        self._thinking_adaptation_patch.start()
+        self._runtime_adaptation_patch.start()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "match_jobs.db"
         self.engine = create_async_engine(
@@ -54,7 +57,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self._run_async(self._create_schema())
 
     def tearDown(self) -> None:
-        self._thinking_adaptation_patch.stop()
+        self._runtime_adaptation_patch.stop()
         self._run_async(self.engine.dispose())
         self.temp_dir.cleanup()
 

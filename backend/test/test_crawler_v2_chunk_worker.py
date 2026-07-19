@@ -629,20 +629,36 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk_id=chunk_id,
             worker_id="w1",
             candidates=[
-                ProfessorCandidatePayload(name="张三", title="教授", profile_url=listing_url, confidence=0.9),
-                ProfessorCandidatePayload(name="李四", title="副教授", profile_url=listing_url, confidence=0.9),
+                ProfessorCandidatePayload(
+                    name="张三",
+                    email="zhang@example.edu",
+                    title="教授",
+                    profile_url=listing_url,
+                    confidence=0.9,
+                ),
+                ProfessorCandidatePayload(
+                    name="李四",
+                    email="li@example.edu",
+                    title="副教授",
+                    profile_url=listing_url,
+                    confidence=0.9,
+                ),
             ],
             discovered_urls=[],
             candidate_count=2,
         )
 
         self.assertEqual(result["saved_count"], 2)
+        self.assertEqual(result["rejected_count"], 0)
         self.assertEqual(result["merged_count"], 0)
         async with self.session_factory() as session:
             rows = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id).order_by(CrawlCandidate.id)))
         self.assertEqual([row.name for row in rows], ["张三", "李四"])
         self.assertEqual([row.profile_url for row in rows], [None, None])
-        self.assertEqual([row.identity_key for row in rows], [None, None])
+        self.assertEqual(
+            [row.identity_key for row in rows],
+            ["zhang@example.edu", "li@example.edu"],
+        )
     async def test_complete_chunk_rejects_candidate_without_email_and_profile_url(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
 
@@ -782,7 +798,14 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.session_factory,
             chunk_id=chunk_id,
             worker_id="w1",
-            candidates=[ProfessorCandidatePayload(name="张三", profile_url="https://example.edu/people/li.html", confidence=0.9)],
+            candidates=[
+                ProfessorCandidatePayload(
+                    name="张三",
+                    email="zhang@example.edu",
+                    profile_url="https://example.edu/people/li.html",
+                    confidence=0.9,
+                ),
+            ],
             discovered_urls=[
                 "https://example.edu/people/li.html",
                 "https://example.edu/about.html",
@@ -795,6 +818,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["rejected_count"], 0)
         self.assertEqual(result["url_count"], 6)
         async with self.session_factory() as session:
             tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id).order_by(CrawlPageTask.id)))
