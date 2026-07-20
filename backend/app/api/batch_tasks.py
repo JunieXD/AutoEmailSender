@@ -61,6 +61,7 @@ from app.services.outreach_templates import (
     render_outreach_template,
     resolve_outreach_template_config,
 )
+from app.services.smtp_error_explanations import explain_smtp_error
 from app.services import llm_runtime
 from app.services.task_runtime import (
     approve_and_send_task,
@@ -837,6 +838,11 @@ def _serialize_batch_task_item(email_task: EmailTask) -> BatchTaskItemRead:
         sent_at=email_task.sent_at,
         last_send_attempt_at=email_task.last_send_attempt_at,
         last_error=email_task.last_error,
+        possible_cause=(
+            explain_smtp_error(email_task.last_error)
+            if email_task.status == EmailTaskStatus.SEND_FAILED.value
+            else None
+        ),
         is_replied=email_task.is_replied,
         updated_at=email_task.updated_at,
         next_action=resolve_batch_task_item_next_action(email_task),

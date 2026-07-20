@@ -68,6 +68,7 @@ class BatchTaskItemRead(ApiSchema):
     sent_at: datetime | None
     last_send_attempt_at: datetime | None
     last_error: str | None
+    possible_cause: str | None
     is_replied: bool
     updated_at: datetime
     next_action: str | None

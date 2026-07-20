@@ -32,6 +32,7 @@ from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     import_outreach_template_file,
 )
+from app.services.smtp_error_explanations import explain_smtp_error
 
 
 router = APIRouter(prefix="/api/identities", tags=["identities"])
@@ -182,7 +183,16 @@ async def smtp_test(
         },
     )
     await session.commit()
-    return ConnectionTestResult(ok=ok, message=message, host=identity.smtp_host)
+    return ConnectionTestResult(
+        ok=ok,
+        message=message,
+        host=identity.smtp_host,
+        possible_cause=(
+            explain_smtp_error(message)
+            if not ok
+            else None
+        ),
+    )
 
 
 @router.post("/{identity_id}/imap-test", response_model=ConnectionTestResult)
@@ -415,4 +425,3 @@ def _clean_required_text(value: object) -> str:
     if not cleaned:
         raise HTTPException(status_code=400, detail="请填写配置名称和发件人姓名")
     return cleaned
-

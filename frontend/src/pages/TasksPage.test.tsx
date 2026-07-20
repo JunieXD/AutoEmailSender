@@ -1532,7 +1532,7 @@ describe("batch task expiration display", () => {
     expect(apiMocks.retryBatchTaskItemDraft).toHaveBeenCalledWith(task.id, failedItem.id);
   });
 
-  it("uses next actions for send failed items instead of workspace fallback", async () => {
+  it("shows a possible cause and the raw error for send failures", async () => {
     const task = buildBatchTask({
       pending_generation_count: 0,
       failed_count: 1,
@@ -1545,7 +1545,10 @@ describe("batch task expiration display", () => {
         professor_name: "发送失败导师",
         professor_email: "send-failed@example.edu",
         status: "send_failed",
-        last_error: "smtp timeout",
+        last_error:
+          "SMTP 发信失败: (550, b'Requested action aborted: flow over limit')",
+        possible_cause:
+          "邮箱服务商可能对发件账号进行了发送限流，请暂停发送并稍后重试。",
         next_action: "send_failed",
       }),
     ]);
@@ -1559,7 +1562,15 @@ describe("batch task expiration display", () => {
     expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
 
-    expect(await screen.findByText("请检查发送失败原因")).toBeInTheDocument();
+    expect(await screen.findByText("可能原因")).toBeInTheDocument();
+    expect(screen.getByText(/发送限流/)).toBeInTheDocument();
+    expect(screen.getByText("原始报错")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "SMTP 发信失败: (550, b'Requested action aborted: flow over limit')",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("请检查发送失败原因")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
     const manualCard = screen
       .getByText("待审核/未处理")

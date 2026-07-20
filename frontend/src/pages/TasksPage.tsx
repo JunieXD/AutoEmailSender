@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
+import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
@@ -3026,13 +3027,13 @@ export const TasksPage = () => {
             onClick={batchTaskDetailsLayer.onContentClick}
             onMouseDown={batchTaskDetailsLayer.onContentMouseDown}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
-              <div>
+            <div className="flex flex-col gap-4 border-b border-stone-200 bg-[#fcfbf8] px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:py-5">
+              <div className="min-w-0">
                 <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
                   <Mail className="h-4 w-4 text-primary" />
                   {batchDraftReviewOpen ? "批量草稿审核" : "批量邮件任务"}
                 </div>
-                <h2 className="mt-2 text-xl font-semibold text-stone-900">
+                <h2 className="mt-2 break-words text-xl font-semibold text-stone-900">
                   {batchDraftReviewOpen ? "批量审核草稿" : selectedBatchTask.name}
                 </h2>
                 <p className="mt-2 text-sm text-stone-500">
@@ -3041,7 +3042,7 @@ export const TasksPage = () => {
                     : buildScheduleLabel(selectedBatchTask)}
                 </p>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
+              <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                 {!batchDraftReviewOpen && canOpenBatchResend(selectedBatchTask, activeTaskListView) ? (
                   <button
                     type="button"
@@ -3594,18 +3595,14 @@ export const TasksPage = () => {
                         key={item.id}
                         className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
                       >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-stone-900">
-                              {item.professor_name}
-                            </p>
-                            <p className="mt-1 text-xs text-red-700">
-                              {item.last_error || "暂无失败原因"}
-                            </p>
-                          </div>
-                          <div className="text-xs">
-                            {renderBatchTaskItemAction(item)}
-                          </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-stone-900">
+                            {item.professor_name}
+                          </p>
+                          <EmailDeliveryFailureDetails
+                            possibleCause={item.possible_cause}
+                            rawError={item.last_error}
+                          />
                         </div>
                       </div>
                     ))}

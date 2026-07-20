@@ -29,6 +29,7 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
@@ -108,6 +109,7 @@ type IdentityConnectionTestSummary = {
   kind: "smtp" | "imap";
   status: "success" | "error";
   message: string;
+  possibleCause?: string | null;
 };
 
 type MaterialFilterValue = IdentityMaterialType | "all";
@@ -941,9 +943,16 @@ const IdentityConnectionCard = ({
           上次测试：{lastResult.kind.toUpperCase()}
           {lastResult.status === "success" ? " 成功" : " 失败"}
         </div>
-        <div className="mt-1 whitespace-pre-wrap break-words text-stone-600">
-          {lastResult.message}
-        </div>
+        {lastResult.kind === "smtp" && lastResult.status === "error" ? (
+          <EmailDeliveryFailureDetails
+            possibleCause={lastResult.possibleCause}
+            rawError={lastResult.message}
+          />
+        ) : (
+          <div className="mt-1 whitespace-pre-wrap break-words text-stone-600">
+            {lastResult.message}
+          </div>
+        )}
       </div>
     ) : null}
   </div>
@@ -2031,6 +2040,7 @@ export const ProfilePage = () => {
           kind,
           status: "error",
           message: result.message,
+          possibleCause: result.possible_cause,
         });
         notifyError(`${kind.toUpperCase()} 连接测试失败`, result.message);
         return;
@@ -2039,6 +2049,7 @@ export const ProfilePage = () => {
         kind,
         status: "success",
         message: result.message,
+        possibleCause: null,
       });
       notifySuccess(`${kind.toUpperCase()} 连接测试成功`, result.message);
     } catch (testError) {
@@ -2050,6 +2061,7 @@ export const ProfilePage = () => {
         kind,
         status: "error",
         message,
+        possibleCause: null,
       });
       notifyError(`${kind.toUpperCase()} 连接测试失败`, message);
     } finally {

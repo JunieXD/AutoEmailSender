@@ -83,6 +83,7 @@ class ConnectionTestResult(ApiSchema):
     ok: bool
     message: str
     host: str | None = None
+    possible_cause: str | None = None
 
 
 class IdentityTemplateImportResult(ApiSchema):

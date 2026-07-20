@@ -482,6 +482,8 @@ describe("ProfilePage onboarding", () => {
       ok: false,
       message: "SMTP 连接失败: (535, b'Error: authentication failed')",
       host: "smtp.example.com",
+      possible_cause:
+        "SMTP 身份验证可能失败。请检查账号、密码或客户端授权码。",
     });
 
     renderPage();
@@ -493,6 +495,9 @@ describe("ProfilePage onboarding", () => {
     expect(
       screen.getByText("SMTP 连接失败: (535, b'Error: authentication failed')"),
     ).toBeInTheDocument();
+    expect(screen.getByText("可能原因")).toBeInTheDocument();
+    expect(screen.getByText(/客户端授权码/)).toBeInTheDocument();
+    expect(screen.getByText("原始报错")).toBeInTheDocument();
     expect(mockedNotifyError).toHaveBeenCalledTimes(1);
     expect(mockedNotifyError.mock.calls[0]?.[0]).toContain("SMTP");
     expect(mockedNotifyError.mock.calls[0]?.[1]).toBe(

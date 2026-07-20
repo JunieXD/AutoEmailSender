@@ -103,6 +103,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(smtp_result.status_code, 200)
         self.assertTrue(smtp_result.json()["ok"])
+        self.assertIsNone(smtp_result.json()["possible_cause"])
         self.assertEqual(imap_result.status_code, 200)
         self.assertTrue(imap_result.json()["ok"])
         self.assertEqual(llm_result.status_code, 200)
@@ -112,6 +113,22 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(created_identity["imap_port"], 993)
         self.assertEqual(created_identity["imap_username"], "sender@example.com")
         self.assertEqual(created_identity["imap_password"], "secret")
+
+    def test_smtp_connectivity_failure_includes_possible_cause_and_raw_error(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        raw_error = "SMTP 连接失败: (550, b'Requested action aborted: flow over limit')"
+
+        with patch(
+            "app.api.identities.test_smtp_connection",
+            AsyncMock(return_value=(False, raw_error)),
+        ):
+            response = self.client.post(f"/api/identities/{identity_id}/smtp-test")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["message"], raw_error)
+        self.assertIn("发送限流", payload["possible_cause"])
 
     def test_identity_accepts_profile_name_and_sender_name_with_name_compatibility(self) -> None:
         payload = self._build_identity_payload(
@@ -8140,7 +8157,8 @@ class ApiEndpointTests(unittest.TestCase):
             connection.execute(
                 """
                 UPDATE email_tasks
-                SET status = 'send_failed', last_error = 'smtp timeout'
+                SET status = 'send_failed',
+                    last_error = 'SMTP 发信失败: (550, b''Requested action aborted: flow over limit'')'
                 WHERE id = ?
                 """,
                 (task_ids[1],),
@@ -8158,7 +8176,11 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(payload[0]["status"], "sent")
         self.assertIsNotNone(payload[0]["sent_at"])
         self.assertEqual(payload[1]["status"], "send_failed")
-        self.assertEqual(payload[1]["last_error"], "smtp timeout")
+        self.assertEqual(
+            payload[1]["last_error"],
+            "SMTP 发信失败: (550, b'Requested action aborted: flow over limit')",
+        )
+        self.assertIn("发送限流", payload[1]["possible_cause"])
 
     def test_batch_task_items_include_next_action_for_blocked_draft_generation(self) -> None:
         identity_id = self._create_identity(with_imap=False)

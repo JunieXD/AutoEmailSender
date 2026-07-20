@@ -130,6 +130,7 @@ export interface ConnectionTestResultDTO {
   ok: boolean;
   message: string;
   host: string | null;
+  possible_cause?: string | null;
 }
 
 export interface IdentityTemplateImportResultDTO {
@@ -652,6 +653,7 @@ export interface BatchTaskItemDTO {
   sent_at: string | null;
   last_send_attempt_at: string | null;
   last_error: string | null;
+  possible_cause?: string | null;
   is_replied: boolean;
   updated_at: string;
   next_action: BatchTaskItemNextAction | null;
