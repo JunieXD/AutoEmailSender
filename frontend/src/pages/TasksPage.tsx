@@ -56,6 +56,14 @@ import {
   retryFailedMatchAnalysisJob,
 } from "@/lib/api/matchAnalysisJobsApi";
 import {
+  cancelProfessorInformationEnrichmentJob,
+  deleteProfessorInformationEnrichmentJob,
+  listProfessorInformationEnrichmentItems,
+  listProfessorInformationEnrichmentJobs,
+  restoreProfessorInformationEnrichmentJob,
+  retryFailedProfessorInformationEnrichmentJob,
+} from "@/lib/api/professorInformationEnrichmentApi";
+import {
   cancelCrawlJob,
   approveCrawlCandidates,
   deleteCrawlJob,
@@ -98,6 +106,7 @@ import {
   BATCH_TASK_STATUS_LABELS,
   MATERIAL_TYPE_LABELS,
   MATCH_ANALYSIS_JOB_STATUS_LABELS,
+  PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS,
   PROFESSOR_STATUS_LABELS,
   type BatchTaskCardDTO,
   type BatchTaskItemDTO,
@@ -111,12 +120,16 @@ import {
   type MatchAnalysisJobDTO,
   type MatchAnalysisJobItemDTO,
   type MatchAnalysisJobStatus,
+  type ProfessorInformationEnrichmentItemDTO,
+  type ProfessorInformationEnrichmentItemStatus,
+  type ProfessorInformationEnrichmentJobDTO,
+  type ProfessorInformationEnrichmentJobStatus,
   type TaskListView,
   type WorkspaceTaskStatus,
   type WorkspaceThreadDTO,
 } from "@/types";
 
-type TasksTab = "batch" | "crawl" | "match";
+type TasksTab = "batch" | "crawl" | "match" | "enrichment";
 type TaskListViews = Record<TasksTab, TaskListView>;
 type BatchReviewItemActionType = "regenerate" | "delete" | "submit";
 type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
@@ -188,6 +201,50 @@ const MATCH_ANALYSIS_JOB_STATUS_TONES: Record<
   partial_failed: "border-amber-200 bg-amber-50 text-amber-700",
   failed: "border-red-200 bg-red-50 text-red-700",
   canceled: "border-stone-200 bg-stone-100 text-stone-600",
+};
+
+const INFORMATION_ENRICHMENT_JOB_STATUS_TONES: Record<
+  ProfessorInformationEnrichmentJobStatus,
+  string
+> = {
+  queued: "border-sky-200 bg-sky-50 text-sky-700",
+  running: "border-primary/20 bg-primary/10 text-primary",
+  partially_completed: "border-amber-200 bg-amber-50 text-amber-700",
+  completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  failed: "border-red-200 bg-red-50 text-red-700",
+  canceled: "border-stone-200 bg-stone-100 text-stone-600",
+};
+
+const INFORMATION_ENRICHMENT_ITEM_STATUS_LABELS: Record<
+  ProfessorInformationEnrichmentItemStatus,
+  string
+> = {
+  queued: "排队中",
+  running: "补全中",
+  succeeded: "已完成",
+  failed: "失败",
+  skipped: "已跳过",
+  canceled: "已取消",
+};
+
+const INFORMATION_ENRICHMENT_ITEM_STATUS_TONES: Record<
+  ProfessorInformationEnrichmentItemStatus,
+  string
+> = {
+  queued: "border-sky-200 bg-sky-50 text-sky-700",
+  running: "border-primary/20 bg-primary/10 text-primary",
+  succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  failed: "border-red-200 bg-red-50 text-red-700",
+  skipped: "border-amber-200 bg-amber-50 text-amber-700",
+  canceled: "border-stone-200 bg-stone-100 text-stone-600",
+};
+
+const INFORMATION_ENRICHMENT_FIELD_LABELS: Record<string, string> = {
+  email: "邮箱",
+  title: "职称",
+  department: "系所",
+  research_direction: "研究方向",
+  recent_papers: "近期论文",
 };
 
 const CRAWL_REFRESH_INTERVAL_MS = 5000;
@@ -281,6 +338,14 @@ const canOpenBatchResend = (task: BatchTaskCardDTO, view: TaskListView) =>
 const canDeleteMatchJob = (job: MatchAnalysisJobDTO) =>
   job.status === "completed" ||
   job.status === "partial_failed" ||
+  job.status === "failed" ||
+  job.status === "canceled";
+
+const canDeleteInformationEnrichmentJob = (
+  job: ProfessorInformationEnrichmentJobDTO,
+) =>
+  job.status === "partially_completed" ||
+  job.status === "completed" ||
   job.status === "failed" ||
   job.status === "canceled";
 
@@ -677,6 +742,7 @@ export const TasksPage = () => {
     batch: "current",
     crawl: "current",
     match: "current",
+    enrichment: "current",
   });
   const [tasks, setTasks] = useState<BatchTaskCardDTO[]>([]);
   const [currentBatchTasks, setCurrentBatchTasks] = useState<BatchTaskCardDTO[]>([]);
@@ -715,11 +781,25 @@ export const TasksPage = () => {
     MatchAnalysisJobItemDTO[]
   >([]);
   const [matchJobDetailsLoading, setMatchJobDetailsLoading] = useState(false);
+  const [informationEnrichmentJobs, setInformationEnrichmentJobs] = useState<
+    ProfessorInformationEnrichmentJobDTO[]
+  >([]);
+  const [currentInformationEnrichmentJobs, setCurrentInformationEnrichmentJobs] =
+    useState<ProfessorInformationEnrichmentJobDTO[]>([]);
+  const [informationEnrichmentJobsLoading, setInformationEnrichmentJobsLoading] =
+    useState(false);
+  const [selectedInformationEnrichmentJob, setSelectedInformationEnrichmentJob] =
+    useState<ProfessorInformationEnrichmentJobDTO | null>(null);
+  const [selectedInformationEnrichmentItems, setSelectedInformationEnrichmentItems] =
+    useState<ProfessorInformationEnrichmentItemDTO[]>([]);
+  const [informationEnrichmentDetailsLoading, setInformationEnrichmentDetailsLoading] =
+    useState(false);
   const [crawlJobs, setCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [currentCrawlJobs, setCurrentCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [crawlJobsLoading, setCrawlJobsLoading] = useState(false);
   const [batchPage, setBatchPage] = useState(1);
   const [matchPage, setMatchPage] = useState(1);
+  const [informationEnrichmentPage, setInformationEnrichmentPage] = useState(1);
   const [crawlPage, setCrawlPage] = useState(1);
   const [batchSentItemPage, setBatchSentItemPage] = useState(1);
   const [batchPendingItemPage, setBatchPendingItemPage] = useState(1);
@@ -751,6 +831,10 @@ export const TasksPage = () => {
   const [retryingMatchJobId, setRetryingMatchJobId] = useState<number | null>(
     null,
   );
+  const [cancelingInformationEnrichmentJobId, setCancelingInformationEnrichmentJobId] =
+    useState<number | null>(null);
+  const [retryingInformationEnrichmentJobId, setRetryingInformationEnrichmentJobId] =
+    useState<number | null>(null);
   const [pausingCrawlJobId, setPausingCrawlJobId] = useState<number | null>(
     null,
   );
@@ -763,12 +847,15 @@ export const TasksPage = () => {
   const lastBatchTaskDetailsLoadErrorRef = useRef<string | null>(null);
   const lastMatchJobsLoadErrorRef = useRef<string | null>(null);
   const lastMatchJobDetailsLoadErrorRef = useRef<string | null>(null);
+  const lastInformationEnrichmentJobsLoadErrorRef = useRef<string | null>(null);
+  const lastInformationEnrichmentDetailsLoadErrorRef = useRef<string | null>(null);
   const lastCrawlJobsLoadErrorRef = useRef<string | null>(null);
   const lastCrawlJobDetailsLoadErrorRef = useRef<string | null>(null);
   const loadedTasksKeyRef = useRef<string | null>(null);
   const crawlJobsPreloadedRef = useRef(false);
   const batchTasksPreloadedKeyRef = useRef<string | null>(null);
   const matchJobsPreloadedKeyRef = useRef<string | null>(null);
+  const informationEnrichmentJobsPreloadedRef = useRef(false);
   const activeTasksRequestKeyRef = useRef<string | null>(null);
   const pendingCrawlEnrichmentCompletionRef = useRef<
     Map<number, Set<string>>
@@ -781,6 +868,8 @@ export const TasksPage = () => {
   const latestBatchReviewRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
   const latestMatchJobDetailsRequestIdRef = useRef(0);
+  const latestInformationEnrichmentJobsRequestIdRef = useRef(0);
+  const latestInformationEnrichmentDetailsRequestIdRef = useRef(0);
   const latestCrawlJobsRequestIdRef = useRef(0);
   const latestCrawlJobDetailsRequestIdRef = useRef(0);
   const activeTaskListView = taskListViews[activeTab];
@@ -857,10 +946,31 @@ export const TasksPage = () => {
       ).length,
     [currentMatchAnalysisJobs],
   );
+  const informationEnrichmentRunningCount = useMemo(
+    () =>
+      currentInformationEnrichmentJobs.filter(
+        (job) => job.status === "queued" || job.status === "running",
+      ).length,
+    [currentInformationEnrichmentJobs],
+  );
+  const informationEnrichmentAttentionCount = useMemo(
+    () =>
+      currentInformationEnrichmentJobs.filter(
+        (job) =>
+          job.status === "partially_completed" || job.status === "failed",
+      ).length,
+    [currentInformationEnrichmentJobs],
+  );
   const totalRunningCount =
-    batchRunningCount + crawlRunningCount + matchRunningCount;
+    batchRunningCount +
+    crawlRunningCount +
+    matchRunningCount +
+    informationEnrichmentRunningCount;
   const totalAttentionCount =
-    batchAttentionCount + crawlReviewCount + matchAttentionCount;
+    batchAttentionCount +
+    crawlReviewCount +
+    matchAttentionCount +
+    informationEnrichmentAttentionCount;
   const sentBatchTaskItems = useMemo(
     () =>
       selectedBatchTaskItems.filter(
@@ -962,6 +1072,15 @@ export const TasksPage = () => {
     () => getPageItems(matchAnalysisJobs, matchPage, TASKS_PAGE_SIZE),
     [matchAnalysisJobs, matchPage],
   );
+  const visibleInformationEnrichmentJobs = useMemo(
+    () =>
+      getPageItems(
+        informationEnrichmentJobs,
+        informationEnrichmentPage,
+        TASKS_PAGE_SIZE,
+      ),
+    [informationEnrichmentJobs, informationEnrichmentPage],
+  );
   const visibleCrawlJobEvents = useMemo(
     () =>
       getPageItems(crawlJobEvents, crawlEventPage, MONITOR_SECTION_PAGE_SIZE),
@@ -1026,7 +1145,11 @@ export const TasksPage = () => {
   );
 
   useEffect(() => {
-    if (hasTaskSelection || activeTab === "crawl") {
+    if (
+      hasTaskSelection ||
+      activeTab === "crawl" ||
+      activeTab === "enrichment"
+    ) {
       return;
     }
     setActiveTab("crawl");
@@ -1043,6 +1166,9 @@ export const TasksPage = () => {
     }
     if (previousTaskListViews.match !== taskListViews.match) {
       setMatchPage(1);
+    }
+    if (previousTaskListViews.enrichment !== taskListViews.enrichment) {
+      setInformationEnrichmentPage(1);
     }
   }, [taskListViews]);
 
@@ -1256,6 +1382,90 @@ export const TasksPage = () => {
     [notifyError],
   );
 
+  const loadInformationEnrichmentJobs = useCallback(
+    async (options?: { showLoading?: boolean }) => {
+      const requestId = latestInformationEnrichmentJobsRequestIdRef.current + 1;
+      latestInformationEnrichmentJobsRequestIdRef.current = requestId;
+      if (options?.showLoading ?? true) {
+        setInformationEnrichmentJobsLoading(true);
+      }
+      try {
+        const data = await listProfessorInformationEnrichmentJobs({
+          view: taskListViews.enrichment,
+        });
+        const currentData =
+          taskListViews.enrichment === "current"
+            ? data
+            : await listProfessorInformationEnrichmentJobs({ view: "current" });
+        if (latestInformationEnrichmentJobsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setInformationEnrichmentJobs(data);
+        setCurrentInformationEnrichmentJobs(currentData);
+        setSelectedInformationEnrichmentJob((currentJob) => {
+          if (!currentJob) {
+            return currentJob;
+          }
+          return data.find((job) => job.id === currentJob.id) ?? currentJob;
+        });
+        lastInformationEnrichmentJobsLoadErrorRef.current = null;
+      } catch (loadError) {
+        if (latestInformationEnrichmentJobsRequestIdRef.current !== requestId) {
+          return;
+        }
+        const message =
+          loadError instanceof Error
+            ? loadError.message
+            : "加载信息补全任务失败";
+        if (lastInformationEnrichmentJobsLoadErrorRef.current !== message) {
+          notifyError("加载信息补全任务失败", message);
+          lastInformationEnrichmentJobsLoadErrorRef.current = message;
+        }
+      } finally {
+        if (
+          latestInformationEnrichmentJobsRequestIdRef.current === requestId &&
+          (options?.showLoading ?? true)
+        ) {
+          setInformationEnrichmentJobsLoading(false);
+        }
+      }
+    },
+    [notifyError, taskListViews.enrichment],
+  );
+
+  const loadInformationEnrichmentDetails = useCallback(
+    async (jobId: number) => {
+      const requestId = latestInformationEnrichmentDetailsRequestIdRef.current + 1;
+      latestInformationEnrichmentDetailsRequestIdRef.current = requestId;
+      setInformationEnrichmentDetailsLoading(true);
+      try {
+        const data = await listProfessorInformationEnrichmentItems(jobId);
+        if (latestInformationEnrichmentDetailsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setSelectedInformationEnrichmentItems(data);
+        lastInformationEnrichmentDetailsLoadErrorRef.current = null;
+      } catch (loadError) {
+        if (latestInformationEnrichmentDetailsRequestIdRef.current !== requestId) {
+          return;
+        }
+        const message =
+          loadError instanceof Error
+            ? loadError.message
+            : "加载信息补全任务详情失败";
+        if (lastInformationEnrichmentDetailsLoadErrorRef.current !== message) {
+          notifyError("加载信息补全任务详情失败", message);
+          lastInformationEnrichmentDetailsLoadErrorRef.current = message;
+        }
+      } finally {
+        if (latestInformationEnrichmentDetailsRequestIdRef.current === requestId) {
+          setInformationEnrichmentDetailsLoading(false);
+        }
+      }
+    },
+    [notifyError],
+  );
+
   const loadBatchTaskDetails = useCallback(
     async (taskId: number) => {
       const requestId = latestBatchTaskDetailsRequestIdRef.current + 1;
@@ -1372,6 +1582,15 @@ export const TasksPage = () => {
   }, [crawlJobs.length]);
 
   useEffect(() => {
+    setInformationEnrichmentPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(informationEnrichmentJobs.length, TASKS_PAGE_SIZE),
+      ),
+    );
+  }, [informationEnrichmentJobs.length]);
+
+  useEffect(() => {
     setCrawlEventPage((currentPage) =>
       Math.min(
         currentPage,
@@ -1425,6 +1644,14 @@ export const TasksPage = () => {
   }, [loadCrawlJobs]);
 
   useEffect(() => {
+    if (informationEnrichmentJobsPreloadedRef.current) {
+      return;
+    }
+    informationEnrichmentJobsPreloadedRef.current = true;
+    void loadInformationEnrichmentJobs({ showLoading: false });
+  }, [loadInformationEnrichmentJobs]);
+
+  useEffect(() => {
     if (activeTab === "batch") {
       return;
     }
@@ -1476,6 +1703,23 @@ export const TasksPage = () => {
   }, [activeTab, loadMatchAnalysisJobs, matchAnalysisJobs.length]);
 
   useEffect(() => {
+    if (activeTab !== "enrichment") {
+      return undefined;
+    }
+    void loadInformationEnrichmentJobs({
+      showLoading: informationEnrichmentJobs.length === 0,
+    });
+    const timer = window.setInterval(() => {
+      void loadInformationEnrichmentJobs({ showLoading: false });
+    }, CRAWL_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    activeTab,
+    informationEnrichmentJobs.length,
+    loadInformationEnrichmentJobs,
+  ]);
+
+  useEffect(() => {
     if (!selectedBatchTask) {
       return undefined;
     }
@@ -1513,6 +1757,21 @@ export const TasksPage = () => {
       window.clearInterval(timer);
     };
   }, [loadMatchJobDetails, selectedMatchJob]);
+
+  useEffect(() => {
+    if (!selectedInformationEnrichmentJob) {
+      return undefined;
+    }
+    lastInformationEnrichmentDetailsLoadErrorRef.current = null;
+    void loadInformationEnrichmentDetails(selectedInformationEnrichmentJob.id);
+    const timer = window.setInterval(() => {
+      void loadInformationEnrichmentDetails(selectedInformationEnrichmentJob.id);
+    }, CRAWL_DETAILS_REFRESH_INTERVAL_MS);
+    return () => {
+      latestInformationEnrichmentDetailsRequestIdRef.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [loadInformationEnrichmentDetails, selectedInformationEnrichmentJob]);
 
   useEffect(() => {
     if (!selectedCrawlJobId) {
@@ -1868,6 +2127,64 @@ export const TasksPage = () => {
       notifyError("重试匹配分析任务失败", message);
     } finally {
       setRetryingMatchJobId((currentJobId) =>
+        currentJobId === jobId ? null : currentJobId,
+      );
+    }
+  };
+
+  const handleCancelInformationEnrichmentJob = async (jobId: number) => {
+    const confirmed = await confirm({
+      title: "确认取消这个信息补全任务？",
+      description: "未完成的导师会被取消，已经补全并写入的信息会保留。",
+      confirmLabel: "取消任务",
+      cancelLabel: "先保留",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setCancelingInformationEnrichmentJobId(jobId);
+    try {
+      const result = await cancelProfessorInformationEnrichmentJob(jobId);
+      setInformationEnrichmentJobs((currentJobs) =>
+        currentJobs.map((job) => (job.id === jobId ? result.job : job)),
+      );
+      setCurrentInformationEnrichmentJobs((currentJobs) =>
+        currentJobs.map((job) => (job.id === jobId ? result.job : job)),
+      );
+      if (selectedInformationEnrichmentJob?.id === jobId) {
+        setSelectedInformationEnrichmentJob(result.job);
+      }
+      notifySuccess("已取消信息补全任务", "已写入的导师信息不会回退。");
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error
+          ? actionError.message
+          : "取消信息补全任务失败";
+      notifyError("取消信息补全任务失败", message);
+    } finally {
+      setCancelingInformationEnrichmentJobId((currentJobId) =>
+        currentJobId === jobId ? null : currentJobId,
+      );
+    }
+  };
+
+  const handleRetryInformationEnrichmentJob = async (jobId: number) => {
+    setRetryingInformationEnrichmentJobId(jobId);
+    try {
+      const job = await retryFailedProfessorInformationEnrichmentJob(jobId);
+      setInformationEnrichmentJobs((currentJobs) => [job, ...currentJobs]);
+      setCurrentInformationEnrichmentJobs((currentJobs) => [job, ...currentJobs]);
+      notifySuccess("已创建重试任务", "失败或取消项已重新加入信息补全队列。");
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error
+          ? actionError.message
+          : "重试信息补全任务失败";
+      notifyError("重试信息补全任务失败", message);
+    } finally {
+      setRetryingInformationEnrichmentJobId((currentJobId) =>
         currentJobId === jobId ? null : currentJobId,
       );
     }
@@ -2345,11 +2662,21 @@ export const TasksPage = () => {
     setMatchJobDetailsLoading(false);
     lastMatchJobDetailsLoadErrorRef.current = null;
   };
+  const closeInformationEnrichmentDetails = () => {
+    latestInformationEnrichmentDetailsRequestIdRef.current += 1;
+    setSelectedInformationEnrichmentJob(null);
+    setSelectedInformationEnrichmentItems([]);
+    setInformationEnrichmentDetailsLoading(false);
+    lastInformationEnrichmentDetailsLoadErrorRef.current = null;
+  };
   const closeSelectedCandidateDetail = useCallback(() => {
     setSelectedCandidateDetail(null);
   }, []);
   const batchTaskDetailsLayer = useDismissableLayerClick(closeBatchTaskDetails);
   const matchJobDetailsLayer = useDismissableLayerClick(closeMatchJobDetails);
+  const informationEnrichmentDetailsLayer = useDismissableLayerClick(
+    closeInformationEnrichmentDetails,
+  );
   const crawlJobDetailsLayer = useDismissableLayerClick(closeCrawlJobDetails);
   const candidateDetailLayer = useDismissableLayerClick(closeSelectedCandidateDetail);
 
@@ -2530,6 +2857,45 @@ export const TasksPage = () => {
     }
   };
 
+  const handleDeleteInformationEnrichmentJob = async (
+    job: ProfessorInformationEnrichmentJobDTO,
+  ) => {
+    const confirmed = await confirm({
+      title: "删除任务",
+      description: "删除后会移入回收站，不会清除任务记录，可在回收站恢复。",
+      confirmLabel: "删除",
+      cancelLabel: "先保留",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await deleteProfessorInformationEnrichmentJob(job.id);
+      notifySuccess("已移入回收站");
+      if (selectedInformationEnrichmentJob?.id === job.id) {
+        closeInformationEnrichmentDetails();
+      }
+      await loadInformationEnrichmentJobs();
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "删除任务失败";
+      notifyError("删除任务失败", message);
+    }
+  };
+
+  const handleRestoreInformationEnrichmentJob = async (jobId: number) => {
+    try {
+      await restoreProfessorInformationEnrichmentJob(jobId);
+      notifySuccess("已还原任务");
+      await loadInformationEnrichmentJobs();
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "还原任务失败";
+      notifyError("还原任务失败", message);
+    }
+  };
+
   const batchDraftReviewOpen = batchReviewItemId !== null;
   const batchReviewEditorHtml =
     batchReviewContentHtml || textToEmailHtml(batchReviewContentText);
@@ -2558,7 +2924,7 @@ export const TasksPage = () => {
 
         {!hasTaskSelection ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            还没有选择身份和模型，批量邮件与匹配分析会在配置后显示；教师抓取任务可继续查看。
+            还没有选择身份和模型，批量邮件与匹配分析会在配置后显示；教师抓取和信息补全任务可继续查看。
           </div>
         ) : null}
 
@@ -2603,7 +2969,7 @@ export const TasksPage = () => {
       </div>
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex gap-2 rounded-2xl border border-stone-200 bg-white p-1.5 shadow-sm">
+        <div className="inline-flex max-w-full gap-2 overflow-x-auto rounded-2xl border border-stone-200 bg-white p-1.5 shadow-sm">
           <button
             type="button"
             aria-label="批量邮件"
@@ -2664,6 +3030,28 @@ export const TasksPage = () => {
               }
             >
               {currentMatchAnalysisJobs.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="信息补全"
+            onClick={() => setActiveTab("enrichment")}
+            className={
+              activeTab === "enrichment"
+                ? "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-white"
+                : "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50"
+            }
+          >
+            <Bot className="h-4 w-4" />
+            信息补全
+            <span
+              className={
+                activeTab === "enrichment"
+                  ? "text-white/80"
+                  : "text-stone-400"
+              }
+            >
+              {currentInformationEnrichmentJobs.length}
             </span>
           </button>
         </div>
@@ -2958,6 +3346,179 @@ export const TasksPage = () => {
             page={matchPage}
             totalCount={matchAnalysisJobs.length}
             onPageChange={setMatchPage}
+          />
+        </>
+      ) : activeTab === "enrichment" &&
+        informationEnrichmentJobsLoading &&
+        informationEnrichmentJobs.length === 0 ? (
+        <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在加载信息补全任务列表...
+        </div>
+      ) : activeTab === "enrichment" &&
+        informationEnrichmentJobs.length === 0 ? (
+        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+          {activeTaskListView === "trash"
+            ? "回收站暂无任务。"
+            : "暂无信息补全任务。可从导师管理页批量创建。"}
+        </div>
+      ) : activeTab === "enrichment" ? (
+        <>
+          <div className="mt-6 grid gap-4">
+            {visibleInformationEnrichmentJobs.map((job) => {
+              const progress =
+                job.target_count === 0
+                  ? 0
+                  : Math.round((job.completed_count / job.target_count) * 100);
+              const canRetry = job.failed_count + job.canceled_count > 0;
+
+              return (
+                <article
+                  key={job.id}
+                  className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
+                >
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_minmax(250px,auto)_auto] lg:items-center">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
+                        <Bot className="h-4 w-4 text-primary" />
+                        信息补全任务
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <h2 className="min-w-0 truncate text-base font-semibold text-stone-900">
+                          {job.name}
+                        </h2>
+                        <span
+                          className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_JOB_STATUS_TONES[job.status]}`}
+                        >
+                          {PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS[job.status]}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-stone-500">
+                        创建于 {formatDisplayTime(job.created_at)}
+                      </p>
+                      {job.last_error ? (
+                        <p className="mt-2 line-clamp-2 break-all text-xs leading-5 text-red-700">
+                          {job.last_error}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div>
+                      <div className="mb-2 flex items-center justify-between text-xs text-stone-500">
+                        <span>
+                          {job.completed_count}/{job.target_count}
+                        </span>
+                        <span>{progress}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                        <div
+                          className="h-full rounded-full bg-primary"
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs text-stone-500">
+                        <span>Token {job.total_tokens.toLocaleString("zh-CN")}</span>
+                        <span>{formatDuration(job.duration_seconds)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">
+                        成功 {job.succeeded_count}
+                      </span>
+                      <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                        失败 {job.failed_count}
+                      </span>
+                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+                        跳过 {job.skipped_count}
+                      </span>
+                      {job.canceled_count > 0 ? (
+                        <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">
+                          取消 {job.canceled_count}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                      {activeTaskListView === "trash" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleRestoreInformationEnrichmentJob(job.id)
+                          }
+                          className="ui-btn-primary"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          还原任务
+                        </button>
+                      ) : null}
+                      {activeTaskListView === "current" &&
+                      canDeleteInformationEnrichmentJob(job) ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDeleteInformationEnrichmentJob(job)
+                          }
+                          className="ui-btn-danger"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          删除
+                        </button>
+                      ) : null}
+                      {activeTaskListView === "current" &&
+                      (job.status === "queued" || job.status === "running") ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleCancelInformationEnrichmentJob(job.id)
+                          }
+                          className="ui-btn-danger"
+                          disabled={cancelingInformationEnrichmentJobId === job.id}
+                        >
+                          {cancelingInformationEnrichmentJobId === job.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Square className="h-4 w-4" />
+                          )}
+                          取消
+                        </button>
+                      ) : null}
+                      {activeTaskListView === "current" && canRetry ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleRetryInformationEnrichmentJob(job.id)
+                          }
+                          className="ui-btn-secondary"
+                          disabled={retryingInformationEnrichmentJobId === job.id}
+                        >
+                          {retryingInformationEnrichmentJobId === job.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                          重试失败项
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedInformationEnrichmentJob(job)}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+                        aria-label={`查看信息补全任务 ${job.name}`}
+                        title="查看详情"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+          <TaskListPagination
+            page={informationEnrichmentPage}
+            totalCount={informationEnrichmentJobs.length}
+            onPageChange={setInformationEnrichmentPage}
           />
         </>
       ) : crawlJobsLoading && crawlJobs.length === 0 ? (
@@ -3766,6 +4327,228 @@ export const TasksPage = () => {
                             </td>
                           </tr>
                         ))
+                      ) : (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-4 py-6 text-center text-sm text-stone-500"
+                          >
+                            暂无任务明细。
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {selectedInformationEnrichmentJob ? (
+        <div
+          className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
+          onClick={informationEnrichmentDetailsLayer.onBackdropClick}
+          onMouseDown={informationEnrichmentDetailsLayer.onBackdropMouseDown}
+        >
+          <section
+            role="dialog"
+            aria-label="信息补全任务详情"
+            className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-5xl sm:rounded-3xl"
+            onClick={informationEnrichmentDetailsLayer.onContentClick}
+            onMouseDown={informationEnrichmentDetailsLayer.onContentMouseDown}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-4 py-5 sm:px-6">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
+                  <Bot className="h-4 w-4 text-primary" />
+                  信息补全任务
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <h2 className="min-w-0 break-words text-xl font-semibold text-stone-900">
+                    {selectedInformationEnrichmentJob.name}
+                  </h2>
+                  <span
+                    className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_JOB_STATUS_TONES[selectedInformationEnrichmentJob.status]}`}
+                  >
+                    {
+                      PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS[
+                        selectedInformationEnrichmentJob.status
+                      ]
+                    }
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-stone-500">
+                  创建于 {formatDisplayTime(selectedInformationEnrichmentJob.created_at)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeInformationEnrichmentDetails}
+                className="ui-btn-secondary shrink-0"
+                aria-label="关闭信息补全任务详情"
+              >
+                <X className="h-4 w-4" />
+                关闭
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+              <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">成功</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {selectedInformationEnrichmentJob.succeeded_count}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">失败</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {selectedInformationEnrichmentJob.failed_count}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">跳过</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {selectedInformationEnrichmentJob.skipped_count}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">取消</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {selectedInformationEnrichmentJob.canceled_count}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">总 Token</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {selectedInformationEnrichmentJob.total_tokens.toLocaleString(
+                      "zh-CN",
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">耗时</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {formatDuration(selectedInformationEnrichmentJob.duration_seconds)}
+                  </div>
+                </div>
+              </div>
+
+              {selectedInformationEnrichmentJob.last_error ? (
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+                  <div className="text-xs font-medium text-red-700">最近错误</div>
+                  <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-red-900">
+                    {selectedInformationEnrichmentJob.last_error}
+                  </div>
+                </div>
+              ) : null}
+
+              <section className="mt-6">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-stone-900">导师明细</h3>
+                  {informationEnrichmentDetailsLoading ? (
+                    <span className="inline-flex items-center gap-2 text-xs text-stone-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      正在刷新
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
+                  <table className="min-w-[960px] divide-y divide-stone-200 text-sm">
+                    <thead className="bg-stone-50 text-left text-xs font-medium text-stone-500">
+                      <tr>
+                        <th className="px-4 py-3">导师</th>
+                        <th className="px-4 py-3">状态</th>
+                        <th className="px-4 py-3">补全字段</th>
+                        <th className="px-4 py-3">说明</th>
+                        <th className="px-4 py-3">Token / 尝试</th>
+                        <th className="px-4 py-3">主页 / 完成时间</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
+                      {selectedInformationEnrichmentItems.length > 0 ? (
+                        selectedInformationEnrichmentItems.map((item) => {
+                          const itemMessage =
+                            item.error_message ||
+                            item.skip_reason ||
+                            (item.status === "succeeded"
+                              ? item.enriched_fields.length > 0
+                                ? "补全完成"
+                                : "未发现可写入的新信息"
+                              : "等待处理");
+
+                          return (
+                            <tr key={item.id}>
+                              <td className="px-4 py-3 align-top">
+                                <div className="font-medium text-stone-900">
+                                  {item.professor_name}
+                                </div>
+                                <div className="mt-1 text-xs leading-5 text-stone-500">
+                                  {item.professor_email || "暂无邮箱"}
+                                </div>
+                                <div className="text-xs leading-5 text-stone-500">
+                                  {[
+                                    item.professor_title,
+                                    item.professor_school,
+                                    item.professor_department,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" / ") || "暂无补充信息"}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 align-top">
+                                <span
+                                  className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_ITEM_STATUS_TONES[item.status]}`}
+                                >
+                                  {INFORMATION_ENRICHMENT_ITEM_STATUS_LABELS[item.status]}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 align-top">
+                                {item.enriched_fields.length > 0 ? (
+                                  <div className="flex max-w-48 flex-wrap gap-1.5">
+                                    {item.enriched_fields.map((field) => (
+                                      <span
+                                        key={field}
+                                        className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700"
+                                      >
+                                        {INFORMATION_ENRICHMENT_FIELD_LABELS[field] ?? field}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-stone-400">--</span>
+                                )}
+                              </td>
+                              <td className="max-w-64 px-4 py-3 align-top">
+                                <div
+                                  className={`whitespace-pre-wrap break-words leading-6 ${
+                                    item.error_message ? "text-red-700" : "text-stone-700"
+                                  }`}
+                                >
+                                  {itemMessage}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 align-top">
+                                <div>{item.total_tokens.toLocaleString("zh-CN")}</div>
+                                <div className="mt-1 text-xs text-stone-500">
+                                  尝试 {item.attempt_count} 次
+                                </div>
+                              </td>
+                              <td className="max-w-64 px-4 py-3 align-top">
+                                <div className="max-w-56 truncate">
+                                  {renderCandidateExternalUrl(item.profile_url)}
+                                </div>
+                                <div className="mt-2 text-xs text-stone-500">
+                                  {formatDisplayTime(item.finished_at, {
+                                    withSeconds: true,
+                                  })}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                       ) : (
                         <tr>
                           <td

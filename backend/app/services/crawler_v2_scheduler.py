@@ -13,6 +13,7 @@ from app.models import (
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
+    CrawlJobKind,
     CrawlJobRun,
     CrawlJobStatus,
     CrawlPageChunk,
@@ -93,6 +94,13 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
     now = utc_now()
     for job in jobs:
         if await _job_has_available_or_leased_work(session, job_id=job.id, now=now):
+            continue
+        if job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+            from app.services.professor_information_enrichment import (
+                finalize_professor_information_enrichment_job,
+            )
+
+            await finalize_professor_information_enrichment_job(session, job, now=now)
             continue
         has_candidates = await _job_has_candidates(session, job_id=job.id)
         error_message = None
@@ -373,6 +381,8 @@ async def _conditional_claim_enrichment_task(
             claimed_at=now,
             lease_expires_at=lease_expires_at,
             attempt_count=int(task.attempt_count or 0) + 1,
+            started_at=task.started_at or now,
+            finished_at=None,
         )
     )
 

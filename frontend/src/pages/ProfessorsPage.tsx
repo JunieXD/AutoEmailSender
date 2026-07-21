@@ -60,6 +60,13 @@ import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import {
+  createProfessorInformationEnrichmentJob,
+  createSingleProfessorInformationEnrichment,
+  getActiveProfessorInformationEnrichment,
+  getProfessorInformationEnrichmentJob,
+  listProfessorInformationEnrichmentItems,
+} from "@/lib/api/professorInformationEnrichmentApi";
+import {
   archiveProfessor,
   bulkUpdateProfessorTags,
   bulkArchiveProfessors,
@@ -67,6 +74,7 @@ import {
   createProfessorTag,
   deleteProfessorTag,
   getProfessorExportDownloadUrl,
+  getProfessor,
   getProfessorTemplateDownloadUrl,
   importProfessorsFromFile,
   getProfessorTagUsage,
@@ -80,6 +88,7 @@ import {
 import type {
   CrawlJobEntryTypeDTO,
   ProfessorImportFileResultDTO,
+  ProfessorInformationEnrichmentJobDTO,
   ProfessorManagementItemDTO,
   ProfessorBulkTagModeDTO,
   ProfessorTagDTO,
@@ -114,6 +123,18 @@ import {
 
 type ArchiveFilter = "active" | "archived" | "all";
 const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "无" };
+const informationEnrichmentFieldLabels: Record<string, string> = {
+  email: "邮箱",
+  title: "职称",
+  department: "系所",
+  research_direction: "研究方向",
+  recent_papers: "近期论文",
+};
+const activeInformationEnrichmentStatuses = new Set(["queued", "running"]);
+type TrackedSingleInformationEnrichment = {
+  job: ProfessorInformationEnrichmentJobDTO;
+  professorName: string;
+};
 type ProfessorFormState = {
   name: string;
   email: string;
@@ -542,6 +563,7 @@ const ModalShell = ({
   description,
   onClose,
   children,
+  headerAction,
   maxWidthClassName = "max-w-3xl",
 }: {
   open: boolean;
@@ -549,6 +571,7 @@ const ModalShell = ({
   description?: string;
   onClose: () => void;
   children: ReactNode;
+  headerAction?: ReactNode;
   maxWidthClassName?: string;
 }) => {
   const {
@@ -595,12 +618,17 @@ const ModalShell = ({
       >
         <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(153,27,27,0.15),transparent_70%)]" />
         <div className="relative max-h-[85vh] overflow-y-auto px-6 py-6">
-          <div className="max-w-2xl">
-            <h2 className="text-2xl font-semibold tracking-[0.01em] text-stone-900">
-              {title}
-            </h2>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-start justify-between gap-4">
+              <h2 className="min-w-0 break-words text-2xl font-semibold tracking-[0.01em] text-stone-900">
+                {title}
+              </h2>
+              {headerAction ? (
+                <div className="shrink-0">{headerAction}</div>
+              ) : null}
+            </div>
             {description ? (
-              <p className="mt-2 text-sm leading-6 text-stone-600">
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-600">
                 {description}
               </p>
             ) : null}
@@ -731,6 +759,13 @@ export const ProfessorsPage = () => {
   const [formState, setFormState] =
     useState<ProfessorFormState>(emptyProfessorForm());
   const [savingProfessor, setSavingProfessor] = useState(false);
+  const [startingSingleInformationEnrichmentIds, setStartingSingleInformationEnrichmentIds] =
+    useState<Set<number>>(new Set());
+  const [singleInformationEnrichments, setSingleInformationEnrichments] =
+    useState<Record<number, TrackedSingleInformationEnrichment>>({});
+  const [creatingBulkInformationEnrichment, setCreatingBulkInformationEnrichment] =
+    useState(false);
+  const notifiedInformationEnrichmentJobIdsRef = useRef<Set<number>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -831,6 +866,177 @@ export const ProfessorsPage = () => {
   useEffect(() => {
     void loadProfessorTags();
   }, [loadProfessorTags]);
+
+  const refreshProfessorAfterInformationEnrichment = useCallback(
+    async (professorId: number) => {
+      await loadProfessors();
+      try {
+        const refreshed = await getProfessor(professorId);
+        setProfessors((previous) =>
+          previous.map((professor) =>
+            professor.id === professorId
+              ? {
+                  ...professor,
+                  email: refreshed.email,
+                  title: refreshed.title,
+                  department: refreshed.department,
+                  research_direction: refreshed.research_direction,
+                  recent_papers: refreshed.recent_papers ?? [],
+                  updated_at: refreshed.updated_at,
+                }
+              : professor,
+          ),
+        );
+        if (editingProfessor?.id !== professorId) {
+          return;
+        }
+        setEditingProfessor((current) =>
+          current?.id === professorId
+            ? {
+                ...current,
+                email: refreshed.email,
+                title: refreshed.title,
+                department: refreshed.department,
+                research_direction: refreshed.research_direction,
+                recent_papers: refreshed.recent_papers ?? [],
+                updated_at: refreshed.updated_at,
+              }
+            : current,
+        );
+        setFormState((previous) => ({
+          ...previous,
+          email: previous.email.trim() ? previous.email : (refreshed.email ?? ""),
+          title: previous.title.trim() ? previous.title : (refreshed.title ?? ""),
+          department: previous.department.trim()
+            ? previous.department
+            : (refreshed.department ?? ""),
+          research_direction: previous.research_direction.trim()
+            ? previous.research_direction
+            : (refreshed.research_direction ?? ""),
+          recent_papers_text: previous.recent_papers_text.trim()
+            ? previous.recent_papers_text
+            : (refreshed.recent_papers ?? []).join("\n"),
+        }));
+      } catch {
+        // The list refresh already reflects committed fields; detail refresh is best effort.
+      }
+    },
+    [
+      editingProfessor,
+      loadProfessors,
+      setEditingProfessor,
+      setFormState,
+      setProfessors,
+    ],
+  );
+
+  const handleSingleInformationEnrichmentFinished = useCallback(
+    async (
+      professorId: number,
+      tracked: TrackedSingleInformationEnrichment,
+      job: ProfessorInformationEnrichmentJobDTO,
+    ) => {
+      if (notifiedInformationEnrichmentJobIdsRef.current.has(job.id)) {
+        return;
+      }
+      notifiedInformationEnrichmentJobIdsRef.current.add(job.id);
+      try {
+        const items = await listProfessorInformationEnrichmentItems(job.id);
+        const item =
+          items.find((candidate) => candidate.professor_id === professorId) ?? items[0];
+        if (item?.status === "failed" || job.status === "failed") {
+          notifyError(
+            `补全失败：${tracked.professorName}`,
+            item?.error_message ?? job.last_error ?? "信息补全失败",
+          );
+        } else if (item?.status === "canceled" || job.status === "canceled") {
+          notifyWarning(
+            `补全已取消：${tracked.professorName}`,
+            item?.error_message ?? "本次信息补全已取消。",
+          );
+        } else if (item?.status === "skipped") {
+          notifyWarning(
+            `补全已跳过：${tracked.professorName}`,
+            item.skip_reason ?? "当前导师不满足信息补全条件。",
+          );
+        } else {
+          const labels = (item?.enriched_fields ?? [])
+            .map((field) => informationEnrichmentFieldLabels[field] ?? field)
+            .join("、");
+          notifySuccess(
+            `补全完成：${tracked.professorName}`,
+            labels
+              ? `已补全：${labels}。`
+              : "补全过程完成，但没有发现可新增的信息。",
+          );
+        }
+        await refreshProfessorAfterInformationEnrichment(professorId);
+      } catch (error) {
+        notifyError(
+          `读取补全结果失败：${tracked.professorName}`,
+          getActionErrorMessage(error, "读取信息补全结果失败"),
+        );
+      } finally {
+        setSingleInformationEnrichments((previous) => {
+          const next = { ...previous };
+          delete next[professorId];
+          return next;
+        });
+      }
+    },
+    [
+      notifyError,
+      notifySuccess,
+      notifyWarning,
+      refreshProfessorAfterInformationEnrichment,
+    ],
+  );
+
+  useEffect(() => {
+    const activeEntries = Object.entries(singleInformationEnrichments).filter(
+      ([, tracked]) => activeInformationEnrichmentStatuses.has(tracked.job.status),
+    );
+    if (activeEntries.length === 0) {
+      return;
+    }
+    let disposed = false;
+    const poll = async () => {
+      await Promise.all(
+        activeEntries.map(async ([professorIdText, tracked]) => {
+          try {
+            const job = await getProfessorInformationEnrichmentJob(tracked.job.id);
+            if (disposed) {
+              return;
+            }
+            const professorId = Number(professorIdText);
+            if (activeInformationEnrichmentStatuses.has(job.status)) {
+              setSingleInformationEnrichments((previous) => {
+                const current = previous[professorId];
+                if (!current || current.job.updated_at === job.updated_at) {
+                  return previous;
+                }
+                return { ...previous, [professorId]: { ...current, job } };
+              });
+              return;
+            }
+            await handleSingleInformationEnrichmentFinished(
+              professorId,
+              tracked,
+              job,
+            );
+          } catch {
+            // Transient polling failures are retried without ending the task state.
+          }
+        }),
+      );
+    };
+    void poll();
+    const intervalId = window.setInterval(() => void poll(), 2500);
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, [handleSingleInformationEnrichmentFinished, singleInformationEnrichments]);
 
   useEffect(() => {
     if (professors.length === 0) {
@@ -1029,6 +1235,25 @@ export const ProfessorsPage = () => {
     setEditingProfessor(professor);
     setFormState(toProfessorForm(professor));
     setUpsertModalOpen(true);
+    void getActiveProfessorInformationEnrichment(professor.id)
+      .then((result) => {
+        if (result.active && result.job) {
+          setSingleInformationEnrichments((previous) => ({
+            ...previous,
+            [professor.id]: { job: result.job!, professorName: professor.name },
+          }));
+          return;
+        }
+        setSingleInformationEnrichments((previous) => {
+          if (!previous[professor.id]) {
+            return previous;
+          }
+          const next = { ...previous };
+          delete next[professor.id];
+          return next;
+        });
+      })
+      .catch(() => undefined);
   };
 
   const closeUpsertModal = () => {
@@ -1058,6 +1283,78 @@ export const ProfessorsPage = () => {
       );
     } finally {
       setSavingProfessor(false);
+    }
+  };
+
+  const handleSingleInformationEnrichment = async () => {
+    if (!editingProfessor) {
+      return;
+    }
+    if (!selectedLlmProfileId) {
+      notifyWarning("请先选择模型", "智能补全会使用当前顶部栏选择的模型。");
+      return;
+    }
+    const professorId = editingProfessor.id;
+    setStartingSingleInformationEnrichmentIds((previous) =>
+      new Set(previous).add(professorId),
+    );
+    try {
+      const job = await createSingleProfessorInformationEnrichment(
+        professorId,
+        selectedLlmProfileId,
+      );
+      setSingleInformationEnrichments((previous) => ({
+        ...previous,
+        [professorId]: { job, professorName: editingProfessor.name },
+      }));
+      notifyWarning(
+        "正在智能补全",
+        `正在为“${editingProfessor.name}”访问导师主页并补全资料。`,
+      );
+    } catch (error) {
+      notifyError(
+        `无法补全：${editingProfessor.name}`,
+        getActionErrorMessage(error, "发起信息补全失败"),
+      );
+    } finally {
+      setStartingSingleInformationEnrichmentIds((previous) => {
+        const next = new Set(previous);
+        next.delete(professorId);
+        return next;
+      });
+    }
+  };
+
+  const handleBulkInformationEnrichment = async () => {
+    if (archiveFilter === "archived") {
+      notifyWarning("回收站导师不可补全", "请先恢复导师后再发起信息补全。");
+      return;
+    }
+    if (selectedIds.size === 0) {
+      notifyWarning("请先选择导师", "选择至少一位导师后再批量智能补全。");
+      return;
+    }
+    if (!selectedLlmProfileId) {
+      notifyWarning("请先选择模型", "批量智能补全会使用当前顶部栏选择的模型。");
+      return;
+    }
+    setCreatingBulkInformationEnrichment(true);
+    try {
+      const job = await createProfessorInformationEnrichmentJob({
+        professorIds: Array.from(selectedIds),
+        llmProfileId: selectedLlmProfileId,
+      });
+      notifySuccess(
+        "批量信息补全已创建",
+        `已排队 ${job.queued_count} 位，跳过 ${job.skipped_count} 位，可在任务中心查看。`,
+      );
+    } catch (error) {
+      notifyError(
+        "创建批量信息补全失败",
+        getActionErrorMessage(error, "创建批量信息补全失败"),
+      );
+    } finally {
+      setCreatingBulkInformationEnrichment(false);
     }
   };
 
@@ -2293,6 +2590,21 @@ export const ProfessorsPage = () => {
                 <Tags className="h-4 w-4" />
                 批量改标签
               </button>
+              {archiveFilter !== "archived" ? (
+                <button
+                  type="button"
+                  onClick={() => void handleBulkInformationEnrichment()}
+                  disabled={creatingBulkInformationEnrichment}
+                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {creatingBulkInformationEnrichment ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Bot className="h-4 w-4" />
+                  )}
+                  批量智能补全
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() =>
@@ -2325,6 +2637,31 @@ export const ProfessorsPage = () => {
         }
         description="手动维护一位导师的核心信息。保存后会立刻出现在导师管理页，并可在首页参与筛选与建任务。"
         onClose={closeUpsertModal}
+        headerAction={
+          editingProfessor ? (
+            <button
+              type="button"
+              onClick={() => void handleSingleInformationEnrichment()}
+              disabled={
+                startingSingleInformationEnrichmentIds.has(editingProfessor.id) ||
+                activeInformationEnrichmentStatuses.has(
+                  singleInformationEnrichments[editingProfessor.id]?.job.status ?? "",
+                )
+              }
+              className="ui-btn-secondary whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {startingSingleInformationEnrichmentIds.has(editingProfessor.id) ||
+              activeInformationEnrichmentStatuses.has(
+                singleInformationEnrichments[editingProfessor.id]?.job.status ?? "",
+              ) ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Bot className="h-4 w-4" />
+              )}
+              智能补全
+            </button>
+          ) : null
+        }
       >
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           <label className="block">

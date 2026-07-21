@@ -21,6 +21,7 @@ const nodeTestFiles = [
   "test/BatchTasksApi.test.ts",
   "test/CrawlJobsApi.test.ts",
   "test/MatchAnalysisJobsApi.test.ts",
+  "test/ProfessorInformationEnrichmentApi.test.ts",
   "test/desktopPackaging.test.ts",
   "test/favicon.test.ts",
   "test/getOnboardingState.test.ts",

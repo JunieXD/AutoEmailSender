@@ -28,6 +28,7 @@ export const getTokenRecordFeatureTone = (
 ): TokenRecordFeatureTone => {
   const tones: Record<TokenUsageRecordFeatureTypeDTO, TokenRecordFeatureTone> = {
     crawl: 'amber',
+    information_enrichment: 'stone',
     match_analysis: 'emerald',
     draft_generation: 'sky',
   };

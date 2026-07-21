@@ -54,7 +54,10 @@ describe("OtherSettingsCard", () => {
     expect(screen.getByLabelText("AI 草稿输出 token 上限")).toHaveValue(6000);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(5);
     expect(screen.getByLabelText("同时运行的抓取任务数")).toHaveValue(2);
-    expect(screen.getByLabelText("每个抓取任务同时补全详情页数")).toHaveValue(3);
+    expect(screen.getByLabelText("同时补全导师详情页数")).toHaveValue(3);
+    expect(
+      screen.getByText(/智能抓取和导师管理页信息补全合计最多同时处理/),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("同一网站同时抓取页数")).toHaveValue(2);
 
     fireEvent.change(screen.getByLabelText("每个匹配任务同时分析导师数"), {

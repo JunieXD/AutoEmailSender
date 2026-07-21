@@ -26,6 +26,16 @@ vi.mock("@/lib/api/professorsApi", () => ({
   updateProfessor: vi.fn(),
 }));
 
+vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+  createSingleProfessorInformationEnrichment: vi.fn(),
+  getActiveProfessorInformationEnrichment: vi
+    .fn()
+    .mockResolvedValue({ active: false, job: null }),
+  getProfessorInformationEnrichmentJob: vi.fn(),
+  listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
+  createProfessorInformationEnrichmentJob: vi.fn(),
+}));
+
 const renderPage = () =>
   render(
     <MemoryRouter>

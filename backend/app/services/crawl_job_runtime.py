@@ -15,7 +15,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.models import CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
+from app.models import CrawlCandidate, CrawlJob, CrawlJobKind, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services.crawler_debug import append_crawler_debug_event
 from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
@@ -252,6 +252,7 @@ async def run_queued_crawl_jobs_once(
                 now=failed_at,
             )
             await session.commit()
+            _ACTIVE_CRAWL_JOB_IDS.discard(job_id)
             return 1
         except LLMRuntimeError as exc:
             failed_at = utc_now()
@@ -266,6 +267,7 @@ async def run_queued_crawl_jobs_once(
                 now=failed_at,
             )
             await session.commit()
+            _ACTIVE_CRAWL_JOB_IDS.discard(job_id)
             return 1
 
         settings = await get_runtime_settings(session)
@@ -452,6 +454,21 @@ async def _recover_interrupted_crawl_job(
     async with session_factory() as session:
         job = await session.get(CrawlJob, job_id)
         if job is None or job.status != CrawlJobStatus.RUNNING.value:
+            return
+
+        if (
+            job.runtime_version == "v2"
+            and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value
+        ):
+            now = utc_now()
+            job.status = CrawlJobStatus.QUEUED.value
+            job.updated_at = now
+            if job.current_run_id is not None:
+                run = await session.get(CrawlJobRun, job.current_run_id)
+                if run is not None and run.status == CrawlJobStatus.RUNNING.value:
+                    run.status = CrawlJobStatus.QUEUED.value
+                    run.updated_at = now
+            await session.commit()
             return
 
         if await _crawl_job_has_pending_work_in_session(session, job_id=job_id):

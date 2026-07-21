@@ -82,11 +82,11 @@ const numberFields: Array<{
   },
   {
     key: "crawler_profile_enrichment_concurrency",
-    label: "每个抓取任务同时补全详情页数",
-    hint: "控制一个抓取任务里，最多同时打开几位导师的详情页补全信息。数值越大越快，也更容易触发网站限制。保存后下一轮抓取生效。",
+    label: "同时补全导师详情页数",
+    hint: "控制智能抓取和导师管理页信息补全合计最多同时处理几位导师。数值越大越快，也更容易触发网站限制。保存后下一轮调度生效。",
     min: 1,
     max: 20,
-    defaultValue: 5,
+    defaultValue: 3,
   },
   {
     key: "crawler_host_concurrency",

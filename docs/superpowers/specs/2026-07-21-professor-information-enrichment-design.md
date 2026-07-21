@@ -151,6 +151,7 @@ source_url
 ```text
 professor_id          // nullable，普通抓取任务为空
 skip_reason           // nullable
+enriched_fields       // 实际写入导师记录的字段名列表
 started_at            // nullable
 finished_at           // nullable
 ```
@@ -167,7 +168,7 @@ failed_terminal
 canceled
 ```
 
-`professor_id` 冗余保存到工作项，用于高效查询导师活动任务并建立部分唯一索引。对 `pending`、`processing`、`failed_retryable` 状态建立“同一 `professor_id` 只能有一个活动工作项”的约束；普通抓取的空 `professor_id` 不受影响。
+`professor_id` 冗余保存到工作项，用于高效查询导师活动任务并建立部分唯一索引。`enriched_fields` 记录本项最终实际写入的允许字段，任务详情据此展示补全结果。对 `pending`、`processing`、`failed_retryable` 状态建立“同一 `professor_id` 只能有一个活动工作项”的约束；普通抓取的空 `professor_id` 不受影响。
 
 ## 字段补全与并发写入规则
 

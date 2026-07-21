@@ -158,6 +158,72 @@ class MigrationScriptTests(unittest.TestCase):
             upgraded_again.close()
         self.assertEqual(version, HEAD_REVISION)
 
+    def test_professor_information_enrichment_migration_upgrades_and_downgrades(self) -> None:
+        database_path = Path(self.temp_dir.name) / "professor_information_enrichment.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260719_professor_history_queue"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            crawl_job_columns = {
+                row[1] for row in upgraded.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+            }
+            enrichment_task_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(crawl_candidate_enrichment_tasks)",
+                ).fetchall()
+            }
+            enrichment_task_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list(crawl_candidate_enrichment_tasks)",
+                ).fetchall()
+            }
+        finally:
+            upgraded.close()
+
+        self.assertTrue(
+            {"job_kind", "trigger_mode", "task_center_visible", "display_name"}.issubset(
+                crawl_job_columns,
+            ),
+        )
+        self.assertTrue(
+            {
+                "professor_id",
+                "skip_reason",
+                "enriched_fields",
+                "started_at",
+                "finished_at",
+            }.issubset(enrichment_task_columns),
+        )
+        self.assertIn(
+            "uq_crawl_candidate_enrichment_tasks_active_professor",
+            enrichment_task_indexes,
+        )
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            downgraded_job_columns = {
+                row[1] for row in downgraded.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+            }
+            downgraded_task_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(crawl_candidate_enrichment_tasks)",
+                ).fetchall()
+            }
+        finally:
+            downgraded.close()
+        self.assertNotIn("job_kind", downgraded_job_columns)
+        self.assertNotIn("professor_id", downgraded_task_columns)
+
+        self._run_alembic(env, "upgrade", "head")
+
     def test_unified_email_history_upgrade_skips_normalized_message_duplicates(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "unified_email_duplicate_messages.db"
         env = os.environ.copy()
@@ -752,7 +818,22 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("crawl_page_fetch_states", table_names)
         self.assertIn("crawl_candidates", table_names)
 
-        self.assertIn("current_run_id", self._get_columns("crawl_jobs"))
+        crawl_job_columns = self._get_columns("crawl_jobs")
+        self.assertIn("current_run_id", crawl_job_columns)
+        self.assertTrue(
+            {"job_kind", "trigger_mode", "task_center_visible", "display_name"}.issubset(
+                crawl_job_columns,
+            ),
+        )
+        self.assertTrue(
+            {
+                "professor_id",
+                "skip_reason",
+                "enriched_fields",
+                "started_at",
+                "finished_at",
+            }.issubset(self._get_columns("crawl_candidate_enrichment_tasks")),
+        )
         self.assertTrue(
             {
                 "id",

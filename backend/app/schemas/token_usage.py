@@ -7,10 +7,16 @@ from pydantic import BaseModel, Field
 
 from app.schemas.base import ApiSchema
 
-TokenUsageFeatureType = Literal["crawl", "match_analysis", "draft_generation"]
+TokenUsageFeatureType = Literal[
+    "crawl",
+    "information_enrichment",
+    "match_analysis",
+    "draft_generation",
+]
 TokenUsageFeatureFilter = Literal[
     "all",
     "crawl",
+    "information_enrichment",
     "match_analysis",
     "draft_generation",
 ]

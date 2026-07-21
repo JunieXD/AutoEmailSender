@@ -2613,6 +2613,7 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
             self.assertEqual(job.status, "failed")
             assert job.error_message is not None
             self.assertIn("思考模式", job.error_message)
+        self.assertNotIn(job_id, crawl_job_runtime._ACTIVE_CRAWL_JOB_IDS)
 
 
 async def _seed_running_crawl_job_with_default_profile(

@@ -4,13 +4,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { ProfessorsPage } from "@/pages/ProfessorsPage";
-import type { ProfessorManagementItemDTO } from "@/types";
+import type {
+  ProfessorInformationEnrichmentItemDTO,
+  ProfessorInformationEnrichmentJobDTO,
+  ProfessorManagementItemDTO,
+} from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const listProfessorsForManagement = vi.hoisted(() => vi.fn());
 const getProfessorExportDownloadUrl = vi.hoisted(() => vi.fn());
 const updateProfessor = vi.hoisted(() => vi.fn());
 const updateProfessorNote = vi.hoisted(() => vi.fn());
+const createSingleProfessorInformationEnrichment = vi.hoisted(() => vi.fn());
+const getActiveProfessorInformationEnrichment = vi.hoisted(() => vi.fn());
+const getProfessorInformationEnrichmentJob = vi.hoisted(() => vi.fn());
+const listProfessorInformationEnrichmentItems = vi.hoisted(() => vi.fn());
+const createProfessorInformationEnrichmentJob = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
@@ -28,6 +37,14 @@ vi.mock("@/lib/api/professorsApi", () => ({
   triggerCrawler: vi.fn(),
   updateProfessor,
   updateProfessorNote,
+}));
+
+vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+  createSingleProfessorInformationEnrichment,
+  getActiveProfessorInformationEnrichment,
+  getProfessorInformationEnrichmentJob,
+  listProfessorInformationEnrichmentItems,
+  createProfessorInformationEnrichmentJob,
 }));
 
 const professor: ProfessorManagementItemDTO = {
@@ -79,6 +96,62 @@ const buildProfessor = (id: number): ProfessorManagementItemDTO => ({
   email: `professor-${id}@example.edu`,
 });
 
+const informationEnrichmentJob: ProfessorInformationEnrichmentJobDTO = {
+  id: 71,
+  name: "李教授 · 信息补全",
+  trigger_mode: "single",
+  status: "running",
+  target_count: 1,
+  completed_count: 0,
+  queued_count: 0,
+  running_count: 1,
+  succeeded_count: 0,
+  failed_count: 0,
+  skipped_count: 0,
+  canceled_count: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  cached_tokens: 0,
+  total_tokens: 0,
+  llm_profile_id: 7,
+  started_at: "2026-04-24T00:00:00Z",
+  finished_at: null,
+  duration_seconds: 0,
+  created_at: "2026-04-24T00:00:00Z",
+  updated_at: "2026-04-24T00:00:00Z",
+  deleted_at: null,
+  last_error: null,
+};
+
+const buildInformationEnrichmentItem = (
+  overrides: Partial<ProfessorInformationEnrichmentItemDTO> = {},
+): ProfessorInformationEnrichmentItemDTO => ({
+  id: 81,
+  job_id: informationEnrichmentJob.id,
+  professor_id: professor.id,
+  professor_name: professor.name,
+  professor_email: professor.email,
+  professor_title: professor.title,
+  professor_university: professor.university,
+  professor_school: professor.school,
+  professor_department: professor.department,
+  profile_url: professor.profile_url,
+  status: "succeeded",
+  enriched_fields: ["department"],
+  error_message: null,
+  skip_reason: null,
+  input_tokens: 100,
+  output_tokens: 20,
+  cached_tokens: 0,
+  total_tokens: 120,
+  attempt_count: 1,
+  started_at: "2026-04-24T00:00:00Z",
+  finished_at: "2026-04-24T00:00:20Z",
+  created_at: "2026-04-24T00:00:00Z",
+  updated_at: "2026-04-24T00:00:20Z",
+  ...overrides,
+});
+
 const renderPage = () =>
   render(
     <MemoryRouter>
@@ -125,6 +198,31 @@ describe("ProfessorsPage layout", () => {
       id: professor.id,
       personal_note: null,
       updated_at: "2026-04-24T00:00:00Z",
+    });
+    createSingleProfessorInformationEnrichment.mockReset();
+    createSingleProfessorInformationEnrichment.mockResolvedValue(
+      informationEnrichmentJob,
+    );
+    getActiveProfessorInformationEnrichment.mockReset();
+    getActiveProfessorInformationEnrichment.mockResolvedValue({
+      active: false,
+      job: null,
+    });
+    getProfessorInformationEnrichmentJob.mockReset();
+    getProfessorInformationEnrichmentJob.mockResolvedValue(
+      informationEnrichmentJob,
+    );
+    listProfessorInformationEnrichmentItems.mockReset();
+    listProfessorInformationEnrichmentItems.mockResolvedValue([]);
+    createProfessorInformationEnrichmentJob.mockReset();
+    createProfessorInformationEnrichmentJob.mockResolvedValue({
+      ...informationEnrichmentJob,
+      id: 72,
+      name: "信息补全 2026-04-24",
+      trigger_mode: "batch",
+      status: "queued",
+      queued_count: 1,
+      running_count: 0,
     });
   });
 
@@ -305,6 +403,117 @@ describe("ProfessorsPage layout", () => {
         }),
       );
     });
+  });
+
+  it("starts single information enrichment from the edit dialog and disables the button", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("主页链接"), {
+      target: { value: "https://example.edu/not-saved-yet" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "智能补全" }));
+
+    await waitFor(() => {
+      expect(createSingleProfessorInformationEnrichment).toHaveBeenCalledWith(
+        professor.id,
+        7,
+      );
+    });
+    expect(screen.getByRole("button", { name: "智能补全" })).toBeDisabled();
+    expect(await screen.findByText("正在智能补全")).toBeInTheDocument();
+  });
+
+  it("shows the original single-enrichment error after the job finishes", async () => {
+    const rawError = "browser fallback failed: net::ERR_CONNECTION_RESET";
+    getProfessorInformationEnrichmentJob.mockResolvedValue({
+      ...informationEnrichmentJob,
+      status: "failed",
+      running_count: 0,
+      completed_count: 1,
+      failed_count: 1,
+      finished_at: "2026-04-24T00:00:20Z",
+      last_error: rawError,
+    });
+    listProfessorInformationEnrichmentItems.mockResolvedValue([
+      buildInformationEnrichmentItem({
+        status: "failed",
+        enriched_fields: [],
+        error_message: rawError,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        attempt_count: 3,
+      }),
+    ]);
+
+    renderPage();
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能补全" }));
+
+    expect(await screen.findByText("补全失败：李教授")).toBeInTheDocument();
+    expect(screen.getByText(rawError)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "智能补全" })).toBeEnabled();
+    });
+  });
+
+  it("reports a skipped single enrichment with its reason", async () => {
+    getProfessorInformationEnrichmentJob.mockResolvedValue({
+      ...informationEnrichmentJob,
+      status: "completed",
+      running_count: 0,
+      completed_count: 1,
+      skipped_count: 1,
+      finished_at: "2026-04-24T00:00:20Z",
+    });
+    listProfessorInformationEnrichmentItems.mockResolvedValue([
+      buildInformationEnrichmentItem({
+        status: "skipped",
+        enriched_fields: [],
+        skip_reason: "导师已在回收站",
+        total_tokens: 0,
+      }),
+    ]);
+
+    renderPage();
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能补全" }));
+
+    expect(await screen.findByText("补全已跳过：李教授")).toBeInTheDocument();
+    expect(screen.getByText("导师已在回收站")).toBeInTheDocument();
+  });
+
+  it("creates a batch information enrichment job for selected professors", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量智能补全" }));
+
+    await waitFor(() => {
+      expect(createProfessorInformationEnrichmentJob).toHaveBeenCalledWith({
+        professorIds: [professor.id],
+        llmProfileId: 7,
+      });
+    });
+    expect(await screen.findByText("批量信息补全已创建")).toBeInTheDocument();
+    expect(screen.getByText(/已排队 1 位，跳过 0 位/)).toBeInTheDocument();
   });
 
   it("opens editable homepage and source links with the desktop default browser", async () => {

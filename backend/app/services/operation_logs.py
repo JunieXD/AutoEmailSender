@@ -57,6 +57,10 @@ MESSAGE_BEARER_PATTERN = re.compile(
     r"(?P<prefix>\bAuthorization\s*:\s*Bearer\s+)(?P<value>[^\s,;]+)",
     re.IGNORECASE,
 )
+MESSAGE_COOKIE_HEADER_PATTERN = re.compile(
+    r"(?P<prefix>\b(?:Cookie|Set-Cookie)\s*:\s*)(?P<value>[^\r\n]+)",
+    re.IGNORECASE,
+)
 URL_PATTERN = re.compile(r"https?://[^\s<>'\"]+")
 
 
@@ -111,6 +115,13 @@ async def cleanup_old_operation_logs(
         .execution_options(synchronize_session=False),
     )
     return int(result.rowcount or 0)
+
+
+def sanitize_user_visible_error(message_or_exc: object) -> str:
+    message = str(message_or_exc).strip()
+    if not message:
+        return "未知错误"
+    return _safe_message(message) or "未知错误"
 
 
 def _safe_json(value: object | None) -> object | None:
@@ -184,6 +195,7 @@ def _safe_message(message: str | None) -> str | None:
 def _sanitize_message(message: str) -> str:
     sanitized = URL_PATTERN.sub(_strip_url_query_and_fragment, message)
     sanitized = MESSAGE_BEARER_PATTERN.sub(r"\g<prefix>[REDACTED]", sanitized)
+    sanitized = MESSAGE_COOKIE_HEADER_PATTERN.sub(r"\g<prefix>[REDACTED]", sanitized)
 
     def replace_value(match: re.Match[str]) -> str:
         key = match.group("key")
@@ -207,4 +219,3 @@ def _truncate_string(value: str) -> str:
 
 def _stringify_exception(exc: BaseException) -> str:
     return _truncate_string(f"{exc.__class__.__name__}: {exc}")
-

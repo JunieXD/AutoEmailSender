@@ -7,7 +7,7 @@ from app.core.time import utc_now
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -33,6 +33,18 @@ class CrawlJobEntryType(str, Enum):
     LIST = "list"
     PROFILE = "profile"
 
+
+class CrawlJobKind(str, Enum):
+    FACULTY_CRAWL = "faculty_crawl"
+    PROFESSOR_ENRICHMENT = "professor_enrichment"
+
+
+class CrawlJobTriggerMode(str, Enum):
+    CRAWL = "crawl"
+    SINGLE = "single"
+    BATCH = "batch"
+
+
 class CrawlRuntimeVersion(str, Enum):
     V1 = "v1"
     V2 = "v2"
@@ -52,6 +64,7 @@ class CrawlCandidateEnrichmentTaskStatus(str, Enum):
     SKIPPED = "skipped"
     FAILED_RETRYABLE = "failed_retryable"
     FAILED_TERMINAL = "failed_terminal"
+    CANCELED = "canceled"
 
 class CrawlWorkerKind(str, Enum):
     PAGE = "page"
@@ -95,6 +108,23 @@ class CrawlJob(Base):
         nullable=False,
         server_default=text("'list'"),
     )
+    job_kind: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        index=True,
+        server_default=text("'faculty_crawl'"),
+    )
+    trigger_mode: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'crawl'"),
+    )
+    task_center_visible: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("1"),
+    )
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     runtime_version: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
@@ -356,22 +386,45 @@ class CrawlCandidateEnrichmentTask(Base):
     __tablename__ = "crawl_candidate_enrichment_tasks"
     __table_args__ = (
         UniqueConstraint("job_id", "candidate_id", name="uq_crawl_candidate_enrichment_tasks_job_candidate"),
+        Index(
+            "uq_crawl_candidate_enrichment_tasks_active_professor",
+            "professor_id",
+            unique=True,
+            sqlite_where=text(
+                "professor_id IS NOT NULL AND status IN "
+                "('pending', 'processing', 'failed_retryable')"
+            ),
+            postgresql_where=text(
+                "professor_id IS NOT NULL AND status IN "
+                "('pending', 'processing', 'failed_retryable')"
+            ),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
     candidate_id: Mapped[int] = mapped_column(ForeignKey("crawl_candidates.id", ondelete="CASCADE"), index=True)
+    professor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("professors.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enriched_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=utc_now)
 
     job: Mapped["CrawlJob"] = relationship(back_populates="enrichment_tasks")
     candidate: Mapped["CrawlCandidate"] = relationship()
+    professor: Mapped["Professor | None"] = relationship()
 
 class CrawlWorkerTokenUsage(Base):
     __tablename__ = "crawl_worker_token_usages"
@@ -388,4 +441,3 @@ class CrawlWorkerTokenUsage(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
     job: Mapped["CrawlJob"] = relationship(back_populates="token_usages")
-

@@ -32,6 +32,7 @@ describe('token usage center helpers', () => {
 
   it('returns stable visual tones for feature types', () => {
     expect(getTokenRecordFeatureTone('crawl')).toBe('amber');
+    expect(getTokenRecordFeatureTone('information_enrichment')).toBe('stone');
     expect(getTokenRecordFeatureTone('match_analysis')).toBe('emerald');
     expect(getTokenRecordFeatureTone('draft_generation')).toBe('sky');
   });

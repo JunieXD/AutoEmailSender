@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import (
     CrawlJob,
+    CrawlJobKind,
     CrawlJobRun,
     CrawlJobStatus,
     EmailDirection,
@@ -359,6 +360,21 @@ async def _list_draft_records(
 
 def _crawl_run_to_record(run: CrawlJobRun) -> TokenUsageRecordRead:
     job = run.job
+    if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+        return TokenUsageRecordRead(
+            id=f"information_enrichment:{run.id}",
+            feature_type="information_enrichment",
+            feature_label="信息补全",
+            title=job.display_name or f"信息补全 #{job.id}",
+            input_tokens=run.input_tokens,
+            output_tokens=run.output_tokens,
+            cached_tokens=run.cached_tokens,
+            total_tokens=run.total_tokens,
+            model_name=job.llm_profile.model_name if job.llm_profile else None,
+            identity_name=None,
+            created_at=run.created_at,
+            status=_map_crawl_status(run.status),
+        )
     title_context = None
     if job is not None:
         title_context = _crawl_job_title_context(job)
@@ -506,6 +522,7 @@ def _map_crawl_status(status: str) -> str:
         return "running"
     if status in {
         CrawlJobStatus.NEEDS_REVIEW.value,
+        CrawlJobStatus.PARTIALLY_COMPLETED.value,
         CrawlJobStatus.COMPLETED.value,
     }:
         return "success"

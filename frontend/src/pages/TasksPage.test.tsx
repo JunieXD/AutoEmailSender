@@ -9,6 +9,8 @@ import type {
   CrawlJobEventDTO,
   CrawlJobSummaryDTO,
   MatchAnalysisJobDTO,
+  ProfessorInformationEnrichmentItemDTO,
+  ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
 } from "@/types";
 import {
@@ -57,6 +59,12 @@ const apiMocks = vi.hoisted(() => ({
   retryFailedMatchAnalysisJob: vi.fn(),
   deleteMatchAnalysisJob: vi.fn(),
   restoreMatchAnalysisJob: vi.fn(),
+  listProfessorInformationEnrichmentJobs: vi.fn(),
+  listProfessorInformationEnrichmentItems: vi.fn(),
+  cancelProfessorInformationEnrichmentJob: vi.fn(),
+  retryFailedProfessorInformationEnrichmentJob: vi.fn(),
+  deleteProfessorInformationEnrichmentJob: vi.fn(),
+  restoreProfessorInformationEnrichmentJob: vi.fn(),
   getWorkspaceThread: vi.fn(),
   regenerateDraft: vi.fn(),
   approveDraft: vi.fn(),
@@ -141,6 +149,21 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
   retryFailedMatchAnalysisJob: apiMocks.retryFailedMatchAnalysisJob,
   deleteMatchAnalysisJob: apiMocks.deleteMatchAnalysisJob,
   restoreMatchAnalysisJob: apiMocks.restoreMatchAnalysisJob,
+}));
+
+vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+  listProfessorInformationEnrichmentJobs:
+    apiMocks.listProfessorInformationEnrichmentJobs,
+  listProfessorInformationEnrichmentItems:
+    apiMocks.listProfessorInformationEnrichmentItems,
+  cancelProfessorInformationEnrichmentJob:
+    apiMocks.cancelProfessorInformationEnrichmentJob,
+  retryFailedProfessorInformationEnrichmentJob:
+    apiMocks.retryFailedProfessorInformationEnrichmentJob,
+  deleteProfessorInformationEnrichmentJob:
+    apiMocks.deleteProfessorInformationEnrichmentJob,
+  restoreProfessorInformationEnrichmentJob:
+    apiMocks.restoreProfessorInformationEnrichmentJob,
 }));
 
 vi.mock("@/lib/api/workspacesApi", () => ({
@@ -508,6 +531,65 @@ const buildMatchAnalysisJob = (
   ...overrides,
 });
 
+const buildInformationEnrichmentJob = (
+  overrides: Partial<ProfessorInformationEnrichmentJobDTO> = {},
+): ProfessorInformationEnrichmentJobDTO => ({
+  id: 51,
+  name: "导师信息补全 2026-05-08",
+  trigger_mode: "batch",
+  status: "partially_completed",
+  target_count: 3,
+  completed_count: 3,
+  queued_count: 0,
+  running_count: 0,
+  succeeded_count: 1,
+  failed_count: 1,
+  skipped_count: 1,
+  canceled_count: 0,
+  input_tokens: 1200,
+  output_tokens: 300,
+  cached_tokens: 400,
+  total_tokens: 1500,
+  llm_profile_id: 2,
+  started_at: "2026-05-08T00:00:00",
+  finished_at: "2026-05-08T00:01:30",
+  duration_seconds: 90,
+  created_at: "2026-05-08T00:00:00",
+  updated_at: "2026-05-08T00:01:30",
+  deleted_at: null,
+  last_error: "upstream request failed: status 503",
+  ...overrides,
+});
+
+const buildInformationEnrichmentItem = (
+  overrides: Partial<ProfessorInformationEnrichmentItemDTO> = {},
+): ProfessorInformationEnrichmentItemDTO => ({
+  id: 61,
+  job_id: 51,
+  professor_id: 21,
+  professor_name: "张老师",
+  professor_email: "zhang@example.edu",
+  professor_title: "教授",
+  professor_university: "测试大学",
+  professor_school: "计算机学院",
+  professor_department: "人工智能系",
+  profile_url: "https://example.edu/zhang",
+  status: "succeeded",
+  enriched_fields: ["email", "research_direction"],
+  error_message: null,
+  skip_reason: null,
+  input_tokens: 1000,
+  output_tokens: 200,
+  cached_tokens: 300,
+  total_tokens: 1200,
+  attempt_count: 1,
+  started_at: "2026-05-08T00:00:00",
+  finished_at: "2026-05-08T00:00:30",
+  created_at: "2026-05-08T00:00:00",
+  updated_at: "2026-05-08T00:00:30",
+  ...overrides,
+});
+
 const buildBatchItem = (
   overrides: Partial<BatchTaskItemDTO> = {},
 ): BatchTaskItemDTO => ({
@@ -640,6 +722,8 @@ beforeEach(() => {
   apiMocks.listCrawlPages.mockResolvedValue([]);
   apiMocks.listMatchAnalysisJobs.mockResolvedValue([]);
   apiMocks.listMatchAnalysisJobItems.mockResolvedValue([]);
+  apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([]);
+  apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([]);
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
@@ -699,6 +783,142 @@ beforeEach(() => {
       review_required_count: 0,
       approved_count: 0,
     }),
+  });
+});
+
+describe("TasksPage information enrichment", () => {
+  it("keeps the information enrichment tab available without an identity", async () => {
+    selectionMock.selectedIdentityId = null;
+    selectionMock.selectedLlmProfileId = null;
+    apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([
+      buildInformationEnrichmentJob(),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    const enrichmentTab = screen.getByRole("button", { name: "信息补全" });
+    expect(enrichmentTab).toBeEnabled();
+    expect(screen.getByRole("button", { name: "批量邮件" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "匹配分析" })).toBeDisabled();
+
+    fireEvent.click(enrichmentTab);
+
+    expect(
+      await screen.findByText("导师信息补全 2026-05-08"),
+    ).toBeInTheDocument();
+    expect(apiMocks.listProfessorInformationEnrichmentJobs).toHaveBeenCalledWith({
+      view: "current",
+    });
+  });
+
+  it("shows enriched fields and the original item error in the detail drawer", async () => {
+    apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([
+      buildInformationEnrichmentJob(),
+    ]);
+    apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([
+      buildInformationEnrichmentItem(),
+      buildInformationEnrichmentItem({
+        id: 62,
+        professor_name: "李老师",
+        status: "failed",
+        enriched_fields: [],
+        error_message: "browser fallback failed: net::ERR_CONNECTION_RESET",
+        total_tokens: 300,
+        attempt_count: 3,
+      }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看信息补全任务 导师信息补全 2026-05-08",
+      }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "信息补全任务详情",
+    });
+    expect(within(dialog).getByText("研究方向")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "browser fallback failed: net::ERR_CONNECTION_RESET",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("尝试 3 次")).toBeInTheDocument();
+  });
+
+  it("supports canceling and retrying failed information enrichment items", async () => {
+    const runningJob = buildInformationEnrichmentJob({
+      status: "running",
+      completed_count: 1,
+      running_count: 1,
+      failed_count: 0,
+      skipped_count: 0,
+      last_error: null,
+    });
+    const canceledJob = buildInformationEnrichmentJob({
+      status: "canceled",
+      canceled_count: 2,
+      failed_count: 0,
+      last_error: null,
+    });
+    const retriedJob = buildInformationEnrichmentJob({
+      id: 52,
+      name: "导师信息补全 2026-05-08 · 失败重试",
+      status: "queued",
+      completed_count: 0,
+      queued_count: 2,
+      succeeded_count: 0,
+      failed_count: 0,
+      skipped_count: 0,
+      canceled_count: 0,
+      last_error: null,
+    });
+    apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([runningJob]);
+    apiMocks.cancelProfessorInformationEnrichmentJob.mockResolvedValue({
+      ok: true,
+      job: canceledJob,
+    });
+    apiMocks.retryFailedProfessorInformationEnrichmentJob.mockResolvedValue(
+      retriedJob,
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+    fireEvent.click(await screen.findByRole("button", { name: "取消" }));
+
+    await waitFor(() => {
+      expect(apiMocks.cancelProfessorInformationEnrichmentJob).toHaveBeenCalledWith(
+        51,
+      );
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "重试失败项" }));
+
+    await waitFor(() => {
+      expect(
+        apiMocks.retryFailedProfessorInformationEnrichmentJob,
+      ).toHaveBeenCalledWith(51);
+    });
+    expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
+      "已创建重试任务",
+      "失败或取消项已重新加入信息补全队列。",
+    );
   });
 });
 

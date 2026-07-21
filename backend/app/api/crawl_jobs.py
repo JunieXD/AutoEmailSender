@@ -19,6 +19,7 @@ from app.models import (
     CrawlCandidate,
     CrawlCandidateReviewStatus,
     CrawlJob,
+    CrawlJobKind,
     CrawlJobStatus,
     CrawlPage,
     CrawlPageChunk,
@@ -143,7 +144,11 @@ async def list_crawl_jobs(
     view: str = "current",
     session: AsyncSession = Depends(get_async_session),
 ) -> list[CrawlJobSummaryRead]:
-    statement = select(CrawlJob).options(selectinload(CrawlJob.current_run))
+    statement = (
+        select(CrawlJob)
+        .options(selectinload(CrawlJob.current_run))
+        .where(CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value)
+    )
     if view == "trash":
         statement = statement.where(CrawlJob.deleted_at.is_not(None))
     elif view == "current":
@@ -166,7 +171,14 @@ async def update_crawl_candidate(
     payload: CrawlCandidateUpdatePayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlCandidate:
-    candidate = await session.get(CrawlCandidate, candidate_id)
+    candidate = await session.scalar(
+        select(CrawlCandidate)
+        .join(CrawlJob, CrawlJob.id == CrawlCandidate.job_id)
+        .where(
+            CrawlCandidate.id == candidate_id,
+            CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
+        )
+    )
     if candidate is None:
         raise HTTPException(status_code=404, detail="未找到候选导师")
 
@@ -1015,7 +1027,12 @@ async def restore_crawl_job(
 
 async def _get_crawl_job_or_404(session: AsyncSession, job_id: int) -> CrawlJob:
     job = await session.scalar(
-        select(CrawlJob).options(selectinload(CrawlJob.current_run)).where(CrawlJob.id == job_id),
+        select(CrawlJob)
+        .options(selectinload(CrawlJob.current_run))
+        .where(
+            CrawlJob.id == job_id,
+            CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
+        ),
     )
     if job is None:
         raise HTTPException(status_code=404, detail="未找到抓取任务")

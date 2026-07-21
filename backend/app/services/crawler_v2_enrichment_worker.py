@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlPage, CrawlWorkerKind, LLMProfile
+from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobKind, CrawlPage, CrawlWorkerKind, LLMProfile
 from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_browser_fallback
 from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
@@ -17,6 +17,8 @@ from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.llm_runtime import ensure_llm_runtime_adaptation
+from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
+from app.services.professor_information_enrichment import apply_enrichment_to_professor
 
 
 _PROFILE_TEXT_CACHE: dict[tuple[int, int, int, str], str] = {}
@@ -38,6 +40,7 @@ async def run_crawler_v2_enrichment_worker_once(
         if candidate is None:
             task.status = CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
             task.last_error = "candidate_missing"
+            task.finished_at = utc_now()
             await session.commit()
             return 1
         job = await session.get(CrawlJob, task.job_id)
@@ -48,6 +51,8 @@ async def run_crawler_v2_enrichment_worker_once(
         job_id = task.job_id
         if not (candidate.profile_url or "").strip():
             task.status = CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
+            task.skip_reason = "缺少有效的导师主页链接"
+            task.finished_at = utc_now()
             task.worker_id = None
             task.claimed_at = None
             task.lease_expires_at = None
@@ -100,19 +105,44 @@ async def run_crawler_v2_enrichment_worker_once(
             if not await ensure_job_active(session, task.job_id):
                 return 0
             _apply_enrichment(candidate, payload)
+            enriched_fields: list[str] = []
+            skip_reason = None
+            job = await session.get(CrawlJob, task.job_id)
+            if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+                enriched_fields, skip_reason = await apply_enrichment_to_professor(
+                    session,
+                    task=task,
+                    candidate=candidate,
+                )
             append_crawler_v2_debug_event(
                 task.job_id,
                 worker_kind="enrichment",
                 event_name="enrichment_completed",
                 work_item_id=task_id,
-                payload={"candidate_id": candidate.id, "email": candidate.email, "title": candidate.title, "department": candidate.department},
+                payload={
+                    "candidate_id": candidate.id,
+                    "professor_id": task.professor_id,
+                    "email": candidate.email,
+                    "title": candidate.title,
+                    "department": candidate.department,
+                    "enriched_fields": enriched_fields,
+                    "skip_reason": skip_reason,
+                },
             )
-            task.status = CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
+            task.status = (
+                CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
+                if skip_reason is not None
+                else CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
+            )
             task.worker_id = None
             task.claimed_at = None
             task.lease_expires_at = None
             task.last_error = None
-            await _append_enrichment_success_event(session, task=task, candidate=candidate)
+            task.skip_reason = skip_reason
+            task.enriched_fields = enriched_fields
+            task.finished_at = utc_now()
+            if skip_reason is None:
+                await _append_enrichment_success_event(session, task=task, candidate=candidate)
             await session.commit()
         return 1
     except Exception as exc:
@@ -120,13 +150,60 @@ async def run_crawler_v2_enrichment_worker_once(
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             candidate = await session.get(CrawlCandidate, task.candidate_id) if task is not None else None
             if task is not None and _enrichment_task_owned_by_worker(task, worker_id) and await ensure_job_active(session, task.job_id):
+                job = await session.get(CrawlJob, task.job_id)
+                error_message = (
+                    sanitize_user_visible_error(exc)
+                    if job is not None
+                    and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value
+                    else str(exc)
+                )
                 mark_crawler_v2_failed(
                     task,
-                    message=str(exc),
+                    message=error_message,
                     retryable_status=CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
                     terminal_status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
                 )
-                await _append_enrichment_failure_event(session, task=task, candidate=candidate, error_message=str(exc))
+                if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value:
+                    task.finished_at = utc_now()
+                await _append_enrichment_failure_event(
+                    session,
+                    task=task,
+                    candidate=candidate,
+                    error_message=error_message,
+                )
+                if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+                    append_crawler_v2_debug_event(
+                        task.job_id,
+                        worker_kind="enrichment",
+                        event_name="information_enrichment_failed",
+                        work_item_id=task.id,
+                        payload={
+                            "candidate_id": task.candidate_id,
+                            "professor_id": task.professor_id,
+                            "task_status": task.status,
+                            "attempt_count": int(task.attempt_count or 0),
+                            "error_message": error_message,
+                        },
+                    )
+                    await record_operation_log(
+                        session,
+                        category="professor_information_enrichment",
+                        event_name="professor_information_enrichment.item_failed",
+                        level=(
+                            "error"
+                            if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
+                            else "warning"
+                        ),
+                        message=error_message,
+                        entity_type="professor",
+                        entity_id=str(task.professor_id) if task.professor_id is not None else None,
+                        metadata={
+                            "job_id": task.job_id,
+                            "task_id": task.id,
+                            "task_status": task.status,
+                            "attempt_count": int(task.attempt_count or 0),
+                        },
+                    )
             await session.commit()
         return 1
 
