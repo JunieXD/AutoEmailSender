@@ -1,7 +1,5 @@
 # Repository Guidelines
 
-- 请保持使用中文和用户进行交流。
-- 终端和文件均使用 UTF-8 编码，避免中文出现乱码。
 - Python 使用 uv 进行包管理。
 
 ## Project Structure & Module Organization
