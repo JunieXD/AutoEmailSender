@@ -93,6 +93,7 @@ export interface IdentityDTO {
   outreach_template_body_html: string | null;
   current_primary_material_id: number | null;
   current_primary_material: IdentityMaterialDTO | null;
+  communication_group_id: number | null;
   match_threshold: number | null;
   daily_send_limit: number | null;
   send_interval_min: number | null;
@@ -102,6 +103,25 @@ export interface IdentityDTO {
   materials: IdentityMaterialDTO[];
   created_at: string;
   updated_at: string;
+}
+
+export interface IdentityCommunicationGroupMemberDTO {
+  id: number;
+  profile_name: string;
+  email_address: string;
+  is_default: boolean;
+}
+
+export interface IdentityCommunicationGroupDTO {
+  id: number;
+  members: IdentityCommunicationGroupMemberDTO[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IdentityCommunicationGroupPayload {
+  identity_ids: number[];
+  confirm_merge_existing_groups?: boolean;
 }
 
 export interface IdentityPayload {
@@ -903,6 +923,13 @@ export interface WorkspaceMessageDTO {
   completion_tokens: number | null;
   total_tokens: number | null;
   created_at: string;
+  source_identities: WorkspaceIdentityDTO[];
+}
+
+export interface WorkspaceSyncWarningDTO {
+  identity_id: number;
+  identity_name: string;
+  message: string;
 }
 
 export interface WorkspaceThreadDTO {
@@ -912,6 +939,8 @@ export interface WorkspaceThreadDTO {
   material_options: IdentityMaterialDTO[];
   current_task: WorkspaceTaskSummaryDTO;
   messages: WorkspaceMessageDTO[];
+  communication_scope: WorkspaceIdentityDTO[];
+  sync_warnings: WorkspaceSyncWarningDTO[];
 }
 
 export interface TokenUsageDTO {

@@ -24,6 +24,9 @@ from app.schemas.identity import (
     IdentityTemplateImportResult,
 )
 from app.services.file_storage import delete_file
+from app.services.identity_communication_groups import (
+    cleanup_communication_group_after_identity_delete,
+)
 from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache_in_session
 from app.services.mail_runtime import test_imap_connection, test_smtp_connection
 from app.services.operation_logs import record_operation_log
@@ -121,6 +124,7 @@ async def delete_identity(
 ) -> None:
     identity = await _get_identity(session, identity_id)
     was_default = identity.is_default
+    communication_group_id = identity.communication_group_id
 
     for material in identity.materials:
         delete_file(material.file_path)
@@ -132,6 +136,35 @@ async def delete_identity(
         metadata={"was_default": was_default},
     )
     await session.delete(identity)
+    await session.flush()
+    group_cleanup = None
+    if communication_group_id is not None:
+        group_cleanup = await cleanup_communication_group_after_identity_delete(
+            session,
+            group_id=communication_group_id,
+            removed_identity_id=identity_id,
+        )
+    if group_cleanup is not None:
+        await record_operation_log(
+            session,
+            category="identity",
+            event_name=(
+                "communication_group.deleted"
+                if group_cleanup.dissolved
+                else "communication_group.updated"
+            ),
+            entity_type="identity_communication_group",
+            entity_id=str(group_cleanup.group_id),
+            metadata={
+                "before_member_ids": list(group_cleanup.previous_member_ids),
+                "after_member_ids": (
+                    []
+                    if group_cleanup.dissolved
+                    else list(group_cleanup.member_ids)
+                ),
+                "removed_identity_id": identity_id,
+            },
+        )
     await session.commit()
 
     if was_default:

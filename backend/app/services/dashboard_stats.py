@@ -30,6 +30,8 @@ from app.schemas.dashboard import (
     DashboardSchoolFilterSchoolRead,
 )
 from app.services.contact_status import build_contact_status_by_professor
+from app.services.communication_events import load_communication_events
+from app.services.identity_communication_groups import resolve_identity_communication_scope
 
 
 HIGH_SCORE_DEFAULT = 80
@@ -75,6 +77,10 @@ async def build_dashboard_overview(
     identity = await session.get(IdentityProfile, identity_id)
     if identity is None:
         raise ValueError("未找到身份")
+    communication_scope = await resolve_identity_communication_scope(
+        session,
+        active_identity_id=identity_id,
+    )
 
     professors = list(
         await session.scalars(
@@ -111,6 +117,7 @@ async def build_dashboard_overview(
         session,
         identity_id=identity_id,
         professor_ids=professor_ids,
+        communication_identity_ids=communication_scope.identity_ids,
     )
     professor_status_by_id = {
         professor.id: contact_status_by_professor[professor.id].status
@@ -137,6 +144,7 @@ async def build_dashboard_overview(
         session,
         tasks=tasks,
         identity_id=identity_id,
+        communication_identity_ids=communication_scope.identity_ids,
         professor_ids=professor_ids,
         professor_status_by_id=professor_status_by_id,
         latest_task_by_professor=latest_task_by_professor,
@@ -309,6 +317,7 @@ async def _build_email_section(
     *,
     tasks: list[EmailTask],
     identity_id: int,
+    communication_identity_ids: tuple[int, ...],
     professor_ids: list[int],
     professor_status_by_id: dict[int, str],
     latest_task_by_professor: dict[int, EmailTask],
@@ -325,34 +334,39 @@ async def _build_email_section(
 
     task_ids = [task.id for task in tasks]
     task_by_id = {task.id: task for task in tasks}
-    sent_logs: list[EmailLog] = []
-    received_logs: list[EmailLog] = []
-    if professor_ids:
-        logs = list(
-            await session.scalars(
-                select(EmailLog)
-                .options(selectinload(EmailLog.professor))
-                .where(
-                    EmailLog.identity_id == identity_id,
-                    EmailLog.professor_id.in_(professor_ids),
-                    EmailLog.direction.in_(
-                        [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
-                    ),
-                )
-                .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
-            ),
-        )
-        for log in logs:
-            if log.direction == EmailDirection.SENT.value and not log.failure_summary:
-                sent_logs.append(log)
-            elif log.direction == EmailDirection.RECEIVED.value:
-                received_logs.append(log)
+    communication_events = await load_communication_events(
+        session,
+        identity_ids=communication_identity_ids,
+        professor_ids=professor_ids,
+        include_message_content=False,
+        include_source_identities=False,
+    )
+    sent_events_from_logs = [
+        event
+        for event in communication_events
+        if event.log.direction == EmailDirection.SENT.value and event.successful
+    ]
+    received_events = [
+        event
+        for event in communication_events
+        if event.log.direction == EmailDirection.RECEIVED.value
+    ]
 
     failed_tasks = [task for task in tasks if task.status == EmailTaskStatus.SEND_FAILED.value]
     review_required_count = sum(1 for task in tasks if task.status == EmailTaskStatus.REVIEW_REQUIRED.value)
     scheduled_count = sum(1 for task in tasks if task.status == EmailTaskStatus.SCHEDULED.value)
-    sent_log_task_ids = {log.email_task_id for log in sent_logs if log.email_task_id is not None}
-    received_log_task_ids = {log.email_task_id for log in received_logs if log.email_task_id is not None}
+    sent_log_task_ids = {
+        log.email_task_id
+        for event in sent_events_from_logs
+        for log in event.logs
+        if log.email_task_id is not None
+    }
+    received_log_task_ids = {
+        log.email_task_id
+        for event in received_events
+        for log in event.logs
+        if log.email_task_id is not None
+    }
 
     all_sent_tasks = [
         task
@@ -369,7 +383,9 @@ async def _build_email_section(
 
     sent_events: list[EmailTrendEvent] = []
     seen_sent_log_task_ids: set[int] = set()
-    for log in sent_logs:
+    active_sent_count = 0
+    for event in sent_events_from_logs:
+        log = event.log
         if log.professor_id is None:
             continue
         task = task_by_id.get(log.email_task_id)
@@ -380,11 +396,17 @@ async def _build_email_section(
             school=email_school,
         ):
             continue
-        if not _datetime_in_range(log.created_at, start_at=start_at, end_at=end_at):
+        if not _datetime_in_range(event.created_at, start_at=start_at, end_at=end_at):
             continue
-        sent_events.append((log.email_task_id, log.professor_id, log.created_at))
-        if log.email_task_id is not None:
-            seen_sent_log_task_ids.add(log.email_task_id)
+        sent_events.append((log.email_task_id, log.professor_id, event.created_at))
+        event_task_ids = {
+            event_log.email_task_id
+            for event_log in event.logs
+            if event_log.email_task_id is not None
+        }
+        seen_sent_log_task_ids.update(event_task_ids)
+        if any(event_log.identity_id == identity_id for event_log in event.logs):
+            active_sent_count += 1
 
     for task in all_sent_tasks:
         if task.id in seen_sent_log_task_ids:
@@ -395,14 +417,16 @@ async def _build_email_section(
         if not _datetime_in_range(source_time, start_at=start_at, end_at=end_at):
             continue
         sent_events.append((task.id, task.professor_id, source_time))
+        active_sent_count += 1
 
     contacted_professor_ids = {professor_id for _, professor_id, _ in sent_events}
     replied_professor_ids: set[int] = set()
-    received_trend_logs: list[EmailLog] = []
-    for log in received_logs:
+    received_trend_events: list[tuple[int, datetime]] = []
+    for event in received_events:
+        log = event.log
         if log.professor_id is None:
             continue
-        if not _datetime_in_range(log.created_at, start_at=start_at, end_at=end_at):
+        if not _datetime_in_range(event.created_at, start_at=start_at, end_at=end_at):
             continue
         if not _professor_matches_school_filters(
             log.professor,
@@ -412,7 +436,7 @@ async def _build_email_section(
             continue
         contacted_professor_ids.add(log.professor_id)
         replied_professor_ids.add(log.professor_id)
-        received_trend_logs.append(log)
+        received_trend_events.append((log.professor_id, event.created_at))
 
     replied_fallback_tasks: list[EmailTask] = []
     for task in all_replied_tasks:
@@ -430,11 +454,15 @@ async def _build_email_section(
     replied_count = len(replied_professor_ids)
     send_failed_count = len(failed_tasks)
     reply_rate = (replied_count / contacted_professor_count) if contacted_professor_count else 0.0
-    send_failed_rate = (send_failed_count / max(sent_count + send_failed_count, 1)) if tasks else 0.0
+    send_failed_rate = (
+        send_failed_count / max(active_sent_count + send_failed_count, 1)
+        if tasks
+        else 0.0
+    )
 
     trend_30_days = _build_email_trend(
         sent_events,
-        received_trend_logs,
+        received_trend_events,
         replied_fallback_tasks=replied_fallback_tasks,
         start_at=start_at,
         end_at=end_at,
@@ -686,7 +714,7 @@ def _build_mentor_follow_up_reason(*, status: str) -> str:
 
 def _build_email_trend(
     sent_events: list[EmailTrendEvent],
-    received_logs: list[EmailLog],
+    received_events: list[tuple[int, datetime]],
     *,
     replied_fallback_tasks: list[EmailTask],
     start_at: datetime | None,
@@ -712,12 +740,10 @@ def _build_email_trend(
             buckets[key].sent_count += 1
 
     replied_professors_by_bucket: dict[str, set[int]] = defaultdict(set)
-    for log in received_logs:
-        if log.professor_id is None:
-            continue
-        key = _floor_day(log.created_at).date().isoformat()
+    for professor_id, event_time in received_events:
+        key = _floor_day(event_time).date().isoformat()
         if key in buckets:
-            replied_professors_by_bucket[key].add(log.professor_id)
+            replied_professors_by_bucket[key].add(professor_id)
 
     for task in replied_fallback_tasks:
         key = _floor_day(task.updated_at).date().isoformat()

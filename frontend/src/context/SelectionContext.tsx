@@ -10,20 +10,25 @@ import {
   type PropsWithChildren,
 } from 'react';
 import { useNotification } from '@/context/NotificationContext';
+import { listCommunicationGroups } from '@/lib/api/communicationGroups';
 import { listIdentities } from '@/lib/api/identities';
 import { listLLMProfiles } from '@/lib/api/llmProfiles';
 import type {
   IdentityDTO,
+  IdentityCommunicationGroupDTO,
   LLMProfileDTO,
 } from '@/types';
 
 interface SelectionContextValue {
   identities: IdentityDTO[];
+  communicationGroups: IdentityCommunicationGroupDTO[];
   llmProfiles: LLMProfileDTO[];
   selectedIdentityId: number | null;
   selectedLlmProfileId: number | null;
   selectedIdentity: IdentityDTO | null;
   selectedLlmProfile: LLMProfileDTO | null;
+  communicationIdentityIds: number[];
+  communicationScopeKey: string;
   loading: boolean;
   setSelectedIdentityId: (value: number | null) => void;
   setSelectedLlmProfileId: (value: number | null) => void;
@@ -47,6 +52,9 @@ const parseStoredId = (key: string) => {
 export const SelectionProvider = ({ children }: PropsWithChildren) => {
   const { notifyError } = useNotification();
   const [identities, setIdentities] = useState<IdentityDTO[]>([]);
+  const [communicationGroups, setCommunicationGroups] = useState<
+    IdentityCommunicationGroupDTO[]
+  >([]);
   const [llmProfiles, setLlmProfiles] = useState<LLMProfileDTO[]>([]);
   const [selectedIdentityId, setSelectedIdentityId] = useState<number | null>(() =>
     parseStoredId(IDENTITY_STORAGE_KEY),
@@ -62,11 +70,13 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
       setLoading(true);
     }
     try {
-      const [identityData, llmData] = await Promise.all([
+      const [identityData, communicationGroupData, llmData] = await Promise.all([
         listIdentities(),
+        listCommunicationGroups(),
         listLLMProfiles(),
       ]);
       setIdentities(identityData);
+      setCommunicationGroups(communicationGroupData);
       setLlmProfiles(llmData);
     } catch (refreshError) {
       const message = refreshError instanceof Error ? refreshError.message : '加载全局上下文失败';
@@ -139,13 +149,30 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
     window.localStorage.setItem(LLM_STORAGE_KEY, String(selectedLlmProfileId));
   }, [selectedLlmProfileId]);
 
+  const selectedIdentity =
+    identities.find((item) => item.id === selectedIdentityId) ?? null;
+  const communicationIdentityIds = selectedIdentity
+    ? identities
+        .filter(
+          (identity) =>
+            identity.id === selectedIdentity.id ||
+            (selectedIdentity.communication_group_id != null &&
+              identity.communication_group_id === selectedIdentity.communication_group_id),
+        )
+        .map((identity) => identity.id)
+        .sort((left, right) => left - right)
+    : [];
+
   const value: SelectionContextValue = {
     identities,
+    communicationGroups,
     llmProfiles,
     selectedIdentityId,
     selectedLlmProfileId,
-    selectedIdentity: identities.find((item) => item.id === selectedIdentityId) ?? null,
+    selectedIdentity,
     selectedLlmProfile: llmProfiles.find((item) => item.id === selectedLlmProfileId) ?? null,
+    communicationIdentityIds,
+    communicationScopeKey: communicationIdentityIds.join(':'),
     loading,
     setSelectedIdentityId,
     setSelectedLlmProfileId,

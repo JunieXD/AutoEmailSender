@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.base import ApiSchema
 from app.schemas.identity import IdentityMaterialRead
@@ -104,6 +104,13 @@ class WorkspaceMessageRead(ApiSchema):
     completion_tokens: int | None = None
     total_tokens: int | None = None
     created_at: datetime
+    source_identities: list[WorkspaceIdentityRead] = Field(default_factory=list)
+
+
+class WorkspaceSyncWarningRead(ApiSchema):
+    identity_id: int
+    identity_name: str
+    message: str
 
 
 class WorkspaceThreadRead(ApiSchema):
@@ -113,3 +120,5 @@ class WorkspaceThreadRead(ApiSchema):
     material_options: list[IdentityMaterialRead]
     current_task: WorkspaceTaskSummaryRead
     messages: list[WorkspaceMessageRead]
+    communication_scope: list[WorkspaceIdentityRead] = Field(default_factory=list)
+    sync_warnings: list[WorkspaceSyncWarningRead] = Field(default_factory=list)

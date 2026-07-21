@@ -16,6 +16,8 @@ type SelectionState = {
   selectedLlmProfileId: number | null;
   selectedIdentity: { id: number; name: string; profile_name: string } | null;
   selectedLlmProfile: { id: number; name: string } | null;
+  communicationIdentityIds?: number[];
+  communicationScopeKey?: string;
   loading: boolean;
 };
 
@@ -31,6 +33,8 @@ let selectionState: SelectionState = {
     id: 2,
     name: "OpenAI",
   },
+  communicationIdentityIds: [1],
+  communicationScopeKey: "1",
   loading: false,
 };
 
@@ -297,6 +301,8 @@ describe("DashboardPage", () => {
         id: 2,
         name: "OpenAI",
       },
+      communicationIdentityIds: [1],
+      communicationScopeKey: "1",
       loading: false,
     };
     getDashboardOverview.mockResolvedValue(overview);
@@ -404,6 +410,31 @@ describe("DashboardPage", () => {
     expect(screen.getByTestId("statistics-section-mentor")).toHaveClass("scroll-mt-44");
     expect(screen.getByTestId("statistics-section-email")).toHaveClass("scroll-mt-44");
     expect(screen.getByTestId("statistics-section-token")).toHaveClass("scroll-mt-44");
+  });
+
+  it("labels shared communication metrics and reloads when the scope changes", async () => {
+    selectionState.communicationIdentityIds = [1, 2];
+    selectionState.communicationScopeKey = "1:2";
+    const view = render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("共享通信 · 2 个身份")).toBeInTheDocument();
+    expect(screen.getAllByText("共享通信").length).toBeGreaterThan(0);
+    await waitFor(() => expect(getDashboardOverview).toHaveBeenCalledTimes(1));
+
+    selectionState.communicationIdentityIds = [1, 2, 3];
+    selectionState.communicationScopeKey = "1:2:3";
+    view.rerender(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(getDashboardOverview).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("共享通信 · 3 个身份")).toBeInTheDocument();
   });
 
   it("renders email sending trend as an index-hover line chart", async () => {

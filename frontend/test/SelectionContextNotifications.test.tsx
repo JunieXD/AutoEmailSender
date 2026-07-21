@@ -8,7 +8,12 @@ import {
 import type { IdentityDTO, LLMProfileDTO } from "@/types";
 
 const listIdentities = vi.hoisted(() => vi.fn());
+const listCommunicationGroups = vi.hoisted(() => vi.fn());
 const listLLMProfiles = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api/communicationGroups", () => ({
+  listCommunicationGroups,
+}));
 
 vi.mock("@/lib/api/identities", () => ({
   listIdentities,
@@ -39,6 +44,7 @@ const makeIdentity = (overrides: Partial<IdentityDTO>): IdentityDTO => ({
   outreach_template_body_html: "<p>默认正文</p>",
   current_primary_material_id: null,
   current_primary_material: null,
+  communication_group_id: null,
   match_threshold: null,
   daily_send_limit: null,
   send_interval_min: null,
@@ -94,10 +100,32 @@ const SelectionSwitchHarness = () => {
   );
 };
 
+const CommunicationScopeHarness = () => {
+  const {
+    communicationGroups,
+    communicationIdentityIds,
+    communicationScopeKey,
+  } = useSelectionContext();
+
+  return (
+    <div>
+      <span data-testid="communication-group-count">
+        {communicationGroups.length}
+      </span>
+      <span data-testid="communication-identity-ids">
+        {communicationIdentityIds.join(",")}
+      </span>
+      <span data-testid="communication-scope-key">{communicationScopeKey}</span>
+    </div>
+  );
+};
+
 describe("SelectionContext notifications", () => {
   beforeEach(() => {
     listIdentities.mockReset();
+    listCommunicationGroups.mockReset();
     listLLMProfiles.mockReset();
+    listCommunicationGroups.mockResolvedValue([]);
     window.localStorage.clear();
   });
 
@@ -144,6 +172,7 @@ describe("SelectionContext notifications", () => {
         outreach_template_body_html: "<p>测试正文</p>",
         current_primary_material_id: null,
         current_primary_material: null,
+        communication_group_id: null,
         match_threshold: null,
         daily_send_limit: null,
         send_interval_min: null,
@@ -285,6 +314,65 @@ describe("SelectionContext notifications", () => {
     await waitFor(() => {
       expect(screen.getByTestId("selected-llm")).toHaveTextContent("备用模型");
       expect(window.localStorage.getItem("selected_llm_profile_id")).toBe("2");
+    });
+  });
+
+  it("derives a stable communication scope from the selected identity group", async () => {
+    window.localStorage.setItem("selected_identity_id", "2");
+    listIdentities.mockResolvedValue([
+      makeIdentity({ id: 1, communication_group_id: 7 }),
+      makeIdentity({
+        id: 2,
+        name: "共享身份",
+        profile_name: "共享身份",
+        email_address: "shared@example.com",
+        smtp_username: "shared@example.com",
+        communication_group_id: 7,
+      }),
+      makeIdentity({
+        id: 3,
+        name: "独立身份",
+        profile_name: "独立身份",
+        email_address: "solo@example.com",
+        smtp_username: "solo@example.com",
+        communication_group_id: null,
+      }),
+    ]);
+    listCommunicationGroups.mockResolvedValue([
+      {
+        id: 7,
+        members: [
+          {
+            id: 1,
+            profile_name: "默认身份",
+            email_address: "default@example.com",
+            is_default: true,
+          },
+          {
+            id: 2,
+            profile_name: "共享身份",
+            email_address: "shared@example.com",
+            is_default: false,
+          },
+        ],
+        created_at: "2026-07-21T00:00:00Z",
+        updated_at: "2026-07-21T00:00:00Z",
+      },
+    ]);
+    listLLMProfiles.mockResolvedValue([]);
+
+    render(
+      <NotificationProvider>
+        <SelectionProvider>
+          <CommunicationScopeHarness />
+        </SelectionProvider>
+      </NotificationProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("communication-group-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("communication-identity-ids")).toHaveTextContent("1,2");
+      expect(screen.getByTestId("communication-scope-key")).toHaveTextContent("1:2");
     });
   });
 });

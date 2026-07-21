@@ -75,6 +75,7 @@ const selectedIdentity: IdentityDTO = {
   outreach_template_body_html: null,
   current_primary_material_id: primaryMaterial.id,
   current_primary_material: primaryMaterial,
+  communication_group_id: null,
   match_threshold: null,
   daily_send_limit: null,
   send_interval_min: null,

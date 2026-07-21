@@ -7,7 +7,11 @@ import {
   hasRenderablePreviewContent,
   sanitizeTemplateHtmlForPreview,
 } from '@/lib/htmlPreview';
-import type { WorkspaceMessageDTO } from '@/types';
+import type {
+  WorkspaceIdentityDTO,
+  WorkspaceMessageDTO,
+  WorkspaceSyncWarningDTO,
+} from '@/types';
 
 type WorkspaceMessageThreadProps = {
   messages: WorkspaceMessageDTO[];
@@ -15,6 +19,8 @@ type WorkspaceMessageThreadProps = {
   lastCheckedAt?: Date | null;
   refreshing?: boolean;
   newReceivedCount?: number;
+  communicationScope?: WorkspaceIdentityDTO[];
+  syncWarnings?: WorkspaceSyncWarningDTO[];
   onRefresh?: () => void;
 };
 
@@ -47,12 +53,43 @@ const getMessageBubbleClassName = (direction: WorkspaceMessageDTO['direction']) 
     ? 'border-stone-200 bg-white text-stone-900 shadow-[0_18px_38px_-30px_rgba(41,37,36,0.26)]'
     : 'border-primary/15 bg-[linear-gradient(180deg,rgba(153,27,27,0.96),rgba(127,29,29,0.96))] text-white shadow-[0_22px_42px_-28px_rgba(127,29,29,0.38)]';
 
+const getSourceIdentityLabel = (
+  identity: WorkspaceIdentityDTO,
+  communicationScope: WorkspaceIdentityDTO[],
+) => {
+  const duplicateName = communicationScope.some(
+    (candidate) =>
+      candidate.id !== identity.id && candidate.profile_name === identity.profile_name,
+  );
+  return duplicateName
+    ? `${identity.profile_name}（${identity.email_address}）`
+    : identity.profile_name;
+};
+
+const getMessageSourceLabel = (
+  message: WorkspaceMessageDTO,
+  communicationScope: WorkspaceIdentityDTO[],
+) => {
+  const sourceIdentities = message.source_identities ?? [];
+  if (sourceIdentities.length === 0) {
+    return null;
+  }
+  const identityNames = sourceIdentities
+    .map((identity) => getSourceIdentityLabel(identity, communicationScope))
+    .join('、');
+  return message.direction === 'received'
+    ? `由 ${identityNames} 收取`
+    : `由 ${identityNames} 发出`;
+};
+
 export const WorkspaceMessageThread = ({
   messages,
   monitoringLabel = '正在监听回复',
   lastCheckedAt = null,
   refreshing = false,
   newReceivedCount = 0,
+  communicationScope = [],
+  syncWarnings = [],
   onRefresh,
 }: WorkspaceMessageThreadProps) => {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -90,6 +127,11 @@ export const WorkspaceMessageThread = ({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="text-sm font-semibold text-stone-900">通信记录</div>
+              {communicationScope.length > 1 ? (
+                <span className="rounded-lg border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700">
+                  共享通信 · {communicationScope.length} 个身份
+                </span>
+              ) : null}
               {newReceivedCount > 0 ? (
                 <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                   新回复
@@ -141,6 +183,15 @@ export const WorkspaceMessageThread = ({
             ) : null}
           </div>
         </div>
+        {syncWarnings.length > 0 ? (
+          <div className="mt-3 border-t border-amber-100 pt-3 text-xs leading-5 text-amber-800">
+            {syncWarnings.map((warning) => (
+              <div key={warning.identity_id}>
+                {warning.identity_name}：{warning.message}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -179,6 +230,7 @@ export const WorkspaceMessageThread = ({
               : '';
             const canRenderExpandedHtml =
               Boolean(expandedHtml) && hasRenderablePreviewContent(expandedHtml);
+            const sourceLabel = getMessageSourceLabel(message, communicationScope);
 
             return (
               <div
@@ -211,6 +263,11 @@ export const WorkspaceMessageThread = ({
                     <span className={isReceived ? 'text-stone-400' : 'text-white/70'}>
                       {formatApiDateTime(message.created_at)}
                     </span>
+                    {sourceLabel ? (
+                      <span className={isReceived ? 'text-stone-500' : 'text-white/80'}>
+                        {sourceLabel}
+                      </span>
+                    ) : null}
                     <span
                       className={clsx(
                         'ml-auto inline-flex items-center gap-1 font-medium',

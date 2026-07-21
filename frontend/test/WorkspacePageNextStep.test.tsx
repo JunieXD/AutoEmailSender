@@ -303,6 +303,16 @@ const buildThread = ({
     },
   },
   messages,
+  communication_scope: [
+    {
+      id: 1,
+      name: "测试身份",
+      profile_name: "测试身份",
+      sender_name: "测试同学",
+      email_address: "sender@example.com",
+    },
+  ],
+  sync_warnings: [],
   });
 };
 
@@ -321,6 +331,15 @@ const buildWorkspaceMessage = (
   completion_tokens: null,
   total_tokens: null,
   created_at: "2026-04-22T10:00:00Z",
+  source_identities: [
+    {
+      id: 1,
+      name: "测试身份",
+      profile_name: "测试身份",
+      sender_name: "测试同学",
+      email_address: "sender@example.com",
+    },
+  ],
   ...overrides,
 });
 

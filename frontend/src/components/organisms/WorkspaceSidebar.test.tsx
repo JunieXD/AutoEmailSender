@@ -91,6 +91,16 @@ const buildThread = (
     ...overrides,
   },
   messages: [],
+  communication_scope: [
+    {
+      id: 1,
+      name: "默认身份",
+      profile_name: "Junie",
+      sender_name: "Junie",
+      email_address: "junie@example.com",
+    },
+  ],
+  sync_warnings: [],
 });
 
 describe("WorkspaceSidebar", () => {

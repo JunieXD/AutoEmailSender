@@ -69,6 +69,7 @@ class IdentityProfileRead(IdentityProfileBase):
     name: str
     profile_name: str
     sender_name: str
+    communication_group_id: int | None
     current_primary_material_id: int | None
     current_primary_material: IdentityMaterialRead | None
     materials: list[IdentityMaterialRead]

@@ -67,6 +67,7 @@ const selectedIdentity: IdentityDTO = {
   outreach_template_body_html: null,
   current_primary_material_id: 1,
   current_primary_material: null,
+  communication_group_id: null,
   match_threshold: null,
   daily_send_limit: null,
   send_interval_min: null,
@@ -101,6 +102,8 @@ const selectionContextValue = {
   selectedLlmProfileId: selectedLlmProfile.id,
   selectedIdentity,
   selectedLlmProfile,
+  communicationIdentityIds: [selectedIdentity.id],
+  communicationScopeKey: String(selectedIdentity.id),
   loading: false,
   setSelectedIdentityId: vi.fn(),
   setSelectedLlmProfileId: vi.fn(),
@@ -304,6 +307,8 @@ describe("selection controls", () => {
       selectedLlmProfileId: selectedLlmProfile.id,
       selectedIdentity,
       selectedLlmProfile,
+      communicationIdentityIds: [selectedIdentity.id],
+      communicationScopeKey: String(selectedIdentity.id),
       loading: false,
     });
   });
@@ -331,6 +336,29 @@ describe("selection controls", () => {
     expect(
       screen.queryByText("导师看板"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reloads home communication status when the sharing scope changes", async () => {
+    const view = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("button", { name: "选择全部筛选结果" });
+    expect(listProfessors).toHaveBeenCalledTimes(1);
+
+    Object.assign(selectionContextValue, {
+      communicationIdentityIds: [1, 2],
+      communicationScopeKey: "1:2",
+    });
+    view.rerender(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(listProfessors).toHaveBeenCalledTimes(2));
   });
 
   it("selects all filtered home results across pages", async () => {

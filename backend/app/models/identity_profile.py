@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.batch_task import BatchTask
     from app.models.email_log import EmailLog
     from app.models.email_task import EmailTask
+    from app.models.identity_communication_group import IdentityCommunicationGroup
     from app.models.identity_material import IdentityMaterial
 
 
@@ -59,6 +60,11 @@ class IdentityProfile(Base):
         ForeignKey("identity_materials.id"),
         nullable=True,
     )
+    communication_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("identity_communication_groups.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     match_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     daily_send_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     send_interval_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -97,6 +103,10 @@ class IdentityProfile(Base):
         foreign_keys=[current_primary_material_id],
         post_update=True,
         uselist=False,
+    )
+    communication_group: Mapped["IdentityCommunicationGroup | None"] = relationship(
+        back_populates="members",
+        foreign_keys=[communication_group_id],
     )
     email_tasks: Mapped[list["EmailTask"]] = relationship(
         back_populates="identity",

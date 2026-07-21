@@ -4,6 +4,11 @@ from app.schemas.batch_task import (
     BatchTaskItemRead,
     CreateBatchTaskRequest,
 )
+from app.schemas.communication_group import (
+    IdentityCommunicationGroupMemberRead,
+    IdentityCommunicationGroupRead,
+    IdentityCommunicationGroupWrite,
+)
 from app.schemas.email_task import (
     EmailTaskApprovalRequest,
     EmailTaskPrimaryMaterialRequest,
@@ -51,6 +56,9 @@ __all__ = [
     "ConnectionTestResult",
     "CreateBatchTaskRequest",
     "CreateMatchAnalysisJobRequest",
+    "IdentityCommunicationGroupMemberRead",
+    "IdentityCommunicationGroupRead",
+    "IdentityCommunicationGroupWrite",
     "EmailTaskApprovalRequest",
     "EmailTaskPrimaryMaterialRequest",
     "EmailTaskScheduleRequest",

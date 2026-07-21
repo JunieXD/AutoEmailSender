@@ -310,6 +310,7 @@ export const HomePage = () => {
     selectedLlmProfileId,
     selectedIdentity,
     selectedLlmProfile,
+    communicationScopeKey = "",
     loading: selectionLoading,
   } = useSelectionContext();
   const dashboardFiltersSessionKey = getDashboardFiltersSessionKey(
@@ -353,7 +354,7 @@ export const HomePage = () => {
   const skipNextFiltersPersistRef = useRef(false);
   const professorsRequestKey =
     selectedIdentityId
-      ? `${selectedIdentityId}`
+      ? `${selectedIdentityId}:${communicationScopeKey || selectedIdentityId}`
       : null;
 
   useEffect(() => {

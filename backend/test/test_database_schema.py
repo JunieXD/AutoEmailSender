@@ -347,6 +347,129 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertIn("NULL", combined_output)
         self.assertIn("cannot downgrade", combined_output)
 
+    def test_identity_communication_group_migration_preserves_existing_data(self) -> None:
+        database_path = Path(self.temp_dir.name) / "identity_communication_groups.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260721_match_analysis_cache"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="before-sharing@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="Before Sharing Model",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "before-sharing@example.edu",
+            )
+            task_id = DatabaseSchemaTests._insert_workspace_root_task_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+            )
+            log_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO email_logs (
+                        email_task_id,
+                        identity_id,
+                        llm_profile_id,
+                        professor_id,
+                        direction,
+                        subject,
+                        content,
+                        normalized_message_id
+                    )
+                    VALUES (?, ?, ?, ?, 'sent', '迁移前邮件', '正文', 'before-sharing@example.com')
+                    """,
+                    (task_id, identity_id, llm_profile_id, professor_id),
+                ).lastrowid,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            tables = {
+                row[0]
+                for row in upgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                ).fetchall()
+            }
+            identity_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(identity_profiles)",
+                ).fetchall()
+            }
+            identity_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list(identity_profiles)",
+                ).fetchall()
+            }
+            identity_row = upgraded.execute(
+                "SELECT communication_group_id FROM identity_profiles WHERE id = ?",
+                (identity_id,),
+            ).fetchone()
+            task_row = upgraded.execute(
+                "SELECT identity_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            log_row = upgraded.execute(
+                "SELECT identity_id FROM email_logs WHERE id = ?",
+                (log_id,),
+            ).fetchone()
+        finally:
+            upgraded.close()
+
+        self.assertIn("identity_communication_groups", tables)
+        self.assertIn("communication_group_id", identity_columns)
+        self.assertIn("ix_identity_profiles_communication_group_id", identity_indexes)
+        self.assertEqual(identity_row, (None,))
+        self.assertEqual(task_row, (identity_id,))
+        self.assertEqual(log_row, (identity_id,))
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            downgraded_tables = {
+                row[0]
+                for row in downgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                ).fetchall()
+            }
+            downgraded_identity_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(identity_profiles)",
+                ).fetchall()
+            }
+            remaining_task_count = downgraded.execute(
+                "SELECT COUNT(*) FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+            remaining_log_count = downgraded.execute(
+                "SELECT COUNT(*) FROM email_logs WHERE id = ?",
+                (log_id,),
+            ).fetchone()[0]
+        finally:
+            downgraded.close()
+
+        self.assertNotIn("identity_communication_groups", downgraded_tables)
+        self.assertNotIn("communication_group_id", downgraded_identity_columns)
+        self.assertEqual(remaining_task_count, 1)
+        self.assertEqual(remaining_log_count, 1)
+
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
         result = self._run_alembic_result(env, *args)
         if result.returncode != 0:

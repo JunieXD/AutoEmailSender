@@ -18,6 +18,7 @@ import {
   BadgeCheck,
   ClipboardCheck,
   GraduationCap,
+  Link2,
   Loader2,
   Percent,
   RefreshCcw,
@@ -728,6 +729,8 @@ export const DashboardPage = () => {
   const {
     selectedIdentityId,
     selectedIdentity,
+    communicationIdentityIds = [],
+    communicationScopeKey = '',
     loading: selectionLoading,
   } = useSelectionContext();
   const [overview, setOverview] = useState<DashboardOverviewDTO | null>(null);
@@ -752,6 +755,7 @@ export const DashboardPage = () => {
     selectedIdentityId
       ? [
           selectedIdentityId,
+          communicationScopeKey || selectedIdentityId,
           selectedUniversity ?? '',
           selectedSchool ?? '',
           emailUniversity ?? '',
@@ -970,7 +974,7 @@ export const DashboardPage = () => {
       {
         title: '已发送邮件',
         value: formatNumber(summary.sent_count),
-        helper: '当前身份下',
+        helper: communicationIdentityIds.length > 1 ? '共享通信' : '当前身份下',
         icon: <Send className="h-5 w-5" />,
         tone: 'teal' as const,
       },
@@ -989,7 +993,7 @@ export const DashboardPage = () => {
         tone: 'violet' as const,
       },
     ];
-  }, [overview]);
+  }, [communicationIdentityIds.length, overview]);
 
   const selectedSchoolOptions = useMemo(() => {
     if (!overview || !selectedUniversity) {
@@ -1176,6 +1180,12 @@ export const DashboardPage = () => {
                 description="发送进度、回复效果和触达趋势"
                 icon={<ClipboardCheck className="h-5 w-5" />}
               />
+              {communicationIdentityIds.length > 1 ? (
+                <div className="mb-4 inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-medium text-teal-800">
+                  <Link2 className="h-4 w-4" />
+                  共享通信 · {communicationIdentityIds.length} 个身份
+                </div>
+              ) : null}
               <div className="mb-4">
                 <EmailOutreachFilterBar
                   schoolFilters={overview.mentor.school_filters}

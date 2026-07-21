@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+from app.schemas.base import ApiSchema
+
+
+class IdentityCommunicationGroupMemberRead(ApiSchema):
+    id: int
+    profile_name: str
+    email_address: str
+    is_default: bool
+
+
+class IdentityCommunicationGroupRead(ApiSchema):
+    id: int
+    members: list[IdentityCommunicationGroupMemberRead]
+    created_at: datetime
+    updated_at: datetime
+
+
+class IdentityCommunicationGroupWrite(BaseModel):
+    identity_ids: list[int] = Field(min_length=2)
+    confirm_merge_existing_groups: bool = False

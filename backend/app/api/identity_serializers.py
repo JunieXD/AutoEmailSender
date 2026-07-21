@@ -18,6 +18,7 @@ def serialize_identity(identity: IdentityProfile) -> IdentityProfileRead:
         name=profile_name,
         profile_name=profile_name,
         sender_name=sender_name,
+        communication_group_id=identity.communication_group_id,
         email_address=identity.email_address,
         smtp_host=identity.smtp_host,
         smtp_port=identity.smtp_port,

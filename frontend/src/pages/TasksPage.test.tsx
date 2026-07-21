@@ -771,6 +771,16 @@ const buildWorkspaceThread = (
     },
   },
   messages: [],
+  communication_scope: [
+    {
+      id: 1,
+      name: "默认身份",
+      profile_name: "申请人",
+      sender_name: "小明",
+      email_address: "student@example.com",
+    },
+  ],
+  sync_warnings: [],
   ...overrides,
 });
 

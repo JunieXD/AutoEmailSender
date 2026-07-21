@@ -19,6 +19,7 @@ const buildMessage = (
   completion_tokens: null,
   total_tokens: null,
   created_at: "2026-04-22T10:00:00Z",
+  source_identities: [],
   ...overrides,
 });
 
@@ -111,5 +112,50 @@ describe("WorkspaceMessageThread", () => {
     fireEvent.click(screen.getByRole("button", { name: "刷新通信记录" }));
 
     expect(handleRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels shared message sources and shows identity-level sync warnings", () => {
+    const communicationScope = [
+      {
+        id: 1,
+        name: "申请邮箱",
+        profile_name: "申请邮箱",
+        sender_name: "申请人",
+        email_address: "first@example.com",
+      },
+      {
+        id: 2,
+        name: "申请邮箱",
+        profile_name: "申请邮箱",
+        sender_name: "申请人",
+        email_address: "second@example.com",
+      },
+    ];
+    render(
+      <WorkspaceMessageThread
+        messages={[
+          buildMessage({
+            direction: "received",
+            source_identities: communicationScope,
+          }),
+        ]}
+        communicationScope={communicationScope}
+        syncWarnings={[
+          {
+            identity_id: 2,
+            identity_name: "申请邮箱",
+            message: "IMAP 连接失败",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("共享通信 · 2 个身份")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "由 申请邮箱（first@example.com）、申请邮箱（second@example.com） 收取",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("申请邮箱：IMAP 连接失败")).toBeInTheDocument();
   });
 });

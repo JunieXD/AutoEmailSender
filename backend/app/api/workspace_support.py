@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from app.core.time import utc_now
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,8 +31,11 @@ from app.schemas.workspace import (
     WorkspaceProfessorRead,
     WorkspaceTaskSummaryRead,
     WorkspaceThreadRead,
+    WorkspaceSyncWarningRead,
 )
 from app.services import llm_runtime
+from app.services.communication_events import CommunicationEvent, load_communication_events
+from app.services.identity_communication_groups import resolve_identity_communication_scope
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
@@ -52,6 +55,7 @@ async def build_workspace_thread(
     professor_id: int,
     identity_id: int,
     llm_profile_id: int,
+    sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
 ) -> WorkspaceThreadRead:
     professor = await _get_professor(session, professor_id)
     identity = await _get_identity(session, identity_id)
@@ -74,6 +78,7 @@ async def build_workspace_thread(
         llm_profile=llm_profile,
         current_task=current_task,
         match_task=match_task,
+        sync_warnings=sync_warnings,
     )
 
 
@@ -85,6 +90,7 @@ async def _build_workspace_thread_read(
     llm_profile: LLMProfile,
     current_task: EmailTask | None,
     match_task: EmailTask | None,
+    sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
 ) -> WorkspaceThreadRead:
     current_task_outreach = (
         _resolve_task_outreach_config(identity, current_task)
@@ -97,35 +103,32 @@ async def _build_workspace_thread_read(
         current_task_outreach,
     )
 
-    message_filters = [
-        EmailLog.professor_id == professor.id,
-        EmailLog.identity_id == identity.id,
-    ]
+    communication_scope = await resolve_identity_communication_scope(
+        session,
+        active_identity_id=identity.id,
+    )
+    communication_events = await load_communication_events(
+        session,
+        identity_ids=communication_scope.identity_ids,
+        professor_ids=[professor.id],
+        include_professors=False,
+    )
+    draft_logs: list[EmailLog] = []
     if current_task is not None:
-        message_filters.append(
-            or_(
-                EmailLog.direction != EmailDirection.DRAFT.value,
-                EmailLog.email_task_id == current_task.id,
+        draft_logs = list(
+            await session.scalars(
+                select(EmailLog)
+                .where(
+                    EmailLog.professor_id == professor.id,
+                    EmailLog.identity_id == identity.id,
+                    EmailLog.direction == EmailDirection.DRAFT.value,
+                    EmailLog.email_task_id == current_task.id,
+                )
+                .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
             ),
         )
-    else:
-        message_filters.append(EmailLog.direction != EmailDirection.DRAFT.value)
-
-    logs = list(
-        (
-            await session.execute(
-                select(EmailLog)
-                .where(*message_filters)
-                .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
-            )
-        ).scalars()
-    )
     latest_draft_log = next(
-        (
-            log
-            for log in reversed(logs)
-            if log.direction == "draft" and current_task and log.email_task_id == current_task.id
-        ),
+        reversed(draft_logs),
         None,
     )
     latest_draft_usage = _extract_usage(latest_draft_log.provider_payload if latest_draft_log else None)
@@ -167,13 +170,7 @@ async def _build_workspace_thread_read(
             recent_papers=professor.recent_papers or [],
             profile_url=professor.profile_url,
         ),
-        identity=WorkspaceIdentityRead(
-            id=identity.id,
-            name=identity.profile_name or identity.name,
-            profile_name=identity.profile_name or identity.name,
-            sender_name=get_identity_sender_name(identity),
-            email_address=identity.email_address,
-        ),
+        identity=_serialize_workspace_identity(identity),
         llm_profile=WorkspaceLLMRead(
             id=llm_profile.id,
             name=llm_profile.name,
@@ -243,7 +240,27 @@ async def _build_workspace_thread_read(
                 rendered_template=rendered_template,
             ),
         ),
-        messages=[_serialize_workspace_message(log) for log in logs],
+        messages=sorted(
+            [
+                *[
+                    _serialize_workspace_message(
+                        log,
+                        source_identities=(identity,),
+                    )
+                    for log in draft_logs
+                ],
+                *[
+                    _serialize_workspace_event(event)
+                    for event in communication_events
+                ],
+            ],
+            key=lambda message: (message.created_at, message.id),
+        ),
+        communication_scope=[
+            _serialize_workspace_identity(scope_identity)
+            for scope_identity in communication_scope.identities
+        ],
+        sync_warnings=sync_warnings or [],
     )
 
 
@@ -590,26 +607,78 @@ def _extract_usage(provider_payload: dict[str, object] | None) -> dict[str, int 
     }
 
 
-def _serialize_workspace_message(log: EmailLog) -> WorkspaceMessageRead:
+def _serialize_workspace_event(event: CommunicationEvent) -> WorkspaceMessageRead:
+    return _serialize_workspace_message(
+        event.log,
+        id_override=event.id,
+        created_at_override=event.created_at,
+        source_identities=event.source_identities,
+        fallback_logs=event.logs,
+    )
+
+
+def _serialize_workspace_message(
+    log: EmailLog,
+    *,
+    id_override: int | None = None,
+    created_at_override: datetime | None = None,
+    source_identities: tuple[IdentityProfile, ...] = (),
+    fallback_logs: tuple[EmailLog, ...] = (),
+) -> WorkspaceMessageRead:
+    ordered_logs = (
+        log,
+        *(candidate for candidate in fallback_logs if candidate.id != log.id),
+    )
+    subject = next(
+        (candidate.subject for candidate in ordered_logs if (candidate.subject or "").strip()),
+        None,
+    )
+    rfc_message_id = next(
+        (
+            candidate.rfc_message_id
+            for candidate in ordered_logs
+            if (candidate.rfc_message_id or "").strip()
+        ),
+        None,
+    )
+    reply_headers = next(
+        (candidate.reply_headers for candidate in ordered_logs if candidate.reply_headers),
+        None,
+    )
     usage = _extract_usage(log.provider_payload)
     is_received = log.direction == "received"
     return WorkspaceMessageRead(
-        id=log.id,
+        id=id_override if id_override is not None else log.id,
         direction=log.direction,
-        subject=log.subject,
+        subject=subject,
         content=strip_quoted_reply_text(log.content) if is_received else log.content,
         content_html=(
             strip_quoted_reply_html(log.content_html)
             if is_received and log.content_html
             else log.content_html
         ),
-        rfc_message_id=log.rfc_message_id,
+        rfc_message_id=rfc_message_id,
         failure_summary=log.failure_summary,
-        reply_headers=log.reply_headers,
+        reply_headers=reply_headers,
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
         total_tokens=usage.get("total_tokens"),
-        created_at=log.created_at,
+        created_at=created_at_override or log.created_at,
+        source_identities=[
+            _serialize_workspace_identity(identity)
+            for identity in source_identities
+        ],
+    )
+
+
+def _serialize_workspace_identity(identity: IdentityProfile) -> WorkspaceIdentityRead:
+    profile_name = identity.profile_name or identity.name
+    return WorkspaceIdentityRead(
+        id=identity.id,
+        name=profile_name,
+        profile_name=profile_name,
+        sender_name=get_identity_sender_name(identity),
+        email_address=identity.email_address,
     )
 
 

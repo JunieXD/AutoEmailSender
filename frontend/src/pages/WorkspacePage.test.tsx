@@ -29,6 +29,7 @@ const notificationMocks = vi.hoisted(() => ({
 const selectionMock = vi.hoisted(() => ({
   selectedIdentityId: 1 as number | null,
   selectedLlmProfileId: 2 as number | null,
+  communicationScopeKey: "1",
   selectedIdentity: {
     current_primary_material_id: 7,
   },
@@ -227,6 +228,16 @@ const buildWorkspaceThread = (
     },
   },
   messages: [],
+  communication_scope: [
+    {
+      id: 1,
+      name: "默认身份",
+      profile_name: "申请人",
+      sender_name: "小明",
+      email_address: "student@example.com",
+    },
+  ],
+  sync_warnings: [],
   ...overrides,
 });
 
@@ -249,6 +260,7 @@ beforeEach(() => {
   editorMockState.initialHtmlOverride = null;
   selectionMock.selectedIdentityId = 1;
   selectionMock.selectedLlmProfileId = 2;
+  selectionMock.communicationScopeKey = "1";
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.refreshWorkspaceReplies.mockResolvedValue(buildWorkspaceThread());
   apiMocks.saveDraft.mockResolvedValue(

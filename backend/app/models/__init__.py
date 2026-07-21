@@ -30,6 +30,7 @@ from app.models.email_task import (
     EmailTaskSource,
     EmailTaskStatus,
 )
+from app.models.identity_communication_group import IdentityCommunicationGroup
 from app.models.identity_profile import IdentityProfile
 from app.models.identity_material import IdentityMaterial, IdentityMaterialType
 from app.models.imap_sync import (
@@ -86,6 +87,7 @@ __all__ = [
     "EmailTaskCancellationReason",
     "EmailTaskSource",
     "EmailTaskStatus",
+    "IdentityCommunicationGroup",
     "IdentityProfile",
     "IdentityMaterial",
     "IdentityMaterialType",

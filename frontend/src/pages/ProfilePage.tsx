@@ -34,6 +34,7 @@ import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor"
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
 import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
+import { CommunicationSharingPanel } from "@/components/organisms/CommunicationSharingPanel";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
 import { textToEmailHtml } from "@/lib/richEmail";
@@ -1693,7 +1694,10 @@ export const ProfilePage = () => {
     [],
   );
 
-  const confirmDeleteTwice = async (targetName: string) => {
+  const confirmDeleteTwice = async (
+    targetName: string,
+    finalDescription = "删除后无法恢复，请再确认一次。",
+  ) => {
     const confirmedOnce = await confirm({
       title: `确认删除${targetName}？`,
       description: "这会移除当前内容，但还不会立即执行最终删除。",
@@ -1708,7 +1712,7 @@ export const ProfilePage = () => {
 
     return confirm({
       title: `再次确认删除${targetName}`,
-      description: "删除后无法恢复，请再确认一次。",
+      description: finalDescription,
       confirmLabel: "确认删除",
       cancelLabel: "返回",
       tone: "danger",
@@ -2472,6 +2476,7 @@ export const ProfilePage = () => {
                 if (
                   !(await confirmDeleteTwice(
                     `身份“${getIdentityProfileName(editingIdentity)}”`,
+                    "删除后无法恢复。该身份产生或同步的通信记录也可能从共享历史中永久消失。",
                   ))
                 ) {
                   return;
@@ -3194,6 +3199,8 @@ export const ProfilePage = () => {
             </div>
           </ProfileSetupSection>
 
+
+          <CommunicationSharingPanel />
 
           <OtherSettingsCard />
 

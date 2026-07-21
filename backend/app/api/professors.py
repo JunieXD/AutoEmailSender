@@ -39,6 +39,7 @@ from app.schemas.professor import (
     ProfessorUpsertPayload,
 )
 from app.services.contact_status import build_contact_status_by_professor
+from app.services.identity_communication_groups import resolve_identity_communication_scope
 from app.services.operation_logs import record_operation_log
 from app.services.professor_management import (
     build_professor_export,
@@ -83,6 +84,13 @@ async def list_professors(
     contact_status_by_professor = {}
 
     if identity_id is not None:
+        try:
+            communication_scope = await resolve_identity_communication_scope(
+                session,
+                active_identity_id=identity_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         task_result = await session.execute(
             select(EmailTask)
             .options(
@@ -113,6 +121,7 @@ async def list_professors(
             identity_id=identity_id,
             professor_ids=professor_ids,
             tasks_by_professor=tasks_by_professor,
+            communication_identity_ids=communication_scope.identity_ids,
         )
 
     latest_match_task_by_professor: dict[int, EmailTask] = {}

@@ -411,7 +411,12 @@ export const WorkspacePage = () => {
   const professorId = Number(id);
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
   const { confirm, choose, dialog: confirmDialog } = useConfirmDialog();
-  const { selectedIdentityId, selectedLlmProfileId, selectedIdentity } = useSelectionContext();
+  const {
+    selectedIdentityId,
+    selectedLlmProfileId,
+    selectedIdentity,
+    communicationScopeKey = '',
+  } = useSelectionContext();
   const { registerWorkspaceDraftGuard } = useWorkspaceDraftGuard();
   const [thread, setThread] = useState<WorkspaceThreadDTO | null>(null);
   const [loading, setLoading] = useState(false);
@@ -450,7 +455,7 @@ export const WorkspacePage = () => {
   const captureNextRewriteActionRequestRef = useRef(false);
   const workspaceRequestKey =
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
-      ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}`
+      ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}:${communicationScopeKey || selectedIdentityId}`
       : null;
   const currentTask = getCurrentTaskOrNull(thread);
   const currentTaskId = currentTask?.id ?? null;
@@ -1228,6 +1233,8 @@ export const WorkspacePage = () => {
   const professorSummary =
     [thread.professor.university, thread.professor.school].filter(Boolean).join(' / ') ||
     '学校信息待补充';
+  const communicationScope = thread.communication_scope ?? [thread.identity];
+  const syncWarnings = thread.sync_warnings ?? [];
 
   return (
     <>
@@ -1262,6 +1269,11 @@ export const WorkspacePage = () => {
               <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1 text-xs font-medium text-stone-600">
                 通信 {realMessageCount} 条
               </span>
+              {communicationScope.length > 1 ? (
+                <span className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-medium text-teal-800">
+                  共享通信 · {communicationScope.length} 个身份
+                </span>
+              ) : null}
             </div>
           </div>
         </header>
@@ -1281,6 +1293,8 @@ export const WorkspacePage = () => {
               <>
                 <WorkspaceMessageThread
                   messages={thread.messages}
+                  communicationScope={communicationScope}
+                  syncWarnings={syncWarnings}
                   monitoringLabel="正在监听回复"
                   lastCheckedAt={lastThreadCheckedAt}
                   refreshing={threadRefreshing}
@@ -1326,16 +1340,26 @@ export const WorkspacePage = () => {
                 />
               </>
             ) : (
-              <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
-                <div className="w-full max-w-2xl rounded-[30px] border border-dashed border-stone-300 bg-[linear-gradient(180deg,rgba(255,251,245,0.98),rgba(252,251,248,0.98))] px-6 py-12 text-center shadow-sm">
-                  <div className="text-lg font-semibold text-stone-950">
-                    这位老师还没有任务
+              <>
+                <WorkspaceMessageThread
+                  messages={thread.messages}
+                  communicationScope={communicationScope}
+                  syncWarnings={syncWarnings}
+                  monitoringLabel="正在监听回复"
+                  lastCheckedAt={lastThreadCheckedAt}
+                  refreshing={threadRefreshing}
+                  newReceivedCount={newReceivedCount}
+                  onRefresh={handleRefreshThread}
+                />
+                <div className="border-t border-stone-200 bg-stone-50/70 px-5 py-5 text-center">
+                  <div className="text-sm font-semibold text-stone-900">
+                    当前身份还没有任务
                   </div>
-                  <p className="mt-3 text-sm leading-7 text-stone-600">
-                    从首页或任务中心进入后，会自动创建通信记录。
+                  <p className="mt-1 text-xs leading-5 text-stone-500">
+                    共享通信记录仍可查看；创建当前身份任务后即可编辑和发送。
                   </p>
                 </div>
-              </div>
+              </>
             )}
           </section>
         </div>

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus
+from app.services.communication_events import load_communication_events
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ async def build_contact_status_by_professor(
     identity_id: int,
     professor_ids: list[int],
     tasks_by_professor: dict[int, list[EmailTask]] | None = None,
+    communication_identity_ids: tuple[int, ...] | list[int] | None = None,
 ) -> dict[int, ProfessorContactStatus]:
     if not professor_ids:
         return {}
@@ -44,33 +46,63 @@ async def build_contact_status_by_professor(
     last_sent_at_by_professor: dict[int, datetime] = {}
     last_replied_at_by_professor: dict[int, datetime] = {}
 
-    successful_sent_log = (
-        (EmailLog.direction == EmailDirection.SENT.value)
-        & (EmailLog.failure_summary.is_(None) | (EmailLog.failure_summary == ""))
+    resolved_identity_ids = tuple(
+        dict.fromkeys(communication_identity_ids or (identity_id,)),
     )
-    log_rows = await session.execute(
-        select(
-            EmailLog.professor_id,
-            func.sum(case((successful_sent_log, 1), else_=0)).label("sent_count"),
-            func.max(case((successful_sent_log, EmailLog.created_at), else_=None)).label("last_sent_at"),
-            func.max(
-                case(
-                    (EmailLog.direction == EmailDirection.RECEIVED.value, EmailLog.created_at),
-                    else_=None,
-                ),
-            ).label("last_replied_at"),
+    if len(resolved_identity_ids) == 1:
+        successful_sent_log = (
+            (EmailLog.direction == EmailDirection.SENT.value)
+            & (func.trim(func.coalesce(EmailLog.failure_summary, "")) == "")
         )
-        .where(
-            EmailLog.identity_id == identity_id,
-            EmailLog.professor_id.in_(unique_professor_ids),
-            EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
+        log_rows = await session.execute(
+            select(
+                EmailLog.professor_id,
+                func.sum(case((successful_sent_log, 1), else_=0)).label("sent_count"),
+                func.max(
+                    case((successful_sent_log, EmailLog.created_at), else_=None),
+                ).label("last_sent_at"),
+                func.max(
+                    case(
+                        (EmailLog.direction == EmailDirection.RECEIVED.value, EmailLog.created_at),
+                        else_=None,
+                    ),
+                ).label("last_replied_at"),
+            )
+            .where(
+                EmailLog.identity_id == resolved_identity_ids[0],
+                EmailLog.professor_id.in_(unique_professor_ids),
+                EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
+            )
+            .group_by(EmailLog.professor_id),
         )
-        .group_by(EmailLog.professor_id),
-    )
-    for professor_id, sent_count, last_sent_at, last_replied_at in log_rows:
-        sent_count_by_professor[professor_id] = int(sent_count or 0)
-        _keep_latest_timestamp(last_sent_at_by_professor, professor_id, last_sent_at)
-        _keep_latest_timestamp(last_replied_at_by_professor, professor_id, last_replied_at)
+        for professor_id, sent_count, last_sent_at, last_replied_at in log_rows:
+            sent_count_by_professor[professor_id] = int(sent_count or 0)
+            _keep_latest_timestamp(last_sent_at_by_professor, professor_id, last_sent_at)
+            _keep_latest_timestamp(last_replied_at_by_professor, professor_id, last_replied_at)
+    else:
+        communication_events = await load_communication_events(
+            session,
+            identity_ids=resolved_identity_ids,
+            professor_ids=unique_professor_ids,
+            include_message_content=False,
+            include_source_identities=False,
+            include_professors=False,
+        )
+        for event in communication_events:
+            professor_id = event.log.professor_id
+            if event.log.direction == EmailDirection.SENT.value and event.successful:
+                sent_count_by_professor[professor_id] += 1
+                _keep_latest_timestamp(
+                    last_sent_at_by_professor,
+                    professor_id,
+                    event.created_at,
+                )
+            elif event.log.direction == EmailDirection.RECEIVED.value:
+                _keep_latest_timestamp(
+                    last_replied_at_by_professor,
+                    professor_id,
+                    event.created_at,
+                )
     professors_with_sent_logs = set(last_sent_at_by_professor)
     professors_with_reply_logs = set(last_replied_at_by_professor)
 

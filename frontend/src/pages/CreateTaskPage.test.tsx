@@ -35,6 +35,7 @@ const selectedIdentity: IdentityDTO = {
   outreach_template_body_html: "<p>{{name}}\u8001\u5e08\u60a8\u597d</p>",
   current_primary_material_id: null,
   current_primary_material: null,
+  communication_group_id: null,
   match_threshold: null,
   daily_send_limit: null,
   send_interval_min: null,
