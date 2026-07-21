@@ -92,6 +92,12 @@ const makeGroup = (
   updated_at: '2026-07-21T00:00:00Z',
 });
 
+const expandPanel = () => {
+  fireEvent.click(
+    screen.getByRole('button', { name: '展开通信记录共享' }),
+  );
+};
+
 describe('CommunicationSharingPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -110,9 +116,28 @@ describe('CommunicationSharingPanel', () => {
     );
   });
 
+  it('uses the same collapsed summary pattern as the other settings cards', () => {
+    render(<CommunicationSharingPanel />);
+
+    const toggle = screen.getByRole('button', { name: '展开通信记录共享' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('未创建共享组')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: '创建共享组' }),
+    ).not.toBeInTheDocument();
+
+    expandPanel();
+
+    expect(
+      screen.getByRole('button', { name: '收起通信记录共享' }),
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: '创建共享组' })).toBeInTheDocument();
+  });
+
   it('creates a group with the current identity preselected', async () => {
     render(<CommunicationSharingPanel />);
 
+    expandPanel();
     fireEvent.click(screen.getByRole('button', { name: '创建共享组' }));
     expect(screen.getByRole('checkbox', { name: /A/ })).toBeChecked();
     fireEvent.click(screen.getByRole('checkbox', { name: /B/ }));
@@ -147,6 +172,7 @@ describe('CommunicationSharingPanel', () => {
 
     render(<CommunicationSharingPanel />);
 
+    expandPanel();
     fireEvent.click(screen.getByRole('button', { name: '编辑 A、B' }));
     fireEvent.click(
       screen.getByRole('checkbox', { name: /^Cc@example\.com/ }),
@@ -177,6 +203,7 @@ describe('CommunicationSharingPanel', () => {
     apiMocks.deleteCommunicationGroup.mockResolvedValue(undefined);
 
     render(<CommunicationSharingPanel />);
+    expandPanel();
     fireEvent.click(screen.getByRole('button', { name: '解散 A、B' }));
 
     await waitFor(() => {
@@ -194,6 +221,7 @@ describe('CommunicationSharingPanel', () => {
     apiMocks.createCommunicationGroup.mockRejectedValue(new Error('数据库写入失败'));
     render(<CommunicationSharingPanel />);
 
+    expandPanel();
     fireEvent.click(screen.getByRole('button', { name: '创建共享组' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /B/ }));
     fireEvent.click(screen.getByRole('button', { name: '保存共享组' }));
