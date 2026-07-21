@@ -65,6 +65,56 @@ class CrawlJobRunTokenUsageTests(unittest.TestCase):
         self.assertEqual(usage["total_tokens"], 120)
         self.assertEqual(usage["cached_tokens"], 64)
 
+    def test_extracts_cached_tokens_from_normalized_response_usage(self) -> None:
+        response = type(
+            "NormalizedUsageResponse",
+            (),
+            {
+                "usage_metadata": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                    "input_token_details": {"cache_read": 64},
+                },
+                "response_metadata": {},
+            },
+        )()
+
+        usage = extract_token_usage_from_llm_response(response)
+
+        self.assertIsNotNone(usage)
+        self.assertEqual(usage["cached_tokens"], 64)
+
+    def test_falls_back_to_provider_usage_for_deepseek_cache_hits(self) -> None:
+        response = type(
+            "DeepSeekUsageResponse",
+            (),
+            {
+                "usage_metadata": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                    "cached_tokens": 0,
+                },
+                "response_metadata": {
+                    "token_usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 20,
+                        "total_tokens": 120,
+                        "prompt_cache_hit_tokens": 80,
+                        "prompt_cache_miss_tokens": 20,
+                    }
+                },
+            },
+        )()
+
+        usage = extract_token_usage_from_llm_response(response)
+
+        self.assertIsNotNone(usage)
+        self.assertEqual(usage["input_tokens"], 100)
+        self.assertEqual(usage["output_tokens"], 20)
+        self.assertEqual(usage["cached_tokens"], 80)
+
     def test_extracts_cached_tokens_from_response_metadata(self) -> None:
         usage = extract_token_usage(
             {

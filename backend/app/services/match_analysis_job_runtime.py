@@ -159,6 +159,7 @@ def serialize_match_analysis_job(job: MatchAnalysisJob) -> MatchAnalysisJobRead:
         skipped_count=job.skipped_count,
         total_prompt_tokens=job.total_prompt_tokens,
         total_completion_tokens=job.total_completion_tokens,
+        total_cached_tokens=job.total_cached_tokens,
         total_tokens=job.total_tokens,
         identity_id=job.identity_id,
         llm_profile_id=job.llm_profile_id,
@@ -191,6 +192,7 @@ def serialize_match_analysis_job_item(
         skip_reason=item.skip_reason,
         prompt_tokens=item.prompt_tokens,
         completion_tokens=item.completion_tokens,
+        cached_tokens=item.cached_tokens,
         total_tokens=item.total_tokens,
         started_at=item.started_at,
         finished_at=item.finished_at,
@@ -574,6 +576,7 @@ async def _run_match_analysis_job_item(
         run_id=result.run_id,
         prompt_tokens=result.usage.prompt_tokens or 0,
         completion_tokens=result.usage.completion_tokens or 0,
+        cached_tokens=result.usage.cached_tokens or 0,
         total_tokens=result.usage.total_tokens or 0,
     )
 
@@ -637,6 +640,7 @@ async def _mark_item_succeeded(
     run_id: int | None,
     prompt_tokens: int,
     completion_tokens: int,
+    cached_tokens: int,
     total_tokens: int,
 ) -> None:
     async with session_factory() as session:
@@ -648,6 +652,7 @@ async def _mark_item_succeeded(
         item.match_analysis_run_id = run_id
         item.prompt_tokens = prompt_tokens
         item.completion_tokens = completion_tokens
+        item.cached_tokens = cached_tokens
         item.total_tokens = total_tokens
         item.error_message = None
         item.skip_reason = None
@@ -748,6 +753,7 @@ async def _refresh_match_analysis_job_summary(
         job.skipped_count = skipped_count
         job.total_prompt_tokens = sum(item.prompt_tokens for item in items)
         job.total_completion_tokens = sum(item.completion_tokens for item in items)
+        job.total_cached_tokens = sum(item.cached_tokens for item in items)
         job.total_tokens = sum(item.total_tokens for item in items)
         job.updated_at = utc_now()
         job.finished_at = job.updated_at
@@ -788,6 +794,7 @@ async def _refresh_match_analysis_job_summary(
                 "canceled_count": canceled_count,
                 "total_prompt_tokens": job.total_prompt_tokens,
                 "total_completion_tokens": job.total_completion_tokens,
+                "total_cached_tokens": job.total_cached_tokens,
                 "total_tokens": job.total_tokens,
             },
         )

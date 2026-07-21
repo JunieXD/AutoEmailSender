@@ -141,7 +141,10 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.status, "completed")
         self.assertEqual(stored.succeeded_count, 1)
         self.assertEqual(stored.failed_count, 0)
+        self.assertEqual(stored.total_cached_tokens, 25)
         self.assertEqual(stored.total_tokens, 100)
+        items = self._run_async(self._get_job_items(job.id))
+        self.assertEqual(items[0].cached_tokens, 25)
 
     def test_run_queued_job_reuses_existing_identity_task_across_llm_profiles(self) -> None:
         identity_id, first_llm_profile_id, professor_ids = self._run_async(
@@ -650,7 +653,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 prompt_tokens=60,
                 completion_tokens=40,
                 total_tokens=100,
-                cached_tokens=0,
+                cached_tokens=25,
             ),
             duration_ms=1200,
             endpoint_kind="chat_completions",

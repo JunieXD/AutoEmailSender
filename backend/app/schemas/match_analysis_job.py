@@ -23,6 +23,7 @@ class MatchAnalysisJobRead(ApiSchema):
     skipped_count: int
     total_prompt_tokens: int
     total_completion_tokens: int
+    total_cached_tokens: int
     total_tokens: int
     identity_id: int
     llm_profile_id: int
@@ -51,6 +52,7 @@ class MatchAnalysisJobItemRead(ApiSchema):
     skip_reason: str | None
     prompt_tokens: int
     completion_tokens: int
+    cached_tokens: int
     total_tokens: int
     started_at: datetime | None
     finished_at: datetime | None

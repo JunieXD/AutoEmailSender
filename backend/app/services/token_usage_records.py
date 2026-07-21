@@ -315,9 +315,6 @@ async def _list_match_job_records(
         .options(
             selectinload(MatchAnalysisJob.identity),
             selectinload(MatchAnalysisJob.llm_profile),
-            selectinload(MatchAnalysisJob.items).selectinload(
-                MatchAnalysisJobItem.match_analysis_run,
-            ),
         )
         .order_by(MatchAnalysisJob.created_at.desc())
     )
@@ -430,22 +427,13 @@ def _match_job_to_record(job: MatchAnalysisJob) -> TokenUsageRecordRead:
         title=job.name,
         input_tokens=job.total_prompt_tokens,
         output_tokens=job.total_completion_tokens,
-        cached_tokens=_sum_match_job_cached_tokens(job),
+        cached_tokens=job.total_cached_tokens,
         total_tokens=job.total_tokens,
         model_name=job.llm_profile.model_name if job.llm_profile else None,
         identity_name=_identity_name(job.identity),
         created_at=job.created_at,
         status=_map_match_job_status(job.status),
     )
-
-
-def _sum_match_job_cached_tokens(job: MatchAnalysisJob) -> int:
-    return sum(
-        item.match_analysis_run.cached_tokens or 0
-        for item in job.items
-        if item.match_analysis_run is not None
-    )
-
 
 def _map_match_job_status(status: str) -> str:
     if status in {

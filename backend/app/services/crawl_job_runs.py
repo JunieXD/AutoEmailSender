@@ -191,9 +191,13 @@ def extract_token_usage(event: dict[str, object]) -> dict[str, int | None] | Non
 def extract_token_usage_from_llm_response(response: object) -> dict[str, int | None] | None:
     metadata = getattr(response, "response_metadata", None)
     usage_metadata = getattr(response, "usage_metadata", None)
+    response_usage = None
+    if isinstance(metadata, dict):
+        candidate = metadata.get("token_usage") or metadata.get("usage")
+        response_usage = candidate if isinstance(candidate, dict) else None
     raw_usage = usage_metadata if isinstance(usage_metadata, dict) else None
-    if raw_usage is None and isinstance(metadata, dict):
-        raw_usage = metadata.get("token_usage") or metadata.get("usage")
+    if raw_usage is None:
+        raw_usage = response_usage
     if not isinstance(raw_usage, dict):
         return None
 
@@ -212,11 +216,17 @@ def extract_token_usage_from_llm_response(response: object) -> dict[str, int | N
         if total_tokens is not None
         else resolved_input_tokens + resolved_output_tokens
     )
+    cached_candidates = [
+        cached
+        for source in (raw_usage, response_usage)
+        if (cached := _extract_cached_tokens_from_mapping(source)) is not None
+    ]
+    cached_tokens = max(cached_candidates) if cached_candidates else None
     return {
         "input_tokens": resolved_input_tokens,
         "output_tokens": resolved_output_tokens,
         "total_tokens": resolved_total_tokens,
-        "cached_tokens": _extract_cached_tokens(str(raw_usage)),
+        "cached_tokens": cached_tokens,
     }
 
 
@@ -227,6 +237,36 @@ def _coerce_token_count(value: object) -> int | None:
         return value
     if isinstance(value, str) and value.isdigit():
         return int(value)
+    return None
+
+
+def _extract_cached_tokens_from_mapping(value: object) -> int | None:
+    if not isinstance(value, dict):
+        return None
+
+    for key in (
+        "prompt_cache_hit_tokens",
+        "cached_tokens",
+        "cache_read",
+        "cache_read_input_tokens",
+    ):
+        cached_tokens = _coerce_token_count(value.get(key))
+        if cached_tokens is not None:
+            return cached_tokens
+
+    for details_key in (
+        "prompt_tokens_details",
+        "input_tokens_details",
+        "input_token_details",
+    ):
+        details = value.get(details_key)
+        if not isinstance(details, dict):
+            continue
+        for key, raw_count in details.items():
+            if key in {"cached_tokens", "cache_read"} or key.endswith("_cache_read"):
+                cached_tokens = _coerce_token_count(raw_count)
+                if cached_tokens is not None:
+                    return cached_tokens
     return None
 
 
@@ -259,4 +299,3 @@ def _stringify_trace_payload(event: dict[str, object]) -> str:
     else:
         parts.append(str(event))
     return "\n".join(parts)
-

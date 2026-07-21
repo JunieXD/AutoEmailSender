@@ -9,6 +9,7 @@ import type {
   CrawlJobEventDTO,
   CrawlJobSummaryDTO,
   MatchAnalysisJobDTO,
+  MatchAnalysisJobItemDTO,
   ProfessorInformationEnrichmentItemDTO,
   ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
@@ -556,6 +557,7 @@ const buildMatchAnalysisJob = (
   skipped_count: 0,
   total_prompt_tokens: 0,
   total_completion_tokens: 0,
+  total_cached_tokens: 0,
   total_tokens: 0,
   identity_id: 1,
   llm_profile_id: 2,
@@ -566,6 +568,32 @@ const buildMatchAnalysisJob = (
   updated_at: "2026-05-08T00:01:00",
   deleted_at: null,
   last_error: null,
+  ...overrides,
+});
+
+const buildMatchAnalysisJobItem = (
+  overrides: Partial<MatchAnalysisJobItemDTO> = {},
+): MatchAnalysisJobItemDTO => ({
+  id: 41,
+  job_id: 31,
+  professor_id: 21,
+  professor_name: "张老师",
+  professor_email: "zhang@example.edu",
+  professor_title: "教授",
+  professor_school: "计算机学院",
+  email_task_id: 71,
+  status: "succeeded",
+  match_score: 91,
+  match_analysis_run_id: 81,
+  error_message: null,
+  skip_reason: null,
+  prompt_tokens: 900,
+  completion_tokens: 100,
+  cached_tokens: 700,
+  total_tokens: 1000,
+  started_at: "2026-05-08T00:00:00",
+  finished_at: "2026-05-08T00:00:30",
+  updated_at: "2026-05-08T00:00:30",
   ...overrides,
 });
 
@@ -862,6 +890,60 @@ describe("TasksPage match analysis notifications", () => {
   });
 });
 
+describe("TasksPage match analysis token usage", () => {
+  it("shows input, output, cached, and total tokens on the card and in details", async () => {
+    const job = buildMatchAnalysisJob({
+      total_prompt_tokens: 1111,
+      total_completion_tokens: 222,
+      total_cached_tokens: 333,
+      total_tokens: 1333,
+    });
+    apiMocks.listMatchAnalysisJobs.mockResolvedValue([job]);
+    apiMocks.listMatchAnalysisJobItems.mockResolvedValue([
+      buildMatchAnalysisJobItem(),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "匹配分析" }));
+    const cardSummary = await screen.findByLabelText(
+      "批量匹配分析 Token 使用汇总",
+    );
+    expect(within(cardSummary).getByText("1,111")).toBeInTheDocument();
+    expect(within(cardSummary).getByText("222")).toBeInTheDocument();
+    expect(within(cardSummary).getByText("333")).toBeInTheDocument();
+    expect(within(cardSummary).getByText("1,333")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "查看匹配分析任务 批量匹配分析",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "匹配分析任务详情",
+    });
+    const detailSummary = within(dialog).getByLabelText(
+      "匹配分析任务 Token 使用汇总",
+    );
+    expect(within(detailSummary).getByText("输入 Token")).toBeInTheDocument();
+    expect(within(detailSummary).getByText("输出 Token")).toBeInTheDocument();
+    expect(within(detailSummary).getByText("缓存命中")).toBeInTheDocument();
+    expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
+
+    const itemSummary = await within(dialog).findByLabelText(
+      "张老师 Token 使用明细",
+    );
+    expect(within(itemSummary).getByText("900")).toBeInTheDocument();
+    expect(within(itemSummary).getByText("100")).toBeInTheDocument();
+    expect(within(itemSummary).getByText("700")).toBeInTheDocument();
+    expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
+  });
+});
+
 describe("TasksPage information enrichment", () => {
   it("keeps the information enrichment tab available without an identity", async () => {
     selectionMock.selectedIdentityId = null;
@@ -915,6 +997,13 @@ describe("TasksPage information enrichment", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+    const cardSummary = await screen.findByLabelText(
+      "导师信息补全 2026-05-08 Token 使用汇总",
+    );
+    expect(within(cardSummary).getByText("1,200")).toBeInTheDocument();
+    expect(within(cardSummary).getByText("300")).toBeInTheDocument();
+    expect(within(cardSummary).getByText("400")).toBeInTheDocument();
+    expect(within(cardSummary).getByText("1,500")).toBeInTheDocument();
     fireEvent.click(
       await screen.findByRole("button", {
         name: "查看信息补全任务 导师信息补全 2026-05-08",
@@ -924,6 +1013,18 @@ describe("TasksPage information enrichment", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "信息补全任务详情",
     });
+    const detailSummary = within(dialog).getByLabelText(
+      "信息补全任务 Token 使用汇总",
+    );
+    expect(within(detailSummary).getByText("输入 Token")).toBeInTheDocument();
+    expect(within(detailSummary).getByText("输出 Token")).toBeInTheDocument();
+    expect(within(detailSummary).getByText("缓存命中")).toBeInTheDocument();
+    expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
+    const itemSummary = within(dialog).getByLabelText("张老师 Token 使用明细");
+    expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
+    expect(within(itemSummary).getByText("200")).toBeInTheDocument();
+    expect(within(itemSummary).getByText("300")).toBeInTheDocument();
+    expect(within(itemSummary).getByText("1,200")).toBeInTheDocument();
     expect(within(dialog).getByText("研究方向")).toBeInTheDocument();
     expect(
       within(dialog).getByText(

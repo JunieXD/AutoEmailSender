@@ -90,6 +90,11 @@ class MatchAnalysisJob(Base):
         nullable=False,
         server_default=text("0"),
     )
+    total_cached_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
     total_tokens: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -171,6 +176,11 @@ class MatchAnalysisJobItem(Base):
         server_default=text("0"),
     )
     completion_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    cached_tokens: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         server_default=text("0"),

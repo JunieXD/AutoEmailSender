@@ -535,6 +535,7 @@ export interface MatchAnalysisJobDTO {
   skipped_count: number;
   total_prompt_tokens: number;
   total_completion_tokens: number;
+  total_cached_tokens: number;
   total_tokens: number;
   identity_id: number;
   llm_profile_id: number;
@@ -563,6 +564,7 @@ export interface MatchAnalysisJobItemDTO {
   skip_reason: string | null;
   prompt_tokens: number;
   completion_tokens: number;
+  cached_tokens: number;
   total_tokens: number;
   started_at: string | null;
   finished_at: string | null;

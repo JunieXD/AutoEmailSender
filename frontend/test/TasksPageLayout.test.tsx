@@ -302,6 +302,7 @@ describe("TasksPage layout", () => {
         skipped_count: 0,
         total_prompt_tokens: 100,
         total_completion_tokens: 20,
+        total_cached_tokens: 60,
         total_tokens: 120,
         identity_id: 1,
         llm_profile_id: 2,

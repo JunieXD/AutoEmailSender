@@ -290,6 +290,16 @@ type TaskListPaginationProps = {
   pageSize?: number;
 };
 
+type TokenUsageBreakdownProps = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  ariaLabel: string;
+  variant?: "compact" | "metrics";
+  className?: string;
+};
+
 type CrawlJobCardProps = {
   job: CrawlJobSummaryDTO;
   listView: TaskListView;
@@ -339,6 +349,59 @@ const canDeleteInformationEnrichmentJob = (
   job.status === "completed" ||
   job.status === "failed" ||
   job.status === "canceled";
+
+const TokenUsageBreakdown = ({
+  inputTokens,
+  outputTokens,
+  cachedTokens,
+  totalTokens,
+  ariaLabel,
+  variant = "compact",
+  className = "",
+}: TokenUsageBreakdownProps) => {
+  const metrics = [
+    { label: variant === "metrics" ? "输入 Token" : "输入", value: inputTokens },
+    { label: variant === "metrics" ? "输出 Token" : "输出", value: outputTokens },
+    { label: variant === "metrics" ? "缓存命中" : "缓存", value: cachedTokens },
+    { label: variant === "metrics" ? "总 Token" : "总计", value: totalTokens },
+  ];
+
+  return (
+    <dl
+      aria-label={ariaLabel}
+      className={`${
+        variant === "metrics"
+          ? "grid grid-cols-2 gap-3 sm:grid-cols-4"
+          : "grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs tabular-nums"
+      } ${className}`}
+    >
+      {metrics.map((metric) => (
+        <div
+          key={metric.label}
+          className={
+            variant === "metrics"
+              ? "rounded-lg border border-stone-100 bg-white px-4 py-3"
+              : "flex min-w-0 items-baseline justify-between gap-2"
+          }
+        >
+          <dt className="whitespace-nowrap font-medium text-stone-500">
+            {metric.label}
+          </dt>
+          <dd
+            className={
+              variant === "metrics"
+                ? "mt-2 text-sm font-semibold text-stone-900 tabular-nums"
+                : "truncate font-semibold text-stone-800"
+            }
+            title={metric.value.toLocaleString("zh-CN")}
+          >
+            {metric.value.toLocaleString("zh-CN")}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+};
 
 export const TaskListViewSwitch = ({
   activeView,
@@ -3235,7 +3298,7 @@ export const TasksPage = () => {
                 key={job.id}
                 className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
               >
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px_auto] lg:items-center">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-center">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
                       <Sparkles className="h-4 w-4 text-primary" />
@@ -3255,13 +3318,17 @@ export const TasksPage = () => {
                       成功 {job.succeeded_count} / 失败 {job.failed_count} / 跳过 {job.skipped_count} / 共 {job.target_count}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                    <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
-                      Token {job.total_tokens.toLocaleString("zh-CN")}
-                    </span>
-                    <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
+                  <div className="min-w-0 space-y-2">
+                    <TokenUsageBreakdown
+                      inputTokens={job.total_prompt_tokens}
+                      outputTokens={job.total_completion_tokens}
+                      cachedTokens={job.total_cached_tokens}
+                      totalTokens={job.total_tokens}
+                      ariaLabel={`${job.name} Token 使用汇总`}
+                    />
+                    <div className="text-right text-xs text-stone-500">
                       更新 {formatDisplayTime(job.updated_at, { withSeconds: true })}
-                    </span>
+                    </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                     {activeTaskListView === "trash" ? (
@@ -3316,7 +3383,7 @@ export const TasksPage = () => {
                       type="button"
                       onClick={() => setSelectedMatchJob(job)}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-                      aria-label="查看详情"
+                      aria-label={`查看匹配分析任务 ${job.name}`}
                       title="查看详情"
                     >
                       <ChevronRight className="h-4 w-4" />
@@ -3361,7 +3428,7 @@ export const TasksPage = () => {
                   key={job.id}
                   className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
                 >
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_minmax(250px,auto)_auto] lg:items-center">
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px_minmax(250px,auto)_auto] lg:items-center">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
                         <Bot className="h-4 w-4 text-primary" />
@@ -3387,7 +3454,7 @@ export const TasksPage = () => {
                       ) : null}
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <div className="mb-2 flex items-center justify-between text-xs text-stone-500">
                         <span>
                           {job.completed_count}/{job.target_count}
@@ -3400,9 +3467,16 @@ export const TasksPage = () => {
                           style={{ width: `${progress}%` }}
                         />
                       </div>
-                      <div className="mt-2 flex items-center justify-between text-xs text-stone-500">
-                        <span>Token {job.total_tokens.toLocaleString("zh-CN")}</span>
-                        <span>{formatDuration(job.duration_seconds)}</span>
+                      <TokenUsageBreakdown
+                        inputTokens={job.input_tokens}
+                        outputTokens={job.output_tokens}
+                        cachedTokens={job.cached_tokens}
+                        totalTokens={job.total_tokens}
+                        ariaLabel={`${job.name} Token 使用汇总`}
+                        className="mt-3"
+                      />
+                      <div className="mt-2 text-right text-xs text-stone-500">
+                        耗时 {formatDuration(job.duration_seconds)}
                       </div>
                     </div>
 
@@ -4224,7 +4298,7 @@ export const TasksPage = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5">
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">成功</div>
                   <div className="mt-2 text-sm font-semibold text-stone-900">
@@ -4243,13 +4317,17 @@ export const TasksPage = () => {
                     {selectedMatchJob.skipped_count}
                   </div>
                 </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">总 Token</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedMatchJob.total_tokens.toLocaleString("zh-CN")}
-                  </div>
-                </div>
               </div>
+
+              <TokenUsageBreakdown
+                inputTokens={selectedMatchJob.total_prompt_tokens}
+                outputTokens={selectedMatchJob.total_completion_tokens}
+                cachedTokens={selectedMatchJob.total_cached_tokens}
+                totalTokens={selectedMatchJob.total_tokens}
+                ariaLabel="匹配分析任务 Token 使用汇总"
+                variant="metrics"
+                className="mt-3"
+              />
 
               <section className="mt-6">
                 <div className="flex items-center justify-between gap-3">
@@ -4264,15 +4342,15 @@ export const TasksPage = () => {
                   ) : null}
                 </div>
 
-                <div className="mt-3 overflow-hidden rounded-2xl border border-stone-200">
-                  <table className="min-w-full divide-y divide-stone-200 text-sm">
+                <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
+                  <table className="min-w-[960px] divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-left text-xs font-medium text-stone-500">
                       <tr>
                         <th className="px-4 py-3">导师</th>
                         <th className="px-4 py-3">状态</th>
                         <th className="px-4 py-3">匹配分</th>
                         <th className="px-4 py-3">说明</th>
-                        <th className="px-4 py-3">Token</th>
+                        <th className="px-4 py-3">Token 明细</th>
                         <th className="px-4 py-3">更新时间</th>
                       </tr>
                     </thead>
@@ -4304,7 +4382,14 @@ export const TasksPage = () => {
                               {item.error_message || item.skip_reason || "已完成"}
                             </td>
                             <td className="px-4 py-3 align-top">
-                              {item.total_tokens.toLocaleString("zh-CN")}
+                              <TokenUsageBreakdown
+                                inputTokens={item.prompt_tokens}
+                                outputTokens={item.completion_tokens}
+                                cachedTokens={item.cached_tokens}
+                                totalTokens={item.total_tokens}
+                                ariaLabel={`${item.professor_name} Token 使用明细`}
+                                className="min-w-48"
+                              />
                             </td>
                             <td className="px-4 py-3 align-top">
                               {formatDisplayTime(item.updated_at, { withSeconds: true })}
@@ -4378,7 +4463,7 @@ export const TasksPage = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-              <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">成功</div>
                   <div className="mt-2 text-sm font-semibold text-stone-900">
@@ -4404,20 +4489,22 @@ export const TasksPage = () => {
                   </div>
                 </div>
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">总 Token</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedInformationEnrichmentJob.total_tokens.toLocaleString(
-                      "zh-CN",
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">耗时</div>
                   <div className="mt-2 text-sm font-semibold text-stone-900">
                     {formatDuration(selectedInformationEnrichmentJob.duration_seconds)}
                   </div>
                 </div>
               </div>
+
+              <TokenUsageBreakdown
+                inputTokens={selectedInformationEnrichmentJob.input_tokens}
+                outputTokens={selectedInformationEnrichmentJob.output_tokens}
+                cachedTokens={selectedInformationEnrichmentJob.cached_tokens}
+                totalTokens={selectedInformationEnrichmentJob.total_tokens}
+                ariaLabel="信息补全任务 Token 使用汇总"
+                variant="metrics"
+                className="mt-3"
+              />
 
               {selectedInformationEnrichmentJob.last_error ? (
                 <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
@@ -4447,7 +4534,7 @@ export const TasksPage = () => {
                         <th className="px-4 py-3">状态</th>
                         <th className="px-4 py-3">补全字段</th>
                         <th className="px-4 py-3">说明</th>
-                        <th className="px-4 py-3">Token / 尝试</th>
+                        <th className="px-4 py-3">Token 明细 / 尝试</th>
                         <th className="px-4 py-3">主页 / 完成时间</th>
                       </tr>
                     </thead>
@@ -4515,7 +4602,14 @@ export const TasksPage = () => {
                                 </div>
                               </td>
                               <td className="px-4 py-3 align-top">
-                                <div>{item.total_tokens.toLocaleString("zh-CN")}</div>
+                                <TokenUsageBreakdown
+                                  inputTokens={item.input_tokens}
+                                  outputTokens={item.output_tokens}
+                                  cachedTokens={item.cached_tokens}
+                                  totalTokens={item.total_tokens}
+                                  ariaLabel={`${item.professor_name} Token 使用明细`}
+                                  className="min-w-48"
+                                />
                                 <div className="mt-1 text-xs text-stone-500">
                                   尝试 {item.attempt_count} 次
                                 </div>
