@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BackgroundTaskNotificationProvider } from "@/context/BackgroundTaskNotificationContext";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { ProfessorsPage } from "@/pages/ProfessorsPage";
 
@@ -40,7 +41,9 @@ const renderPage = () =>
   render(
     <MemoryRouter>
       <NotificationProvider>
-        <ProfessorsPage />
+        <BackgroundTaskNotificationProvider>
+          <ProfessorsPage />
+        </BackgroundTaskNotificationProvider>
       </NotificationProvider>
     </MemoryRouter>,
   );

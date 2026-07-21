@@ -117,3 +117,13 @@ export function isCrawlEnrichmentCompletionEvent(
     event.message.trim().startsWith("候选导师详情补全完成：")
   );
 }
+
+export function getCrawlEnrichmentCompletionEventKeys(
+  events: CrawlJobEventDTO[],
+): Set<string> {
+  return new Set(
+    events
+      .filter(isCrawlEnrichmentCompletionEvent)
+      .map(getCrawlEventStableKey),
+  );
+}

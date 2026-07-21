@@ -9,6 +9,7 @@ import { DesktopStartupStatusBanner } from '@/components/organisms/DesktopStartu
 import { KeepAliveLayout } from '@/components/organisms/KeepAliveLayout';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
+import { BackgroundTaskNotificationProvider } from '@/context/BackgroundTaskNotificationContext';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';
@@ -48,21 +49,23 @@ const AppShell = () => (
   <>
     <RouteScrollRestoration />
     <NotificationProvider>
-      <DesktopBackendProvider>
-        <WorkspaceDraftGuardProvider>
-          <SelectionProvider>
-            <div className="flex min-h-screen flex-col bg-background">
-              <DesktopStartupStatusBanner />
-              <TopNavBar />
-              <div className="min-h-0 flex-1">
-                <Suspense fallback={routeLoadingFallback}>
-                  <Outlet />
-                </Suspense>
+      <BackgroundTaskNotificationProvider>
+        <DesktopBackendProvider>
+          <WorkspaceDraftGuardProvider>
+            <SelectionProvider>
+              <div className="flex min-h-screen flex-col bg-background">
+                <DesktopStartupStatusBanner />
+                <TopNavBar />
+                <div className="min-h-0 flex-1">
+                  <Suspense fallback={routeLoadingFallback}>
+                    <Outlet />
+                  </Suspense>
+                </div>
               </div>
-            </div>
-          </SelectionProvider>
-        </WorkspaceDraftGuardProvider>
-      </DesktopBackendProvider>
+            </SelectionProvider>
+          </WorkspaceDraftGuardProvider>
+        </DesktopBackendProvider>
+      </BackgroundTaskNotificationProvider>
     </NotificationProvider>
   </>
 );

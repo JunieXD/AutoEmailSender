@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deleteMatchAnalysisJob,
+  getMatchAnalysisJob,
   restoreMatchAnalysisJob,
 } from "@/lib/api/matchAnalysisJobsApi";
 
@@ -26,6 +27,14 @@ describe("matchAnalysisJobsApi", () => {
         method: "POST",
       },
     );
+  });
+
+  it("gets one match analysis job for background monitoring", async () => {
+    mockedApiFetch.mockResolvedValue({});
+
+    await getMatchAnalysisJob(7);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith("/api/match-analysis-jobs/7");
   });
 
   it("restores a match analysis job from trash with the expected URL", async () => {

@@ -59,6 +59,16 @@ vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notificationMock,
 }));
 
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => ({
+    stopTrackingInformationEnrichmentJob: vi.fn(),
+    trackCrawlCandidateEnrichment: vi.fn(),
+    trackCrawlJob: vi.fn(),
+    trackInformationEnrichmentJob: vi.fn(),
+    trackMatchAnalysisJob: vi.fn(),
+  }),
+}));
+
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionContextValue,
 }));

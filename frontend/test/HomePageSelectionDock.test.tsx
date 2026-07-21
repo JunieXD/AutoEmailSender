@@ -9,6 +9,12 @@ import type {
 } from "@/types";
 import { HomePage } from "@/pages/HomePage";
 
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => ({
+    trackMatchAnalysisJob: vi.fn(),
+  }),
+}));
+
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => ({
     notifyError: vi.fn(),

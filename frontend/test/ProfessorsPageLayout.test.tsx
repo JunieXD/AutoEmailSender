@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BackgroundTaskNotificationProvider } from "@/context/BackgroundTaskNotificationContext";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { ProfessorsPage } from "@/pages/ProfessorsPage";
@@ -156,7 +157,9 @@ const renderPage = () =>
   render(
     <MemoryRouter>
       <NotificationProvider>
-        <ProfessorsPage />
+        <BackgroundTaskNotificationProvider>
+          <ProfessorsPage />
+        </BackgroundTaskNotificationProvider>
       </NotificationProvider>
     </MemoryRouter>,
   );
@@ -425,7 +428,7 @@ describe("ProfessorsPage layout", () => {
       );
     });
     expect(screen.getByRole("button", { name: "智能补全" })).toBeDisabled();
-    expect(await screen.findByText("正在智能补全")).toBeInTheDocument();
+    expect(screen.queryByText("正在智能补全")).not.toBeInTheDocument();
   });
 
   it("shows the original single-enrichment error after the job finishes", async () => {
@@ -496,7 +499,26 @@ describe("ProfessorsPage layout", () => {
     expect(screen.getByText("导师已在回收站")).toBeInTheDocument();
   });
 
-  it("creates a batch information enrichment job for selected professors", async () => {
+  it("reports the result after a batch information enrichment job finishes", async () => {
+    getProfessorInformationEnrichmentJob.mockResolvedValue({
+      ...informationEnrichmentJob,
+      id: 72,
+      name: "信息补全 2026-04-24",
+      trigger_mode: "batch",
+      status: "completed",
+      completed_count: 1,
+      queued_count: 0,
+      running_count: 0,
+      succeeded_count: 1,
+      finished_at: "2026-04-24T00:00:20Z",
+    });
+    listProfessorInformationEnrichmentItems.mockResolvedValue([
+      buildInformationEnrichmentItem({
+        job_id: 72,
+        status: "succeeded",
+        enriched_fields: ["department"],
+      }),
+    ]);
     renderPage();
 
     await waitFor(() => {
@@ -524,8 +546,11 @@ describe("ProfessorsPage layout", () => {
         llmProfileId: 7,
       });
     });
-    expect(await screen.findByText("批量信息补全已创建")).toBeInTheDocument();
-    expect(screen.getByText(/已排队 1 位，跳过 0 位/)).toBeInTheDocument();
+    expect(screen.queryByText("批量信息补全已创建")).not.toBeInTheDocument();
+    expect(await screen.findByText("批量信息补全完成")).toBeInTheDocument();
+    expect(
+      screen.getByText("成功 1 位，失败 0 位，跳过 0 位，取消 0 位，共补全 1 项信息。"),
+    ).toBeInTheDocument();
   });
 
   it("opens editable homepage and source links with the desktop default browser", async () => {

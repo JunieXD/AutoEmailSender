@@ -21,6 +21,7 @@ import {
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
+import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
@@ -86,9 +87,8 @@ import {
 } from "@/features/crawl-review/client/reviewCandidates";
 import {
   getCandidateEnrichmentFailureMessage,
-  getCrawlEventStableKey,
+  getCrawlEnrichmentCompletionEventKeys,
   getCrawlEventFailureReason,
-  isCrawlEnrichmentCompletionEvent,
 } from "@/features/crawl-review/client/crawlJobEvents";
 import {
   buildBatchPendingItemAction,
@@ -253,15 +253,6 @@ const SCHEDULE_DATE_PATTERN = /^\d{4}-(\d{2})-(\d{2})$/;
 const TASKS_PAGE_SIZE = 8;
 const MONITOR_SECTION_PAGE_SIZE = 5;
 const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;
-
-const getCrawlEnrichmentCompletionEventKeys = (
-  events: CrawlJobEventDTO[],
-): Set<string> =>
-  new Set(
-    events
-      .filter(isCrawlEnrichmentCompletionEvent)
-      .map(getCrawlEventStableKey),
-  );
 
 const formatScheduleDate = (value: string) => {
   const match = SCHEDULE_DATE_PATTERN.exec(value);
@@ -733,6 +724,13 @@ export const TasksPage = () => {
   const navigate = useNavigate();
   const { selectedIdentityId, selectedLlmProfileId, setSelectedIdentityId } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
+  const {
+    stopTrackingInformationEnrichmentJob,
+    trackCrawlCandidateEnrichment,
+    trackCrawlJob,
+    trackInformationEnrichmentJob,
+    trackMatchAnalysisJob,
+  } = useBackgroundTaskNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const hasTaskSelection = selectedIdentityId !== null;
   const [activeTab, setActiveTab] = useState<TasksTab>(() =>
@@ -857,9 +855,6 @@ export const TasksPage = () => {
   const matchJobsPreloadedKeyRef = useRef<string | null>(null);
   const informationEnrichmentJobsPreloadedRef = useRef(false);
   const activeTasksRequestKeyRef = useRef<string | null>(null);
-  const pendingCrawlEnrichmentCompletionRef = useRef<
-    Map<number, Set<string>>
-  >(new Map());
   const previousTaskListViewsRef = useRef(taskListViews);
   const previousSelectedBatchTaskIdRef = useRef(selectedBatchTask?.id);
   const previousSelectedCrawlJobIdRef = useRef(selectedCrawlJob?.id ?? null);
@@ -1516,19 +1511,6 @@ export const TasksPage = () => {
         if (latestCrawlJobDetailsRequestIdRef.current !== requestId) {
           return;
         }
-        const completionBaseline =
-          pendingCrawlEnrichmentCompletionRef.current.get(jobId);
-        if (completionBaseline) {
-          const completedEvent = events.find(
-            (event) =>
-              isCrawlEnrichmentCompletionEvent(event) &&
-              !completionBaseline.has(getCrawlEventStableKey(event)),
-          );
-          if (completedEvent) {
-            notifySuccess("候选信息补全完成", completedEvent.message);
-            pendingCrawlEnrichmentCompletionRef.current.delete(jobId);
-          }
-        }
         setSelectedCrawlJob(job);
         setCrawlJobPages(pages);
         setCrawlJobCandidates(candidates);
@@ -1555,7 +1537,7 @@ export const TasksPage = () => {
         }
       }
     },
-    [notifyError, notifySuccess],
+    [notifyError],
   );
 
   useEffect(() => {
@@ -1936,7 +1918,8 @@ export const TasksPage = () => {
     });
     setResumingCrawlJobId(jobId);
     try {
-      await resumeCrawlJob(jobId, llmProfileId);
+      const job = await resumeCrawlJob(jobId, llmProfileId);
+      trackCrawlJob(job);
       safeRecordUserAction({
         eventName: "tasks.crawl_job_resume_succeeded",
         data: diagnosticData,
@@ -2022,10 +2005,11 @@ export const TasksPage = () => {
     });
     setRetryingCrawlJobId(jobId);
     try {
-      await retryCrawlJob(jobId, {
+      const job = await retryCrawlJob(jobId, {
         clear_existing_data: true,
         llmProfileId,
       });
+      trackCrawlJob(job);
       safeRecordUserAction({
         eventName: "tasks.crawl_job_retry_succeeded",
         data: diagnosticData,
@@ -2120,6 +2104,7 @@ export const TasksPage = () => {
     try {
       const job = await retryFailedMatchAnalysisJob(jobId);
       setMatchAnalysisJobs((currentJobs) => [job, ...currentJobs]);
+      trackMatchAnalysisJob(job);
       notifySuccess("已创建重试任务", "失败项已重新加入后台匹配分析队列。");
     } catch (actionError) {
       const message =
@@ -2156,6 +2141,7 @@ export const TasksPage = () => {
       if (selectedInformationEnrichmentJob?.id === jobId) {
         setSelectedInformationEnrichmentJob(result.job);
       }
+      stopTrackingInformationEnrichmentJob(jobId);
       notifySuccess("已取消信息补全任务", "已写入的导师信息不会回退。");
     } catch (actionError) {
       const message =
@@ -2176,6 +2162,7 @@ export const TasksPage = () => {
       const job = await retryFailedProfessorInformationEnrichmentJob(jobId);
       setInformationEnrichmentJobs((currentJobs) => [job, ...currentJobs]);
       setCurrentInformationEnrichmentJobs((currentJobs) => [job, ...currentJobs]);
+      trackInformationEnrichmentJob(job);
       notifySuccess("已创建重试任务", "失败或取消项已重新加入信息补全队列。");
     } catch (actionError) {
       const message =
@@ -2271,7 +2258,7 @@ export const TasksPage = () => {
         selectedReviewableCrawlCandidateIds,
         llmProfileId,
       );
-      pendingCrawlEnrichmentCompletionRef.current.set(
+      trackCrawlCandidateEnrichment(
         selectedCrawlJobId,
         completionEventBaseline,
       );
@@ -2290,9 +2277,6 @@ export const TasksPage = () => {
   };
 
   const closeCrawlJobDetails = () => {
-    if (selectedCrawlJobId !== null) {
-      pendingCrawlEnrichmentCompletionRef.current.delete(selectedCrawlJobId);
-    }
     latestCrawlJobDetailsRequestIdRef.current += 1;
     setSelectedCrawlJob(null);
     setCrawlJobPages([]);

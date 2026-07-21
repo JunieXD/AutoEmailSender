@@ -8,6 +8,16 @@ import type { WorkspaceThreadDTO } from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => ({
+    stopTrackingInformationEnrichmentJob: vi.fn(),
+    trackCrawlCandidateEnrichment: vi.fn(),
+    trackCrawlJob: vi.fn(),
+    trackInformationEnrichmentJob: vi.fn(),
+    trackMatchAnalysisJob: vi.fn(),
+  }),
+}));
+
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
 }));

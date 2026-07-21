@@ -34,6 +34,9 @@ export const listMatchAnalysisJobItems = (jobId: number) =>
     `/api/match-analysis-jobs/${jobId}/items`,
   );
 
+export const getMatchAnalysisJob = (jobId: number) =>
+  apiFetch<MatchAnalysisJobDTO>(`/api/match-analysis-jobs/${jobId}`);
+
 export const cancelMatchAnalysisJob = (jobId: number) =>
   apiFetch<{ ok: boolean; job: MatchAnalysisJobDTO }>(
     `/api/match-analysis-jobs/${jobId}/cancel`,

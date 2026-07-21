@@ -15,6 +15,13 @@ const mockedChoose = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifySuccess = vi.hoisted(() => vi.fn());
 const mockedNotifyWarning = vi.hoisted(() => vi.fn());
+const mockedTrackMatchAnalysisJob = vi.hoisted(() => vi.fn());
+
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => ({
+    trackMatchAnalysisJob: mockedTrackMatchAnalysisJob,
+  }),
+}));
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
@@ -140,6 +147,7 @@ describe("HomePage match analysis", () => {
     mockedNotifyError.mockReset();
     mockedNotifySuccess.mockReset();
     mockedNotifyWarning.mockReset();
+    mockedTrackMatchAnalysisJob.mockReset();
     mockedUseSelectionContext.mockReturnValue({
       selectedIdentityId: 1,
       selectedLlmProfileId: 1,
@@ -236,6 +244,10 @@ describe("HomePage match analysis", () => {
         professor_ids: [101, 102],
         name: null,
       });
+    });
+    expect(mockedTrackMatchAnalysisJob).toHaveBeenCalledWith({
+      id: 1,
+      target_count: 2,
     });
   });
 

@@ -76,6 +76,13 @@ const notificationMocks = vi.hoisted(() => ({
   notifyError: vi.fn(),
   notifySuccess: vi.fn(),
 }));
+const backgroundTaskNotificationMocks = vi.hoisted(() => ({
+  stopTrackingInformationEnrichmentJob: vi.fn(),
+  trackCrawlCandidateEnrichment: vi.fn(),
+  trackCrawlJob: vi.fn(),
+  trackInformationEnrichmentJob: vi.fn(),
+  trackMatchAnalysisJob: vi.fn(),
+}));
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -99,6 +106,10 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notificationMocks,
+}));
+
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => backgroundTaskNotificationMocks,
 }));
 
 vi.mock("@/lib/useConfirmDialog", () => ({
@@ -451,7 +462,8 @@ describe("TasksPage crawl job action copy", () => {
 
   it("uses re-crawl wording after retrying a failed crawl job", async () => {
     apiMocks.listCrawlJobs.mockResolvedValue([buildCrawlJob()]);
-    apiMocks.retryCrawlJob.mockResolvedValue(buildCrawlJob({ status: "queued" }));
+    const retriedJob = buildCrawlJob({ status: "queued" });
+    apiMocks.retryCrawlJob.mockResolvedValue(retriedJob);
 
     render(
       <MemoryRouter>
@@ -471,6 +483,32 @@ describe("TasksPage crawl job action copy", () => {
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
       "抓取任务已重新加入队列",
       "任务已进入队列，稍后开始执行",
+    );
+    expect(backgroundTaskNotificationMocks.trackCrawlJob).toHaveBeenCalledWith(
+      retriedJob,
+    );
+  });
+
+  it("tracks a resumed crawl job globally", async () => {
+    const pausedJob = buildCrawlJob({ status: "paused" });
+    const resumedJob = buildCrawlJob({ status: "queued" });
+    apiMocks.listCrawlJobs.mockResolvedValue([pausedJob]);
+    apiMocks.resumeCrawlJob.mockResolvedValue(resumedJob);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "继续抓取" }));
+
+    await waitFor(() => {
+      expect(apiMocks.resumeCrawlJob).toHaveBeenCalledWith(9, 2);
+    });
+    expect(backgroundTaskNotificationMocks.trackCrawlJob).toHaveBeenCalledWith(
+      resumedJob,
     );
   });
 });
@@ -786,6 +824,44 @@ beforeEach(() => {
   });
 });
 
+describe("TasksPage match analysis notifications", () => {
+  it("tracks a retried match analysis job globally", async () => {
+    const failedJob = buildMatchAnalysisJob({
+      status: "partial_failed",
+      succeeded_count: 0,
+      failed_count: 1,
+      last_error: "分析失败",
+    });
+    const retriedJob = buildMatchAnalysisJob({
+      id: 32,
+      status: "queued",
+      succeeded_count: 0,
+      failed_count: 0,
+      started_at: null,
+      finished_at: null,
+      last_error: null,
+    });
+    apiMocks.listMatchAnalysisJobs.mockResolvedValue([failedJob]);
+    apiMocks.retryFailedMatchAnalysisJob.mockResolvedValue(retriedJob);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "匹配分析" }));
+    fireEvent.click(await screen.findByRole("button", { name: "重试失败项" }));
+
+    await waitFor(() => {
+      expect(apiMocks.retryFailedMatchAnalysisJob).toHaveBeenCalledWith(31);
+    });
+    expect(
+      backgroundTaskNotificationMocks.trackMatchAnalysisJob,
+    ).toHaveBeenCalledWith(retriedJob);
+  });
+});
+
 describe("TasksPage information enrichment", () => {
   it("keeps the information enrichment tab available without an identity", async () => {
     selectionMock.selectedIdentityId = null;
@@ -907,6 +983,9 @@ describe("TasksPage information enrichment", () => {
         51,
       );
     });
+    expect(
+      backgroundTaskNotificationMocks.stopTrackingInformationEnrichmentJob,
+    ).toHaveBeenCalledWith(51);
 
     fireEvent.click(await screen.findByRole("button", { name: "重试失败项" }));
 
@@ -919,6 +998,9 @@ describe("TasksPage information enrichment", () => {
       "已创建重试任务",
       "失败或取消项已重新加入信息补全队列。",
     );
+    expect(
+      backgroundTaskNotificationMocks.trackInformationEnrichmentJob,
+    ).toHaveBeenCalledWith(retriedJob);
   });
 });
 

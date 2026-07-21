@@ -158,6 +158,16 @@ vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notifyMock,
 }));
 
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => ({
+    stopTrackingInformationEnrichmentJob: vi.fn(),
+    trackCrawlCandidateEnrichment: vi.fn(),
+    trackCrawlJob: vi.fn(),
+    trackInformationEnrichmentJob: vi.fn(),
+    trackMatchAnalysisJob: vi.fn(),
+  }),
+}));
+
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionContextValue,
 }));
@@ -349,7 +359,9 @@ describe("selection controls", () => {
       "w-fit",
       "max-w-full",
       "justify-center",
+      "pointer-events-auto",
     );
+    expect(homeSelectionDock?.parentElement).toHaveClass("pointer-events-none");
     expect(homeSelectionDock).not.toHaveClass("max-w-3xl", "justify-between");
     expect(
       screen.getByRole("button", { name: "清空选择" }),
@@ -572,6 +584,10 @@ describe("selection controls", () => {
       "max-w-full",
       "flex-col",
       "items-start",
+      "pointer-events-auto",
+    );
+    expect(managementSelectionDock?.parentElement).toHaveClass(
+      "pointer-events-none",
     );
     expect(managementSelectionDock).not.toHaveClass(
       "max-w-3xl",

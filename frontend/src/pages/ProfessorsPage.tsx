@@ -43,6 +43,7 @@ import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
 import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
+import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
@@ -64,7 +65,6 @@ import {
   createSingleProfessorInformationEnrichment,
   getActiveProfessorInformationEnrichment,
   getProfessorInformationEnrichmentJob,
-  listProfessorInformationEnrichmentItems,
 } from "@/lib/api/professorInformationEnrichmentApi";
 import {
   archiveProfessor,
@@ -123,13 +123,6 @@ import {
 
 type ArchiveFilter = "active" | "archived" | "all";
 const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "无" };
-const informationEnrichmentFieldLabels: Record<string, string> = {
-  email: "邮箱",
-  title: "职称",
-  department: "系所",
-  research_direction: "研究方向",
-  recent_papers: "近期论文",
-};
 const activeInformationEnrichmentStatuses = new Set(["queued", "running"]);
 type TrackedSingleInformationEnrichment = {
   job: ProfessorInformationEnrichmentJobDTO;
@@ -696,6 +689,8 @@ export const ProfessorsPage = () => {
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { selectedLlmProfileId } = useSelectionContext();
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
+  const { trackCrawlJob, trackInformationEnrichmentJob } =
+    useBackgroundTaskNotification();
   const storedState = useMemo(() => {
     const state = readStoredProfessorManagementState();
     if (!linkedKeyword) {
@@ -764,7 +759,6 @@ export const ProfessorsPage = () => {
     useState<Record<number, TrackedSingleInformationEnrichment>>({});
   const [creatingBulkInformationEnrichment, setCreatingBulkInformationEnrichment] =
     useState(false);
-  const notifiedInformationEnrichmentJobIdsRef = useRef<Set<number>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -930,51 +924,9 @@ export const ProfessorsPage = () => {
   );
 
   const handleSingleInformationEnrichmentFinished = useCallback(
-    async (
-      professorId: number,
-      tracked: TrackedSingleInformationEnrichment,
-      job: ProfessorInformationEnrichmentJobDTO,
-    ) => {
-      if (notifiedInformationEnrichmentJobIdsRef.current.has(job.id)) {
-        return;
-      }
-      notifiedInformationEnrichmentJobIdsRef.current.add(job.id);
+    async (professorId: number) => {
       try {
-        const items = await listProfessorInformationEnrichmentItems(job.id);
-        const item =
-          items.find((candidate) => candidate.professor_id === professorId) ?? items[0];
-        if (item?.status === "failed" || job.status === "failed") {
-          notifyError(
-            `补全失败：${tracked.professorName}`,
-            item?.error_message ?? job.last_error ?? "信息补全失败",
-          );
-        } else if (item?.status === "canceled" || job.status === "canceled") {
-          notifyWarning(
-            `补全已取消：${tracked.professorName}`,
-            item?.error_message ?? "本次信息补全已取消。",
-          );
-        } else if (item?.status === "skipped") {
-          notifyWarning(
-            `补全已跳过：${tracked.professorName}`,
-            item.skip_reason ?? "当前导师不满足信息补全条件。",
-          );
-        } else {
-          const labels = (item?.enriched_fields ?? [])
-            .map((field) => informationEnrichmentFieldLabels[field] ?? field)
-            .join("、");
-          notifySuccess(
-            `补全完成：${tracked.professorName}`,
-            labels
-              ? `已补全：${labels}。`
-              : "补全过程完成，但没有发现可新增的信息。",
-          );
-        }
         await refreshProfessorAfterInformationEnrichment(professorId);
-      } catch (error) {
-        notifyError(
-          `读取补全结果失败：${tracked.professorName}`,
-          getActionErrorMessage(error, "读取信息补全结果失败"),
-        );
       } finally {
         setSingleInformationEnrichments((previous) => {
           const next = { ...previous };
@@ -983,12 +935,7 @@ export const ProfessorsPage = () => {
         });
       }
     },
-    [
-      notifyError,
-      notifySuccess,
-      notifyWarning,
-      refreshProfessorAfterInformationEnrichment,
-    ],
+    [refreshProfessorAfterInformationEnrichment],
   );
 
   useEffect(() => {
@@ -1018,11 +965,7 @@ export const ProfessorsPage = () => {
               });
               return;
             }
-            await handleSingleInformationEnrichmentFinished(
-              professorId,
-              tracked,
-              job,
-            );
+            await handleSingleInformationEnrichmentFinished(professorId);
           } catch {
             // Transient polling failures are retried without ending the task state.
           }
@@ -1237,6 +1180,9 @@ export const ProfessorsPage = () => {
     void getActiveProfessorInformationEnrichment(professor.id)
       .then((result) => {
         if (result.active && result.job) {
+          trackInformationEnrichmentJob(result.job, {
+            professorName: professor.name,
+          });
           setSingleInformationEnrichments((previous) => ({
             ...previous,
             [professor.id]: { job: result.job!, professorName: professor.name },
@@ -1306,10 +1252,9 @@ export const ProfessorsPage = () => {
         ...previous,
         [professorId]: { job, professorName: editingProfessor.name },
       }));
-      notifyWarning(
-        "正在智能补全",
-        `正在为“${editingProfessor.name}”访问导师主页并补全资料。`,
-      );
+      trackInformationEnrichmentJob(job, {
+        professorName: editingProfessor.name,
+      });
     } catch (error) {
       notifyError(
         `无法补全：${editingProfessor.name}`,
@@ -1353,10 +1298,7 @@ export const ProfessorsPage = () => {
         professorIds: Array.from(selectedIds),
         llmProfileId: selectedLlmProfileId,
       });
-      notifySuccess(
-        "批量信息补全已创建",
-        `已排队 ${job.queued_count} 位，跳过 ${job.skipped_count} 位，可在任务中心查看。`,
-      );
+      trackInformationEnrichmentJob(job);
     } catch (error) {
       notifyError(
         "创建批量信息补全失败",
@@ -1885,7 +1827,8 @@ export const ProfessorsPage = () => {
     });
     setCreatingCrawlJob(true);
     try {
-      await createCrawlJob(payload);
+      const job = await createCrawlJob(payload);
+      trackCrawlJob(job);
       safeRecordUserAction({
         eventName: "professors.crawl_job_create_succeeded",
         data: diagnosticData,
@@ -2571,8 +2514,8 @@ export const ProfessorsPage = () => {
       </section>
 
       {selectedIds.size > 0 ? (
-        <div className="sticky bottom-4 z-20 mt-6 flex justify-center px-2">
-          <div className="flex w-fit max-w-full flex-col items-start gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
+        <div className="pointer-events-none sticky bottom-4 z-20 mt-6 flex justify-center px-2">
+          <div className="pointer-events-auto flex w-fit max-w-full flex-col items-start gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
             <div>
               <div className="text-sm font-medium text-stone-900">
                 已选中 {selectedIds.size} 位导师

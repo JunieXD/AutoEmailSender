@@ -14,6 +14,12 @@ const updateProfessorNote = vi.hoisted(() => vi.fn());
 const notifyError = vi.hoisted(() => vi.fn());
 const notifySuccess = vi.hoisted(() => vi.fn());
 
+vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+  useBackgroundTaskNotification: () => ({
+    trackMatchAnalysisJob: vi.fn(),
+  }),
+}));
+
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => ({
     notifyError,

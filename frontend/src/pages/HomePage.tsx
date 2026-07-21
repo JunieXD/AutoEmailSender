@@ -27,6 +27,7 @@ import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTa
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
@@ -303,6 +304,7 @@ export const HomePage = () => {
   const navigate = useNavigate();
   const { choose, confirm, dialog: confirmDialog } = useConfirmDialog();
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
+  const { trackMatchAnalysisJob } = useBackgroundTaskNotification();
   const {
     selectedIdentityId,
     selectedLlmProfileId,
@@ -1126,6 +1128,7 @@ export const HomePage = () => {
         professor_ids: professorIdsForJob,
         name: null,
       });
+      trackMatchAnalysisJob(job);
       notifySuccess(
         "已创建批量匹配分析任务",
         `任务中心会继续后台分析 ${job.target_count} 位导师。`,
@@ -1576,8 +1579,8 @@ export const HomePage = () => {
         </section>
 
         {selectedIds.size > 0 ? (
-          <div className="sticky bottom-4 z-20 mt-6 flex justify-center px-2">
-            <div className="flex w-fit max-w-full flex-wrap items-center justify-center gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
+          <div className="pointer-events-none sticky bottom-4 z-20 mt-6 flex justify-center px-2">
+            <div className="pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
               <div className="shrink-0">
                 <div className="text-sm font-medium text-stone-900">
                   已选中 {selectedIds.size} 位导师
