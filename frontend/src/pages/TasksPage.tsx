@@ -1855,15 +1855,18 @@ export const TasksPage = () => {
   }, [selectedCrawlJobId]);
 
   useEffect(() => {
-    if (!selectedCandidateDetail) {
+    if (!selectedCrawlJobId) {
       return;
     }
-    const originalOverflow = document.body.style.overflow;
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalDocumentOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = originalOverflow;
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalDocumentOverflow;
     };
-  }, [selectedCandidateDetail]);
+  }, [selectedCrawlJobId]);
 
   const handleAction = async (
     taskId: number,
@@ -4682,7 +4685,10 @@ export const TasksPage = () => {
               </button>
             </div>
 
-            <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <div
+              data-testid="crawl-job-detail-scroll"
+              className="flex-1 space-y-6 overflow-y-auto overscroll-contain px-6 py-5"
+            >
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">

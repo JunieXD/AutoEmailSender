@@ -259,6 +259,12 @@ describe("TasksPage crawler jobs tab", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByTestId("crawl-job-detail-scroll")).toHaveClass(
+      "overflow-y-auto",
+      "overscroll-contain",
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     expect(listCrawlPages).toHaveBeenCalledWith(7);
     expect(listCrawlCandidates).toHaveBeenCalledWith(7);
     expect(getCrawlJobEvents).toHaveBeenCalledWith(7);
@@ -290,6 +296,8 @@ describe("TasksPage crawler jobs tab", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "抓取任务详情" })).not.toBeInTheDocument();
     });
+    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
   });
 
   it("keeps long candidate detail content scrollable inside the dialog", async () => {
@@ -342,7 +350,8 @@ describe("TasksPage crawler jobs tab", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "候选导师详情" })).not.toBeInTheDocument();
     });
-    expect(document.body.style.overflow).toBe("");
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
   });
 
   it("opens candidate profile and source links with the desktop default browser when available", async () => {
