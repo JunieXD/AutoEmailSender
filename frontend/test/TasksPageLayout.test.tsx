@@ -348,6 +348,12 @@ describe("TasksPage layout", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "批量任务详情" });
     expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByTestId("batch-task-detail-scroll")).toHaveClass(
+      "overflow-y-auto",
+      "overscroll-contain",
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     expect(listBatchTaskItems).toHaveBeenCalledWith(3);
     expect(within(dialog).getByText("春季套磁任务")).toBeInTheDocument();
     expect(within(dialog).getByText("申请加入课题组")).toBeInTheDocument();
@@ -374,6 +380,8 @@ describe("TasksPage layout", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量任务详情" })).not.toBeInTheDocument();
     });
+    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
   });
 
   it("paginates batch task cards", async () => {

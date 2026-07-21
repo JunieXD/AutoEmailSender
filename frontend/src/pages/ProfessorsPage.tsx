@@ -59,6 +59,7 @@ import {
 } from "@/lib/externalUrls";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
+import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import {
   createProfessorInformationEnrichmentJob,
@@ -574,6 +575,7 @@ const ModalShell = ({
     onContentMouseDown,
   } =
     useDismissableLayerClick(onClose);
+  useDocumentScrollLock(open);
 
   useEffect(() => {
     if (!open) {
@@ -609,7 +611,10 @@ const ModalShell = ({
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >
-        <div className="relative max-h-[85vh] overflow-y-auto px-6 py-6">
+        <div
+          data-testid="professor-modal-scroll"
+          className="relative max-h-[85vh] overflow-y-auto overscroll-contain px-6 py-6"
+        >
           <div className="min-w-0">
             <div className="flex min-w-0 items-start justify-between gap-4">
               <h2 className="min-w-0 break-words text-2xl font-semibold tracking-[0.01em] text-stone-900">

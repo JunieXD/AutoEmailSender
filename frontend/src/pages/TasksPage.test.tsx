@@ -936,6 +936,12 @@ describe("TasksPage match analysis token usage", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "匹配分析任务详情",
     });
+    expect(within(dialog).getByTestId("match-job-detail-scroll")).toHaveClass(
+      "overflow-y-auto",
+      "overscroll-contain",
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     const detailSummary = within(dialog).getByLabelText(
       "匹配分析任务 Token 使用汇总",
     );
@@ -1023,6 +1029,11 @@ describe("TasksPage information enrichment", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "信息补全任务详情",
     });
+    expect(
+      within(dialog).getByTestId("information-enrichment-detail-scroll"),
+    ).toHaveClass("overflow-y-auto", "overscroll-contain");
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     const detailSummary = within(dialog).getByLabelText(
       "信息补全任务 Token 使用汇总",
     );

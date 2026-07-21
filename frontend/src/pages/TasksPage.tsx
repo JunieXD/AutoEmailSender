@@ -28,6 +28,7 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
+import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
   approveAndSendBatchTaskItemDraft,
@@ -1284,6 +1285,13 @@ export const TasksPage = () => {
     [crawlCandidatePage, crawlJobCandidates],
   );
   const selectedCrawlJobId = selectedCrawlJob?.id ?? null;
+  const taskDetailDialogOpen =
+    selectedBatchTask !== null ||
+    selectedMatchJob !== null ||
+    selectedInformationEnrichmentJob !== null ||
+    selectedCrawlJob !== null ||
+    resendDialogOpen;
+  useDocumentScrollLock(taskDetailDialogOpen);
   const selectedCrawlJobCanReview =
     selectedCrawlJob?.status === "needs_review" ||
     selectedCrawlJob?.status === "partially_completed";
@@ -1973,20 +1981,6 @@ export const TasksPage = () => {
     setCrawlEventPage(1);
     setCrawlDetailPagePage(1);
     setCrawlCandidatePage(1);
-  }, [selectedCrawlJobId]);
-
-  useEffect(() => {
-    if (!selectedCrawlJobId) {
-      return;
-    }
-    const originalBodyOverflow = document.body.style.overflow;
-    const originalDocumentOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = originalBodyOverflow;
-      document.documentElement.style.overflow = originalDocumentOverflow;
-    };
   }, [selectedCrawlJobId]);
 
   const handleAction = async (
@@ -3818,7 +3812,10 @@ export const TasksPage = () => {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div
+              data-testid="batch-task-detail-scroll"
+              className="flex-1 overflow-y-auto overscroll-contain px-6 py-5"
+            >
               {batchDraftReviewOpen ? (
                 <div className="grid min-h-full gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
                   <aside className="rounded-3xl border border-stone-200 bg-stone-50/70 p-4">
@@ -4421,7 +4418,10 @@ export const TasksPage = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div
+              data-testid="match-job-detail-scroll"
+              className="flex-1 overflow-y-auto overscroll-contain px-6 py-5"
+            >
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">成功</div>
@@ -4622,7 +4622,10 @@ export const TasksPage = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+            <div
+              data-testid="information-enrichment-detail-scroll"
+              className="flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6"
+            >
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
                   <div className="text-xs font-medium text-stone-500">成功</div>

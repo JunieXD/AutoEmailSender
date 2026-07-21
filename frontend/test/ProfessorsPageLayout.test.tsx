@@ -390,6 +390,13 @@ describe("ProfessorsPage layout", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑导师：李教授" });
+    expect(within(dialog).getByTestId("professor-modal-scroll")).toHaveClass(
+      "overflow-y-auto",
+      "overscroll-contain",
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
     const noteInput = screen.getByLabelText("个人备注");
 
     expect(noteInput).toHaveValue("已有备注");
@@ -406,6 +413,13 @@ describe("ProfessorsPage layout", () => {
         }),
       );
     });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "编辑导师：李教授" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
   });
 
   it("starts single information enrichment from the edit dialog and disables the button", async () => {
