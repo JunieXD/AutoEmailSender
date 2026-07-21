@@ -1299,6 +1299,10 @@ export const ProfessorsPage = () => {
         llmProfileId: selectedLlmProfileId,
       });
       trackInformationEnrichmentJob(job);
+      notifySuccess(
+        "批量信息补全已创建",
+        `已排队 ${job.queued_count} 位，跳过 ${job.skipped_count} 位，可在任务中心查看。`,
+      );
     } catch (error) {
       notifyError(
         "创建批量信息补全失败",

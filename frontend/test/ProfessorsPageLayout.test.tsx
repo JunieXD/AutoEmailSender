@@ -546,7 +546,10 @@ describe("ProfessorsPage layout", () => {
         llmProfileId: 7,
       });
     });
-    expect(screen.queryByText("批量信息补全已创建")).not.toBeInTheDocument();
+    expect(await screen.findByText("批量信息补全已创建")).toBeInTheDocument();
+    expect(
+      screen.getByText("已排队 1 位，跳过 0 位，可在任务中心查看。"),
+    ).toBeInTheDocument();
     expect(await screen.findByText("批量信息补全完成")).toBeInTheDocument();
     expect(
       screen.getByText("成功 1 位，失败 0 位，跳过 0 位，取消 0 位，共补全 1 项信息。"),
