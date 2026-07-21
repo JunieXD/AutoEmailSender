@@ -506,6 +506,18 @@ describe("ProfessorsPage layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
     fireEvent.click(screen.getByRole("button", { name: "批量智能补全" }));
 
+    expect(
+      await screen.findByText("补全选中的 1 位导师信息？"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "将访问已保存的主页链接补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
+      ),
+    ).toBeInTheDocument();
+    expect(createProfessorInformationEnrichmentJob).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "开始补全" }));
+
     await waitFor(() => {
       expect(createProfessorInformationEnrichmentJob).toHaveBeenCalledWith({
         professorIds: [professor.id],

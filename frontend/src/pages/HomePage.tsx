@@ -649,7 +649,7 @@ export const HomePage = () => {
         tagNames,
       }),
       confirmLabel: labels.confirmLabel,
-      cancelLabel: "先不处理",
+      cancelLabel: "取消",
       tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
     });
     if (!confirmed) {

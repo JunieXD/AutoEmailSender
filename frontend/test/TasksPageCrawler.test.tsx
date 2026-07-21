@@ -212,7 +212,10 @@ describe("TasksPage crawler jobs tab", () => {
     expect(screen.getByText("已抓页面 12")).toBeInTheDocument();
     expect(screen.getByText("候选导师 34")).toBeInTheDocument();
     expect(screen.getByText("正在分析教师列表")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查看详情" })).toBeEnabled();
+    const detailButton = screen.getByRole("button", { name: "查看详情" });
+    expect(detailButton).toBeEnabled();
+    expect(detailButton.querySelector(".lucide-chevron-right")).not.toBeNull();
+    expect(detailButton.parentElement?.lastElementChild).toBe(detailButton);
   });
 
   it("shows crawler jobs even when no sender identity is configured", async () => {

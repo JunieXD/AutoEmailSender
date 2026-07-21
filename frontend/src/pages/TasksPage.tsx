@@ -464,15 +464,6 @@ export const CrawlJobCard = ({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 xl:ml-4 xl:max-w-[18rem] xl:justify-end">
-        <button
-          type="button"
-          onClick={() => onOpenDetails(job)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-          aria-label="查看详情"
-          title="查看详情"
-        >
-          <FileSearch className="h-4 w-4" />
-        </button>
         {listView === "trash" ? (
           <button
             type="button"
@@ -561,6 +552,15 @@ export const CrawlJobCard = ({
             </button>
           </>
         ) : null}
+        <button
+          type="button"
+          onClick={() => onOpenDetails(job)}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+          aria-label="查看详情"
+          title="查看详情"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
     </div>
   </article>

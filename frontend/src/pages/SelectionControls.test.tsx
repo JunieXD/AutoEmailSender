@@ -564,9 +564,19 @@ describe("selection controls", () => {
 
     fireEvent.click(selectFilteredResults);
 
-    expect(
-      await screen.findByText("已选中 11 位导师"),
-    ).toBeInTheDocument();
+    const selectedCount = await screen.findByText("已选中 11 位导师");
+    expect(selectedCount).toBeInTheDocument();
+    const managementSelectionDock = selectedCount.parentElement?.parentElement;
+    expect(managementSelectionDock).toHaveClass(
+      "w-fit",
+      "max-w-full",
+      "flex-col",
+      "items-start",
+    );
+    expect(managementSelectionDock).not.toHaveClass(
+      "max-w-3xl",
+      "justify-between",
+    );
     expect(
       screen.getByRole("button", { name: "清空选择" }),
     ).toBeInTheDocument();

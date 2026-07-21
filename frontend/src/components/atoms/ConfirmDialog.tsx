@@ -107,7 +107,7 @@ export const ConfirmDialog = ({
             <button
               type="button"
               onClick={onCancel}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900"
               aria-label="关闭确认弹层"
             >
               <X className="h-4 w-4" />

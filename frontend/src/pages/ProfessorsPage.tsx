@@ -616,7 +616,6 @@ const ModalShell = ({
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >
-        <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(153,27,27,0.15),transparent_70%)]" />
         <div className="relative max-h-[85vh] overflow-y-auto px-6 py-6">
           <div className="min-w-0">
             <div className="flex min-w-0 items-start justify-between gap-4">
@@ -1338,6 +1337,16 @@ export const ProfessorsPage = () => {
       notifyWarning("请先选择模型", "批量智能补全会使用当前顶部栏选择的模型。");
       return;
     }
+    const confirmed = await confirm({
+      title: `补全选中的 ${selectedIds.size} 位导师信息？`,
+      description:
+        "将访问已保存的主页链接补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
+      confirmLabel: "开始补全",
+      cancelLabel: "取消",
+    });
+    if (!confirmed) {
+      return;
+    }
     setCreatingBulkInformationEnrichment(true);
     try {
       const job = await createProfessorInformationEnrichmentJob({
@@ -1554,7 +1563,7 @@ export const ProfessorsPage = () => {
         tagNames,
       }),
       confirmLabel: labels.confirmLabel,
-      cancelLabel: "先不处理",
+      cancelLabel: "取消",
       tone: mode === "remove" || mode === "replace" ? "danger" : "neutral",
     });
     if (!confirmed) {
@@ -1669,7 +1678,7 @@ export const ProfessorsPage = () => {
       description:
         "移入回收站后，这位导师会从首页与正常列表中隐藏，但历史任务和通信会保留。",
       confirmLabel: "确认移入",
-      cancelLabel: "先不处理",
+      cancelLabel: "取消",
       tone: "danger",
     });
     if (!confirmed) {
@@ -1695,7 +1704,7 @@ export const ProfessorsPage = () => {
       title: `将选中的 ${selectedIds.size} 位导师移入回收站？`,
       description: "移入后会从首页与正常列表中隐藏，但历史任务和通信不会删除。",
       confirmLabel: "确认移入",
-      cancelLabel: "先不处理",
+      cancelLabel: "取消",
       tone: "danger",
     });
     if (!confirmed) {
@@ -1722,7 +1731,7 @@ export const ProfessorsPage = () => {
       title: `恢复选中的 ${selectedIds.size} 位导师？`,
       description: "恢复后会回到正常列表，可继续参与首页筛选和任务创建。",
       confirmLabel: "确认恢复",
-      cancelLabel: "先不处理",
+      cancelLabel: "取消",
     });
     if (!confirmed) {
       return;
@@ -2562,8 +2571,8 @@ export const ProfessorsPage = () => {
       </section>
 
       {selectedIds.size > 0 ? (
-        <div className="sticky bottom-4 z-20 mt-6">
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
+        <div className="sticky bottom-4 z-20 mt-6 flex justify-center px-2">
+          <div className="flex w-fit max-w-full flex-col items-start gap-3 rounded-[28px] border border-stone-200 bg-white/95 px-5 py-4 shadow-[0_18px_34px_-24px_rgba(41,37,36,0.36)] backdrop-blur-xl">
             <div>
               <div className="text-sm font-medium text-stone-900">
                 已选中 {selectedIds.size} 位导师
@@ -2574,7 +2583,7 @@ export const ProfessorsPage = () => {
                   : "这些导师会被移入回收站，但历史任务和通信不会删除。"}
               </div>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex max-w-full flex-wrap gap-3">
               <button
                 type="button"
                 onClick={() => setSelectedIds(new Set())}

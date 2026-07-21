@@ -23,6 +23,12 @@ describe("ConfirmDialog", () => {
     expect(container).not.toHaveTextContent("发现新版本");
     expect(screen.getByRole("heading", { name: "发现新版本" })).toBeInTheDocument();
     expect(document.body).toContainElement(screen.getByText("当前版本 v0.1.0，发现新版本 v2.0.2。是否立即下载并安装？"));
+    expect(screen.getByRole("button", { name: "关闭确认弹层" })).toHaveClass(
+      "h-9",
+      "w-9",
+      "shrink-0",
+      "rounded-full",
+    );
   });
 
   it("keeps open when a drag starts inside the dialog and ends on the backdrop", () => {
