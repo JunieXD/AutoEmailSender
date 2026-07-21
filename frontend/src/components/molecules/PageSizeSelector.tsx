@@ -12,6 +12,7 @@ type PageSizeSelectorProps = {
   onChange: (pageSize: number) => void;
   className?: string;
   unitLabel?: string;
+  menuPlacement?: "popover" | "inline" | "floating-up";
 };
 
 const CUSTOM_VALUE = "custom";
@@ -21,6 +22,7 @@ export const PageSizeSelector = ({
   onChange,
   className,
   unitLabel = "位",
+  menuPlacement = "floating-up",
 }: PageSizeSelectorProps) => {
   const valueMatchesFixedOption = PAGE_SIZE_OPTIONS.includes(
     value as (typeof PAGE_SIZE_OPTIONS)[number],
@@ -76,7 +78,7 @@ export const PageSizeSelector = ({
         }}
         wrapperClassName="w-24"
         shellClassName="!min-h-0 h-9 rounded-2xl px-3 py-0 shadow-none"
-        menuPlacement="floating-up"
+        menuPlacement={menuPlacement}
       >
         {PAGE_SIZE_OPTIONS.map((option) => (
           <option key={option} value={option}>

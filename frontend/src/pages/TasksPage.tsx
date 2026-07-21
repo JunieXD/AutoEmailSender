@@ -20,7 +20,9 @@ import {
 } from "lucide-react";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
+import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
+import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
@@ -97,6 +99,7 @@ import {
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
+import { useTaskDetailItems } from "@/lib/useTaskDetailItems";
 import {
   normalizeExternalHttpUrl,
   openExternalHttpUrl,
@@ -119,6 +122,7 @@ import {
   type CrawlPageDTO,
   type MatchAnalysisJobDTO,
   type MatchAnalysisJobItemDTO,
+  type MatchAnalysisJobItemStatus,
   type MatchAnalysisJobStatus,
   type ProfessorInformationEnrichmentItemDTO,
   type ProfessorInformationEnrichmentItemStatus,
@@ -200,6 +204,30 @@ const MATCH_ANALYSIS_JOB_STATUS_TONES: Record<
   completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
   partial_failed: "border-amber-200 bg-amber-50 text-amber-700",
   failed: "border-red-200 bg-red-50 text-red-700",
+  canceled: "border-stone-200 bg-stone-100 text-stone-600",
+};
+
+const MATCH_ANALYSIS_ITEM_STATUS_LABELS: Record<
+  MatchAnalysisJobItemStatus,
+  string
+> = {
+  queued: "排队中",
+  running: "分析中",
+  succeeded: "成功",
+  failed: "失败",
+  skipped: "已跳过",
+  canceled: "已取消",
+};
+
+const MATCH_ANALYSIS_ITEM_STATUS_TONES: Record<
+  MatchAnalysisJobItemStatus,
+  string
+> = {
+  queued: "border-sky-200 bg-sky-50 text-sky-700",
+  running: "border-primary/20 bg-primary/10 text-primary",
+  succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  failed: "border-red-200 bg-red-50 text-red-700",
+  skipped: "border-amber-200 bg-amber-50 text-amber-700",
   canceled: "border-stone-200 bg-stone-100 text-stone-600",
 };
 
@@ -288,6 +316,15 @@ type TaskListPaginationProps = {
   totalCount: number;
   onPageChange: (page: number) => void;
   pageSize?: number;
+};
+
+type DetailItemPaginationProps = {
+  page: number;
+  totalCount: number;
+  pageSize: number;
+  ariaLabel: string;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
 };
 
 type TokenUsageBreakdownProps = {
@@ -705,6 +742,64 @@ const TaskListPagination = ({
   );
 };
 
+const DetailItemPagination = ({
+  page,
+  totalCount,
+  pageSize,
+  ariaLabel,
+  onPageChange,
+  onPageSizeChange,
+}: DetailItemPaginationProps) => {
+  if (totalCount === 0) {
+    return null;
+  }
+
+  const totalPages = getTotalPages(totalCount, pageSize);
+  const startItem = (page - 1) * pageSize + 1;
+  const endItem = Math.min(totalCount, page * pageSize);
+
+  return (
+    <nav
+      aria-label={ariaLabel}
+      className="mt-3 flex flex-col gap-3 border-t border-stone-100 pt-3 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="text-xs tabular-nums text-stone-500">
+        显示 {startItem}-{endItem} / {totalCount} 位导师
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <PageSizeSelector
+          value={pageSize}
+          onChange={onPageSizeChange}
+          menuPlacement="popover"
+        />
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 transition hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="上一页导师明细"
+          title="上一页"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="min-w-20 text-center text-xs font-medium tabular-nums text-stone-600">
+          第 {page} / {totalPages} 页
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page === totalPages}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 transition hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="下一页导师明细"
+          title="下一页"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </nav>
+  );
+};
+
 const formatDisplayTime = (
   value: string | null | undefined,
   options?: { withSeconds?: boolean },
@@ -855,6 +950,32 @@ export const TasksPage = () => {
     useState<ProfessorInformationEnrichmentItemDTO[]>([]);
   const [informationEnrichmentDetailsLoading, setInformationEnrichmentDetailsLoading] =
     useState(false);
+  const {
+    filteredItems: filteredMatchJobItems,
+    page: matchJobItemPage,
+    pageSize: matchJobItemPageSize,
+    setPage: setMatchJobItemPage,
+    setPageSize: setMatchJobItemPageSize,
+    setStatusFilter: setMatchJobItemStatusFilter,
+    statusFilter: matchJobItemStatusFilter,
+    visibleItems: visibleMatchJobItems,
+  } = useTaskDetailItems(
+    selectedMatchJobItems,
+    selectedMatchJob?.id ?? null,
+  );
+  const {
+    filteredItems: filteredInformationEnrichmentItems,
+    page: informationEnrichmentItemPage,
+    pageSize: informationEnrichmentItemPageSize,
+    setPage: setInformationEnrichmentItemPage,
+    setPageSize: setInformationEnrichmentItemPageSize,
+    setStatusFilter: setInformationEnrichmentItemStatusFilter,
+    statusFilter: informationEnrichmentItemStatusFilter,
+    visibleItems: visibleInformationEnrichmentItems,
+  } = useTaskDetailItems(
+    selectedInformationEnrichmentItems,
+    selectedInformationEnrichmentJob?.id ?? null,
+  );
   const [crawlJobs, setCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [currentCrawlJobs, setCurrentCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [crawlJobsLoading, setCrawlJobsLoading] = useState(false);
@@ -4333,16 +4454,42 @@ export const TasksPage = () => {
               />
 
               <section className="mt-6">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <h3 className="text-sm font-semibold text-stone-900">
                     导师明细
                   </h3>
-                  {matchJobDetailsLoading ? (
-                    <span className="inline-flex items-center gap-2 text-xs text-stone-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      正在刷新
+                  <div className="flex flex-wrap items-center gap-2">
+                    {matchJobDetailsLoading ? (
+                      <span className="inline-flex items-center gap-2 text-xs text-stone-500">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        正在刷新
+                      </span>
+                    ) : null}
+                    <span className="text-xs text-stone-500">状态</span>
+                    <NativeSelectField
+                      ariaLabel="筛选匹配分析导师状态"
+                      value={matchJobItemStatusFilter}
+                      onChange={(event) => {
+                        setMatchJobItemStatusFilter(
+                          event.target.value as MatchAnalysisJobItemStatus | "all",
+                        );
+                      }}
+                      wrapperClassName="w-32"
+                      shellClassName="!min-h-0 h-9 rounded-2xl px-3 py-0 shadow-none"
+                    >
+                      <option value="all">全部状态</option>
+                      {Object.entries(MATCH_ANALYSIS_ITEM_STATUS_LABELS).map(
+                        ([status, label]) => (
+                          <option key={status} value={status}>
+                            {label}
+                          </option>
+                        ),
+                      )}
+                    </NativeSelectField>
+                    <span className="text-xs tabular-nums text-stone-500">
+                      {filteredMatchJobItems.length} / {selectedMatchJobItems.length} 位
                     </span>
-                  ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
@@ -4358,8 +4505,8 @@ export const TasksPage = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {selectedMatchJobItems.length > 0 ? (
-                        selectedMatchJobItems.map((item) => (
+                      {filteredMatchJobItems.length > 0 ? (
+                        visibleMatchJobItems.map((item) => (
                           <tr key={item.id}>
                             <td className="px-4 py-3 align-top">
                               <div className="font-medium text-stone-900">
@@ -4373,9 +4520,9 @@ export const TasksPage = () => {
                             </td>
                             <td className="px-4 py-3 align-top">
                               <span
-                                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_JOB_STATUS_TONES[item.status === "succeeded" ? "completed" : item.status === "skipped" ? "canceled" : item.status === "running" ? "running" : item.status === "queued" ? "queued" : "failed"]}`}
+                                className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_ITEM_STATUS_TONES[item.status]}`}
                               >
-                                {item.status}
+                                {MATCH_ANALYSIS_ITEM_STATUS_LABELS[item.status]}
                               </span>
                             </td>
                             <td className="px-4 py-3 align-top">
@@ -4405,13 +4552,23 @@ export const TasksPage = () => {
                             colSpan={6}
                             className="px-4 py-6 text-center text-sm text-stone-500"
                           >
-                            暂无任务明细。
+                            {selectedMatchJobItems.length > 0
+                              ? "当前状态下暂无导师。"
+                              : "暂无任务明细。"}
                           </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
                 </div>
+                <DetailItemPagination
+                  page={matchJobItemPage}
+                  totalCount={filteredMatchJobItems.length}
+                  pageSize={matchJobItemPageSize}
+                  ariaLabel="匹配分析导师明细分页"
+                  onPageChange={setMatchJobItemPage}
+                  onPageSizeChange={setMatchJobItemPageSize}
+                />
               </section>
             </div>
           </section>
@@ -4519,14 +4676,43 @@ export const TasksPage = () => {
               ) : null}
 
               <section className="mt-6">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <h3 className="text-sm font-semibold text-stone-900">导师明细</h3>
-                  {informationEnrichmentDetailsLoading ? (
-                    <span className="inline-flex items-center gap-2 text-xs text-stone-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      正在刷新
+                  <div className="flex flex-wrap items-center gap-2">
+                    {informationEnrichmentDetailsLoading ? (
+                      <span className="inline-flex items-center gap-2 text-xs text-stone-500">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        正在刷新
+                      </span>
+                    ) : null}
+                    <span className="text-xs text-stone-500">状态</span>
+                    <NativeSelectField
+                      ariaLabel="筛选信息补全导师状态"
+                      value={informationEnrichmentItemStatusFilter}
+                      onChange={(event) => {
+                        setInformationEnrichmentItemStatusFilter(
+                          event.target.value as
+                            | ProfessorInformationEnrichmentItemStatus
+                            | "all",
+                        );
+                      }}
+                      wrapperClassName="w-32"
+                      shellClassName="!min-h-0 h-9 rounded-2xl px-3 py-0 shadow-none"
+                    >
+                      <option value="all">全部状态</option>
+                      {Object.entries(INFORMATION_ENRICHMENT_ITEM_STATUS_LABELS).map(
+                        ([status, label]) => (
+                          <option key={status} value={status}>
+                            {label}
+                          </option>
+                        ),
+                      )}
+                    </NativeSelectField>
+                    <span className="text-xs tabular-nums text-stone-500">
+                      {filteredInformationEnrichmentItems.length} /{" "}
+                      {selectedInformationEnrichmentItems.length} 位
                     </span>
-                  ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
@@ -4542,8 +4728,8 @@ export const TasksPage = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {selectedInformationEnrichmentItems.length > 0 ? (
-                        selectedInformationEnrichmentItems.map((item) => {
+                      {filteredInformationEnrichmentItems.length > 0 ? (
+                        visibleInformationEnrichmentItems.map((item) => {
                           const itemMessage =
                             item.error_message ||
                             item.skip_reason ||
@@ -4636,13 +4822,23 @@ export const TasksPage = () => {
                             colSpan={6}
                             className="px-4 py-6 text-center text-sm text-stone-500"
                           >
-                            暂无任务明细。
+                            {selectedInformationEnrichmentItems.length > 0
+                              ? "当前状态下暂无导师。"
+                              : "暂无任务明细。"}
                           </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
                 </div>
+                <DetailItemPagination
+                  page={informationEnrichmentItemPage}
+                  totalCount={filteredInformationEnrichmentItems.length}
+                  pageSize={informationEnrichmentItemPageSize}
+                  ariaLabel="信息补全导师明细分页"
+                  onPageChange={setInformationEnrichmentItemPage}
+                  onPageSizeChange={setInformationEnrichmentItemPageSize}
+                />
               </section>
             </div>
           </section>

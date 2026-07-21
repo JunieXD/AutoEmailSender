@@ -762,7 +762,6 @@ async def _refresh_match_analysis_job_summary(
             job.status = MatchAnalysisJobStatus.CANCELED.value
         elif (
             failed_count == 0
-            and skipped_count == 0
             and queued_count == 0
             and running_count == 0
             and succeeded_count > 0

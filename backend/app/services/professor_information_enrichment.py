@@ -548,7 +548,7 @@ async def finalize_professor_information_enrichment_job(
 
     if failed > 0 and succeeded == 0:
         final_status = CrawlJobStatus.FAILED.value
-    elif succeeded > 0 and (failed > 0 or skipped > 0 or canceled > 0):
+    elif succeeded > 0 and (failed > 0 or canceled > 0):
         final_status = CrawlJobStatus.PARTIALLY_COMPLETED.value
     else:
         final_status = CrawlJobStatus.COMPLETED.value

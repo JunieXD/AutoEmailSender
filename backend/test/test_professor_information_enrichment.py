@@ -26,6 +26,7 @@ from app.services.crawler_v2_scheduler import finalize_idle_jobs
 from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
 from app.services.professor_information_enrichment import (
     create_professor_information_enrichment_job,
+    finalize_professor_information_enrichment_job,
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
 )
@@ -101,6 +102,42 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[1].skip_reason, "缺少有效的导师主页链接")
         self.assertEqual(items[2].skip_reason, "资料已完整，无需补全")
         self.assertEqual(items[3].skip_reason, "导师已在回收站")
+
+    async def test_successes_and_skips_finalize_as_completed(self) -> None:
+        active_id = await self._create_professor(
+            name="可补全导师",
+            profile_url="https://example.edu/active",
+        )
+        skipped_id = await self._create_professor(name="缺少主页导师")
+        job_id = await create_professor_information_enrichment_job(
+            self.session_factory,
+            professor_ids=[active_id, skipped_id],
+            llm_profile_id=self.llm_profile_id,
+            trigger_mode="batch",
+        )
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            succeeded_task = await session.scalar(
+                select(CrawlCandidateEnrichmentTask).where(
+                    CrawlCandidateEnrichmentTask.job_id == job_id,
+                    CrawlCandidateEnrichmentTask.professor_id == active_id,
+                )
+            )
+            assert job is not None and succeeded_task is not None
+            succeeded_task.status = CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
+            succeeded_task.finished_at = utc_now()
+            await finalize_professor_information_enrichment_job(session, job)
+            await session.commit()
+
+        async with self.session_factory() as session:
+            job_read = await get_professor_information_enrichment_job(session, job_id)
+
+        assert job_read is not None
+        self.assertEqual(job_read.status, CrawlJobStatus.COMPLETED.value)
+        self.assertEqual(job_read.succeeded_count, 1)
+        self.assertEqual(job_read.failed_count, 0)
+        self.assertEqual(job_read.skipped_count, 1)
 
     async def test_single_creation_rejects_an_existing_active_job(self) -> None:
         professor_id = await self._create_professor(

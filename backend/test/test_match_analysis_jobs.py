@@ -146,6 +146,37 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         items = self._run_async(self._get_job_items(job.id))
         self.assertEqual(items[0].cached_tokens, 25)
 
+    def test_run_queued_job_with_successes_and_skips_is_completed(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0], professor_ids[1]],
+                name=None,
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
+        ):
+            self._run_async(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+            )
+
+        stored = self._run_async(self._get_job(job.id))
+        self.assertEqual(stored.status, MatchAnalysisJobStatus.COMPLETED.value)
+        self.assertEqual(stored.succeeded_count, 1)
+        self.assertEqual(stored.failed_count, 0)
+        self.assertEqual(stored.skipped_count, 1)
+
     def test_run_queued_job_reuses_existing_identity_task_across_llm_profiles(self) -> None:
         identity_id, first_llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
