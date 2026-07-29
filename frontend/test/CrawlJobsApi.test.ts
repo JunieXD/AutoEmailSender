@@ -10,8 +10,14 @@ import {
   listCrawlPages,
   restoreCrawlJob,
   resumeCrawlJobReview,
+  updateCrawlCandidate,
 } from '@/lib/api/crawlJobsApi';
-import type { CrawlJobCreatePayloadDTO, CrawlJobDTO, CrawlJobSummaryDTO } from '@/types';
+import type {
+  CrawlCandidateUpdatePayloadDTO,
+  CrawlJobCreatePayloadDTO,
+  CrawlJobDTO,
+  CrawlJobSummaryDTO,
+} from '@/types';
 
 const mockedApiFetch = vi.hoisted(() => vi.fn());
 
@@ -121,6 +127,30 @@ describe('crawlJobsApi', () => {
     await getCrawlJobEvents(7);
 
     expect(mockedApiFetch).toHaveBeenCalledWith('/api/crawl-jobs/7/events');
+  });
+
+  it('updates a crawl candidate with the expected PATCH payload', async () => {
+    const payload = {
+      name: '张教授',
+      email: 'zhang@example.edu',
+      title: null,
+      university: '示例大学',
+      school: '计算机学院',
+      department: null,
+      research_direction: null,
+      recent_papers: [],
+      profile_url: 'https://example.edu/faculty/zhang',
+      source_url: 'https://example.edu/faculty',
+      review_status: 'pending',
+    } satisfies CrawlCandidateUpdatePayloadDTO;
+    mockedApiFetch.mockResolvedValue({});
+
+    await updateCrawlCandidate(21, payload);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith('/api/crawl-jobs/candidates/21', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
   });
 
   it('cancels a crawl job with a base job response', async () => {

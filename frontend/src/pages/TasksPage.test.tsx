@@ -52,6 +52,7 @@ const apiMocks = vi.hoisted(() => ({
   resumeCrawlJobReview: vi.fn(),
   approveCrawlCandidates: vi.fn(),
   enrichCrawlCandidates: vi.fn(),
+  updateCrawlCandidate: vi.fn(),
   deleteCrawlJob: vi.fn(),
   restoreCrawlJob: vi.fn(),
   listMatchAnalysisJobs: vi.fn(),
@@ -150,6 +151,7 @@ vi.mock("@/lib/api/crawlJobsApi", () => ({
   resumeCrawlJobReview: apiMocks.resumeCrawlJobReview,
   approveCrawlCandidates: apiMocks.approveCrawlCandidates,
   enrichCrawlCandidates: apiMocks.enrichCrawlCandidates,
+  updateCrawlCandidate: apiMocks.updateCrawlCandidate,
   deleteCrawlJob: apiMocks.deleteCrawlJob,
   restoreCrawlJob: apiMocks.restoreCrawlJob,
 }));

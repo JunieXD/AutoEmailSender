@@ -15,6 +15,7 @@ import {
   listCrawlCandidates,
   listCrawlJobs,
   listCrawlPages,
+  updateCrawlCandidate,
 } from "@/lib/api/crawlJobsApi";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
@@ -84,6 +85,7 @@ vi.mock("@/lib/api/crawlJobsApi", () => ({
   listCrawlPages: vi.fn(),
   listCrawlCandidates: vi.fn(),
   getCrawlJobEvents: vi.fn(),
+  updateCrawlCandidate: vi.fn(),
 }));
 
 const runningJob = {
@@ -352,6 +354,150 @@ describe("TasksPage crawler jobs tab", () => {
     });
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.documentElement.style.overflow).toBe("hidden");
+  });
+
+  it("edits and saves a pending candidate before starting enrichment", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review" as const,
+    };
+    const candidate = {
+      id: 21,
+      job_id: 7,
+      professor_id: null,
+      name: "张教授",
+      email: null,
+      title: null,
+      university: "示例大学",
+      school: "计算机学院",
+      department: null,
+      research_direction: null,
+      recent_papers: [],
+      profile_url: "https://example.edu/faculty/zhang",
+      source_url: "https://example.edu/faculty",
+      confidence: 0.86,
+      field_confidence: null,
+      evidence: null,
+      review_status: "pending" as const,
+      created_at: "2026-04-26T10:02:00Z",
+      updated_at: "2026-04-26T10:02:00Z",
+    };
+    const updatedCandidate = {
+      ...candidate,
+      email: "zhang@example.edu",
+      department: "人工智能系",
+      updated_at: "2026-04-26T10:05:00Z",
+    };
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
+    vi.mocked(listCrawlCandidates).mockResolvedValue([candidate]);
+    vi.mocked(updateCrawlCandidate).mockResolvedValue(updatedCandidate);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
+
+    const candidateDialog = await screen.findByRole("dialog", {
+      name: "候选导师详情",
+    });
+    fireEvent.click(within(candidateDialog).getByRole("button", { name: "编辑" }));
+    fireEvent.change(within(candidateDialog).getByRole("textbox", { name: "邮箱" }), {
+      target: { value: " zhang@example.edu " },
+    });
+    fireEvent.change(within(candidateDialog).getByRole("textbox", { name: "部门" }), {
+      target: { value: " 人工智能系 " },
+    });
+    fireEvent.click(
+      within(candidateDialog).getByRole("button", { name: "保存修改" }),
+    );
+
+    await waitFor(() => {
+      expect(updateCrawlCandidate).toHaveBeenCalledWith(
+        21,
+        expect.objectContaining({
+          name: "张教授",
+          email: "zhang@example.edu",
+          department: "人工智能系",
+          profile_url: "https://example.edu/faculty/zhang",
+          review_status: "pending",
+        }),
+      );
+    });
+    expect(await within(candidateDialog).findByText("zhang@example.edu")).toBeInTheDocument();
+    expect(notifySuccess).toHaveBeenCalledWith(
+      "导师信息已保存",
+      "后续补全只会填写仍然缺失的可补全字段，不会覆盖本次保存的内容。",
+    );
+
+    fireEvent.click(
+      within(candidateDialog).getByRole("button", { name: "关闭候选导师详情" }),
+    );
+    fireEvent.click(
+      within(crawlDialog).getByRole("checkbox", { name: "选择候选导师 张教授" }),
+    );
+    fireEvent.click(
+      within(crawlDialog).getByRole("button", { name: "补全缺失信息" }),
+    );
+
+    await waitFor(() => {
+      expect(enrichCrawlCandidates).toHaveBeenCalledWith(7, [21], 2);
+    });
+  });
+
+  it("asks before closing candidate details with unsaved edits", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review" as const,
+    };
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
+
+    const candidateDialog = await screen.findByRole("dialog", {
+      name: "候选导师详情",
+    });
+    fireEvent.click(within(candidateDialog).getByRole("button", { name: "编辑" }));
+    fireEvent.change(within(candidateDialog).getByRole("textbox", { name: "邮箱" }), {
+      target: { value: "unsaved@example.edu" },
+    });
+
+    confirm.mockResolvedValueOnce(false);
+    fireEvent.click(
+      within(candidateDialog).getByRole("button", { name: "关闭候选导师详情" }),
+    );
+
+    await waitFor(() => {
+      expect(confirm).toHaveBeenCalledWith({
+        title: "放弃未保存的修改？",
+        description: "关闭后，本次对候选导师信息的修改将不会保存。",
+        confirmLabel: "不保存并关闭",
+        cancelLabel: "继续编辑",
+        tone: "danger",
+      });
+    });
+    expect(screen.getByRole("dialog", { name: "候选导师详情" })).toBeInTheDocument();
+    expect(updateCrawlCandidate).not.toHaveBeenCalled();
+
+    confirm.mockResolvedValueOnce(true);
+    fireEvent.click(
+      within(candidateDialog).getByRole("button", { name: "关闭候选导师详情" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "候选导师详情" })).not.toBeInTheDocument();
+    });
+    expect(updateCrawlCandidate).not.toHaveBeenCalled();
   });
 
   it("opens candidate profile and source links with the desktop default browser when available", async () => {

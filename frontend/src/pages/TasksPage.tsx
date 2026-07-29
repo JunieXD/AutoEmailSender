@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Activity,
@@ -11,8 +18,10 @@ import {
   Loader2,
   Mail,
   Pause,
+  Pencil,
   Play,
   RotateCcw,
+  Save,
   Sparkles,
   Square,
   Trash2,
@@ -82,6 +91,7 @@ import {
   restoreCrawlJob,
   resumeCrawlJobReview,
   resumeCrawlJob,
+  updateCrawlCandidate,
 } from "@/lib/api/crawlJobsApi";
 import {
   getReviewableCandidateIdsWithoutEmail,
@@ -117,6 +127,7 @@ import {
   type BatchTaskResendContextDTO,
   type CrawlCandidateDTO,
   type CrawlCandidateReviewStatusDTO,
+  type CrawlCandidateUpdatePayloadDTO,
   type CrawlJobEventDTO,
   type CrawlJobStatusDTO,
   type CrawlJobSummaryDTO,
@@ -138,6 +149,69 @@ type TasksTab = "batch" | "crawl" | "match" | "enrichment";
 type TaskListViews = Record<TasksTab, TaskListView>;
 type BatchReviewItemActionType = "regenerate" | "delete" | "submit";
 type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
+
+type CrawlCandidateEditForm = {
+  name: string;
+  email: string;
+  title: string;
+  university: string;
+  school: string;
+  department: string;
+  researchDirection: string;
+  recentPapers: string;
+  profileUrl: string;
+  sourceUrl: string;
+};
+
+const CRAWL_CANDIDATE_EDIT_INPUT_CLASS =
+  "mt-2 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20";
+
+const toCrawlCandidateEditForm = (
+  candidate: CrawlCandidateDTO,
+): CrawlCandidateEditForm => ({
+  name: candidate.name,
+  email: candidate.email ?? "",
+  title: candidate.title ?? "",
+  university: candidate.university ?? "",
+  school: candidate.school ?? "",
+  department: candidate.department ?? "",
+  researchDirection: candidate.research_direction ?? "",
+  recentPapers: candidate.recent_papers.join("\n"),
+  profileUrl: candidate.profile_url ?? "",
+  sourceUrl: candidate.source_url ?? "",
+});
+
+const toNullableTrimmedText = (value: string) => value.trim() || null;
+
+const toCrawlCandidateUpdatePayload = (
+  candidate: CrawlCandidateDTO,
+  form: CrawlCandidateEditForm,
+): CrawlCandidateUpdatePayloadDTO => ({
+  name: form.name.trim(),
+  email: toNullableTrimmedText(form.email),
+  title: toNullableTrimmedText(form.title),
+  university: toNullableTrimmedText(form.university),
+  school: toNullableTrimmedText(form.school),
+  department: toNullableTrimmedText(form.department),
+  research_direction: toNullableTrimmedText(form.researchDirection),
+  recent_papers: form.recentPapers
+    .split(/\r?\n/)
+    .map((paper) => paper.trim())
+    .filter(Boolean),
+  profile_url: toNullableTrimmedText(form.profileUrl),
+  source_url: toNullableTrimmedText(form.sourceUrl),
+  review_status: candidate.review_status,
+});
+
+const hasUnsavedCrawlCandidateChanges = (
+  candidate: CrawlCandidateDTO,
+  form: CrawlCandidateEditForm,
+) => {
+  const initialForm = toCrawlCandidateEditForm(candidate);
+  return (Object.keys(initialForm) as (keyof CrawlCandidateEditForm)[]).some(
+    (field) => initialForm[field] !== form[field],
+  );
+};
 
 const CRAWL_JOB_STATUS_LABELS: Record<CrawlJobStatusDTO, string> = {
   queued: "排队中",
@@ -1032,6 +1106,9 @@ export const TasksPage = () => {
   );
   const [selectedCandidateDetail, setSelectedCandidateDetail] =
     useState<CrawlCandidateDTO | null>(null);
+  const [candidateEditForm, setCandidateEditForm] =
+    useState<CrawlCandidateEditForm | null>(null);
+  const [candidateUpdateLoading, setCandidateUpdateLoading] = useState(false);
   const lastLoadErrorRef = useRef<string | null>(null);
   const lastBatchTaskDetailsLoadErrorRef = useRef<string | null>(null);
   const lastMatchJobsLoadErrorRef = useRef<string | null>(null);
@@ -1984,6 +2061,8 @@ export const TasksPage = () => {
     setCrawlJobEnrichLoading(false);
     setResumingCrawlJobReviewId(null);
     setSelectedCandidateDetail(null);
+    setCandidateEditForm(null);
+    setCandidateUpdateLoading(false);
     setCrawlEventPage(1);
     setCrawlDetailPagePage(1);
     setCrawlCandidatePage(1);
@@ -2463,6 +2542,89 @@ export const TasksPage = () => {
     }
   };
 
+  const handleStartCandidateEdit = () => {
+    if (
+      !selectedCandidateDetail ||
+      selectedCandidateDetail.review_status !== "pending" ||
+      !selectedCrawlJobCanReview
+    ) {
+      return;
+    }
+    setCandidateEditForm(toCrawlCandidateEditForm(selectedCandidateDetail));
+  };
+
+  const handleCancelCandidateEdit = () => {
+    if (candidateUpdateLoading) {
+      return;
+    }
+    setCandidateEditForm(null);
+  };
+
+  const handleCandidateEditFieldChange = (
+    field: keyof CrawlCandidateEditForm,
+    value: string,
+  ) => {
+    setCandidateEditForm((currentForm) =>
+      currentForm ? { ...currentForm, [field]: value } : currentForm,
+    );
+  };
+
+  const handleSaveCandidateEdit = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    if (
+      !selectedCandidateDetail ||
+      !candidateEditForm ||
+      candidateUpdateLoading
+    ) {
+      return;
+    }
+    if (
+      selectedCandidateDetail.review_status !== "pending" ||
+      !selectedCrawlJobCanReview
+    ) {
+      notifyError("无法保存导师信息", "该候选导师已不在待审核状态，请刷新任务后重试。");
+      return;
+    }
+
+    const payload = toCrawlCandidateUpdatePayload(
+      selectedCandidateDetail,
+      candidateEditForm,
+    );
+    if (!payload.name) {
+      notifyError("无法保存导师信息", "导师姓名不能为空。");
+      return;
+    }
+
+    setCandidateUpdateLoading(true);
+    try {
+      const updatedCandidate = await updateCrawlCandidate(
+        selectedCandidateDetail.id,
+        payload,
+      );
+      setCrawlJobCandidates((currentCandidates) =>
+        currentCandidates.map((candidate) =>
+          candidate.id === updatedCandidate.id ? updatedCandidate : candidate,
+        ),
+      );
+      setSelectedCandidateDetail(updatedCandidate);
+      setCandidateEditForm(null);
+      notifySuccess(
+        "导师信息已保存",
+        "后续补全只会填写仍然缺失的可补全字段，不会覆盖本次保存的内容。",
+      );
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error
+          ? actionError.message
+          : "保存候选导师信息失败";
+      notifyError("保存候选导师信息失败", message);
+    } finally {
+      setCandidateUpdateLoading(false);
+    }
+  };
+
   const closeCrawlJobDetails = () => {
     latestCrawlJobDetailsRequestIdRef.current += 1;
     setSelectedCrawlJob(null);
@@ -2472,6 +2634,8 @@ export const TasksPage = () => {
     setSelectedCrawlCandidateIds([]);
     setCrawlJobApproveLoading(false);
     setSelectedCandidateDetail(null);
+    setCandidateEditForm(null);
+    setCandidateUpdateLoading(false);
     setCrawlEventPage(1);
     setCrawlDetailPagePage(1);
     setCrawlCandidatePage(1);
@@ -2840,9 +3004,40 @@ export const TasksPage = () => {
     setInformationEnrichmentDetailsLoading(false);
     lastInformationEnrichmentDetailsLoadErrorRef.current = null;
   };
-  const closeSelectedCandidateDetail = useCallback(() => {
+  const requestCloseSelectedCandidateDetail = useCallback(async () => {
+    if (candidateUpdateLoading) {
+      return;
+    }
+    if (
+      selectedCandidateDetail &&
+      candidateEditForm &&
+      hasUnsavedCrawlCandidateChanges(
+        selectedCandidateDetail,
+        candidateEditForm,
+      )
+    ) {
+      const shouldDiscardChanges = await confirm({
+        title: "放弃未保存的修改？",
+        description: "关闭后，本次对候选导师信息的修改将不会保存。",
+        confirmLabel: "不保存并关闭",
+        cancelLabel: "继续编辑",
+        tone: "danger",
+      });
+      if (!shouldDiscardChanges) {
+        return;
+      }
+    }
+    setCandidateEditForm(null);
     setSelectedCandidateDetail(null);
-  }, []);
+  }, [
+    candidateEditForm,
+    candidateUpdateLoading,
+    confirm,
+    selectedCandidateDetail,
+  ]);
+  const closeSelectedCandidateDetail = useCallback(() => {
+    void requestCloseSelectedCandidateDetail();
+  }, [requestCloseSelectedCandidateDetail]);
   const batchTaskDetailsLayer = useDismissableLayerClick(closeBatchTaskDetails);
   const matchJobDetailsLayer = useDismissableLayerClick(closeMatchJobDetails);
   const informationEnrichmentDetailsLayer = useDismissableLayerClick(
@@ -5237,9 +5432,10 @@ export const TasksPage = () => {
                             </span>
                             <button
                               type="button"
-                              onClick={() =>
-                                setSelectedCandidateDetail(candidate)
-                              }
+                              onClick={() => {
+                                setCandidateEditForm(null);
+                                setSelectedCandidateDetail(candidate);
+                              }}
                               className="ui-btn-secondary px-3 py-2 text-sm"
                             >
                               查看详情
@@ -5290,31 +5486,225 @@ export const TasksPage = () => {
             onMouseDown={candidateDetailLayer.onContentMouseDown}
           >
             <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-6 py-5">
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-stone-400">
-                  候选导师详情
+                  {candidateEditForm ? "编辑候选导师" : "候选导师详情"}
                 </p>
                 <h3 className="mt-2 text-xl font-semibold text-stone-900">
                   {selectedCandidateDetail.name}
                 </h3>
                 <p className="mt-1 text-sm text-stone-500">
-                  {selectedCandidateDetail.email ?? "暂无邮箱（可尝试进行补全）"}
+                  {candidateEditForm
+                    ? "手动修正待审核资料，保存后仍可继续补全缺失信息。"
+                    : selectedCandidateDetail.email ??
+                      "暂无邮箱（可尝试进行补全）"}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={closeSelectedCandidateDetail}
-                className="ui-btn-secondary shrink-0"
-                aria-label="关闭候选导师详情"
-              >
-                <X className="h-4 w-4" />
-                关闭
-              </button>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                {!candidateEditForm &&
+                selectedCrawlJobCanReview &&
+                selectedCandidateDetail.review_status === "pending" ? (
+                  <button
+                    type="button"
+                    onClick={handleStartCandidateEdit}
+                    disabled={candidateUpdateLoading}
+                    className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    编辑
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closeSelectedCandidateDetail}
+                  disabled={candidateUpdateLoading}
+                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="关闭候选导师详情"
+                >
+                  <X className="h-4 w-4" />
+                  关闭
+                </button>
+              </div>
             </div>
-            <div
-              data-testid="candidate-detail-scroll"
-              className="grid flex-1 gap-4 overflow-y-auto overscroll-contain px-6 py-5 md:grid-cols-2"
-            >
+            {candidateEditForm ? (
+              <form
+                onSubmit={(event) => void handleSaveCandidateEdit(event)}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <div
+                  data-testid="candidate-detail-scroll"
+                  className="grid flex-1 gap-4 overflow-y-auto overscroll-contain px-6 py-5 md:grid-cols-2"
+                >
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
+                    姓名
+                    <input
+                      type="text"
+                      required
+                      value={candidateEditForm.name}
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange("name", event.target.value)
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
+                    邮箱
+                    <input
+                      type="email"
+                      value={candidateEditForm.email}
+                      placeholder="例如 professor@example.edu"
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange("email", event.target.value)
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
+                    职称
+                    <input
+                      type="text"
+                      value={candidateEditForm.title}
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange("title", event.target.value)
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
+                    部门
+                    <input
+                      type="text"
+                      value={candidateEditForm.department}
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange(
+                          "department",
+                          event.target.value,
+                        )
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
+                    院校
+                    <input
+                      type="text"
+                      value={candidateEditForm.university}
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange(
+                          "university",
+                          event.target.value,
+                        )
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
+                    学院
+                    <input
+                      type="text"
+                      value={candidateEditForm.school}
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange("school", event.target.value)
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
+                    研究方向
+                    <textarea
+                      value={candidateEditForm.researchDirection}
+                      rows={3}
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange(
+                          "researchDirection",
+                          event.target.value,
+                        )
+                      }
+                      className={`${CRAWL_CANDIDATE_EDIT_INPUT_CLASS} resize-y leading-6`}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
+                    近期论文
+                    <textarea
+                      value={candidateEditForm.recentPapers}
+                      rows={5}
+                      placeholder="每行填写一篇论文"
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange(
+                          "recentPapers",
+                          event.target.value,
+                        )
+                      }
+                      className={`${CRAWL_CANDIDATE_EDIT_INPUT_CLASS} resize-y leading-6`}
+                    />
+                    <span className="mt-2 block font-normal text-stone-400">
+                      每行一篇，空行会在保存时自动忽略。
+                    </span>
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
+                    资料页
+                    <input
+                      type="url"
+                      value={candidateEditForm.profileUrl}
+                      placeholder="https://example.edu/profile"
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange(
+                          "profileUrl",
+                          event.target.value,
+                        )
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
+                    来源页
+                    <input
+                      type="url"
+                      value={candidateEditForm.sourceUrl}
+                      placeholder="https://example.edu/faculty"
+                      onChange={(event) =>
+                        handleCandidateEditFieldChange(
+                          "sourceUrl",
+                          event.target.value,
+                        )
+                      }
+                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50/80 px-6 py-4">
+                  <p className="max-w-xl text-pretty text-xs leading-5 text-stone-500">
+                    保存后仍可补全缺失信息；已有内容（包括本次手动修改）不会被覆盖。
+                  </p>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCancelCandidateEdit}
+                      disabled={candidateUpdateLoading}
+                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={candidateUpdateLoading}
+                      className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {candidateUpdateLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      {candidateUpdateLoading ? "保存中..." : "保存修改"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            ) : (
+              <div
+                data-testid="candidate-detail-scroll"
+                className="grid flex-1 gap-4 overflow-y-auto overscroll-contain px-6 py-5 md:grid-cols-2"
+              >
               <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
                 <div className="text-xs font-medium text-stone-500">职称</div>
                 <div className="mt-2 text-sm text-stone-900">
@@ -5407,7 +5797,8 @@ export const TasksPage = () => {
                   </div>
                 </div>
               ) : null}
-            </div>
+              </div>
+            )}
           </section>
         </div>
       ) : null}

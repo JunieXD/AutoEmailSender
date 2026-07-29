@@ -101,6 +101,49 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trace[-1]["raw"]["candidate_id"], candidate_id)
         self.assertEqual(trace[-1]["raw"]["status"], "succeeded")
 
+    async def test_enrichment_preserves_existing_candidate_fields(self) -> None:
+        candidate_id, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            candidate.email = "manual@example.edu"
+            candidate.title = "手动职称"
+            candidate.department = "手动部门"
+            candidate.research_direction = "手动研究方向"
+            candidate.recent_papers = ["手动论文"]
+            await session.commit()
+
+        payload = CandidateEnrichmentPayload(
+            email="crawler@example.edu",
+            title="抓取职称",
+            department="抓取部门",
+            research_direction="抓取研究方向",
+            recent_papers=["抓取论文"],
+            confidence=0.8,
+            field_confidence={},
+        )
+        with patch(
+            "app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(return_value=(payload, None)),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+        assert candidate is not None
+        self.assertEqual(candidate.email, "manual@example.edu")
+        self.assertEqual(candidate.title, "手动职称")
+        self.assertEqual(candidate.department, "手动部门")
+        self.assertEqual(candidate.research_direction, "手动研究方向")
+        self.assertEqual(candidate.recent_papers, ["手动论文"])
+
     async def test_enrichment_skips_candidate_without_profile_url(self) -> None:
         _, task_id = await self._seed_task(profile_url=None)
 
