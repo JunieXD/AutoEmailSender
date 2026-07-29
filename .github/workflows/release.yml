@@ -55,16 +55,19 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build and publish desktop release
+      - name: Build Windows release
         working-directory: desktop
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish
+        run: npm run dist
 
-      - name: Update GitHub release notes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --notes-file ./desktop/release-notes.md
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: |
+            desktop/release/AutoEmailSender-Setup-*.exe
+            desktop/release/AutoEmailSender-Setup-*.exe.blockmap
+            desktop/release/latest.yml
 
   build-macos:
     runs-on: macos-latest
@@ -107,13 +110,88 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Test Sparkle release helpers
+        run: >-
+          node --test
+          scripts/configure-sparkle-info.test.mjs
+          scripts/prepare-sparkle-release.test.mjs
+
       - name: Test desktop
         working-directory: desktop
         run: npm test
 
-      - name: Build and publish macOS release
+      - name: Build macOS DMG
         working-directory: desktop
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm run publish:mac
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+        run: npm run dist:mac
+
+      - name: Generate signed appcast and deltas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+        run: >-
+          node scripts/prepare-sparkle-release.mjs
+          --release-tag "${{ github.ref_name }}"
+          --output-dir desktop/release/sparkle-publish
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          if-no-files-found: error
+          path: desktop/release/sparkle-publish/*
+
+  publish:
+    runs-on: ubuntu-latest
+    needs:
+      - build-windows
+      - build-macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets/windows
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: release-assets/macos
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release edit "${{ github.ref_name }}" --notes-file ./desktop/release-notes.md
+          else
+            gh release create "${{ github.ref_name }}" --draft --verify-tag --title "${{ github.ref_name }}" --notes-file ./desktop/release-notes.md
+          fi
+
+      - name: Upload installers and update metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(release-assets/windows/* release-assets/macos/*.dmg release-assets/macos/*.delta)
+          gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber
+          gh release upload "${{ github.ref_name }}" release-assets/macos/appcast.xml --clobber
+
+      - name: Publish staged GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if [[ "$(gh release view "${{ github.ref_name }}" --json isDraft --jq .isDraft)" == "true" ]]; then
+            gh release edit "${{ github.ref_name }}" --draft=false --latest
+          fi

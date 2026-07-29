@@ -97,3 +97,19 @@ npm run dist
 打包前确认已在仓库根目录执行过 `.\scripts\install-backend-playwright.ps1`。桌面端打包会将 `backend/ms-playwright/` 复制到安装包资源目录，跳过这一步会导致安装版中的浏览器自动化无法启动。
 
 安装包生成到 `desktop/release/`。本地打包不会自动发布到 GitHub。
+
+### macOS 与 Sparkle
+
+macOS 只发布 Apple Silicon `arm64` DMG，并保持 ad-hoc 签名，不需要 Apple Developer Program。构建前需要准备 Sparkle 和用于更新归档验签的公开密钥：
+
+```bash
+./scripts/setup-sparkle.sh
+export SPARKLE_PUBLIC_ED_KEY="<Sparkle EdDSA 公钥>"
+
+cd desktop
+npm run dist:mac
+```
+
+`dist:mac` 会自动编译原生桥接并把 `Sparkle.framework` 放入应用包。DMG 同时用于首次安装和 Sparkle 无法使用差分包时的全量回退，不再另外发布裸 `.app`。
+
+正式发布由 tag 触发 GitHub Actions：Windows 和 macOS job 只构建产物，最后由单独的 publish job 一次性创建 Release。macOS job 会复用上一版 `appcast.xml`，下载最近 3 个旧 DMG，生成并签名差分包与新的 appcast。完整的首次密钥配置、迁移和故障处理见 [Sparkle 发布运维说明](https://github.com/JunieXD/AutoEmailSender/blob/master/docs/sparkle-release-operations.md)。

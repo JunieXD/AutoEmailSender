@@ -43,7 +43,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。安装版自动�
 
 ## 更新
 
-应用会检查 GitHub Releases 的新版本。Windows 版可在应用内下载并安装更新；macOS Apple Silicon 版发现新版本后会打开 GitHub Releases，由你下载新版 `.dmg` 后手动替换安装。
+应用会检查 GitHub Releases 的新版本。Windows 版继续使用内置更新流程；macOS Apple Silicon 版由 Sparkle 显示原生窗口，确认后自动下载、替换并重启应用。尚未集成 Sparkle 的旧 macOS 版本需要手动覆盖安装新版 `.dmg` 一次，之后即可使用应用内更新。
 
 ## 开发者入口
 
