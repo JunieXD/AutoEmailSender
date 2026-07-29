@@ -24,7 +24,11 @@ desktop/native/sparkle/vendor/
 .superpowers
 .omx
 .worktrees/
-.codex
+.codex/*
+!.codex/skills/
+.codex/skills/*
+!.codex/skills/auto-email-sender-release/
+!.codex/skills/auto-email-sender-release/**
 .agents
 skills-lock.json
 .env
