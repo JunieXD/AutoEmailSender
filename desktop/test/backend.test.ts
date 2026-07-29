@@ -131,13 +131,13 @@ describe("desktop backend helpers", () => {
       isPackaged: true,
       repoRoot: "C:\\Repo",
       resourcesPath: "C:\\App\\resources",
-      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
     });
 
     expect(env.PATH).toBe("C:\\Windows");
     expect(env.AUTO_EMAIL_SENDER_DATA_DIR).toBe(
-      "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
     );
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
     expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
@@ -150,7 +150,7 @@ describe("desktop backend helpers", () => {
       isPackaged: false,
       resourcesPath: "C:\\App\\resources",
       repoRoot: "C:\\Repo",
-      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
     });
 

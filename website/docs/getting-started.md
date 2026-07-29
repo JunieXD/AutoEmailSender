@@ -5,7 +5,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。安装版自动�
 ## 下载安装
 
 1. 打开 [GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases)。
-2. Windows 下载 `AutoEmailSender Setup x.y.z.exe`，双击安装后从开始菜单或桌面快捷方式打开。
+2. Windows 下载 `AutoEmailSender-Setup-x.y.z.exe`，双击安装后从开始菜单或桌面快捷方式打开。
 3. macOS Apple Silicon 下载 `AutoEmailSender-x.y.z-arm64.dmg`，打开后把应用拖到“应用程序”。
 4. macOS Apple Silicon 版首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。
 

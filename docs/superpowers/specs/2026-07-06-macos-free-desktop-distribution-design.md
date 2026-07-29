@@ -98,7 +98,7 @@ macOS 使用 Sparkle 2.9.4：
 - `mac.target` 使用 `dmg`。
 - `mac.icon` 使用 `build/icon.icns`。
 - `mac.category` 使用教育或生产力类目。
-- 明确当前 macOS 包不做签名和公证。
+- 明确当前 macOS 包采用 ad-hoc 签名，但不使用 Developer ID 签名和 Apple 公证。
 - `artifactName` 区分 Windows 与 macOS，避免 `Setup` 命名污染 macOS 产物。
 
 `desktop/package.json` 增加 macOS 脚本：
@@ -148,7 +148,7 @@ release workflow 分为 Windows 构建、macOS 构建和统一发布三个 job�
 
 `docs/releases/vX.Y.Z.md` 和同步后的 `desktop/release-notes.md` 的“安装说明”改为：
 
-- Windows：下载 `AutoEmailSender Setup x.y.z.exe`。
+- Windows：下载 `AutoEmailSender-Setup-x.y.z.exe`。
 - macOS：下载 `AutoEmailSender-x.y.z-arm64.dmg`，拖到“应用程序”。首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。
 
 “自动更新”改为：

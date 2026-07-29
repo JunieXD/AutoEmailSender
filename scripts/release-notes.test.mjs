@@ -15,6 +15,7 @@ describe("release notes generator", () => {
     expect(notes).toContain("### 问题修复");
     expect(notes).toContain("Windows：下载 `AutoEmailSender-Setup-2.0.2.exe` 后双击安装。");
     expect(notes).toContain("macOS Apple Silicon：下载 `AutoEmailSender-2.0.2-arm64.dmg`，打开后把应用拖到“应用程序”。");
+    expect(notes).toContain("macOS 采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证");
     expect(notes).toContain("系统设置 > 隐私与安全性");
     expect(notes).toContain("Intel Mac 暂未提供安装包。");
     expect(notes).toContain("请只从本项目 GitHub Releases 页面下载安装包。");

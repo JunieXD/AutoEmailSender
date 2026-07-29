@@ -47,13 +47,12 @@ Auto Email Sender 桌面端使用 Electron + NSIS 打包。当前卸载流程只
 在 Windows 上，该目录通常位于：
 
 ```text
-%APPDATA%\Auto Email Sender
+%APPDATA%\auto-email-sender-desktop
 ```
 
 卸载器只允许删除以下应用自有目录：
 
-- `%APPDATA%\Auto Email Sender`
-- electron-builder 模板可能使用的产品名、文件名或包名对应目录，但必须与本应用标识匹配。
+- `%APPDATA%\auto-email-sender-desktop`
 
 实现时不得递归删除未校验的动态路径，也不得删除整个 `%APPDATA%`、用户目录、安装目录之外的任意父目录。
 
@@ -79,7 +78,7 @@ electron-builder 的 NSIS 模板已支持 `--delete-app-data` 参数和 `DELETE_
 
 - 目标路径不能为空。
 - 目标路径必须位于当前用户的 `%APPDATA%` 下。
-- 目标路径末级目录必须与本应用的产品名、文件名或包名匹配。
+- 目标路径末级目录必须严格等于包名 `auto-email-sender-desktop`。
 - 目标路径不能是 `%APPDATA%` 本身或任何上级目录。
 
 如果校验失败，卸载器应跳过数据删除，并继续完成程序卸载。
@@ -118,7 +117,7 @@ electron-builder 的 NSIS 模板已支持 `--delete-app-data` 参数和 `DELETE_
 1. 安装桌面端。
 2. 启动应用并创建一份测试数据。
 3. 关闭应用。
-4. 执行普通卸载，确认 `%APPDATA%\Auto Email Sender` 仍存在。
+4. 执行普通卸载，确认 `%APPDATA%\auto-email-sender-desktop` 仍存在。
 5. 重新安装应用，确认测试数据仍可读取。
 6. 再次卸载并勾选清空数据，确认目录被删除。
 

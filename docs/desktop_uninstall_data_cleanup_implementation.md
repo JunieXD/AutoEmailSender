@@ -157,7 +157,7 @@ Function un.DeleteAutoEmailSenderAppData
   ${EndIf}
 
   SetShellVarContext current
-  StrCpy $R0 "$APPDATA\Auto Email Sender"
+  StrCpy $R0 "$APPDATA\auto-email-sender-desktop"
 
   ${If} $R0 == ""
     Return
@@ -234,7 +234,7 @@ npm run dist
 ```
 
 检查产物：
-- `desktop/release/AutoEmailSender Setup <version>.exe` 存在。
+- `desktop/release/AutoEmailSender-Setup-<version>.exe` 存在。
 - 安装器能正常安装。
 - Windows「应用和功能」中能正常卸载。
 
@@ -244,11 +244,11 @@ npm run dist
 
 1. 安装桌面端。
 2. 启动应用，创建测试数据。
-3. 记录 `%APPDATA%\Auto Email Sender` 是否存在。
+3. 记录 `%APPDATA%\auto-email-sender-desktop` 是否存在。
 4. 关闭应用。
 5. 从 Windows「应用和功能」卸载。
 6. 不勾选「同时删除本地数据」。
-7. 确认卸载完成后 `%APPDATA%\Auto Email Sender` 仍存在。
+7. 确认卸载完成后 `%APPDATA%\auto-email-sender-desktop` 仍存在。
 8. 重新安装应用，确认测试数据仍可读取。
 
 ### 5.2 交互式彻底卸载
@@ -257,7 +257,7 @@ npm run dist
 2. 从 Windows「应用和功能」卸载。
 3. 勾选「同时删除本地数据」。
 4. 在二次确认中选择「是」。
-5. 确认卸载完成后 `%APPDATA%\Auto Email Sender` 不存在。
+5. 确认卸载完成后 `%APPDATA%\auto-email-sender-desktop` 不存在。
 
 ### 5.3 取消二次确认
 
@@ -266,7 +266,7 @@ npm run dist
 3. 勾选「同时删除本地数据」。
 4. 在二次确认中选择「否」。
 5. 确认卸载继续完成。
-6. 确认 `%APPDATA%\Auto Email Sender` 仍存在。
+6. 确认 `%APPDATA%\auto-email-sender-desktop` 仍存在。
 
 ### 5.4 静默卸载
 
@@ -295,7 +295,7 @@ npm run dist
 - 不要默认删除用户数据。
 - 不要使用通配符删除 `%APPDATA%` 下的多个目录。
 - 不要因为数据删除失败而阻断卸载主流程。
-- 如果后续发现 Electron 实际 `userData` 目录名与 `%APPDATA%\Auto Email Sender` 不一致，应先确认 `productName`、`appId` 和运行时 `app.getPath("userData")`，再更新脚本中的已知目录列表。
+- 如果后续修改 Electron 包名或显式设置 `app` 名称，应先确认运行时 `app.getPath("userData")`，并设计现有数据目录的兼容迁移，再更新卸载脚本。
 
 ## 7. 发布说明
 
@@ -306,5 +306,5 @@ npm run dist
 同时建议在文档中补充手动清理路径：
 
 ```text
-%APPDATA%\Auto Email Sender
+%APPDATA%\auto-email-sender-desktop
 ```

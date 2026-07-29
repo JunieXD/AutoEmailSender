@@ -22,7 +22,7 @@ export default defineConfig({
           items: [
             { text: "快速开始", link: "/docs/getting-started" },
             { text: "交流与反馈", link: "/docs/feedback" },
-            { text: "安装 Windows 版", link: "/docs/install" },
+            { text: "安装桌面版", link: "/docs/install" },
             { text: "首次配置", link: "/docs/first-run" }
           ]
         },

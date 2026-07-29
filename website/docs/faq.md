@@ -18,11 +18,11 @@
 
 Windows 安装版会将数据库、上传文件和运行日志保存到当前用户的数据目录：
 
-`C:\Users\<你的用户名>\AppData\Roaming\Auto Email Sender`
+`C:\Users\<你的用户名>\AppData\Roaming\auto-email-sender-desktop`
 
 macOS Apple Silicon 安装版数据目录：
 
-`~/Library/Application Support/Auto Email Sender`
+`~/Library/Application Support/auto-email-sender-desktop`
 
 本地运行源码时，默认数据目录是仓库根目录下的 `data/`。后端支持通过环境变量 `AUTO_EMAIL_SENDER_DATA_DIR` 自定义路径。
 
@@ -34,7 +34,7 @@ macOS Apple Silicon 安装版数据目录：
 
 ## macOS 为什么提示无法验证开发者
 
-当前 macOS Apple Silicon 版未购买 Apple Developer Program 账号签名，因此首次打开会被系统拦截。请确认安装包来自本项目 GitHub Releases 页面，然后到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。之后可以正常双击启动。
+当前 macOS Apple Silicon 版采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证，因此首次打开可能被系统拦截。请确认安装包来自本项目 GitHub Releases 页面，然后到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。之后可以正常双击启动。
 
 ## 启动后白屏怎么办
 

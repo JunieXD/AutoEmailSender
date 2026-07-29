@@ -4,7 +4,7 @@
 
 [打开 GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases)
 
-- Windows 下载 `AutoEmailSender Setup x.y.z.exe`。
+- Windows 下载 `AutoEmailSender-Setup-x.y.z.exe`。
 - macOS Apple Silicon 下载 `AutoEmailSender-x.y.z-arm64.dmg`。
 - Intel Mac 暂未提供安装包。
 
@@ -45,16 +45,16 @@
 
 Windows 安装版数据目录：
 
-`C:\Users\<你的用户名>\AppData\Roaming\Auto Email Sender`
+`C:\Users\<你的用户名>\AppData\Roaming\auto-email-sender-desktop`
 
 macOS Apple Silicon 安装版数据目录：
 
-`~/Library/Application Support/Auto Email Sender`
+`~/Library/Application Support/auto-email-sender-desktop`
 
 包含数据库文件、上传的附件和运行日志。
 
 ## 常见提示
 
-Windows 安装包暂未购买代码签名证书，看到「未知发布者」或 SmartScreen 拦截是正常现象。macOS Apple Silicon 版首次打开若提示无法验证开发者，请到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。请确认安装包来源为本项目 GitHub Releases 页面。
+Windows 安装包暂未购买代码签名证书，看到「未知发布者」或 SmartScreen 拦截是正常现象。macOS Apple Silicon 版采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证；首次打开若提示无法验证开发者，请到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。请确认安装包来源为本项目 GitHub Releases 页面。
 
 启动后白屏或连接失败，先退出应用后重新打开。问题依旧的话，请到 GitHub Issues 反馈，附上系统版本、安装包版本和错误截图。

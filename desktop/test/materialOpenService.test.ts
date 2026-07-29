@@ -18,7 +18,7 @@ describe("desktop material open service", () => {
     const fetchMock = vi.fn<typeof fetch>();
     const service = createMaterialOpenService({
       getBackendBaseUrl: () => "http://127.0.0.1:8010",
-      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       dependencies: { fetch: fetchMock },
     });
 
@@ -37,7 +37,7 @@ describe("desktop material open service", () => {
     const openPathMock = vi.fn().mockResolvedValue("");
     const service = createMaterialOpenService({
       getBackendBaseUrl: () => "http://127.0.0.1:8010",
-      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\Auto Email Sender",
+      userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       dependencies: {
         fetch: vi.fn<typeof fetch>().mockResolvedValueOnce(
           okResponse("document content", {

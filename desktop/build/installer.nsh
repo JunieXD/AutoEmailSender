@@ -48,7 +48,7 @@ FunctionEnd
 
 Function un.DeleteAutoEmailSenderAppData
   SetShellVarContext current
-  StrCpy $R0 "$APPDATA\Auto Email Sender"
+  StrCpy $R0 "$APPDATA\auto-email-sender-desktop"
 
   ${If} $R0 == ""
     Return

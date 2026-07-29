@@ -12,7 +12,7 @@ Auto Email Sender 的安装、使用和开发说明。
 
 - [快速开始](./getting-started)
 - [交流与反馈](./feedback)
-- [安装 Windows 版](./install)
+- [安装桌面版](./install)
 - [首次配置](./first-run)
 
 ## 基础配置

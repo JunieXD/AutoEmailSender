@@ -1,6 +1,6 @@
 # 开发者文档
 
-本文面向需要本地运行、调试或打包 Auto Email Sender 的开发者。普通用户请直接下载 Windows 安装版。
+本文面向需要本地运行、调试或打包 Auto Email Sender 的开发者。普通用户请直接下载桌面版。
 
 ## 环境要求
 
@@ -74,7 +74,7 @@ npm run dev
 
 桌面端开发模式加载 `http://127.0.0.1:5173`，并自动选择本地端口启动后端。看到 `ERR_CONNECTION_REFUSED` 时，通常是前端开发服务器未启动或端口不是 `5173`。后端启动失败时，确认已完成首次初始化且 `backend/ms-playwright/` 目录存在。
 
-桌面版启动时将用户数据目录传给后端，因此安装版和源码版的数据默认位置不同。安装版数据落在当前用户的 AppData 目录下。
+桌面版启动时将 Electron 用户数据目录传给后端，因此安装版和源码版的数据默认位置不同。Windows 安装版使用 `%APPDATA%\auto-email-sender-desktop`，macOS 安装版使用 `~/Library/Application Support/auto-email-sender-desktop`。
 
 ## 常用配置
 

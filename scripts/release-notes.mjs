@@ -22,7 +22,7 @@ export function buildReleaseNotes(version) {
     "",
     `- Windows：下载 \`${windowsInstallerName}\` 后双击安装。`,
     `- macOS Apple Silicon：下载 \`${macAppleSiliconInstallerName}\`，打开后把应用拖到“应用程序”。`,
-    "- macOS 首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。",
+    "- macOS 采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证；首次打开若提示无法验证开发者，到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。",
     "- Intel Mac 暂未提供安装包。",
     "- 请只从本项目 GitHub Releases 页面下载安装包。",
     "",
