@@ -43,6 +43,7 @@ class MatchAnalysisJobItemRead(ApiSchema):
     professor_name: str
     professor_email: str | None
     professor_title: str | None
+    professor_university: str | None
     professor_school: str | None
     email_task_id: int | None
     status: str

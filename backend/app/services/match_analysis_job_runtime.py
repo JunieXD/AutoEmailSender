@@ -183,6 +183,7 @@ def serialize_match_analysis_job_item(
         professor_name=item.professor.name,
         professor_email=item.professor.email,
         professor_title=item.professor.title,
+        professor_university=item.professor.university,
         professor_school=item.professor.school,
         email_task_id=item.email_task_id,
         status=item.status,

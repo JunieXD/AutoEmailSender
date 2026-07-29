@@ -4910,6 +4910,13 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(len(listed.json()), 1)
 
+        items = self.client.get(
+            f"/api/match-analysis-jobs/{created.json()['id']}/items",
+        )
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        self.assertEqual(items.json()[0]["professor_university"], "Example University")
+        self.assertEqual(items.json()[0]["professor_school"], "School of Computing")
+
     def test_match_analysis_jobs_list_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm()

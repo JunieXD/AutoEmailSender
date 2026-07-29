@@ -580,6 +580,7 @@ const buildMatchAnalysisJobItem = (
   professor_name: "张老师",
   professor_email: "zhang@example.edu",
   professor_title: "教授",
+  professor_university: "测试大学",
   professor_school: "计算机学院",
   email_task_id: 71,
   status: "succeeded",
@@ -927,6 +928,8 @@ describe("TasksPage match analysis token usage", () => {
     expect(within(cardSummary).getByText("222")).toBeInTheDocument();
     expect(within(cardSummary).getByText("333")).toBeInTheDocument();
     expect(within(cardSummary).getByText("1,333")).toBeInTheDocument();
+    expect(cardSummary).toHaveClass("grid");
+    expect(cardSummary).not.toHaveClass("inline-grid");
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -950,9 +953,29 @@ describe("TasksPage match analysis token usage", () => {
     expect(within(detailSummary).getByText("缓存命中")).toBeInTheDocument();
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
+    const detailHeaders = within(dialog).getAllByRole("columnheader");
+    detailHeaders.forEach((header) => {
+      expect(header).toHaveClass("align-middle");
+      expect(header.parentElement?.parentElement).toHaveClass("text-center");
+    });
+    expect(
+      within(dialog).getByRole("columnheader", { name: "Token 明细" }),
+    ).toHaveClass("w-44");
+
     const itemSummary = await within(dialog).findByLabelText(
       "张老师 Token 使用明细",
     );
+    expect(itemSummary).toHaveClass("inline-grid", "gap-x-3", "text-left");
+    const itemRow = within(dialog).getByText("张老师").closest("tr");
+    expect(itemRow).not.toBeNull();
+    const itemCells = within(itemRow as HTMLTableRowElement).getAllByRole("cell");
+    expect(itemCells[0]).toHaveClass("align-middle");
+    expect(
+      within(itemCells[0]).getByText("教授 / 测试大学 / 计算机学院"),
+    ).toBeInTheDocument();
+    [1, 2, 4, 5].forEach((index) => {
+      expect(itemCells[index]).toHaveClass("text-center", "align-middle");
+    });
     expect(within(itemSummary).getByText("900")).toBeInTheDocument();
     expect(within(itemSummary).getByText("100")).toBeInTheDocument();
     expect(within(itemSummary).getByText("700")).toBeInTheDocument();
@@ -1041,7 +1064,27 @@ describe("TasksPage information enrichment", () => {
     expect(within(detailSummary).getByText("输出 Token")).toBeInTheDocument();
     expect(within(detailSummary).getByText("缓存命中")).toBeInTheDocument();
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
+
+    const detailHeaders = within(dialog).getAllByRole("columnheader");
+    detailHeaders.forEach((header) => {
+      expect(header).toHaveClass("align-middle");
+      expect(header.parentElement?.parentElement).toHaveClass("text-center");
+    });
+    expect(
+      within(dialog).getByRole("columnheader", {
+        name: "Token 明细 / 尝试",
+      }),
+    ).toHaveClass("w-44");
+
     const itemSummary = within(dialog).getByLabelText("张老师 Token 使用明细");
+    expect(itemSummary).toHaveClass("inline-grid", "gap-x-3", "text-left");
+    const itemRow = within(dialog).getByText("张老师").closest("tr");
+    expect(itemRow).not.toBeNull();
+    const itemCells = within(itemRow as HTMLTableRowElement).getAllByRole("cell");
+    expect(itemCells[0]).toHaveClass("align-middle");
+    [1, 2, 4, 5].forEach((index) => {
+      expect(itemCells[index]).toHaveClass("text-center", "align-middle");
+    });
     expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
     expect(within(itemSummary).getByText("200")).toBeInTheDocument();
     expect(within(itemSummary).getByText("300")).toBeInTheDocument();

@@ -575,6 +575,7 @@ export interface MatchAnalysisJobItemDTO {
   professor_name: string;
   professor_email: string | null;
   professor_title: string | null;
+  professor_university: string | null;
   professor_school: string | null;
   email_task_id: number | null;
   status: MatchAnalysisJobItemStatus;
