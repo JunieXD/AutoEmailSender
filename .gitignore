@@ -19,6 +19,8 @@ backend/dist/
 backend/ms-playwright/
 desktop/dist/
 desktop/release/
+desktop/native/sparkle/build/
+desktop/native/sparkle/vendor/
 .superpowers
 .omx
 .worktrees/

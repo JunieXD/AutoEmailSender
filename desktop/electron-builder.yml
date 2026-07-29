@@ -6,6 +6,7 @@ directories:
 files:
   - dist/**
   - package.json
+afterPack: ../scripts/configure-sparkle-info.mjs
 extraResources:
   - from: ../frontend/dist
     to: frontend
@@ -29,6 +30,21 @@ mac:
   icon: build/icon.icns
   category: public.app-category.productivity
   identity: "-"
+  extendInfo:
+    SUFeedURL: "https://github.com/JunieXD/AutoEmailSender/releases/latest/download/appcast.xml"
+    SUEnableAutomaticChecks: true
+    SUAllowsAutomaticUpdates: false
+    SUScheduledCheckInterval: 86400
+    SUVerifyUpdateBeforeExtraction: true
+    SURequireSignedFeed: true
+  extraResources:
+    - from: native/sparkle/build/Release/sparkle_bridge.node
+      to: native/sparkle_bridge.node
+    - from: native/sparkle/vendor/LICENSE
+      to: licenses/Sparkle-LICENSE
+  extraFiles:
+    - from: native/sparkle/vendor/Sparkle.framework
+      to: Frameworks/Sparkle.framework
   target:
     - target: dmg
       arch:

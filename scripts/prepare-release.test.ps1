@@ -58,6 +58,9 @@ try {
   if ($notes -notmatch "macOS Apple Silicon：下载 ``AutoEmailSender-1.0.1-arm64.dmg``") {
     throw "公告模板缺少 macOS Apple Silicon 安装说明。`n$notes"
   }
+  if ($notes -notmatch "确认后由 Sparkle 下载并重启安装") {
+    throw "公告模板缺少 macOS Sparkle 更新说明。`n$notes"
+  }
   if ($notes -match "fix\(更新\): 修复公告弹窗高度") {
     throw "公告模板不应该直接包含 commit subject。`n$notes"
   }

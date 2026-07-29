@@ -2,11 +2,13 @@
 
 ## 如何更新
 
-应用会检查 GitHub Releases 的新版本。Windows 版可在应用内下载并安装更新；macOS Apple Silicon 版会打开 GitHub Releases 下载页，你需要下载新版 `.dmg` 后手动拖到“应用程序”覆盖安装。Intel Mac 暂未提供安装包。
+应用会检查 GitHub Releases 的新版本。Windows 版继续使用内置更新流程；macOS Apple Silicon 版由 Sparkle 显示原生更新窗口，确认后自动下载、替换并重启应用。Intel Mac 暂未提供安装包。
+
+如果你正在使用尚未集成 Sparkle 的旧 macOS 版本，它仍会打开 GitHub Releases。此时需要最后手动下载一次新版 `.dmg` 并覆盖安装；从该版本起即可在应用内更新。
 
 ## 检查更新失败怎么办
 
-检查更新需要访问 GitHub。网络不可用、GitHub 无法访问或代理配置异常时，检查更新将失败，并有相应提示。
+检查更新需要访问 GitHub。网络不可用、GitHub 无法访问或代理配置异常时，检查更新将失败，并有相应提示。macOS 的错误提示由 Sparkle 原生窗口显示。
 
 可以稍后重试，或手动前往 GitHub Releases 下载最新安装包：
 

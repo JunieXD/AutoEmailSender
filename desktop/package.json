@@ -9,12 +9,14 @@
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json",
     "test": "vitest run",
     "dev": "npm run build && electron . --dev",
+    "setup:sparkle": "../scripts/setup-sparkle.sh",
+    "build:sparkle": "../scripts/build-sparkle-bridge.sh",
+    "prepare:sparkle": "npm run setup:sparkle && npm run build:sparkle",
     "pack": "npm run build && electron-builder --config electron-builder.yml --win --dir",
-    "pack:mac": "npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never",
+    "pack:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never",
     "dist": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
-    "dist:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never",
-    "publish": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish always",
-    "publish:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish always"
+    "dist:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never",
+    "publish": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.8.3"

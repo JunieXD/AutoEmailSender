@@ -29,7 +29,8 @@ export function buildReleaseNotes(version) {
     "## 自动更新",
     "",
     "- Windows：应用内可下载并安装更新。",
-    "- macOS Apple Silicon：应用内可检查更新；发现新版本后会打开 GitHub Releases，请下载新版 `.dmg` 并拖到“应用程序”覆盖安装。",
+    "- macOS Apple Silicon：应用会自动检查更新，也可点击“检查更新”；确认后由 Sparkle 下载并重启安装。",
+    "- 如果当前 macOS 旧版本仍打开 GitHub Releases，请手动覆盖安装本版本一次；之后即可使用应用内更新。",
     "",
   ].join("\n");
 }

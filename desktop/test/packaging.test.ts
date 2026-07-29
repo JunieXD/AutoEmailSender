@@ -99,6 +99,26 @@ describe("macOS desktop packaging", () => {
     expect(existsSync(path.resolve("build", "icon.icns"))).toBe(true);
   });
 
+  it("embeds Sparkle with a signed feed and user-confirmed installation", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+
+    expect(config).toContain("SUFeedURL:");
+    expect(config).toContain("afterPack: ../scripts/configure-sparkle-info.mjs");
+    expect(config).toContain("SUEnableAutomaticChecks: true");
+    expect(config).toContain("SUAllowsAutomaticUpdates: false");
+    expect(config).toContain("SURequireSignedFeed: true");
+    expect(config).toContain("from: native/sparkle/build/Release/sparkle_bridge.node");
+    expect(config).toContain("from: native/sparkle/vendor/Sparkle.framework");
+    expect(config).toContain("to: Frameworks/Sparkle.framework");
+    const hook = readFileSync(path.resolve("..", "scripts", "configure-sparkle-info.mjs"), "utf8");
+    expect(hook).toContain("process.env.SPARKLE_PUBLIC_ED_KEY");
+    expect(hook).toContain('decoded.length !== 32');
+    expect(hook).toContain('"-insert", "SUPublicEDKey"');
+    const setupScript = readFileSync(path.resolve("..", "scripts", "setup-sparkle.sh"), "utf8");
+    expect(setupScript).toContain('sparkle_version="2.9.4"');
+    expect(setupScript).toContain("ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9");
+  });
+
   it("keeps platform-specific artifact names", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
 
@@ -112,8 +132,21 @@ describe("macOS desktop packaging", () => {
     expect(packageJson).toContain('"pack": "npm run build && electron-builder --config electron-builder.yml --win --dir"');
     expect(packageJson).toContain('"dist": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
     expect(packageJson).toContain('"publish": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"');
-    expect(packageJson).toContain('"pack:mac": "npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never"');
-    expect(packageJson).toContain('"dist:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never"');
-    expect(packageJson).toContain('"publish:mac": "npm run build && electron-builder --config electron-builder.yml --mac dmg --publish always"');
+    expect(packageJson).toContain('"pack:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never"');
+    expect(packageJson).toContain('"dist:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never"');
+    expect(packageJson).not.toContain('"publish:mac"');
+  });
+
+  it("publishes both platforms together and uploads appcast last", () => {
+    const workflow = readFileSync(path.resolve("..", ".github", "workflows", "release.yml"), "utf8");
+
+    expect(workflow).toContain("build-windows:");
+    expect(workflow).toContain("build-macos:");
+    expect(workflow).toContain("publish:");
+    expect(workflow).toContain("needs:");
+    expect(workflow).toContain("scripts/prepare-sparkle-release.mjs");
+    expect(workflow.indexOf("release-assets/macos/appcast.xml --clobber")).toBeGreaterThan(
+      workflow.indexOf('gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber'),
+    );
   });
 });
