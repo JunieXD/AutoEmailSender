@@ -7,6 +7,7 @@ from app.core.database import get_async_session
 from app.services.llm_runtime import LLMRuntimeError
 from app.schemas.test_compose import (
     TestComposeDraftUpdateRequest,
+    TestComposeGenerateRequest,
     TestComposeMessageSendRequest,
     TestComposeStatusRead,
     TestComposeThreadRead,
@@ -57,6 +58,7 @@ async def get_test_compose_thread(
 async def generate_test_compose(
     identity_id: int,
     llm_profile_id: int,
+    payload: TestComposeGenerateRequest | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> TestComposeThreadRead:
     return await _run_test_compose_action(
@@ -65,6 +67,21 @@ async def generate_test_compose(
             session,
             identity_id=identity_id,
             llm_profile_id=llm_profile_id,
+            outreach_template_id=(payload.outreach_template_id if payload else None),
+            template_selection_explicit=(
+                payload is not None
+                and "outreach_template_id" in payload.model_fields_set
+            ),
+            subject_template=(payload.subject if payload else None),
+            body_text_template=(payload.body_text if payload else None),
+            body_html_template=(payload.body_html if payload else None),
+            template_content_explicit=(
+                payload is not None
+                and bool(
+                    {"subject", "body_text", "body_html"}
+                    & payload.model_fields_set
+                )
+            ),
         ),
     )
 

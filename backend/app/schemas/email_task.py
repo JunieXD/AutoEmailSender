@@ -25,6 +25,7 @@ class EmailTaskPrimaryMaterialRequest(BaseModel):
 
 class EmailTaskOutreachConfigRequest(BaseModel):
     outreach_generation_mode: str
+    outreach_template_id: int | None = None
     outreach_template_subject: str | None = None
     outreach_template_body_text: str | None = None
     outreach_template_body_html: str | None = None

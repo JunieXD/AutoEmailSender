@@ -29,6 +29,10 @@ from app.services.task_runtime import (
     calculate_task_match,
 )
 from app.services.operation_logs import record_operation_log
+from app.services.outreach_template_library import (
+    get_default_outreach_template_for_identity,
+)
+from app.services.outreach_templates import resolve_outreach_template_config
 
 
 _ACTIVE_MATCH_ANALYSIS_JOB_IDS: set[int] = set()
@@ -329,12 +333,25 @@ async def _ensure_match_email_task(
     if existing_task is not None:
         return existing_task
 
+    selected_template = await get_default_outreach_template_for_identity(
+        session,
+        identity,
+    )
+    snapshot = resolve_outreach_template_config(identity, template=selected_template)
     task = EmailTask(
         professor_id=professor.id,
         identity_id=identity.id,
         llm_profile_id=llm_profile.id,
         source=EmailTaskSource.MANUAL.value,
         status=EmailTaskStatus.DISCOVERED.value,
+        outreach_template_id=(
+            selected_template.id if selected_template is not None else None
+        ),
+        outreach_template_snapshot_version=1,
+        outreach_generation_mode=snapshot.generation_mode,
+        outreach_template_subject=snapshot.subject_template,
+        outreach_template_body_text=snapshot.body_text_template,
+        outreach_template_body_html=snapshot.body_html_template,
         selected_material_ids=[],
     )
     session.add(task)

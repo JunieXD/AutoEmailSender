@@ -53,6 +53,7 @@ class WorkspaceTaskSummaryRead(ApiSchema):
     cancellation_reason: str | None
     can_continue_manually: bool
     can_write_follow_up: bool
+    outreach_template_id: int | None
     outreach_generation_mode: str
     outreach_template_subject: str | None
     outreach_template_body_text: str | None

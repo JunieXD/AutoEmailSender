@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   updateTaskOutreachConfig: vi.fn(),
   continueManually: vi.fn(),
   startFollowUp: vi.fn(),
+  listOutreachTemplates: vi.fn(),
   approveAndSend: vi.fn(),
   approveAndSchedule: vi.fn(),
   cancelScheduledTask: vi.fn(),
@@ -85,6 +86,10 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
   approveAndSend: apiMocks.approveAndSend,
   approveAndSchedule: apiMocks.approveAndSchedule,
   cancelScheduledTask: apiMocks.cancelScheduledTask,
+}));
+
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  listOutreachTemplates: apiMocks.listOutreachTemplates,
 }));
 
 vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
@@ -263,6 +268,41 @@ beforeEach(() => {
   selectionMock.communicationScopeKey = "1";
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.refreshWorkspaceReplies.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.listOutreachTemplates.mockResolvedValue([
+    {
+      id: 9,
+      name: "研究申请模板",
+      recommended_generation_mode: "template",
+      subject: "新模板主题 {{name}}",
+      body_text: "新模板正文 {{sender_name}}",
+      body_html: "<p>新模板正文 {{sender_name}}</p>",
+      is_ready: true,
+      is_default: false,
+      archived_at: null,
+      created_at: "2026-07-30T00:00:00Z",
+      updated_at: "2026-07-30T00:00:00Z",
+    },
+  ]);
+  apiMocks.updateTaskOutreachConfig.mockResolvedValue(
+    buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        outreach_template_id: 9,
+        outreach_generation_mode: "template",
+        outreach_template_subject: "新模板主题 {{name}}",
+        outreach_template_body_text: "新模板正文 {{sender_name}}",
+        outreach_template_body_html: "<p>新模板正文 {{sender_name}}</p>",
+        draft: {
+          subject: "新模板主题 保存草稿导师",
+          body_text: "新模板正文 小明",
+          body_html: "<p>新模板正文 小明</p>",
+          source: "template",
+          sendable: true,
+          editable: true,
+        },
+      },
+    }),
+  );
   apiMocks.saveDraft.mockResolvedValue(
     buildWorkspaceThread({
       current_task: {
@@ -390,6 +430,56 @@ describe("WorkspacePage draft saving", () => {
     expect(screen.queryByText("直接套用模板")).not.toBeInTheDocument();
     expect(screen.getAllByText("来自模板").length).toBeGreaterThan(0);
     expect(apiMocks.updateTaskOutreachConfig).not.toHaveBeenCalled();
+  });
+
+  it("copies a selected library template into the current task snapshot", async () => {
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    const templateTrigger = (
+      await screen.findByText("当前任务独立快照")
+    ).closest("button");
+    expect(templateTrigger).not.toBeNull();
+    await waitFor(() => expect(templateTrigger).toBeEnabled());
+    fireEvent.click(templateTrigger!);
+    fireEvent.click(screen.getByRole("option", { name: "研究申请模板" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateTaskOutreachConfig).toHaveBeenCalledWith(101, {
+        outreach_generation_mode: "template",
+        outreach_template_id: 9,
+        outreach_template_subject: "新模板主题 {{name}}",
+        outreach_template_body_text: "新模板正文 {{sender_name}}",
+        outreach_template_body_html: "<p>新模板正文 {{sender_name}}</p>",
+      });
+    });
+    expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
+      "任务模板已更新",
+      "已复制“研究申请模板”作为当前任务快照，后续编辑不会改动模板库。",
+    );
+  });
+
+  it("keeps unsaved task edits when template replacement is cancelled", async () => {
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.change(screen.getByLabelText("邮件主题"), {
+      target: { value: "尚未保存的主题" },
+    });
+    const templateTrigger = (
+      await screen.findByText("当前任务独立快照")
+    ).closest("button");
+    expect(templateTrigger).not.toBeNull();
+    fireEvent.click(templateTrigger!);
+    fireEvent.click(screen.getByRole("option", { name: "研究申请模板" }));
+
+    expect(
+      await screen.findByText("用模板替换当前未保存的草稿？"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+
+    expect(apiMocks.updateTaskOutreachConfig).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("邮件主题")).toHaveValue("尚未保存的主题");
   });
 
   it("disables rewrite save send schedule and editor while rewriting", async () => {

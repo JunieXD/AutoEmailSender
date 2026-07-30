@@ -9,6 +9,7 @@ import { TaskDateSelector } from '@/components/molecules/TaskDateSelector';
 import { useNotification } from '@/context/NotificationContext';
 import { safeRecordUserAction } from '@/lib/diagnosticUserActions';
 import { createBatchTask } from '@/lib/api/batchTasksApi';
+import { listOutreachTemplates } from '@/lib/api/outreachTemplates';
 import {
   clearBatchResendPrefillContext,
   readBatchResendPrefillContext,
@@ -28,6 +29,7 @@ import {
   MATERIAL_TYPE_LABELS,
   type IdentityMaterialDTO,
   type OutreachGenerationMode,
+  type OutreachTemplateDTO,
   type ProfessorDashboardItemDTO,
 } from '@/types';
 
@@ -77,6 +79,14 @@ export const CreateTaskPage = () => {
   const [templateSubject, setTemplateSubject] = useState('');
   const [templateBodyText, setTemplateBodyText] = useState('');
   const [templateBodyHtml, setTemplateBodyHtml] = useState('');
+  const [outreachTemplates, setOutreachTemplates] = useState<OutreachTemplateDTO[]>([]);
+  const [loadingOutreachTemplates, setLoadingOutreachTemplates] = useState(true);
+  const [outreachTemplatesLoaded, setOutreachTemplatesLoaded] = useState(false);
+  const [selectedOutreachTemplateId, setSelectedOutreachTemplateId] = useState<number | null>(null);
+  const activeOutreachTemplates = useMemo(
+    () => outreachTemplates.filter((template) => !template.archived_at),
+    [outreachTemplates],
+  );
   const [scheduleType, setScheduleType] = useState<'immediate' | 'scheduled'>('immediate');
   const [scheduledDates, setScheduledDates] = useState<string[]>([]);
   const [startTime, setStartTime] = useState('09:00');
@@ -87,6 +97,7 @@ export const CreateTaskPage = () => {
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
+  const templateInitializationKeyRef = useRef<string | null>(null);
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
   const professorsRequestKey =
@@ -99,6 +110,36 @@ export const CreateTaskPage = () => {
       clearBatchResendPrefillContext();
     };
   }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    const loadTemplates = async () => {
+      setLoadingOutreachTemplates(true);
+      try {
+        const templates = await listOutreachTemplates(true);
+        if (!ignore) {
+          setOutreachTemplates(templates);
+          setOutreachTemplatesLoaded(true);
+        }
+      } catch (loadError) {
+        if (!ignore) {
+          setOutreachTemplatesLoaded(false);
+          notifyError(
+            '加载发信模板失败',
+            loadError instanceof Error ? loadError.message : '加载发信模板失败',
+          );
+        }
+      } finally {
+        if (!ignore) {
+          setLoadingOutreachTemplates(false);
+        }
+      }
+    };
+    void loadTemplates();
+    return () => {
+      ignore = true;
+    };
+  }, [notifyError]);
 
   useEffect(() => {
     const loadProfessors = async () => {
@@ -154,6 +195,8 @@ export const CreateTaskPage = () => {
 
   useEffect(() => {
     if (!selectedIdentity) {
+      templateInitializationKeyRef.current = null;
+      setSelectedOutreachTemplateId(null);
       setPrimaryMaterialId(null);
       setSelectedMaterialIds([]);
       setTaskMode('llm');
@@ -182,6 +225,7 @@ export const CreateTaskPage = () => {
     setTemplateSubject(selectedIdentity.outreach_template_subject ?? '');
     setTemplateBodyText(nextTemplateBodyText);
     setTemplateBodyHtml(nextTemplateBodyHtml);
+    setSelectedOutreachTemplateId(selectedIdentity.default_outreach_template_id ?? null);
 
     if (isResendPrefillActive && resendPrefillContext) {
       setTaskName('重新发起 - ' + resendPrefillContext.sourceTaskName);
@@ -197,6 +241,9 @@ export const CreateTaskPage = () => {
       setTemplateSubject(subjectValue);
       setTemplateBodyText(bodyTextValue);
       setTemplateBodyHtml(bodyHtmlValue);
+      setSelectedOutreachTemplateId(
+        resendPrefillContext.defaults.outreach_template_id ?? null,
+      );
       setPrimaryMaterialId(
         resendPrefillContext.defaults.primary_material_id !== null &&
           materialIds.has(resendPrefillContext.defaults.primary_material_id)
@@ -208,6 +255,86 @@ export const CreateTaskPage = () => {
       clearBatchResendPrefillContext();
     }
   }, [isResendPrefillActive, resendPrefillContext, selectedIdentity]);
+
+  useEffect(() => {
+    if (!selectedIdentity || loadingOutreachTemplates || !outreachTemplatesLoaded) {
+      return;
+    }
+    const initializationKey = `${selectedIdentity.id}:${
+      isResendPrefillActive && resendPrefillContext
+        ? `resend-${resendPrefillContext.sourceTaskId}`
+        : 'new-task'
+    }`;
+    if (templateInitializationKeyRef.current === initializationKey) {
+      return;
+    }
+    templateInitializationKeyRef.current = initializationKey;
+
+    if (isResendPrefillActive && resendPrefillContext) {
+      const snapshotTemplateId =
+        resendPrefillContext.defaults.outreach_template_id ?? null;
+      setSelectedOutreachTemplateId(
+        snapshotTemplateId !== null &&
+          outreachTemplates.some((template) => template.id === snapshotTemplateId)
+          ? snapshotTemplateId
+          : null,
+      );
+      return;
+    }
+
+    const selectedTemplate =
+      activeOutreachTemplates.find(
+        (template) =>
+          template.id === selectedIdentity.default_outreach_template_id,
+      ) ??
+      activeOutreachTemplates.find((template) => template.is_default) ??
+      null;
+    if (!selectedTemplate) {
+      return;
+    }
+
+    const nextBodyText = selectedTemplate.body_text ?? '';
+    const nextBodyHtml =
+      selectedTemplate.body_html ??
+      (nextBodyText ? textToEmailHtml(nextBodyText) : '');
+    setSelectedOutreachTemplateId(selectedTemplate.id);
+    setTaskMode(selectedTemplate.recommended_generation_mode);
+    setSubject(selectedTemplate.subject ?? '');
+    setBody(nextBodyText);
+    setBodyHtml(nextBodyHtml);
+    setTemplateSubject(selectedTemplate.subject ?? '');
+    setTemplateBodyText(nextBodyText);
+    setTemplateBodyHtml(nextBodyHtml);
+  }, [
+    isResendPrefillActive,
+    activeOutreachTemplates,
+    loadingOutreachTemplates,
+    outreachTemplatesLoaded,
+    outreachTemplates,
+    resendPrefillContext,
+    selectedIdentity,
+  ]);
+
+  const applySelectedOutreachTemplate = (templateId: number | null) => {
+    setSelectedOutreachTemplateId(templateId);
+    if (templateId === null) {
+      return;
+    }
+    const template = outreachTemplates.find((item) => item.id === templateId);
+    if (!template) {
+      return;
+    }
+    const nextBodyText = template.body_text ?? '';
+    const nextBodyHtml =
+      template.body_html ?? (nextBodyText ? textToEmailHtml(nextBodyText) : '');
+    setTaskMode(template.recommended_generation_mode);
+    setSubject(template.subject ?? '');
+    setBody(nextBodyText);
+    setBodyHtml(nextBodyHtml);
+    setTemplateSubject(template.subject ?? '');
+    setTemplateBodyText(nextBodyText);
+    setTemplateBodyHtml(nextBodyHtml);
+  };
 
   const primaryMaterialOptions = useMemo(
     () => (selectedIdentity ? selectedIdentity.materials.filter(isPrimaryMaterialCandidate) : []),
@@ -227,7 +354,10 @@ export const CreateTaskPage = () => {
     setTargetMentorsPage((currentPage) => Math.min(currentPage, targetMentorsTotalPages));
   }, [targetMentorsTotalPages]);
 
-  const templateReady = Boolean(templateBodyText.trim() || templateBodyHtml.trim());
+  const selectedOutreachTemplate =
+    outreachTemplates.find(
+      (template) => template.id === selectedOutreachTemplateId,
+    ) ?? null;
 
   const handleSubmit = async () => {
     const validationErrors: string[] = [];
@@ -256,8 +386,14 @@ export const CreateTaskPage = () => {
     ) {
       validationErrors.push('当前定时发送窗口已全部过期，请重新选择发送日期或结束时间');
     }
-    if (taskMode === 'template' && !templateReady) {
-      validationErrors.push('直接套用模板需要填写纯文本正文或 HTML 正文');
+    if (taskMode === 'template' && !templateSubject.trim()) {
+      validationErrors.push('直接套用模板需要填写模板主题');
+    }
+    if (taskMode === 'template' && !templateBodyText.trim()) {
+      validationErrors.push('直接套用模板需要填写模板纯文本正文');
+    }
+    if (taskMode === 'llm' && !subject.trim()) {
+      validationErrors.push('AI 辅助写信需要填写套磁信模板主题');
     }
     if (taskMode === 'llm' && !body.trim()) {
       validationErrors.push('AI 辅助写信需要填写套磁信模板正文');
@@ -333,6 +469,7 @@ export const CreateTaskPage = () => {
         outreach_template_subject: taskTemplateSubject,
         outreach_template_body_text: taskTemplateBodyText,
         outreach_template_body_html: taskTemplateBodyHtml,
+        outreach_template_id: selectedOutreachTemplateId,
       });
       safeRecordUserAction({
         eventName: 'tasks.batch_create_succeeded',
@@ -419,6 +556,44 @@ export const CreateTaskPage = () => {
                   className="form-input"
                 />
               </label>
+
+              <div className="rounded-[28px] border border-stone-200 bg-stone-50/80 p-4">
+                <NativeSelectField
+                  label="本次任务使用的发信模板"
+                  value={selectedOutreachTemplateId === null ? '' : String(selectedOutreachTemplateId)}
+                  disabled={loadingOutreachTemplates}
+                  onChange={(event) =>
+                    applySelectedOutreachTemplate(
+                      event.target.value ? Number(event.target.value) : null,
+                    )
+                  }
+                >
+                  <option value="">
+                    {isResendPrefillActive
+                      ? '保留原任务内容快照'
+                      : '不关联模板库（保留当前内容）'}
+                  </option>
+                  {selectedOutreachTemplate?.archived_at ? (
+                    <option value={selectedOutreachTemplate.id} disabled>
+                      {selectedOutreachTemplate.name} · 已归档（保留原任务来源）
+                    </option>
+                  ) : null}
+                  {activeOutreachTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}{template.is_default ? ' · 全局默认' : ''}{template.is_ready ? '' : ' · 草稿'}
+                    </option>
+                  ))}
+                </NativeSelectField>
+                <p className="mt-2 text-xs leading-6 text-stone-500">
+                  {loadingOutreachTemplates
+                    ? '正在加载模板库…'
+                    : selectedOutreachTemplate
+                      ? `已带入“${selectedOutreachTemplate.name}”。下方修改只属于本次任务，不会改动模板库。`
+                      : isResendPrefillActive
+                        ? '继续使用原任务保存的内容快照；原模板后续修改或归档都不会改变它。'
+                        : '可直接编辑下方内容；创建后会保存为任务快照。'}
+                </p>
+              </div>
 
               <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(180deg,rgba(255,248,240,0.72),rgba(255,255,255,0.96))] p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
@@ -539,7 +714,7 @@ export const CreateTaskPage = () => {
                     </p>
                   </div>
                   <SubjectTemplateInput
-                    label="模板主题（可选）"
+                    label="模板主题"
                     value={subject}
                     onChange={setSubject}
                     placeholder="例如：申请与{{name}}老师交流科研方向"

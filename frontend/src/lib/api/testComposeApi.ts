@@ -11,9 +11,24 @@ export const getTestComposeStatus = (identityId: number) =>
 export const getTestComposeThread = (identityId: number, llmProfileId: number) =>
   apiFetch<TestComposeThreadDTO>(`/api/test-compose/${identityId}/${llmProfileId}`);
 
-export const generateTestComposeDraft = (identityId: number, llmProfileId: number) =>
+export const generateTestComposeDraft = (
+  identityId: number,
+  llmProfileId: number,
+  outreachTemplateId?: number | null,
+  templateSnapshot?: Pick<
+    TestComposeDraftPayloadDTO,
+    'subject' | 'body_text' | 'body_html'
+  >,
+) =>
   apiFetch<TestComposeThreadDTO>(`/api/test-compose/${identityId}/${llmProfileId}/generate-draft`, {
     method: 'POST',
+    body:
+      outreachTemplateId === undefined && templateSnapshot === undefined
+        ? undefined
+        : JSON.stringify({
+            outreach_template_id: outreachTemplateId,
+            ...templateSnapshot,
+          }),
   });
 
 export const saveTestComposeDraft = (

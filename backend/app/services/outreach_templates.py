@@ -76,6 +76,47 @@ class ImportedOutreachTemplate:
     format_name: str
 
 
+def build_outreach_template_snapshot_config(
+    *,
+    generation_mode: str | None,
+    subject_template: str | None,
+    body_text_template: str | None,
+    body_html_template: str | None,
+) -> OutreachTemplateConfig:
+    mode = (generation_mode or OUTREACH_GENERATION_MODE_LLM).strip()
+    if mode not in {OUTREACH_GENERATION_MODE_LLM, OUTREACH_GENERATION_MODE_TEMPLATE}:
+        mode = OUTREACH_GENERATION_MODE_LLM
+    return OutreachTemplateConfig(
+        generation_mode=mode,
+        subject_template=subject_template,
+        body_text_template=body_text_template,
+        body_html_template=body_html_template,
+    )
+
+
+def has_outreach_template_snapshot(
+    *,
+    snapshot_version: int | None = None,
+    template_id: int | None,
+    subject_template: str | None,
+    body_text_template: str | None,
+    body_html_template: str | None,
+) -> bool:
+    # Legacy manual tasks could persist only the selected mode while still
+    # resolving their content from the identity. A mode by itself therefore is
+    # not proof of a snapshot. New tasks set a version so even an intentionally
+    # empty snapshot remains distinguishable from that legacy fallback state.
+    return snapshot_version is not None or any(
+        value is not None
+        for value in (
+            template_id,
+            subject_template,
+            body_text_template,
+            body_html_template,
+        )
+    )
+
+
 def get_outreach_template_defaults_validation_error(
     subject_template: str | None,
     body_text_template: str | None,
@@ -175,27 +216,51 @@ def build_test_compose_send_template_context(
 def resolve_outreach_template_config(
     identity: IdentityProfile,
     *,
+    template=None,
     generation_mode: str | None = None,
     subject_template: str | None = None,
     body_text_template: str | None = None,
     body_html_template: str | None = None,
 ) -> OutreachTemplateConfig:
-    mode = (generation_mode or identity.outreach_generation_mode or OUTREACH_GENERATION_MODE_LLM).strip()
+    default_template = template or getattr(identity, "default_outreach_template", None)
+    if default_template is not None and getattr(default_template, "archived_at", None) is not None:
+        default_template = None
+    default_mode = (
+        getattr(default_template, "recommended_generation_mode", None)
+        or identity.outreach_generation_mode
+        or OUTREACH_GENERATION_MODE_LLM
+    )
+    default_subject = (
+        getattr(default_template, "subject", None)
+        if default_template is not None
+        else identity.outreach_template_subject
+    )
+    default_body_text = (
+        getattr(default_template, "body_text", None)
+        if default_template is not None
+        else identity.outreach_template_body_text
+    )
+    default_body_html = (
+        getattr(default_template, "body_html", None)
+        if default_template is not None
+        else identity.outreach_template_body_html
+    )
+    mode = (generation_mode or default_mode).strip()
     if mode not in {OUTREACH_GENERATION_MODE_LLM, OUTREACH_GENERATION_MODE_TEMPLATE}:
         mode = OUTREACH_GENERATION_MODE_LLM
 
     return OutreachTemplateConfig(
         generation_mode=mode,
-        subject_template=(subject_template if subject_template is not None else identity.outreach_template_subject),
+        subject_template=(subject_template if subject_template is not None else default_subject),
         body_text_template=(
             body_text_template
             if body_text_template is not None
-            else identity.outreach_template_body_text
+            else default_body_text
         ),
         body_html_template=(
             body_html_template
             if body_html_template is not None
-            else identity.outreach_template_body_html
+            else default_body_html
         ),
     )
 
@@ -250,12 +315,13 @@ def render_identity_outreach_template(
     identity: IdentityProfile,
     professor: Professor,
 ) -> RenderedOutreachTemplate:
+    resolved = resolve_outreach_template_config(identity)
     return render_outreach_template(
         identity,
         professor,
-        subject_template=identity.outreach_template_subject,
-        body_text_template=identity.outreach_template_body_text,
-        body_html_template=identity.outreach_template_body_html,
+        subject_template=resolved.subject_template,
+        body_text_template=resolved.body_text_template,
+        body_html_template=resolved.body_html_template,
     )
 
 
@@ -744,4 +810,3 @@ def _append_inline_style(tag, style_fragment: str) -> None:
     if existing_style and not existing_style.endswith(";"):
         existing_style = f"{existing_style};"
     tag["style"] = f"{existing_style}{style_fragment}"
-

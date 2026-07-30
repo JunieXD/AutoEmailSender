@@ -13,6 +13,19 @@ def serialize_identity(identity: IdentityProfile) -> IdentityProfileRead:
         key=lambda item: (item.id == current_primary_material_id, item.created_at),
         reverse=True,
     )
+    default_template = identity.default_outreach_template
+    if default_template is not None and default_template.archived_at is None:
+        outreach_generation_mode = default_template.recommended_generation_mode
+        outreach_template_subject = default_template.subject
+        outreach_template_body_text = default_template.body_text
+        outreach_template_body_html = default_template.body_html
+        default_outreach_template_id = default_template.id
+    else:
+        outreach_generation_mode = identity.outreach_generation_mode
+        outreach_template_subject = identity.outreach_template_subject
+        outreach_template_body_text = identity.outreach_template_body_text
+        outreach_template_body_html = identity.outreach_template_body_html
+        default_outreach_template_id = None
     return IdentityProfileRead(
         id=identity.id,
         name=profile_name,
@@ -29,10 +42,11 @@ def serialize_identity(identity: IdentityProfile) -> IdentityProfileRead:
         imap_username=identity.imap_username,
         imap_password=identity.imap_password,
         default_language=identity.default_language,
-        outreach_generation_mode=identity.outreach_generation_mode,
-        outreach_template_subject=identity.outreach_template_subject,
-        outreach_template_body_text=identity.outreach_template_body_text,
-        outreach_template_body_html=identity.outreach_template_body_html,
+        outreach_generation_mode=outreach_generation_mode,
+        outreach_template_subject=outreach_template_subject,
+        outreach_template_body_text=outreach_template_body_text,
+        outreach_template_body_html=outreach_template_body_html,
+        default_outreach_template_id=default_outreach_template_id,
         match_threshold=identity.match_threshold,
         daily_send_limit=identity.daily_send_limit,
         send_interval_min=identity.send_interval_min,

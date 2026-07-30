@@ -16,11 +16,13 @@ import {
   TimerReset,
 } from 'lucide-react';
 import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor';
+import { NativeSelectField } from '@/components/atoms/NativeSelectField';
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
 import { formatApiDateTime } from '@/lib/dateTime';
 type RichEmailValue = { html: string; text: string };
 import {
   MATERIAL_TYPE_LABELS,
+  type OutreachTemplateDTO,
   type WorkspaceDraftSourceDTO,
   type WorkspaceTaskSummaryDTO,
   type WorkspaceThreadDTO,
@@ -36,6 +38,9 @@ type WorkspaceComposerDockProps = {
   content: string;
   contentHtml: string;
   selectedMaterialIds: number[];
+  outreachTemplates: OutreachTemplateDTO[];
+  selectedOutreachTemplateId: number | null;
+  loadingOutreachTemplates: boolean;
   scheduledAt: string;
   acting: boolean;
   isRewriting: boolean;
@@ -51,6 +56,7 @@ type WorkspaceComposerDockProps = {
   onSubjectChange: (value: string) => void;
   onContentChange: (value: RichEmailValue) => void;
   onSelectedMaterialIdsChange: (ids: number[]) => void;
+  onOutreachTemplateChange: (templateId: number | null) => void;
   onSaveDraft: () => void;
   onSendNow: () => void;
   onScheduleSend: () => void;
@@ -199,6 +205,9 @@ export const WorkspaceComposerDock = ({
   subject,
   contentHtml,
   selectedMaterialIds,
+  outreachTemplates,
+  selectedOutreachTemplateId,
+  loadingOutreachTemplates,
   scheduledAt,
   acting,
   isRewriting,
@@ -214,6 +223,7 @@ export const WorkspaceComposerDock = ({
   onSubjectChange,
   onContentChange,
   onSelectedMaterialIdsChange,
+  onOutreachTemplateChange,
   onSaveDraft,
   onSendNow,
   onScheduleSend,
@@ -238,6 +248,13 @@ export const WorkspaceComposerDock = ({
   const draftSourceLabel = getDraftSourceLabel(currentTask.draft?.source);
   const actionDisabled = acting || draftSaving || isRewriting;
   const editorDisabled = actionDisabled || currentTask.draft?.editable === false;
+  const selectedOutreachTemplate =
+    outreachTemplates.find(
+      (template) => template.id === selectedOutreachTemplateId,
+    ) ?? null;
+  const activeOutreachTemplates = outreachTemplates.filter(
+    (template) => !template.archived_at,
+  );
   const rewriteDescription = isRewriting
     ? '正在改写当前草稿，完成前不能保存或发送。'
     : hasDraftBody
@@ -301,6 +318,43 @@ export const WorkspaceComposerDock = ({
                 />
 
                 <div className="mt-5 space-y-4">
+                  <div className="rounded-2xl border border-stone-200 bg-white p-4">
+                    <NativeSelectField
+                      label="当前任务模板"
+                      value={
+                        selectedOutreachTemplateId === null
+                          ? ''
+                          : String(selectedOutreachTemplateId)
+                      }
+                      disabled={editorDisabled || loadingOutreachTemplates}
+                      onChange={(event) =>
+                        onOutreachTemplateChange(
+                          event.target.value ? Number(event.target.value) : null,
+                        )
+                      }
+                    >
+                      <option value="">当前任务独立快照</option>
+                      {selectedOutreachTemplate?.archived_at ? (
+                        <option value={selectedOutreachTemplate.id} disabled>
+                          {selectedOutreachTemplate.name} · 已归档（保留任务来源）
+                        </option>
+                      ) : null}
+                      {activeOutreachTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                          {template.is_default ? ' · 全局默认' : ''}
+                          {template.is_ready ? '' : ' · 草稿'}
+                        </option>
+                      ))}
+                    </NativeSelectField>
+                    <div className="mt-2 text-xs leading-5 text-stone-500">
+                      {loadingOutreachTemplates
+                        ? '正在加载模板库…'
+                        : selectedOutreachTemplate
+                          ? `来源：${selectedOutreachTemplate.name}。下方编辑只影响当前任务。`
+                          : '当前内容是任务自己的快照，不会随模板库修改。'}
+                    </div>
+                  </div>
                   <SubjectTemplateInput
                     label="邮件主题"
                     value={subject}

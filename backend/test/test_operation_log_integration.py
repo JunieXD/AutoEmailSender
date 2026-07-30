@@ -568,6 +568,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
             IdentityProfile,
             LLMProfile,
             OperationLog,
+            OutreachTemplate,
             Professor,
             TestComposeMessage,
             TestComposeSession,
@@ -587,6 +588,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
                 CrawlJob,
                 IdentityMaterial,
                 IdentityProfile,
+                OutreachTemplate,
                 LLMProfile,
                 Professor,
             ]:

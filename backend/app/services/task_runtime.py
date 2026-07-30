@@ -31,6 +31,7 @@ from app.models import (
     ImapProfessorSyncState,
     MatchAnalysisRun,
     LLMProfile,
+    OutreachTemplate,
     Professor,
 )
 from app.core.config import get_settings
@@ -67,11 +68,17 @@ from app.services.materials import (
     material_can_be_primary,
 )
 from app.services.operation_logs import record_operation_log
+from app.services.outreach_template_library import (
+    get_default_outreach_template_for_identity,
+    get_outreach_template,
+)
 from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
+    build_outreach_template_snapshot_config,
     build_send_template_context,
     build_template_context,
     get_outreach_template_defaults_validation_error,
+    has_outreach_template_snapshot,
     render_outreach_template,
     render_template_with_context,
     resolve_outreach_template_config,
@@ -768,7 +775,18 @@ async def generate_task_draft(
         batch_task = task.batch_task
 
         try:
-            outreach_config = _resolve_draft_generation_outreach_config(task)
+            fallback_template = (
+                None
+                if _task_has_outreach_template_snapshot(task)
+                else await get_default_outreach_template_for_identity(
+                    session,
+                    task.identity,
+                )
+            )
+            outreach_config = _resolve_draft_generation_outreach_config(
+                task,
+                fallback_template=fallback_template,
+            )
             if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
                 template_subject = _normalize_nullable_text(outreach_config.subject_template)
                 template_body = _normalize_nullable_text(outreach_config.body_text_template)
@@ -923,6 +941,21 @@ async def generate_task_draft(
 
         if runtime_llm_profile is not None:
             task.llm_profile_id = runtime_llm_profile.id
+        if not _task_has_outreach_template_snapshot(task):
+            task.outreach_template_id = (
+                fallback_template.id if fallback_template is not None else None
+            )
+            task.outreach_template_snapshot_version = 1
+            task.outreach_generation_mode = outreach_config.generation_mode
+            task.outreach_template_subject = _normalize_nullable_text(
+                outreach_config.subject_template,
+            )
+            task.outreach_template_body_text = _normalize_nullable_text(
+                outreach_config.body_text_template,
+            )
+            task.outreach_template_body_html = _normalize_nullable_text(
+                outreach_config.body_html_template,
+            )
         task.generated_subject = subject
         task.generated_content_text = body_text
         task.generated_content_html = body_html
@@ -1304,7 +1337,18 @@ async def preview_task_draft(
             raise ValueError(f"EmailTask {task_id} 不存在")
         runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
 
-        outreach_config = _resolve_draft_generation_outreach_config(task)
+        fallback_template = (
+            None
+            if _task_has_outreach_template_snapshot(task)
+            else await get_default_outreach_template_for_identity(
+                session,
+                task.identity,
+            )
+        )
+        outreach_config = _resolve_draft_generation_outreach_config(
+            task,
+            fallback_template=fallback_template,
+        )
         if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
             raise ValueError("模板模式不需要 AI 草稿预览")
         if task.primary_material is None:
@@ -1503,6 +1547,8 @@ async def update_task_outreach_config(
     task_id: int,
     *,
     outreach_generation_mode: str,
+    outreach_template_id: int | None = None,
+    template_selection_explicit: bool = False,
     outreach_template_subject: str | None = None,
     outreach_template_body_text: str | None = None,
     outreach_template_body_html: str | None = None,
@@ -1514,29 +1560,111 @@ async def update_task_outreach_config(
         _ensure_task_allows_legacy_manual_actions(task)
         _ensure_task_not_generating_for_workspace_change(task)
         if task.status in {
+            EmailTaskStatus.SENDING.value,
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
         }:
-            raise ValueError("已发送或已回信任务不能再切换本次发信模式")
+            raise ValueError("正在发送、已发送或已回信任务不能再切换本次发信模式")
 
-        snapshot = _build_task_outreach_snapshot(
-            task.identity,
-            outreach_generation_mode=outreach_generation_mode,
-            outreach_template_subject=outreach_template_subject,
-            outreach_template_body_text=outreach_template_body_text,
-            outreach_template_body_html=outreach_template_body_html,
-            fallback_task=task,
+        if template_selection_explicit:
+            selected_template = (
+                await get_outreach_template(session, outreach_template_id)
+                if outreach_template_id is not None
+                else None
+            )
+        else:
+            selected_template = await get_default_outreach_template_for_identity(
+                session,
+                task.identity,
+            )
+        previous_snapshot = (
+            task.outreach_generation_mode,
+            _normalize_nullable_text(task.outreach_template_subject),
+            _normalize_nullable_text(task.outreach_template_body_text),
+            _normalize_nullable_text(task.outreach_template_body_html),
         )
-        task.outreach_generation_mode = snapshot["outreach_generation_mode"]
-        task.outreach_template_subject = snapshot["outreach_template_subject"]
-        task.outreach_template_body_text = snapshot["outreach_template_body_text"]
-        task.outreach_template_body_html = snapshot["outreach_template_body_html"]
-        task.approved_subject = None
-        task.approved_body_text = None
-        task.approved_body_html = None
-        task.approved_at = None
-        task.scheduled_at = None
-        task.last_error = None
+        if template_selection_explicit and selected_template is None:
+            unlinked_snapshot = build_outreach_template_snapshot_config(
+                generation_mode=outreach_generation_mode or task.outreach_generation_mode,
+                subject_template=(
+                    outreach_template_subject
+                    if outreach_template_subject is not None
+                    else task.outreach_template_subject
+                ),
+                body_text_template=(
+                    outreach_template_body_text
+                    if outreach_template_body_text is not None
+                    else task.outreach_template_body_text
+                ),
+                body_html_template=(
+                    outreach_template_body_html
+                    if outreach_template_body_html is not None
+                    else task.outreach_template_body_html
+                ),
+            )
+            snapshot = {
+                "outreach_generation_mode": unlinked_snapshot.generation_mode,
+                "outreach_template_subject": _normalize_nullable_text(
+                    unlinked_snapshot.subject_template,
+                ),
+                "outreach_template_body_text": _normalize_nullable_text(
+                    unlinked_snapshot.body_text_template,
+                ),
+                "outreach_template_body_html": _normalize_nullable_text(
+                    unlinked_snapshot.body_html_template,
+                ),
+            }
+        else:
+            snapshot = _build_task_outreach_snapshot(
+                task.identity,
+                template=selected_template,
+                outreach_generation_mode=outreach_generation_mode,
+                outreach_template_subject=outreach_template_subject,
+                outreach_template_body_text=outreach_template_body_text,
+                outreach_template_body_html=outreach_template_body_html,
+                validate_ready=False,
+            )
+        next_snapshot = (
+            snapshot["outreach_generation_mode"],
+            snapshot["outreach_template_subject"],
+            snapshot["outreach_template_body_text"],
+            snapshot["outreach_template_body_html"],
+        )
+        provenance_only_unlink = bool(
+            template_selection_explicit
+            and selected_template is None
+            and previous_snapshot == next_snapshot
+        )
+        task.outreach_generation_mode = next_snapshot[0]
+        task.outreach_template_subject = next_snapshot[1]
+        task.outreach_template_body_text = next_snapshot[2]
+        task.outreach_template_body_html = next_snapshot[3]
+        task.outreach_template_id = (
+            selected_template.id if selected_template is not None else None
+        )
+        task.outreach_template_snapshot_version = 1
+        if not provenance_only_unlink:
+            task.generated_subject = None
+            task.generated_content_text = None
+            task.generated_content_html = None
+            task.approved_subject = None
+            task.approved_body_text = None
+            task.approved_body_html = None
+            task.approved_at = None
+            task.scheduled_at = None
+            task.draft_rewrite_source_subject = None
+            task.draft_rewrite_source_body_text = None
+            task.draft_rewrite_source_body_html = None
+            task.draft_rewrite_source_selected_material_ids = None
+            task.draft_generation_previous_status = None
+            task.draft_generation_started_at = None
+            if task.status != EmailTaskStatus.CANCELED.value:
+                task.status = (
+                    EmailTaskStatus.MATCHED.value
+                    if _task_has_match_result(task)
+                    else EmailTaskStatus.DISCOVERED.value
+                )
+            task.last_error = None
         task.updated_at = utc_now()
         await _record_email_task_log(
             session,
@@ -1697,7 +1825,19 @@ async def continue_task_manually(
         identity_id = task.identity_id
         llm_profile_id = task.llm_profile_id
         parent_task_id = task.id
-        child_task = _create_manual_child_task(task, reuse_existing_draft=True)
+        fallback_template = (
+            None
+            if _task_has_outreach_template_snapshot(task)
+            else await get_default_outreach_template_for_identity(
+                session,
+                task.identity,
+            )
+        )
+        child_task = _create_manual_child_task(
+            task,
+            reuse_existing_draft=True,
+            fallback_template=fallback_template,
+        )
         session.add(child_task)
         try:
             await session.flush()
@@ -1736,10 +1876,19 @@ async def start_follow_up_task(
         identity_id = task.identity_id
         llm_profile_id = task.llm_profile_id
         parent_task_id = task.id
+        fallback_template = (
+            None
+            if _task_has_outreach_template_snapshot(task)
+            else await get_default_outreach_template_for_identity(
+                session,
+                task.identity,
+            )
+        )
         child_task = _create_manual_child_task(
             task,
             reuse_existing_draft=False,
             minimum_status=EmailTaskStatus.MATCHED.value,
+            fallback_template=fallback_template,
         )
         session.add(child_task)
         try:
@@ -4279,8 +4428,7 @@ def _is_task_scheduled_for_future(task: EmailTask, now: datetime) -> bool:
 
 
 def _resolve_task_outreach_config(task: EmailTask):
-    return resolve_outreach_template_config(
-        task.identity,
+    return build_outreach_template_snapshot_config(
         generation_mode=task.outreach_generation_mode,
         subject_template=task.outreach_template_subject,
         body_text_template=task.outreach_template_body_text,
@@ -4288,12 +4436,27 @@ def _resolve_task_outreach_config(task: EmailTask):
     )
 
 
-def _resolve_draft_generation_outreach_config(task: EmailTask):
-    if task.batch_task_id is not None:
+def _task_has_outreach_template_snapshot(task: EmailTask) -> bool:
+    return has_outreach_template_snapshot(
+        snapshot_version=task.outreach_template_snapshot_version,
+        template_id=task.outreach_template_id,
+        subject_template=task.outreach_template_subject,
+        body_text_template=task.outreach_template_body_text,
+        body_html_template=task.outreach_template_body_html,
+    )
+
+
+def _resolve_draft_generation_outreach_config(
+    task: EmailTask,
+    *,
+    fallback_template: OutreachTemplate | None = None,
+):
+    if _task_has_outreach_template_snapshot(task):
         return _resolve_task_outreach_config(task)
 
     return resolve_outreach_template_config(
         task.identity,
+        template=fallback_template,
         generation_mode=task.outreach_generation_mode,
     )
 
@@ -4301,14 +4464,17 @@ def _resolve_draft_generation_outreach_config(task: EmailTask):
 def _build_task_outreach_snapshot(
     identity: IdentityProfile,
     *,
+    template: OutreachTemplate | None = None,
     outreach_generation_mode: str | None = None,
     outreach_template_subject: str | None = None,
     outreach_template_body_text: str | None = None,
     outreach_template_body_html: str | None = None,
     fallback_task: EmailTask | None = None,
+    validate_ready: bool = True,
 ) -> dict[str, str | None]:
     resolved = resolve_outreach_template_config(
         identity,
+        template=template,
         generation_mode=(
             outreach_generation_mode
             if outreach_generation_mode is not None
@@ -4317,27 +4483,40 @@ def _build_task_outreach_snapshot(
         subject_template=(
             outreach_template_subject
             if outreach_template_subject is not None
-            else fallback_task.outreach_template_subject if fallback_task is not None else None
+            else (
+                fallback_task.outreach_template_subject
+                if fallback_task is not None and template is None
+                else None
+            )
         ),
         body_text_template=(
             outreach_template_body_text
             if outreach_template_body_text is not None
-            else fallback_task.outreach_template_body_text if fallback_task is not None else None
+            else (
+                fallback_task.outreach_template_body_text
+                if fallback_task is not None and template is None
+                else None
+            )
         ),
         body_html_template=(
             outreach_template_body_html
             if outreach_template_body_html is not None
-            else fallback_task.outreach_template_body_html if fallback_task is not None else None
+            else (
+                fallback_task.outreach_template_body_html
+                if fallback_task is not None and template is None
+                else None
+            )
         ),
     )
     body_text = _normalize_nullable_text(resolved.body_text_template)
     body_html = _normalize_nullable_text(resolved.body_html_template)
-    detail = get_outreach_template_defaults_validation_error(
-        resolved.subject_template,
-        resolved.body_text_template,
-    )
-    if detail:
-        raise ValueError(detail)
+    if validate_ready:
+        detail = get_outreach_template_defaults_validation_error(
+            resolved.subject_template,
+            resolved.body_text_template,
+        )
+        if detail:
+            raise ValueError(detail)
     return {
         "outreach_generation_mode": resolved.generation_mode,
         "outreach_template_subject": _normalize_nullable_text(resolved.subject_template),
@@ -4373,8 +4552,13 @@ def _create_manual_child_task(
     *,
     reuse_existing_draft: bool,
     minimum_status: str | None = None,
+    fallback_template: OutreachTemplate | None = None,
 ) -> EmailTask:
     now = utc_now()
+    outreach_config = _resolve_draft_generation_outreach_config(
+        task,
+        fallback_template=fallback_template,
+    )
     return EmailTask(
         source=EmailTaskSource.MANUAL.value,
         batch_task_id=None,
@@ -4394,10 +4578,16 @@ def _create_manual_child_task(
         generated_subject=task.generated_subject if reuse_existing_draft else None,
         generated_content_text=task.generated_content_text if reuse_existing_draft else None,
         generated_content_html=task.generated_content_html if reuse_existing_draft else None,
-        outreach_generation_mode=task.outreach_generation_mode,
-        outreach_template_subject=task.outreach_template_subject,
-        outreach_template_body_text=task.outreach_template_body_text,
-        outreach_template_body_html=task.outreach_template_body_html,
+        outreach_generation_mode=outreach_config.generation_mode,
+        outreach_template_subject=outreach_config.subject_template,
+        outreach_template_body_text=outreach_config.body_text_template,
+        outreach_template_body_html=outreach_config.body_html_template,
+        outreach_template_id=(
+            task.outreach_template_id
+            if _task_has_outreach_template_snapshot(task)
+            else fallback_template.id if fallback_template is not None else None
+        ),
+        outreach_template_snapshot_version=1,
         selected_material_ids=(
             list(task.selected_material_ids)
             if task.selected_material_ids is not None

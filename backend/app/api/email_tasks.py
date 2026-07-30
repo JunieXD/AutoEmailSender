@@ -179,6 +179,10 @@ async def change_outreach_config(
             get_session_factory(),
             task_id,
             outreach_generation_mode=payload.outreach_generation_mode,
+            outreach_template_id=payload.outreach_template_id,
+            template_selection_explicit=(
+                "outreach_template_id" in payload.model_fields_set
+            ),
             outreach_template_subject=payload.outreach_template_subject,
             outreach_template_body_text=payload.outreach_template_body_text,
             outreach_template_body_html=payload.outreach_template_body_html,

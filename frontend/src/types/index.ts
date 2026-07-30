@@ -91,6 +91,7 @@ export interface IdentityDTO {
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
+  default_outreach_template_id?: number | null;
   current_primary_material_id: number | null;
   current_primary_material: IdentityMaterialDTO | null;
   communication_group_id: number | null;
@@ -142,6 +143,7 @@ export interface IdentityPayload {
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
+  default_outreach_template_id?: number | null;
   same_domain_cooldown_minutes: number | null;
   is_default: boolean;
 }
@@ -158,6 +160,29 @@ export interface IdentityTemplateImportResultDTO {
   body_text: string;
   body_html: string;
   format_name: string;
+}
+
+export interface OutreachTemplateDTO {
+  id: number;
+  name: string;
+  recommended_generation_mode: OutreachGenerationMode;
+  subject: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  is_ready: boolean;
+  is_default: boolean;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachTemplatePayloadDTO {
+  name: string;
+  recommended_generation_mode: OutreachGenerationMode;
+  subject: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  is_default?: boolean;
 }
 
 export interface LLMProfileDTO {
@@ -520,6 +545,7 @@ export interface CreateBatchTaskRequestDTO {
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
+  outreach_template_id?: number | null;
 }
 
 export type MatchAnalysisJobStatus =
@@ -777,6 +803,7 @@ export interface BatchTaskResendContextTaskDTO {
 
 export interface BatchTaskResendDefaultsDTO {
   identity_id: number;
+  outreach_template_id?: number | null;
   outreach_generation_mode: OutreachGenerationMode | null;
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
@@ -857,6 +884,7 @@ export interface WorkspaceTaskSummaryDTO {
   cancellation_reason?: string | null;
   can_continue_manually?: boolean;
   can_write_follow_up?: boolean;
+  outreach_template_id?: number | null;
   outreach_generation_mode: OutreachGenerationMode;
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;
@@ -962,6 +990,7 @@ export interface TestComposeThreadDTO {
   llm_profile: WorkspaceLLMDTO;
   material_options: IdentityMaterialDTO[];
   draft: {
+    outreach_template_id?: number | null;
     subject: string | null;
     body_text: string;
     body_html: string | null;
@@ -985,6 +1014,7 @@ export interface TestComposeStatusDTO {
 }
 
 export interface TestComposeDraftPayloadDTO {
+  outreach_template_id?: number | null;
   subject: string | null;
   body_text: string;
   body_html: string | null;
@@ -1004,6 +1034,7 @@ export interface EmailTaskRewriteDraftPayloadDTO extends EmailTaskApprovalPayloa
 
 export interface EmailTaskOutreachConfigPayloadDTO {
   outreach_generation_mode: OutreachGenerationMode;
+  outreach_template_id?: number | null;
   outreach_template_subject?: string | null;
   outreach_template_body_text?: string | null;
   outreach_template_body_html?: string | null;

@@ -50,6 +50,7 @@ class IdentityProfileBase(BaseModel):
     outreach_template_subject: str | None = None
     outreach_template_body_text: str | None = None
     outreach_template_body_html: str | None = None
+    default_outreach_template_id: int | None = None
     match_threshold: int | None = None
     same_domain_cooldown_minutes: int | None = None
     is_default: bool = False

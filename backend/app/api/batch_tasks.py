@@ -55,6 +55,10 @@ from app.services.batch_task_resend_context import (
 from app.services.batch_task_status import sync_batch_task_completion
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
+from app.services.outreach_template_library import (
+    get_default_outreach_template_for_identity,
+    get_outreach_template,
+)
 from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     get_outreach_template_defaults_validation_error,
@@ -187,6 +191,30 @@ async def create_batch_task(
         if len(set(selected_material_ids)) != len(set(material_map) & set(selected_material_ids)):
             raise HTTPException(status_code=400, detail="存在不属于当前身份的随信材料")
 
+    selected_template = None
+    if payload.outreach_template_id is not None:
+        allow_archived_provenance = bool(
+            {
+                "outreach_template_subject",
+                "outreach_template_body_text",
+            }.issubset(payload.model_fields_set)
+            and _normalize_nullable_text(payload.outreach_template_subject)
+            and _normalize_nullable_text(payload.outreach_template_body_text)
+        )
+        try:
+            selected_template = await get_outreach_template(
+                session,
+                payload.outreach_template_id,
+                include_archived=allow_archived_provenance,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    elif "outreach_template_id" not in payload.model_fields_set:
+        selected_template = await get_default_outreach_template_for_identity(
+            session,
+            identity,
+        )
+
     requested_subject = _normalize_nullable_text(payload.outreach_template_subject) or _normalize_nullable_text(
         payload.email_subject,
     )
@@ -194,10 +222,20 @@ async def create_batch_task(
         payload.outreach_template_body_text,
     ) or _normalize_nullable_text(payload.email_body)
     requested_generation_mode = (
-        str(payload.outreach_generation_mode or identity.outreach_generation_mode or "llm").strip().lower()
+        str(
+            payload.outreach_generation_mode
+            or (
+                selected_template.recommended_generation_mode
+                if selected_template is not None
+                else None
+            )
+            or identity.outreach_generation_mode
+            or "llm"
+        ).strip().lower()
     )
     outreach_config = resolve_outreach_template_config(
         identity,
+        template=selected_template,
         generation_mode=requested_generation_mode,
         subject_template=requested_subject,
         body_text_template=requested_body_text,
@@ -259,6 +297,10 @@ async def create_batch_task(
             llm_profile_id=payload.llm_profile_id,
             professor_id=professor.id,
             primary_material_id=primary_material_id,
+            outreach_template_id=(
+                selected_template.id if selected_template is not None else None
+            ),
+            outreach_template_snapshot_version=1,
             outreach_generation_mode=outreach_config.generation_mode,
             outreach_template_subject=_normalize_nullable_text(outreach_config.subject_template),
             outreach_template_body_text=_normalize_nullable_text(outreach_config.body_text_template),
@@ -352,6 +394,9 @@ async def get_batch_task_resend_context(
         ),
         defaults=BatchTaskResendDefaultsRead(
             identity_id=task.identity_id,
+            outreach_template_id=(
+                snapshot_task.outreach_template_id if snapshot_task else None
+            ),
             outreach_generation_mode=(
                 snapshot_task.outreach_generation_mode
                 if snapshot_task and snapshot_task.outreach_generation_mode

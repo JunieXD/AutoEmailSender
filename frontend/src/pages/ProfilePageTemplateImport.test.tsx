@@ -9,6 +9,9 @@ const mockedUseDesktopBackend = vi.hoisted(() => vi.fn());
 const mockedConfirm = vi.hoisted(() => vi.fn());
 const mockedRequestWorkspaceDraftGuard = vi.hoisted(() => vi.fn());
 const mockedImportIdentityTemplate = vi.hoisted(() => vi.fn());
+const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
+const mockedCreateOutreachTemplate = vi.hoisted(() => vi.fn());
+const mockedUpdateIdentityDefaultOutreachTemplate = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifyFormErrors = vi.hoisted(() => vi.fn());
 const mockedNotifySuccess = vi.hoisted(() => vi.fn());
@@ -51,6 +54,18 @@ vi.mock("@/lib/api/identities", () => ({
   testIdentityImap: vi.fn(),
   testIdentitySmtp: vi.fn(),
   updateIdentity: vi.fn(),
+  updateIdentityDefaultOutreachTemplate:
+    mockedUpdateIdentityDefaultOutreachTemplate,
+}));
+
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  archiveOutreachTemplate: vi.fn(),
+  createOutreachTemplate: mockedCreateOutreachTemplate,
+  duplicateOutreachTemplate: vi.fn(),
+  listOutreachTemplates: mockedListOutreachTemplates,
+  restoreOutreachTemplate: vi.fn(),
+  setGlobalDefaultOutreachTemplate: vi.fn(),
+  updateOutreachTemplate: vi.fn(),
 }));
 
 vi.mock("@/lib/api/materials", () => ({
@@ -124,6 +139,7 @@ const selectedIdentity: IdentityDTO = {
   outreach_template_subject: "现有主题",
   outreach_template_body_text: "现有正文",
   outreach_template_body_html: "<p>现有正文</p>",
+  default_outreach_template_id: 1,
   current_primary_material_id: null,
   current_primary_material: null,
   communication_group_id: null,
@@ -161,14 +177,15 @@ const renderProfilePage = () =>
     </MemoryRouter>,
   );
 
-const openTemplateModal = () => {
+const openTemplateModal = async () => {
   renderProfilePage();
   fireEvent.click(
     screen.getByRole("button", {
       name: /材料与模板\s*任务准备\s*准备默认模板和常用材料/,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "打开默认值编辑" }));
+  fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
+  await screen.findByDisplayValue("现有模板");
 };
 
 describe("ProfilePage default template import", () => {
@@ -178,6 +195,32 @@ describe("ProfilePage default template import", () => {
     mockedRequestWorkspaceDraftGuard.mockReset();
     mockedRequestWorkspaceDraftGuard.mockResolvedValue(true);
     mockedImportIdentityTemplate.mockReset();
+    mockedListOutreachTemplates.mockReset();
+    mockedCreateOutreachTemplate.mockReset();
+    mockedUpdateIdentityDefaultOutreachTemplate.mockReset();
+    mockedUpdateIdentityDefaultOutreachTemplate.mockResolvedValue({
+      ...selectedIdentity,
+      default_outreach_template_id: null,
+      outreach_generation_mode: "llm",
+      outreach_template_subject: null,
+      outreach_template_body_text: null,
+      outreach_template_body_html: null,
+    });
+    mockedListOutreachTemplates.mockResolvedValue([
+      {
+        id: 1,
+        name: "现有模板",
+        recommended_generation_mode: "template",
+        subject: "现有主题",
+        body_text: "现有正文",
+        body_html: "<p>现有正文</p>",
+        is_ready: true,
+        is_default: true,
+        archived_at: null,
+        created_at: "2026-04-22T00:00:00Z",
+        updated_at: "2026-04-22T00:00:00Z",
+      },
+    ]);
     mockedNotifyError.mockReset();
     mockedNotifyFormErrors.mockReset();
     mockedNotifySuccess.mockReset();
@@ -201,7 +244,7 @@ describe("ProfilePage default template import", () => {
 
   it("does not import a dropped template file when replacing existing body is cancelled", async () => {
     mockedConfirm.mockResolvedValue(false);
-    openTemplateModal();
+    await openTemplateModal();
 
     latestTemplateImportHandler?.(new File(["new template"], "template.docx"));
 
@@ -216,6 +259,28 @@ describe("ProfilePage default template import", () => {
     expect(mockedImportIdentityTemplate).not.toHaveBeenCalled();
   });
 
+  it("can unlink the identity default without deleting the template", async () => {
+    await openTemplateModal();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消当前身份默认" }),
+    );
+
+    await waitFor(() => {
+      expect(mockedUpdateIdentityDefaultOutreachTemplate).toHaveBeenCalledWith(
+        selectedIdentity.id,
+        null,
+      );
+    });
+    expect(
+      screen.getByRole("button", { name: "设为当前身份默认" }),
+    ).toBeInTheDocument();
+    expect(mockedNotifySuccess).toHaveBeenCalledWith(
+      "身份默认模板已取消",
+      "“测试身份”之后创建的任务将使用全局默认模板（如有）。",
+    );
+  });
+
   it("imports a dropped template file after confirming replacement", async () => {
     const templateFile = new File(["new template"], "template.docx");
     mockedConfirm.mockResolvedValue(true);
@@ -225,7 +290,7 @@ describe("ProfilePage default template import", () => {
       body_html: "<p>导入正文</p>",
       format_name: "DOCX",
     });
-    openTemplateModal();
+    await openTemplateModal();
 
     latestTemplateImportHandler?.(templateFile);
 
@@ -236,6 +301,63 @@ describe("ProfilePage default template import", () => {
       "模板导入成功",
       expect.stringContaining("已导入 DOCX 模板文件"),
     );
+  });
+
+  it("saves an incomplete template draft without validating or saving an identity", async () => {
+    const refreshSelections = vi.fn();
+    mockedListOutreachTemplates.mockResolvedValue([]);
+    mockedCreateOutreachTemplate.mockResolvedValue({
+      id: 9,
+      name: "稍后补充的模板",
+      recommended_generation_mode: "llm",
+      subject: null,
+      body_text: null,
+      body_html: null,
+      is_ready: false,
+      is_default: false,
+      archived_at: null,
+      created_at: "2026-04-22T00:00:00Z",
+      updated_at: "2026-04-22T00:00:00Z",
+    });
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: null,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity: null,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections,
+      loading: false,
+    });
+
+    renderProfilePage();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /材料与模板\s*任务准备\s*准备默认模板和常用材料/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
+    await screen.findByText(
+      "还没有模板。新建后可独立保存，不需要先完善发件身份。",
+    );
+    const nameInput = await screen.findByRole("textbox", { name: /模板名称/ });
+    fireEvent.change(nameInput, { target: { value: "稍后补充的模板" } });
+    fireEvent.click(screen.getByRole("button", { name: "完成编辑" }));
+
+    await waitFor(() => {
+      expect(mockedCreateOutreachTemplate).toHaveBeenCalledWith({
+        name: "稍后补充的模板",
+        recommended_generation_mode: "llm",
+        subject: null,
+        body_text: null,
+        body_html: null,
+        is_default: false,
+      });
+    });
+    expect(mockedNotifyFormErrors).not.toHaveBeenCalled();
+    expect(refreshSelections).toHaveBeenCalled();
   });
 
   it("does not switch current identity when workspace draft guard blocks it", async () => {

@@ -14,6 +14,7 @@ import clsx from "clsx";
 import {
   ChevronDown,
   CheckCircle2,
+  Copy,
   Download,
   Eye,
   EyeOff,
@@ -21,6 +22,7 @@ import {
   FolderOpen,
   Loader2,
   Plus,
+  Star,
   Send,
   Upload,
   X,
@@ -49,7 +51,17 @@ import {
   testIdentityImap,
   testIdentitySmtp,
   updateIdentity,
+  updateIdentityDefaultOutreachTemplate,
 } from "@/lib/api/identities";
+import {
+  archiveOutreachTemplate,
+  createOutreachTemplate,
+  duplicateOutreachTemplate,
+  listOutreachTemplates,
+  restoreOutreachTemplate,
+  setGlobalDefaultOutreachTemplate,
+  updateOutreachTemplate,
+} from "@/lib/api/outreachTemplates";
 import {
   deleteMaterial,
   getMaterialDownloadUrl,
@@ -76,6 +88,8 @@ import {
   type LLMProfilePayload,
   type LLMProfileTestResultDTO,
   type OutreachGenerationMode,
+  type OutreachTemplateDTO,
+  type OutreachTemplatePayloadDTO,
 } from "@/types";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 
@@ -94,7 +108,17 @@ type IdentityFormState = {
   outreach_template_subject: string;
   outreach_template_body_text: string;
   outreach_template_body_html: string;
+  default_outreach_template_id: number | null;
   same_domain_cooldown_minutes: string;
+  is_default: boolean;
+};
+
+type OutreachTemplateFormState = {
+  name: string;
+  outreach_generation_mode: OutreachGenerationMode;
+  outreach_template_subject: string;
+  outreach_template_body_text: string;
+  outreach_template_body_html: string;
   is_default: boolean;
 };
 
@@ -179,7 +203,17 @@ const createEmptyIdentityForm = (): IdentityFormState => ({
   outreach_template_subject: "",
   outreach_template_body_text: "",
   outreach_template_body_html: "",
+  default_outreach_template_id: null,
   same_domain_cooldown_minutes: "",
+  is_default: false,
+});
+
+const createEmptyOutreachTemplateForm = (): OutreachTemplateFormState => ({
+  name: "",
+  outreach_generation_mode: "llm",
+  outreach_template_subject: "",
+  outreach_template_body_text: "",
+  outreach_template_body_html: "",
   is_default: false,
 });
 
@@ -211,30 +245,8 @@ const shouldSyncImapHost = (smtpHost: string, imapHost: string) => {
 
 const hasVisibleTemplateBody = ({
   outreach_template_body_text,
-}: Pick<IdentityFormState, "outreach_template_body_text">) =>
+}: Pick<OutreachTemplateFormState, "outreach_template_body_text">) =>
   Boolean(outreach_template_body_text.trim());
-
-const getTemplateValidationMessage = ({
-  outreach_template_subject,
-  outreach_template_body_text,
-}: Pick<
-  IdentityFormState,
-  "outreach_template_subject" | "outreach_template_body_text"
->) => {
-  const hasSubject = Boolean(outreach_template_subject.trim());
-  const hasBodyText = Boolean(outreach_template_body_text.trim());
-
-  if (!hasSubject && !hasBodyText) {
-    return "请先填写默认套磁信主题和正文";
-  }
-  if (!hasSubject) {
-    return "请先填写默认套磁信主题";
-  }
-  if (!hasBodyText) {
-    return "请先填写默认套磁信正文";
-  }
-  return null;
-};
 
 const getIdentityProfileName = (identity: IdentityDTO) =>
   identity.profile_name || identity.name;
@@ -259,6 +271,7 @@ const toIdentityForm = (identity: IdentityDTO): IdentityFormState => {
     outreach_template_subject: identity.outreach_template_subject ?? "",
     outreach_template_body_text: identity.outreach_template_body_text ?? "",
     outreach_template_body_html: identity.outreach_template_body_html ?? "",
+    default_outreach_template_id: identity.default_outreach_template_id ?? null,
     same_domain_cooldown_minutes:
       identity.same_domain_cooldown_minutes === null
         ? ""
@@ -298,12 +311,58 @@ const toIdentityPayload = (form: IdentityFormState): IdentityPayload => {
     outreach_template_body_html: hasVisibleTemplateBody(form)
       ? form.outreach_template_body_html.trim() || null
       : null,
+    default_outreach_template_id: form.default_outreach_template_id,
     same_domain_cooldown_minutes: form.same_domain_cooldown_minutes
       ? Number(form.same_domain_cooldown_minutes)
       : null,
     is_default: form.is_default,
   };
 };
+
+const toOutreachTemplateForm = (
+  template: OutreachTemplateDTO,
+): OutreachTemplateFormState => ({
+  name: template.name,
+  outreach_generation_mode: template.recommended_generation_mode,
+  outreach_template_subject: template.subject ?? "",
+  outreach_template_body_text: template.body_text ?? "",
+  outreach_template_body_html: template.body_html ?? "",
+  is_default: template.is_default,
+});
+
+const toOutreachTemplatePayload = (
+  form: OutreachTemplateFormState,
+): OutreachTemplatePayloadDTO => ({
+  name: form.name.trim(),
+  recommended_generation_mode: form.outreach_generation_mode,
+  subject: form.outreach_template_subject.trim() || null,
+  body_text: form.outreach_template_body_text.trim() || null,
+  body_html: form.outreach_template_body_html.trim() || null,
+  is_default: form.is_default,
+});
+
+const applyOutreachTemplateToIdentityForm = (
+  form: IdentityFormState,
+  template: OutreachTemplateDTO,
+): IdentityFormState => ({
+  ...form,
+  default_outreach_template_id: template.id,
+  outreach_generation_mode: template.recommended_generation_mode,
+  outreach_template_subject: template.subject ?? "",
+  outreach_template_body_text: template.body_text ?? "",
+  outreach_template_body_html: template.body_html ?? "",
+});
+
+const clearOutreachTemplateFromIdentityForm = (
+  form: IdentityFormState,
+): IdentityFormState => ({
+  ...form,
+  default_outreach_template_id: null,
+  outreach_generation_mode: "llm",
+  outreach_template_subject: "",
+  outreach_template_body_text: "",
+  outreach_template_body_html: "",
+});
 
 const toLLMPayload = (form: LLMFormState): LLMProfilePayload => ({
   name: form.name.trim(),
@@ -963,13 +1022,29 @@ const IdentityConnectionCard = ({
 
 const OutreachTemplateSummaryCard = ({
   form,
+  template,
+  globalTemplate,
+  templateCount,
+  loadingTemplates,
   onOpen,
 }: {
   form: IdentityFormState;
+  template: OutreachTemplateDTO | null;
+  globalTemplate: OutreachTemplateDTO | null;
+  templateCount: number;
+  loadingTemplates: boolean;
   onOpen: () => void;
 }) => {
-  const hasSubject = Boolean(form.outreach_template_subject.trim());
-  const hasTemplateBody = hasVisibleTemplateBody(form);
+  const effectiveTemplate = template ?? globalTemplate;
+  const hasSubject = effectiveTemplate
+    ? Boolean(effectiveTemplate.subject?.trim())
+    : Boolean(form.outreach_template_subject.trim());
+  const hasTemplateBody = effectiveTemplate
+    ? Boolean(effectiveTemplate.body_text?.trim())
+    : hasVisibleTemplateBody(form);
+  const effectiveMode =
+    effectiveTemplate?.recommended_generation_mode ??
+    form.outreach_generation_mode;
 
   return (
     <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(135deg,#fffdfa,#fff7ee_58%,#fff2e4)] p-5 shadow-sm shadow-stone-200/70">
@@ -977,25 +1052,30 @@ const OutreachTemplateSummaryCard = ({
         <div className="space-y-3">
           <div>
             <div className="text-sm font-medium text-stone-900">
-              默认发信模式与默认模板
+              发信模板库
             </div>
             <div className="mt-1 text-xs leading-6 text-stone-500">
-              设置新任务默认使用的写信方式和模板。当前默认模式：
-              {form.outreach_generation_mode === "template"
+              模板与发件身份独立保存，可创建多份并在使用时选择。当前身份默认：
+              {template
+                ? template.name
+                : globalTemplate
+                  ? `未单独设置（使用全局“${globalTemplate.name}”）`
+                  : "未选择"}
+            </div>
+            <div className="mt-1 text-xs leading-6 text-stone-500">
+              当前推荐模式：
+              {effectiveMode === "template"
                 ? "直接套用模板"
                 : "AI 辅助写信"}
-              {" · 可直接导入模板文件"}
-            </div>
-            <div className="mt-1 text-xs leading-6 text-stone-500">
-              导入文件只带入正文，主题需单独填写。
+              {` · ${loadingTemplates ? "正在加载" : `${templateCount} 份可用模板`}`}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <span className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600">
-              {hasSubject ? "主题（必填）已填写" : "主题（必填）未填写"}
+              {hasSubject ? "主题已填写" : "主题未填写（草稿）"}
             </span>
             <span className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600">
-              {hasTemplateBody ? "正文（必填）已填写" : "正文（必填）未填写"}
+              {hasTemplateBody ? "正文已填写" : "正文未填写（草稿）"}
             </span>
           </div>
         </div>
@@ -1006,7 +1086,7 @@ const OutreachTemplateSummaryCard = ({
           className="inline-flex items-center gap-2 rounded-2xl border border-stone-300 bg-white/95 px-4 py-2.5 text-sm font-medium text-stone-800 shadow-sm transition hover:border-stone-400 hover:bg-white"
         >
           <FolderOpen className="h-4 w-4" />
-          打开默认值编辑
+          管理模板库
         </button>
       </div>
     </div>
@@ -1017,10 +1097,25 @@ const OutreachTemplateModal = ({
   open,
   importingTemplateFile,
   savingTemplate,
+  actingOnTemplate,
+  loadingTemplates,
+  templates,
+  editorId,
   form,
+  identityLabel,
+  identityDefaultTemplateId,
   onClose,
   onComplete,
+  onCreate,
+  onSelect,
+  onDuplicate,
+  onSetIdentityDefault,
+  onClearIdentityDefault,
+  onSetGlobalDefault,
+  onArchive,
+  onRestore,
   onImport,
+  onNameChange,
   onModeChange,
   onSubjectChange,
   onBodyChange,
@@ -1028,10 +1123,25 @@ const OutreachTemplateModal = ({
   open: boolean;
   importingTemplateFile: boolean;
   savingTemplate: boolean;
-  form: IdentityFormState;
+  actingOnTemplate: boolean;
+  loadingTemplates: boolean;
+  templates: OutreachTemplateDTO[];
+  editorId: EditorId;
+  form: OutreachTemplateFormState;
+  identityLabel: string;
+  identityDefaultTemplateId: number | null;
   onClose: () => void;
   onComplete: () => void;
+  onCreate: () => void;
+  onSelect: (templateId: number) => void;
+  onDuplicate: (templateId: number) => void;
+  onSetIdentityDefault: (template: OutreachTemplateDTO) => void;
+  onClearIdentityDefault: () => void;
+  onSetGlobalDefault: (templateId: number) => void;
+  onArchive: (template: OutreachTemplateDTO) => void;
+  onRestore: (templateId: number) => void;
   onImport: (file: File) => void;
+  onNameChange: (value: string) => void;
   onModeChange: (value: OutreachGenerationMode) => void;
   onSubjectChange: (value: string) => void;
   onBodyChange: (value: { html: string; text: string }) => void;
@@ -1052,6 +1162,10 @@ const OutreachTemplateModal = ({
   const templateEditorHtml =
     form.outreach_template_body_html ||
     textToEmailHtml(form.outreach_template_body_text);
+  const editingTemplate = isExistingEditorId(editorId)
+    ? (templates.find((template) => template.id === editorId) ?? null)
+    : null;
+  const templateBusy = savingTemplate || actingOnTemplate;
 
   const handleTemplateDragOver = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
@@ -1098,14 +1212,13 @@ const OutreachTemplateModal = ({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-xs uppercase tracking-[0.26em] text-stone-400">
-                Outreach Defaults
+                Outreach Templates
               </div>
               <h3 className="mt-2 text-2xl font-semibold text-stone-900">
-                默认发信模式与默认模板
+                发信模板库
               </h3>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-500">
-                设置新任务默认带出的模式、主题和正文。
-                只影响新任务，不影响已创建任务。
+                模板独立于身份保存。选择默认模板只影响之后创建的任务，已创建任务继续使用自己的快照。
               </p>
             </div>
             <button
@@ -1123,9 +1236,12 @@ const OutreachTemplateModal = ({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-sm font-medium text-stone-900">
-                当前默认值摘要
+                当前编辑摘要
               </div>
               <div className="mt-1 flex flex-wrap gap-2 text-xs text-stone-500">
+                <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
+                  {editorId === "new" ? "新模板" : (editingTemplate?.name ?? "请选择模板")}
+                </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
                   模式：
                   {form.outreach_generation_mode === "template"
@@ -1133,12 +1249,10 @@ const OutreachTemplateModal = ({
                     : "AI 辅助写信"}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  主题（必填）：
-                  {form.outreach_template_subject.trim() ? "已填写" : "未填写"}
+                  {form.outreach_template_subject.trim() ? "主题已填写" : "主题未填写，可存草稿"}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  正文（必填）：
-                  {hasVisibleTemplateBody(form) ? "已填写" : "未填写"}
+                  {hasVisibleTemplateBody(form) ? "正文已填写" : "正文未填写，可存草稿"}
                 </span>
               </div>
             </div>
@@ -1166,7 +1280,7 @@ const OutreachTemplateModal = ({
                 ? "正在导入模板文件"
                 : isTemplateDropActive
                   ? "松开即可导入模板"
-                  : "点击或拖拽导入默认模板"}
+                  : "点击或拖拽导入模板正文"}
               <input
                 type="file"
                 accept={TEMPLATE_FILE_ACCEPT}
@@ -1186,7 +1300,92 @@ const OutreachTemplateModal = ({
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="grid gap-6">
+          <div className="grid gap-6 lg:grid-cols-[260px,minmax(0,1fr)]">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-stone-900">全部模板</div>
+                <button
+                  type="button"
+                  onClick={onCreate}
+                  disabled={templateBusy}
+                  className="inline-flex items-center gap-1 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:border-stone-300 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  新建
+                </button>
+              </div>
+              <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+                {loadingTemplates ? (
+                  <div className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-5 text-sm text-stone-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    正在加载模板
+                  </div>
+                ) : templates.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-4 py-5 text-sm leading-6 text-stone-500">
+                    还没有模板。新建后可独立保存，不需要先完善发件身份。
+                  </div>
+                ) : (
+                  templates.map((template) => {
+                    const active = editorId === template.id;
+                    return (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => onSelect(template.id)}
+                        className={clsx(
+                          "w-full rounded-2xl border px-4 py-3 text-left transition",
+                          active
+                            ? "border-primary/30 bg-primary/5 shadow-sm"
+                            : "border-stone-200 bg-white hover:border-stone-300",
+                          template.archived_at && "opacity-65",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="break-words text-sm font-medium text-stone-900">
+                            {template.name}
+                          </span>
+                          {template.is_default ? (
+                            <Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" />
+                          ) : null}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                          <span className={clsx(
+                            "rounded-full px-2 py-1",
+                            template.is_ready
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-amber-50 text-amber-700",
+                          )}>
+                            {template.is_ready ? "可用于发信" : "草稿"}
+                          </span>
+                          {identityDefaultTemplateId === template.id ? (
+                            <span className="rounded-full bg-sky-50 px-2 py-1 text-sky-700">
+                              身份默认
+                            </span>
+                          ) : null}
+                          {template.archived_at ? (
+                            <span className="rounded-full bg-stone-100 px-2 py-1 text-stone-600">
+                              已归档
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="grid min-w-0 gap-6">
+              <label className="block">
+                {renderFieldLabel("模板名称", true)}
+                <input
+                  value={form.name}
+                  onChange={(event) => onNameChange(event.target.value)}
+                  className={inputClassName}
+                  placeholder="例如：博士申请通用模板"
+                />
+              </label>
+
             <div className="grid gap-3 sm:grid-cols-2">
               {[
                 {
@@ -1219,7 +1418,7 @@ const OutreachTemplateModal = ({
                       </div>
                       {active ? (
                         <span className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-white">
-                          当前默认
+                          当前推荐
                         </span>
                       ) : null}
                     </div>
@@ -1237,8 +1436,7 @@ const OutreachTemplateModal = ({
 
             <div className="grid gap-4">
               <SubjectTemplateInput
-                label="默认模板主题"
-                required
+                label="模板主题"
                 value={form.outreach_template_subject}
                 onChange={onSubjectChange}
                 inputClassName={`${inputClassName} pr-28`}
@@ -1248,7 +1446,7 @@ const OutreachTemplateModal = ({
                 导入文件只带入正文，主题需单独填写。
               </p>
               <EmailTemplateEditor
-                label="默认模板正文"
+                label="模板正文"
                 html={templateEditorHtml}
                 placeholder="可将套磁信docx拖到此处导入"
                 onFileDrop={onImport}
@@ -1258,8 +1456,73 @@ const OutreachTemplateModal = ({
 
             <div className="rounded-2xl border border-dashed border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
               {form.outreach_generation_mode === "template"
-                ? "作为新任务默认值；已创建任务不受后续修改影响。"
+                ? "使用时会按模板生成任务快照；后续修改模板不会改变已创建任务。"
                 : "AI 只在模板基础上调整称呼、个性化理由和主题。"}
+            </div>
+
+              {editingTemplate ? (
+                <div className="flex flex-wrap gap-2 border-t border-stone-200 pt-4">
+                  {!editingTemplate.archived_at &&
+                  identityDefaultTemplateId === editingTemplate.id ? (
+                    <button
+                      type="button"
+                      onClick={onClearIdentityDefault}
+                      disabled={templateBusy}
+                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      取消{identityLabel}默认
+                    </button>
+                  ) : !editingTemplate.archived_at ? (
+                    <button
+                      type="button"
+                      onClick={() => onSetIdentityDefault(editingTemplate)}
+                      disabled={templateBusy}
+                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      设为{identityLabel}默认
+                    </button>
+                  ) : null}
+                  {!editingTemplate.archived_at && !editingTemplate.is_default ? (
+                    <button
+                      type="button"
+                      onClick={() => onSetGlobalDefault(editingTemplate.id)}
+                      disabled={templateBusy}
+                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Star className="h-4 w-4" />
+                      设为全局默认
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => onDuplicate(editingTemplate.id)}
+                    disabled={templateBusy}
+                    className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Copy className="h-4 w-4" />
+                    复制一份
+                  </button>
+                  {editingTemplate.archived_at ? (
+                    <button
+                      type="button"
+                      onClick={() => onRestore(editingTemplate.id)}
+                      disabled={templateBusy}
+                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      恢复模板
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onArchive(editingTemplate)}
+                      disabled={templateBusy}
+                      className="ui-btn-danger disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      归档模板
+                    </button>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1267,12 +1530,12 @@ const OutreachTemplateModal = ({
         <div className="border-t border-stone-200/80 bg-white/80 px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs leading-6 text-stone-500">
-              完成编辑会保存到当前身份。
+              模板会独立保存；只要求模板名称，主题和正文可稍后补齐。发信时才检查内容是否完整。
             </div>
             <button
               type="button"
               onClick={onComplete}
-              disabled={savingTemplate}
+              disabled={templateBusy}
               className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
               {savingTemplate && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -1561,8 +1824,19 @@ export const ProfilePage = () => {
     createEmptyIdentityForm(),
   );
   const [smtpPasswordVisible, setSmtpPasswordVisible] = useState(false);
+  const [outreachTemplates, setOutreachTemplates] = useState<
+    OutreachTemplateDTO[]
+  >([]);
+  const [loadingOutreachTemplates, setLoadingOutreachTemplates] =
+    useState(true);
+  const [templateEditorId, setTemplateEditorId] = useState<EditorId>(null);
+  const [outreachTemplateForm, setOutreachTemplateForm] =
+    useState<OutreachTemplateFormState>(createEmptyOutreachTemplateForm());
   const [llmForm, setLlmForm] = useState<LLMFormState>(createEmptyLLMForm());
   const [submittingIdentity, setSubmittingIdentity] = useState(false);
+  const [savingOutreachTemplate, setSavingOutreachTemplate] = useState(false);
+  const [actingOnOutreachTemplate, setActingOnOutreachTemplate] =
+    useState(false);
   const [submittingLLM, setSubmittingLLM] = useState(false);
   const [importingTemplateFile, setImportingTemplateFile] = useState(false);
   const [testingIdentityConnection, setTestingIdentityConnection] = useState<
@@ -1609,7 +1883,7 @@ export const ProfilePage = () => {
     useState<TestComposeSetupStatus>("unchecked");
   const identityNameInputRef = useRef<HTMLInputElement | null>(null);
   const llmNameInputRef = useRef<HTMLInputElement | null>(null);
-  const identityEditorIdRef = useRef<EditorId>(null);
+  const templateEditorIdRef = useRef<EditorId>(null);
   const setupSectionRefs = useRef<
     Record<ProfileSetupSectionId, HTMLElement | null>
   >({
@@ -1621,8 +1895,9 @@ export const ProfilePage = () => {
   const templateSubjectRef = useRef("");
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
-  identityEditorIdRef.current = identityEditorId;
-  templateSubjectRef.current = identityForm.outreach_template_subject;
+  templateEditorIdRef.current = templateEditorId;
+  templateSubjectRef.current =
+    outreachTemplateForm.outreach_template_subject;
 
   const focusInput = (element: HTMLInputElement | null) => {
     if (!element) {
@@ -1634,6 +1909,24 @@ export const ProfilePage = () => {
 
   const getActionErrorMessage = (error: unknown, fallbackMessage: string) =>
     error instanceof Error ? error.message : fallbackMessage;
+  const refreshOutreachTemplates = useCallback(async () => {
+    setLoadingOutreachTemplates(true);
+    try {
+      const templates = await listOutreachTemplates(true);
+      setOutreachTemplates(templates);
+      return templates;
+    } catch (templateError) {
+      notifyError(
+        "模板加载失败",
+        templateError instanceof Error
+          ? templateError.message
+          : "加载发信模板失败",
+      );
+      return [];
+    } finally {
+      setLoadingOutreachTemplates(false);
+    }
+  }, [notifyError]);
   const setSetupSectionRef = useCallback(
     (sectionId: ProfileSetupSectionId, element: HTMLElement | null) => {
       setupSectionRefs.current[sectionId] = element;
@@ -1697,6 +1990,10 @@ export const ProfilePage = () => {
     },
     [],
   );
+
+  useEffect(() => {
+    void refreshOutreachTemplates();
+  }, [refreshOutreachTemplates]);
 
   const confirmDeleteTwice = async (
     targetName: string,
@@ -1807,6 +2104,54 @@ export const ProfilePage = () => {
   const editingLLM = isExistingEditorId(llmEditorId)
     ? (llmProfiles.find((item) => item.id === llmEditorId) ?? null)
     : null;
+  const activeOutreachTemplates = useMemo(
+    () => outreachTemplates.filter((template) => !template.archived_at),
+    [outreachTemplates],
+  );
+  const identityDefaultOutreachTemplate =
+    activeOutreachTemplates.find(
+      (template) => template.id === identityForm.default_outreach_template_id,
+    ) ?? null;
+  const globalDefaultOutreachTemplate =
+    activeOutreachTemplates.find((template) => template.is_default) ?? null;
+
+  useEffect(() => {
+    if (!templateModalOpen || loadingOutreachTemplates) {
+      return;
+    }
+    if (templateEditorId === "new") {
+      return;
+    }
+    if (
+      isExistingEditorId(templateEditorId) &&
+      outreachTemplates.some((template) => template.id === templateEditorId)
+    ) {
+      return;
+    }
+
+    const fallback =
+      activeOutreachTemplates.find(
+        (template) =>
+          template.id === identityForm.default_outreach_template_id,
+      ) ??
+      activeOutreachTemplates.find((template) => template.is_default) ??
+      activeOutreachTemplates[0] ??
+      null;
+    if (fallback) {
+      setTemplateEditorId(fallback.id);
+      setOutreachTemplateForm(toOutreachTemplateForm(fallback));
+      return;
+    }
+    setTemplateEditorId("new");
+    setOutreachTemplateForm(createEmptyOutreachTemplateForm());
+  }, [
+    activeOutreachTemplates,
+    identityForm.default_outreach_template_id,
+    loadingOutreachTemplates,
+    outreachTemplates,
+    templateEditorId,
+    templateModalOpen,
+  ]);
 
   const defaultIdentity = identities.find((item) => item.is_default) ?? null;
   const defaultLLMProfile = llmProfiles.find((item) => item.is_default) ?? null;
@@ -1851,11 +2196,17 @@ export const ProfilePage = () => {
     null;
   const setupLlmProfile =
     selectedLlmProfile ?? defaultLLMProfile ?? llmProfiles[0] ?? null;
-  const setupHasTemplate = Boolean(
-    setupIdentity?.outreach_template_subject?.trim() &&
-    (setupIdentity.outreach_template_body_text?.trim() ||
-      setupIdentity.outreach_template_body_html?.trim()),
-  );
+  const setupOutreachTemplate =
+    activeOutreachTemplates.find(
+      (template) =>
+        template.id === setupIdentity?.default_outreach_template_id,
+    ) ?? globalDefaultOutreachTemplate;
+  const setupHasTemplate = setupOutreachTemplate
+    ? setupOutreachTemplate.is_ready
+    : Boolean(
+        setupIdentity?.outreach_template_subject?.trim() &&
+          setupIdentity.outreach_template_body_text?.trim(),
+      );
   const setupHasMaterial = Boolean(
     setupIdentity?.current_primary_material || setupIdentity?.materials.length,
   );
@@ -2022,6 +2373,44 @@ export const ProfilePage = () => {
     setFetchingLLMModels(false);
   };
 
+  const beginOutreachTemplateCreation = () => {
+    setTemplateEditorId("new");
+    setOutreachTemplateForm(createEmptyOutreachTemplateForm());
+  };
+
+  const openOutreachTemplateEditor = (templateId: number) => {
+    const template = outreachTemplates.find((item) => item.id === templateId);
+    if (!template) {
+      return;
+    }
+    setTemplateEditorId(template.id);
+    setOutreachTemplateForm(toOutreachTemplateForm(template));
+  };
+
+  const openOutreachTemplateLibrary = () => {
+    if (loadingOutreachTemplates) {
+      setTemplateEditorId(null);
+      setOutreachTemplateForm(createEmptyOutreachTemplateForm());
+      setTemplateModalOpen(true);
+      return;
+    }
+    const fallback =
+      activeOutreachTemplates.find(
+        (template) =>
+          template.id === identityForm.default_outreach_template_id,
+      ) ??
+      activeOutreachTemplates.find((template) => template.is_default) ??
+      activeOutreachTemplates[0] ??
+      null;
+    if (fallback) {
+      setTemplateEditorId(fallback.id);
+      setOutreachTemplateForm(toOutreachTemplateForm(fallback));
+    } else {
+      beginOutreachTemplateCreation();
+    }
+    setTemplateModalOpen(true);
+  };
+
   const handleSmtpHostChange = (nextSmtpHost: string) => {
     setIdentityForm((previous) => ({
       ...previous,
@@ -2077,13 +2466,206 @@ export const ProfilePage = () => {
     }
   };
 
+  const saveOutreachTemplate = async (): Promise<OutreachTemplateDTO | null> => {
+    if (!desktopBackendReady) {
+      notifyError(
+        "系统正在准备本地数据",
+        "请等待系统准备完成后再保存模板，已填写内容不会丢失。",
+      );
+      return null;
+    }
+    if (!outreachTemplateForm.name.trim()) {
+      notifyFormErrors("请检查表单", ["请填写模板名称"]);
+      return null;
+    }
+
+    setSavingOutreachTemplate(true);
+    try {
+      const payload = toOutreachTemplatePayload(outreachTemplateForm);
+      const isCreating = templateEditorId === "new";
+      const saved = isExistingEditorId(templateEditorId)
+        ? await updateOutreachTemplate(templateEditorId, payload)
+        : await createOutreachTemplate(payload);
+      setTemplateEditorId(saved.id);
+      setOutreachTemplateForm(toOutreachTemplateForm(saved));
+      if (identityForm.default_outreach_template_id === saved.id) {
+        setIdentityForm((previous) =>
+          applyOutreachTemplateToIdentityForm(previous, saved),
+        );
+      }
+      await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
+      notifySuccess(
+        isCreating ? "模板创建成功" : "模板保存成功",
+        "模板已独立保存；主题或正文未填写时会保留为草稿。",
+      );
+      return saved;
+    } catch (saveError) {
+      notifyError(
+        "模板保存失败",
+        getActionErrorMessage(saveError, "保存发信模板失败"),
+      );
+      return null;
+    } finally {
+      setSavingOutreachTemplate(false);
+    }
+  };
+
+  const handleSetIdentityDefaultTemplate = async (
+    template: OutreachTemplateDTO,
+  ) => {
+    setActingOnOutreachTemplate(true);
+    try {
+      if (editingIdentity) {
+        await updateIdentityDefaultOutreachTemplate(
+          editingIdentity.id,
+          template.id,
+        );
+        await refreshSelections();
+      }
+      setIdentityForm((previous) =>
+        applyOutreachTemplateToIdentityForm(previous, template),
+      );
+      notifySuccess(
+        "身份默认模板已更新",
+        editingIdentity
+          ? `“${getIdentityProfileName(editingIdentity)}”之后创建的任务将默认选择“${template.name}”。`
+          : `保存新身份时会将“${template.name}”设为默认模板。`,
+      );
+    } catch (templateError) {
+      notifyError(
+        "设置身份默认模板失败",
+        getActionErrorMessage(templateError, "设置身份默认模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
+  const handleSetGlobalDefaultTemplate = async (templateId: number) => {
+    setActingOnOutreachTemplate(true);
+    try {
+      const saved = await setGlobalDefaultOutreachTemplate(templateId);
+      setOutreachTemplateForm((previous) => ({
+        ...previous,
+        is_default: templateEditorId === saved.id,
+      }));
+      await refreshOutreachTemplates();
+      notifySuccess(
+        "全局默认模板已更新",
+        `未设置身份默认模板时，将优先选择“${saved.name}”。`,
+      );
+    } catch (templateError) {
+      notifyError(
+        "设置全局默认模板失败",
+        getActionErrorMessage(templateError, "设置全局默认模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
+  const handleClearIdentityDefaultTemplate = async () => {
+    setActingOnOutreachTemplate(true);
+    try {
+      if (editingIdentity) {
+        await updateIdentityDefaultOutreachTemplate(editingIdentity.id, null);
+        await refreshSelections();
+      }
+      setIdentityForm(clearOutreachTemplateFromIdentityForm);
+      notifySuccess(
+        "身份默认模板已取消",
+        editingIdentity
+          ? `“${getIdentityProfileName(editingIdentity)}”之后创建的任务将使用全局默认模板（如有）。`
+          : "保存新身份后，将使用全局默认模板（如有）。",
+      );
+    } catch (templateError) {
+      notifyError(
+        "取消身份默认模板失败",
+        getActionErrorMessage(templateError, "取消身份默认模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
+  const handleDuplicateOutreachTemplate = async (templateId: number) => {
+    setActingOnOutreachTemplate(true);
+    try {
+      const duplicate = await duplicateOutreachTemplate(templateId);
+      await refreshOutreachTemplates();
+      setTemplateEditorId(duplicate.id);
+      setOutreachTemplateForm(toOutreachTemplateForm(duplicate));
+      notifySuccess("模板复制成功", `已创建“${duplicate.name}”。`);
+    } catch (templateError) {
+      notifyError(
+        "复制模板失败",
+        getActionErrorMessage(templateError, "复制发信模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
+  const handleArchiveOutreachTemplate = async (
+    template: OutreachTemplateDTO,
+  ) => {
+    const confirmed = await confirm({
+      title: `确认归档模板“${template.name}”？`,
+      description:
+        "模板仍可恢复；使用它的身份会取消默认关联，但已创建任务的内容快照不会改变。",
+      confirmLabel: "确认归档",
+      cancelLabel: "先不归档",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setActingOnOutreachTemplate(true);
+    try {
+      const archived = await archiveOutreachTemplate(template.id);
+      if (identityForm.default_outreach_template_id === template.id) {
+        setIdentityForm(clearOutreachTemplateFromIdentityForm);
+      }
+      setOutreachTemplateForm(toOutreachTemplateForm(archived));
+      await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
+      notifySuccess("模板已归档", "历史任务快照保持不变，可随时恢复模板。 ");
+    } catch (templateError) {
+      notifyError(
+        "归档模板失败",
+        getActionErrorMessage(templateError, "归档发信模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
+  const handleRestoreOutreachTemplate = async (templateId: number) => {
+    setActingOnOutreachTemplate(true);
+    try {
+      const restored = await restoreOutreachTemplate(templateId);
+      setOutreachTemplateForm(toOutreachTemplateForm(restored));
+      await refreshOutreachTemplates();
+      notifySuccess("模板已恢复", `“${restored.name}”已重新加入可用模板。`);
+    } catch (templateError) {
+      notifyError(
+        "恢复模板失败",
+        getActionErrorMessage(templateError, "恢复发信模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
   const handleTemplateFileImport = async (file: File) => {
     if (importingTemplateFile) {
       return;
     }
 
-    const importTargetEditorId = identityEditorId;
-    const hasExistingTemplateBody = hasVisibleTemplateBody(identityForm);
+    const importTargetEditorId = templateEditorId;
+    const hasExistingTemplateBody = hasVisibleTemplateBody(
+      outreachTemplateForm,
+    );
 
     if (hasExistingTemplateBody) {
       const shouldReplaceTemplateBody = await confirm({
@@ -2102,13 +2684,15 @@ export const ProfilePage = () => {
     setImportingTemplateFile(true);
     try {
       const imported = await importIdentityTemplate(file);
-      if (identityEditorIdRef.current !== importTargetEditorId) {
+      if (templateEditorIdRef.current !== importTargetEditorId) {
         return;
       }
 
       const hasSubject = Boolean(templateSubjectRef.current.trim());
-      setIdentityForm((previous) => ({
+      setOutreachTemplateForm((previous) => ({
         ...previous,
+        name:
+          previous.name.trim() || file.name.replace(/\.[^.]+$/, "").trim(),
         outreach_template_body_text: imported.body_text,
         outreach_template_body_html: imported.body_html,
       }));
@@ -2116,7 +2700,7 @@ export const ProfilePage = () => {
         "模板导入成功",
         hasSubject
           ? `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。`
-          : `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。请继续填写模板主题后再保存身份。`,
+          : `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。可补充主题后保存，也可先保存为草稿。`,
       );
     } catch (importError) {
       notifyError(
@@ -2211,9 +2795,7 @@ export const ProfilePage = () => {
     }));
   };
 
-  const saveIdentity = async ({
-    validateTemplate = false,
-  }: { validateTemplate?: boolean } = {}): Promise<IdentityDTO | null> => {
+  const saveIdentity = async (): Promise<IdentityDTO | null> => {
     if (!desktopBackendReady) {
       notifyError(
         "系统正在准备本地数据",
@@ -2236,15 +2818,6 @@ export const ProfilePage = () => {
       notifyFormErrors("请检查表单", ["请先填写所有带红色星号的身份必填项"]);
       return null;
     }
-    if (validateTemplate) {
-      const templateValidationMessage =
-        getTemplateValidationMessage(identityForm);
-      if (templateValidationMessage) {
-        notifyFormErrors("请检查表单", [templateValidationMessage]);
-        return null;
-      }
-    }
-
     setSubmittingIdentity(true);
     try {
       const payload = toIdentityPayload(identityForm);
@@ -2839,7 +3412,11 @@ export const ProfilePage = () => {
             <div className="mt-6">
               <OutreachTemplateSummaryCard
                 form={identityForm}
-                onOpen={() => setTemplateModalOpen(true)}
+                template={identityDefaultOutreachTemplate}
+                globalTemplate={globalDefaultOutreachTemplate}
+                templateCount={activeOutreachTemplates.length}
+                loadingTemplates={loadingOutreachTemplates}
+                onOpen={openOutreachTemplateLibrary}
               />
             </div>
 
@@ -3235,31 +3812,61 @@ export const ProfilePage = () => {
       <OutreachTemplateModal
         open={templateModalOpen}
         importingTemplateFile={importingTemplateFile}
-        savingTemplate={submittingIdentity}
-        form={identityForm}
+        savingTemplate={savingOutreachTemplate}
+        actingOnTemplate={actingOnOutreachTemplate}
+        loadingTemplates={loadingOutreachTemplates}
+        templates={outreachTemplates}
+        editorId={templateEditorId}
+        form={outreachTemplateForm}
+        identityLabel={editingIdentity ? "当前身份" : "新身份"}
+        identityDefaultTemplateId={identityForm.default_outreach_template_id}
         onClose={() => setTemplateModalOpen(false)}
         onComplete={() =>
-          void saveIdentity({ validateTemplate: true }).then((saved) => {
+          void saveOutreachTemplate().then((saved) => {
             if (saved) {
               setTemplateModalOpen(false);
             }
           })
         }
+        onCreate={beginOutreachTemplateCreation}
+        onSelect={openOutreachTemplateEditor}
+        onDuplicate={(templateId) =>
+          void handleDuplicateOutreachTemplate(templateId)
+        }
+        onSetIdentityDefault={(template) =>
+          void handleSetIdentityDefaultTemplate(template)
+        }
+        onClearIdentityDefault={() =>
+          void handleClearIdentityDefaultTemplate()
+        }
+        onSetGlobalDefault={(templateId) =>
+          void handleSetGlobalDefaultTemplate(templateId)
+        }
+        onArchive={(template) => void handleArchiveOutreachTemplate(template)}
+        onRestore={(templateId) =>
+          void handleRestoreOutreachTemplate(templateId)
+        }
         onImport={(file) => void handleTemplateFileImport(file)}
+        onNameChange={(value) =>
+          setOutreachTemplateForm((previous) => ({
+            ...previous,
+            name: value,
+          }))
+        }
         onModeChange={(value) =>
-          setIdentityForm((previous) => ({
+          setOutreachTemplateForm((previous) => ({
             ...previous,
             outreach_generation_mode: value,
           }))
         }
         onSubjectChange={(value) =>
-          setIdentityForm((previous) => ({
+          setOutreachTemplateForm((previous) => ({
             ...previous,
             outreach_template_subject: value,
           }))
         }
         onBodyChange={({ html, text }) =>
-          setIdentityForm((previous) => ({
+          setOutreachTemplateForm((previous) => ({
             ...previous,
             outreach_template_body_text: text,
             outreach_template_body_html: html,

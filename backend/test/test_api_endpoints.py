@@ -936,6 +936,725 @@ class ApiEndpointTests(unittest.TestCase):
                 {"matched", "scheduled", "sent", "skipped", "send_failed", "needs_attention"},
             )
 
+    def test_outreach_template_library_saves_drafts_without_identity(self) -> None:
+        response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "尚未完成的英文模板",
+                "recommended_generation_mode": "llm",
+                "subject": None,
+                "body_text": "Dear {{name}},",
+                "body_html": "<p>Dear {{name}},</p>",
+                "is_default": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        created = response.json()
+        self.assertFalse(created["is_ready"])
+        self.assertTrue(created["is_default"])
+        self.assertEqual(created["body_text"], "Dear {{name}},")
+
+        duplicate = self.client.post(
+            f"/api/outreach-templates/{created['id']}/duplicate",
+        )
+        self.assertEqual(duplicate.status_code, 201, msg=duplicate.text)
+        self.assertFalse(duplicate.json()["is_default"])
+
+        templates = self.client.get("/api/outreach-templates").json()
+        self.assertEqual(len(templates), 2)
+        self.assertEqual(templates[0]["id"], created["id"])
+
+    def test_outreach_template_defaults_switch_safely_and_duplicate_names_fit_limit(self) -> None:
+        first_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "模" * 120,
+                "recommended_generation_mode": "llm",
+                "is_default": True,
+            },
+        )
+        self.assertEqual(first_response.status_code, 201, msg=first_response.text)
+        first = first_response.json()
+
+        duplicate_response = self.client.post(
+            f"/api/outreach-templates/{first['id']}/duplicate",
+        )
+        self.assertEqual(duplicate_response.status_code, 201, msg=duplicate_response.text)
+        duplicate = duplicate_response.json()
+        self.assertEqual(len(duplicate["name"]), 120)
+        self.assertTrue(duplicate["name"].endswith("（副本）"))
+
+        second_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "第二份全局默认模板",
+                "recommended_generation_mode": "template",
+                "subject": "主题",
+                "body_text": "正文",
+                "is_default": True,
+            },
+        )
+        self.assertEqual(second_response.status_code, 201, msg=second_response.text)
+        second = second_response.json()
+        defaults = [
+            template
+            for template in self.client.get("/api/outreach-templates").json()
+            if template["is_default"]
+        ]
+        self.assertEqual([template["id"] for template in defaults], [second["id"]])
+
+        reset_response = self.client.post(
+            f"/api/outreach-templates/{first['id']}/default",
+        )
+        self.assertEqual(reset_response.status_code, 200, msg=reset_response.text)
+        defaults = [
+            template
+            for template in self.client.get("/api/outreach-templates").json()
+            if template["is_default"]
+        ]
+        self.assertEqual([template["id"] for template in defaults], [first["id"]])
+
+    def test_identity_default_template_keeps_legacy_fields_in_sync(self) -> None:
+        identity_payload = self._build_identity_payload(
+            with_imap=False,
+            outreach_template_subject=None,
+            outreach_template_body_text=None,
+        )
+        identity_response = self.client.post("/api/identities", json=identity_payload)
+        self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
+        identity_id = identity_response.json()["id"]
+
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "博士申请中文模板",
+                "recommended_generation_mode": "template",
+                "subject": "申请与{{name}}老师交流",
+                "body_text": "{{name}}老师您好，我是{{sender_name}}。",
+                "body_html": "<p>{{name}}老师您好，我是{{sender_name}}。</p>",
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+
+        default_response = self.client.put(
+            f"/api/identities/{identity_id}/default-template",
+            json={"template_id": template_id},
+        )
+        self.assertEqual(default_response.status_code, 200, msg=default_response.text)
+        default_identity = default_response.json()
+        self.assertEqual(default_identity["default_outreach_template_id"], template_id)
+        self.assertEqual(default_identity["outreach_generation_mode"], "template")
+        self.assertEqual(
+            default_identity["outreach_template_body_text"],
+            "{{name}}老师您好，我是{{sender_name}}。",
+        )
+
+        updated_template = self.client.put(
+            f"/api/outreach-templates/{template_id}",
+            json={"body_text": "更新后的模板正文", "body_html": "<p>更新后的模板正文</p>"},
+        )
+        self.assertEqual(updated_template.status_code, 200, msg=updated_template.text)
+        refreshed_identity = next(
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == identity_id
+        )
+        self.assertEqual(refreshed_identity["outreach_template_body_text"], "更新后的模板正文")
+
+        archived = self.client.delete(f"/api/outreach-templates/{template_id}")
+        self.assertEqual(archived.status_code, 200, msg=archived.text)
+        refreshed_identity = next(
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == identity_id
+        )
+        self.assertIsNone(refreshed_identity["default_outreach_template_id"])
+        self.assertIsNone(refreshed_identity["outreach_template_body_text"])
+
+    def test_deleting_identity_does_not_delete_its_independent_template(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        identity = next(
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == identity_id
+        )
+        template_id = identity["default_outreach_template_id"]
+        self.assertIsNotNone(template_id)
+
+        delete_response = self.client.delete(f"/api/identities/{identity_id}")
+        self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
+
+        template_response = self.client.get(
+            f"/api/outreach-templates/{template_id}",
+        )
+        self.assertEqual(template_response.status_code, 200, msg=template_response.text)
+        self.assertEqual(template_response.json()["id"], template_id)
+
+        replacement_payload = self._build_identity_payload(
+            with_imap=False,
+            outreach_template_subject="新身份主题",
+            outreach_template_body_text="新身份正文",
+            outreach_template_body_html="<p>新身份正文</p>",
+        )
+        replacement_payload["name"] = "替代身份"
+        replacement_payload["email_address"] = "replacement-sender@example.com"
+        replacement_response = self.client.post(
+            "/api/identities",
+            json=replacement_payload,
+        )
+        self.assertEqual(
+            replacement_response.status_code,
+            201,
+            msg=replacement_response.text,
+        )
+        self.assertEqual(replacement_response.json()["id"], identity_id)
+        self.assertEqual(len(self.client.get("/api/outreach-templates").json()), 2)
+
+    def test_global_default_template_is_snapshotted_by_workspace_and_test_compose(self) -> None:
+        identity_response = self.client.post(
+            "/api/identities",
+            json=self._build_identity_payload(
+                with_imap=False,
+                outreach_template_subject=None,
+                outreach_template_body_text=None,
+                outreach_template_body_html=None,
+            ),
+        )
+        self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
+        identity_id = identity_response.json()["id"]
+        self.assertIsNone(identity_response.json()["default_outreach_template_id"])
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="global-template@example.edu")
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "全局回退模板",
+                "recommended_generation_mode": "template",
+                "subject": "全局主题 {{name}}",
+                "body_text": "全局正文 {{sender_name}}",
+                "body_html": "<p>全局正文 {{sender_name}}</p>",
+                "is_default": True,
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+
+        workspace_response = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(workspace_response.status_code, 200, msg=workspace_response.text)
+        workspace_task = workspace_response.json()["current_task"]
+        self.assertEqual(workspace_task["outreach_template_id"], template_id)
+        self.assertEqual(workspace_task["outreach_template_subject"], "全局主题 {{name}}")
+        self.assertEqual(workspace_task["outreach_template_body_text"], "全局正文 {{sender_name}}")
+
+        compose_response = self.client.get(
+            f"/api/test-compose/{identity_id}/{llm_id}",
+        )
+        self.assertEqual(compose_response.status_code, 200, msg=compose_response.text)
+        compose_draft = compose_response.json()["draft"]
+        self.assertEqual(compose_draft["outreach_template_id"], template_id)
+        self.assertEqual(compose_draft["subject"], "全局主题 {{name}}")
+        self.assertEqual(compose_draft["body_text"], "全局正文 {{sender_name}}")
+
+    def test_legacy_mode_only_task_can_fall_back_to_global_default_template(self) -> None:
+        identity_payload = self._build_identity_payload(
+            with_imap=False,
+            outreach_template_subject=None,
+            outreach_template_body_text=None,
+            outreach_template_body_html=None,
+        )
+        identity_payload["default_outreach_template_id"] = None
+        identity_response = self.client.post("/api/identities", json=identity_payload)
+        self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
+        identity_id = identity_response.json()["id"]
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="legacy-global-template@example.edu")
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "旧任务全局回退模板",
+                "recommended_generation_mode": "template",
+                "subject": "旧任务全局主题 {{name}}",
+                "body_text": "旧任务全局正文 {{sender_name}}",
+                "body_html": "<p>旧任务全局正文 {{sender_name}}</p>",
+                "is_default": True,
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="matched",
+            primary_material_id=None,
+            outreach_generation_mode="template",
+        )
+
+        workspace_response = self.client.get(
+            f"/api/workspaces/{professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(workspace_response.status_code, 200, msg=workspace_response.text)
+        workspace_task = workspace_response.json()["current_task"]
+        self.assertEqual(workspace_task["id"], task_id)
+        self.assertIsNone(workspace_task["outreach_template_id"])
+        self.assertEqual(
+            workspace_task["outreach_template_subject"],
+            "旧任务全局主题 {{name}}",
+        )
+
+        generate_response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft",
+        )
+        self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
+        generated = generate_response.json()["current_task"]
+        self.assertEqual(
+            generated["generated_subject"],
+            "旧任务全局主题 材料删除测试导师",
+        )
+        self.assertEqual(generated["generated_content_text"], "旧任务全局正文 测试身份")
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            frozen_snapshot = connection.execute(
+                """
+                SELECT outreach_template_id, outreach_template_snapshot_version,
+                       outreach_template_subject, outreach_template_body_text
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(
+            frozen_snapshot,
+            (
+                template_id,
+                1,
+                "旧任务全局主题 {{name}}",
+                "旧任务全局正文 {{sender_name}}",
+            ),
+        )
+
+    def test_workspace_can_select_incomplete_template_until_generation_or_send(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="draft-template@example.edu")
+        ensure_response = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(ensure_response.status_code, 200, msg=ensure_response.text)
+        task_id = ensure_response.json()["current_task"]["id"]
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "待补充的工作台模板",
+                "recommended_generation_mode": "template",
+                "subject": None,
+                "body_text": None,
+                "body_html": None,
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+
+        select_response = self.client.post(
+            f"/api/email-tasks/{task_id}/outreach-config",
+            json={
+                "outreach_generation_mode": "template",
+                "outreach_template_id": template_id,
+                "outreach_template_subject": None,
+                "outreach_template_body_text": None,
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(select_response.status_code, 200, msg=select_response.text)
+        selected_task = select_response.json()["current_task"]
+        self.assertEqual(selected_task["outreach_template_id"], template_id)
+        self.assertIsNone(selected_task["outreach_template_subject"])
+        self.assertIsNone(selected_task["outreach_template_body_text"])
+
+        generate_response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft",
+        )
+        self.assertEqual(generate_response.status_code, 400, msg=generate_response.text)
+        self.assertIn("主题", generate_response.text)
+
+        unlink_response = self.client.post(
+            f"/api/email-tasks/{task_id}/outreach-config",
+            json={
+                "outreach_generation_mode": "template",
+                "outreach_template_id": None,
+                "outreach_template_subject": None,
+                "outreach_template_body_text": None,
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(unlink_response.status_code, 200, msg=unlink_response.text)
+        unlinked = unlink_response.json()["current_task"]
+        self.assertIsNone(unlinked["outreach_template_id"])
+        self.assertIsNone(unlinked["outreach_template_subject"])
+        self.assertIsNone(unlinked["outreach_template_body_text"])
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            snapshot_version = connection.execute(
+                "SELECT outreach_template_snapshot_version FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(snapshot_version, 1)
+
+        generate_unlinked_response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft",
+        )
+        self.assertEqual(
+            generate_unlinked_response.status_code,
+            400,
+            msg=generate_unlinked_response.text,
+        )
+        self.assertIn("主题", generate_unlinked_response.text)
+
+    def test_workspace_can_unlink_template_without_losing_task_snapshot(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="unlinked-template@example.edu")
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "待解除关联模板",
+                "recommended_generation_mode": "template",
+                "subject": "独立旧主题 {{name}}",
+                "body_text": "独立旧正文 {{sender_name}}",
+                "body_html": "<p>独立旧正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+        default_response = self.client.put(
+            f"/api/identities/{identity_id}/default-template",
+            json={"template_id": template_id},
+        )
+        self.assertEqual(default_response.status_code, 200, msg=default_response.text)
+
+        ensure_response = self.client.post(
+            f"/api/workspaces/{professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(ensure_response.status_code, 200, msg=ensure_response.text)
+        task = ensure_response.json()["current_task"]
+        task_id = task["id"]
+        self.assertEqual(task["outreach_template_id"], template_id)
+
+        generate_response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft",
+        )
+        self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
+        generated_before_unlink = generate_response.json()["current_task"]
+        self.assertEqual(
+            generated_before_unlink["generated_subject"],
+            "独立旧主题 材料删除测试导师",
+        )
+
+        update_response = self.client.put(
+            f"/api/outreach-templates/{template_id}",
+            json={
+                "subject": "模板库新主题 {{name}}",
+                "body_text": "模板库新正文 {{sender_name}}",
+                "body_html": "<p>模板库新正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(update_response.status_code, 200, msg=update_response.text)
+
+        unlink_response = self.client.post(
+            f"/api/email-tasks/{task_id}/outreach-config",
+            json={
+                "outreach_generation_mode": "template",
+                "outreach_template_id": None,
+                "outreach_template_subject": task["outreach_template_subject"],
+                "outreach_template_body_text": task["outreach_template_body_text"],
+                "outreach_template_body_html": task["outreach_template_body_html"],
+            },
+        )
+        self.assertEqual(unlink_response.status_code, 200, msg=unlink_response.text)
+        unlinked = unlink_response.json()["current_task"]
+        self.assertIsNone(unlinked["outreach_template_id"])
+        self.assertEqual(unlinked["outreach_template_subject"], "独立旧主题 {{name}}")
+        self.assertEqual(unlinked["outreach_template_body_text"], "独立旧正文 {{sender_name}}")
+        self.assertEqual(unlinked["status"], generated_before_unlink["status"])
+        self.assertEqual(
+            unlinked["generated_subject"],
+            generated_before_unlink["generated_subject"],
+        )
+        self.assertEqual(
+            unlinked["generated_content_text"],
+            generated_before_unlink["generated_content_text"],
+        )
+
+    def test_test_compose_generates_from_explicit_template_and_keeps_provenance(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "测试写信固定模板",
+                "recommended_generation_mode": "template",
+                "subject": "测试主题 {{name}}",
+                "body_text": "测试正文 {{sender_name}}",
+                "body_html": "<p>测试正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+
+        generate_response = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_id}/generate-draft",
+            json={
+                "outreach_template_id": template_id,
+                "subject": "本次测试主题 {{name}}",
+                "body_text": "本次测试正文 {{sender_name}}",
+                "body_html": "<p>本次测试正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
+        draft = generate_response.json()["draft"]
+        self.assertEqual(draft["outreach_template_id"], template_id)
+        self.assertEqual(draft["subject"], "本次测试主题 {{name}}")
+        self.assertEqual(draft["body_text"], "本次测试正文 {{sender_name}}")
+
+        archive_response = self.client.delete(
+            f"/api/outreach-templates/{template_id}",
+        )
+        self.assertEqual(archive_response.status_code, 200, msg=archive_response.text)
+        save_response = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_id}/draft",
+            json={
+                "outreach_template_id": template_id,
+                "subject": draft["subject"],
+                "body_text": draft["body_text"],
+                "body_html": draft["body_html"],
+                "selected_material_ids": [],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200, msg=save_response.text)
+        self.assertEqual(
+            save_response.json()["draft"]["outreach_template_id"],
+            template_id,
+        )
+
+    def test_batch_task_keeps_selected_template_snapshot_after_library_edit(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="template-snapshot@example.edu")
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "独立批量模板",
+                "recommended_generation_mode": "template",
+                "subject": "原始主题 {{name}}",
+                "body_text": "原始正文 {{sender_name}}",
+                "body_html": "<p>原始正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+
+        batch_response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "模板快照任务",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "selected_material_ids": [],
+                "outreach_template_id": template_id,
+                "outreach_generation_mode": "template",
+            },
+        )
+        self.assertEqual(batch_response.status_code, 201, msg=batch_response.text)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            before_update = connection.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM email_tasks
+                WHERE batch_task_id = ?
+                """,
+                (batch_response.json()["id"],),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(
+            before_update,
+            (
+                template_id,
+                "原始主题 {{name}}",
+                "原始正文 {{sender_name}}",
+                "<p>原始正文 {{sender_name}}</p>",
+            ),
+        )
+
+        update_response = self.client.put(
+            f"/api/outreach-templates/{template_id}",
+            json={
+                "subject": "修改后的主题",
+                "body_text": "修改后的正文",
+                "body_html": "<p>修改后的正文</p>",
+            },
+        )
+        self.assertEqual(update_response.status_code, 200, msg=update_response.text)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            after_update = connection.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM email_tasks
+                WHERE batch_task_id = ?
+                """,
+                (batch_response.json()["id"],),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(after_update, before_update)
+
+    def test_batch_resend_keeps_archived_template_provenance_with_explicit_snapshot(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="archived-resend-template@example.edu")
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "之后会归档的来源模板",
+                "recommended_generation_mode": "template",
+                "subject": "原任务主题 {{name}}",
+                "body_text": "原任务正文 {{sender_name}}",
+                "body_html": "<p>原任务正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+        archive_response = self.client.delete(f"/api/outreach-templates/{template_id}")
+        self.assertEqual(archive_response.status_code, 200, msg=archive_response.text)
+
+        rejected = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "不能重新选归档模板",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "outreach_template_id": template_id,
+                "outreach_generation_mode": "template",
+            },
+        )
+        self.assertEqual(rejected.status_code, 400, msg=rejected.text)
+
+        resend = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "保留归档来源的重发任务",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "selected_material_ids": [],
+                "outreach_template_id": template_id,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "原任务主题 {{name}}",
+                "outreach_template_body_text": "原任务正文 {{sender_name}}",
+                "outreach_template_body_html": "<p>原任务正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(resend.status_code, 201, msg=resend.text)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            task_row = connection.execute(
+                """
+                SELECT outreach_template_id, outreach_template_snapshot_version,
+                       outreach_template_subject, outreach_template_body_text
+                FROM email_tasks
+                WHERE batch_task_id = ?
+                """,
+                (resend.json()["id"],),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(
+            task_row,
+            (
+                template_id,
+                1,
+                "原任务主题 {{name}}",
+                "原任务正文 {{sender_name}}",
+            ),
+        )
+
+    def test_switching_workspace_template_discards_stale_generated_draft(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="switch-template-draft@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="旧草稿主题",
+            generated_content_text="旧草稿正文",
+            generated_content_html="<p>旧草稿正文</p>",
+        )
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "切换后的固定模板",
+                "recommended_generation_mode": "template",
+                "subject": "新模板主题 {{name}}",
+                "body_text": "新模板正文 {{sender_name}}",
+                "body_html": "<p>新模板正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
+
+        switched_response = self.client.post(
+            f"/api/email-tasks/{task_id}/outreach-config",
+            json={
+                "outreach_generation_mode": "template",
+                "outreach_template_id": template_id,
+                "outreach_template_subject": "新模板主题 {{name}}",
+                "outreach_template_body_text": "新模板正文 {{sender_name}}",
+                "outreach_template_body_html": "<p>新模板正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(switched_response.status_code, 200, msg=switched_response.text)
+        switched = switched_response.json()["current_task"]
+        self.assertEqual(switched["status"], "discovered")
+        self.assertIsNone(switched["generated_subject"])
+        self.assertIsNone(switched["generated_content_text"])
+        self.assertEqual(switched["draft"]["source"], "template")
+        self.assertIn("新模板正文", switched["draft"]["body_text"])
+
     def test_professor_dashboard_ignores_failed_send_logs_for_contact_state(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -2537,7 +3256,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(payload["current_task"]["generated_subject"], "申请与模板导师老师交流")
         self.assertIn("模板导师老师您好", payload["current_task"]["generated_content_text"])
 
-    def test_template_mode_regeneration_uses_latest_identity_template_after_existing_draft(self) -> None:
+    def test_template_mode_regeneration_keeps_task_template_snapshot_after_default_changes(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -2597,11 +3316,11 @@ class ApiEndpointTests(unittest.TestCase):
         second_generate = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
         self.assertEqual(second_generate.status_code, 200, msg=second_generate.text)
         payload = second_generate.json()
-        self.assertEqual(payload["current_task"]["generated_subject"], "新模板主题 模板更新导师")
-        self.assertIn("新模板正文 模板更新导师", payload["current_task"]["generated_content_text"])
+        self.assertEqual(payload["current_task"]["generated_subject"], "旧模板主题 模板更新导师")
+        self.assertIn("旧模板正文 模板更新导师", payload["current_task"]["generated_content_text"])
         latest_draft = [message for message in payload["messages"] if message["direction"] == "draft"][-1]
-        self.assertEqual(latest_draft["subject"], "新模板主题 模板更新导师")
-        self.assertIn("新模板正文 模板更新导师", latest_draft["content"])
+        self.assertEqual(latest_draft["subject"], "旧模板主题 模板更新导师")
+        self.assertIn("旧模板正文 模板更新导师", latest_draft["content"])
 
     def test_workspace_template_summary_returns_backend_rendered_template(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -2658,7 +3377,7 @@ class ApiEndpointTests(unittest.TestCase):
             task["rendered_template_body_html"],
         )
 
-    def test_child_manual_template_regeneration_uses_latest_identity_template(self) -> None:
+    def test_child_manual_template_regeneration_keeps_parent_template_snapshot(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         update_response = self.client.put(
@@ -2738,8 +3457,8 @@ class ApiEndpointTests(unittest.TestCase):
         generate_response = self.client.post(f"/api/email-tasks/{child_task_id}/generate-draft")
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
         generated = generate_response.json()["current_task"]
-        self.assertEqual(generated["generated_subject"], "子任务新主题 子任务模板导师")
-        self.assertIn("子任务新正文 子任务模板导师", generated["generated_content_text"])
+        self.assertEqual(generated["generated_subject"], "父任务旧主题 子任务模板导师")
+        self.assertIn("父任务旧正文 子任务模板导师", generated["generated_content_text"])
 
     def test_manual_send_renders_subject_and_body_placeholders(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -6319,9 +7038,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["generated_content_text"], "旧草稿正文")
         self.assertEqual(current_task["generated_content_html"], "<p>旧草稿正文</p>")
         self.assertEqual(current_task["outreach_generation_mode"], "template")
-        self.assertEqual(current_task["outreach_template_subject"], "申请与{{name}}老师交流")
-        self.assertEqual(current_task["outreach_template_body_text"], "老师您好，我是{{sender_name}}，关注到您在{{research_direction}}方向的工作。")
-        self.assertIsNone(current_task["outreach_template_body_html"])
+        self.assertEqual(current_task["outreach_template_subject"], "继续联系 {{name}}")
+        self.assertEqual(current_task["outreach_template_body_text"], "继续联系正文 {{name}}")
+        self.assertEqual(current_task["outreach_template_body_html"], "<p>继续联系正文 {{name}}</p>")
         self.assertFalse(current_task["can_continue_manually"])
         self.assertFalse(current_task["can_write_follow_up"])
 
@@ -6932,9 +7651,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(current_task["approved_body_text"])
         self.assertIsNone(current_task["approved_body_html"])
         self.assertEqual(current_task["outreach_generation_mode"], "template")
-        self.assertEqual(current_task["outreach_template_subject"], "申请与{{name}}老师交流")
-        self.assertEqual(current_task["outreach_template_body_text"], "老师您好，我是{{sender_name}}，关注到您在{{research_direction}}方向的工作。")
-        self.assertIsNone(current_task["outreach_template_body_html"])
+        self.assertEqual(current_task["outreach_template_subject"], "跟进主题 {{name}}")
+        self.assertEqual(current_task["outreach_template_body_text"], "跟进正文 {{name}}")
+        self.assertEqual(current_task["outreach_template_body_html"], "<p>跟进正文 {{name}}</p>")
         self.assertFalse(current_task["can_continue_manually"])
         self.assertFalse(current_task["can_write_follow_up"])
 
@@ -7314,7 +8033,7 @@ class ApiEndpointTests(unittest.TestCase):
         sent_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
         self.assertEqual(sent_thread["current_task"]["status"], "sent")
 
-    def test_template_polish_mode_requires_complete_template_when_creating_batch_task(self) -> None:
+    def test_batch_task_generation_requires_selected_template_to_be_complete(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -7323,21 +8042,18 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers information extraction.",
             material_type="resume",
         )
-        connection = sqlite3.connect(self.db_path)
-        try:
-            connection.execute(
-                """
-                UPDATE identity_profiles
-                SET outreach_template_subject = NULL,
-                    outreach_template_body_text = NULL,
-                    outreach_template_body_html = NULL
-                WHERE id = ?
-                """,
-                (identity_id,),
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "待补充的批量模板",
+                "recommended_generation_mode": "llm",
+                "subject": None,
+                "body_text": None,
+                "body_html": None,
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
         self.client.post("/api/professors/import-sample")
         professor_id = self.client.get("/api/professors").json()[0]["id"]
 
@@ -7357,6 +8073,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "email_body": None,
                 "selected_material_ids": None,
                 "outreach_generation_mode": "llm",
+                "outreach_template_id": template_id,
                 "outreach_template_subject": None,
                 "outreach_template_body_text": None,
                 "outreach_template_body_html": None,
@@ -8853,7 +9570,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("{{name}}您好", draft["body_html"])
         self.assertIn("{{sender_name}}", draft["body_html"])
 
-    def test_batch_task_workspace_uses_latest_identity_template_defaults(self) -> None:
+    def test_batch_task_workspace_keeps_created_template_snapshot(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -8926,8 +9643,8 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(workspace.status_code, 200, msg=workspace.text)
         payload = workspace.json()
         self.assertEqual(payload["current_task"]["outreach_generation_mode"], "template")
-        self.assertEqual(payload["current_task"]["outreach_template_subject"], "后来改掉的主题")
-        self.assertEqual(payload["current_task"]["outreach_template_body_text"], "后来改掉的正文 {{name}}")
+        self.assertEqual(payload["current_task"]["outreach_template_subject"], "批量主题 {{name}}")
+        self.assertEqual(payload["current_task"]["outreach_template_body_text"], "批量正文 {{name}}")
 
     def test_llm_batch_task_prefers_outreach_template_fields_for_snapshot_and_draft(self) -> None:
         identity_id = self._create_identity(with_imap=False)

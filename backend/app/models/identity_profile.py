@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.email_task import EmailTask
     from app.models.identity_communication_group import IdentityCommunicationGroup
     from app.models.identity_material import IdentityMaterial
+    from app.models.outreach_template import OutreachTemplate
 
 
 class IdentityProfile(Base):
@@ -56,6 +57,11 @@ class IdentityProfile(Base):
     outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_outreach_template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("outreach_templates.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     current_primary_material_id: Mapped[int | None] = mapped_column(
         ForeignKey("identity_materials.id"),
         nullable=True,
@@ -107,6 +113,11 @@ class IdentityProfile(Base):
     communication_group: Mapped["IdentityCommunicationGroup | None"] = relationship(
         back_populates="members",
         foreign_keys=[communication_group_id],
+    )
+    default_outreach_template: Mapped["OutreachTemplate | None"] = relationship(
+        back_populates="default_for_identities",
+        foreign_keys=[default_outreach_template_id],
+        lazy="joined",
     )
     email_tasks: Mapped[list["EmailTask"]] = relationship(
         back_populates="identity",

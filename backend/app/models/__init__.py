@@ -50,6 +50,7 @@ from app.models.match_analysis_job import (
 )
 from app.models.match_analysis_run import MatchAnalysisRun
 from app.models.operation_log import OperationLog
+from app.models.outreach_template import OutreachTemplate
 from app.models.professor import Professor, ProfessorTag, ProfessorTagLink
 from app.models.test_compose_message import TestComposeMessage
 from app.models.test_compose_session import TestComposeSession
@@ -104,6 +105,7 @@ __all__ = [
     "MatchAnalysisJobStatus",
     "MatchAnalysisRun",
     "OperationLog",
+    "OutreachTemplate",
     "Professor",
     "ProfessorTag",
     "ProfessorTagLink",

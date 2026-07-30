@@ -8,6 +8,7 @@ import { CreateTaskPage } from "./CreateTaskPage";
 const navigateMock = vi.fn();
 const listProfessorsMock = vi.fn();
 const createBatchTaskMock = vi.fn();
+const listOutreachTemplatesMock = vi.fn();
 const confirmMock = vi.fn();
 const notifyMock = {
   notifyError: vi.fn(),
@@ -129,6 +130,11 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   createBatchTask: (...args: unknown[]) => createBatchTaskMock(...args),
 }));
 
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  listOutreachTemplates: (...args: unknown[]) =>
+    listOutreachTemplatesMock(...args),
+}));
+
 vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
   EmailTemplateEditor: ({
     label,
@@ -169,6 +175,7 @@ describe("CreateTaskPage", () => {
       id: 1,
       name: "批量任务",
     });
+    listOutreachTemplatesMock.mockResolvedValue([]);
     confirmMock.mockResolvedValue(true);
   });
 
@@ -196,6 +203,86 @@ describe("CreateTaskPage", () => {
         outreach_template_body_text: "{{name}}老师您好",
         outreach_template_body_html: "<p><strong>{{name}}</strong>老师您好</p>",
         primary_material_id: null,
+        outreach_template_id: null,
+      }),
+    );
+  });
+
+  it("uses the global template as a task-local snapshot when the identity has no default", async () => {
+    listOutreachTemplatesMock.mockResolvedValue([
+      {
+        id: 55,
+        name: "全局模板",
+        recommended_generation_mode: "template",
+        subject: "全局主题 {{name}}",
+        body_text: "全局正文 {{name}}",
+        body_html: "<p>全局正文 {{name}}</p>",
+        is_ready: true,
+        is_default: true,
+        archived_at: null,
+        created_at: "2026-05-01T00:00:00Z",
+        updated_at: "2026-05-01T00:00:00Z",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText(/已带入“全局模板”/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(createBatchTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outreach_template_id: 55,
+        outreach_generation_mode: "template",
+        outreach_template_subject: "全局主题 {{name}}",
+        outreach_template_body_text: "全局正文 {{name}}",
+        outreach_template_body_html: "<p>全局正文 {{name}}</p>",
+      }),
+    );
+  });
+
+  it("does not choose an arbitrary template when no default exists", async () => {
+    listOutreachTemplatesMock.mockResolvedValue([
+      {
+        id: 56,
+        name: "普通模板",
+        recommended_generation_mode: "template",
+        subject: "不应自动带入的主题",
+        body_text: "不应自动带入的正文",
+        body_html: "<p>不应自动带入的正文</p>",
+        is_ready: true,
+        is_default: false,
+        archived_at: null,
+        created_at: "2026-05-01T00:00:00Z",
+        updated_at: "2026-05-01T00:00:00Z",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("张明")).toBeInTheDocument();
+    expect(
+      await screen.findByText("可直接编辑下方内容；创建后会保存为任务快照。"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(createBatchTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outreach_template_id: null,
+        outreach_template_subject: "申请与{{name}}老师交流",
+        outreach_template_body_text: "{{name}}老师您好",
       }),
     );
   });

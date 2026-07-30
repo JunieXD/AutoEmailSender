@@ -21,6 +21,7 @@ from app.models import (
     EmailTaskStatus,
     IdentityProfile,
     LLMProfile,
+    OutreachTemplate,
     Professor,
 )
 from app.schemas.workspace import (
@@ -39,10 +40,14 @@ from app.services.identity_communication_groups import resolve_identity_communic
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
+from app.services.outreach_template_library import (
+    get_default_outreach_template_for_identity,
+)
 from app.services.outreach_templates import (
-    OUTREACH_GENERATION_MODE_TEMPLATE,
     RenderedOutreachTemplate,
+    build_outreach_template_snapshot_config,
     get_identity_sender_name,
+    has_outreach_template_snapshot,
     render_outreach_template,
     resolve_outreach_template_config,
 )
@@ -92,11 +97,21 @@ async def _build_workspace_thread_read(
     match_task: EmailTask | None,
     sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
 ) -> WorkspaceThreadRead:
-    current_task_outreach = (
-        _resolve_task_outreach_config(identity, current_task)
-        if current_task is not None
-        else resolve_outreach_template_config(identity)
+    selected_template = await get_default_outreach_template_for_identity(
+        session,
+        identity,
     )
+    if current_task is not None:
+        current_task_outreach = _resolve_task_outreach_config(
+            identity,
+            current_task,
+            fallback_template=selected_template,
+        )
+    else:
+        current_task_outreach = resolve_outreach_template_config(
+            identity,
+            template=selected_template,
+        )
     rendered_template = _render_workspace_template_summary(
         identity,
         professor,
@@ -190,6 +205,9 @@ async def _build_workspace_thread_read(
             cancellation_reason=current_task.cancellation_reason if current_task else None,
             can_continue_manually=_can_continue_manually(current_task),
             can_write_follow_up=_can_write_follow_up(current_task),
+            outreach_template_id=(
+                current_task.outreach_template_id if current_task else None
+            ),
             outreach_generation_mode=current_task_outreach.generation_mode,
             outreach_template_subject=current_task_outreach.subject_template,
             outreach_template_body_text=current_task_outreach.body_text_template,
@@ -334,7 +352,11 @@ async def ensure_workspace_task(
             await session.refresh(current_task)
         return current_task
 
-    snapshot = resolve_outreach_template_config(identity)
+    selected_template = await get_default_outreach_template_for_identity(
+        session,
+        identity,
+    )
+    snapshot = resolve_outreach_template_config(identity, template=selected_template)
     match_task = await _get_latest_identity_match_task(session, professor_pk, identity_pk)
     task = EmailTask(
         source="manual",
@@ -343,6 +365,10 @@ async def ensure_workspace_task(
         llm_profile_id=llm_profile_id,
         professor_id=professor_pk,
         primary_material_id=identity.current_primary_material_id,
+        outreach_template_id=(
+            selected_template.id if selected_template is not None else None
+        ),
+        outreach_template_snapshot_version=1,
         outreach_generation_mode=snapshot.generation_mode,
         outreach_template_subject=_normalize_nullable_text(snapshot.subject_template),
         outreach_template_body_text=_normalize_nullable_text(snapshot.body_text_template),
@@ -394,7 +420,15 @@ async def _create_workspace_resume_task(
 ) -> EmailTask:
     professor_id = task.professor_id
     identity_id = task.identity_id
-    resumed_task = _create_manual_child_task(task, reuse_existing_draft=True)
+    fallback_template = await get_default_outreach_template_for_identity(
+        session,
+        task.identity,
+    )
+    resumed_task = _create_manual_child_task(
+        task,
+        reuse_existing_draft=True,
+        fallback_template=fallback_template,
+    )
     session.add(resumed_task)
     try:
         await session.flush()
@@ -801,19 +835,29 @@ def _task_blocks_draft_actions(task: EmailTask | None) -> bool:
     )
 
 
-def _resolve_task_outreach_config(identity: IdentityProfile, task: EmailTask):
-    if task.batch_task_id is None or task.outreach_generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
-        return resolve_outreach_template_config(
-            identity,
-            generation_mode=task.outreach_generation_mode,
-        )
-
-    return resolve_outreach_template_config(
-        identity,
-        generation_mode=task.outreach_generation_mode,
+def _resolve_task_outreach_config(
+    identity: IdentityProfile,
+    task: EmailTask,
+    *,
+    fallback_template: OutreachTemplate | None = None,
+):
+    if has_outreach_template_snapshot(
+        snapshot_version=task.outreach_template_snapshot_version,
+        template_id=task.outreach_template_id,
         subject_template=task.outreach_template_subject,
         body_text_template=task.outreach_template_body_text,
         body_html_template=task.outreach_template_body_html,
+    ):
+        return build_outreach_template_snapshot_config(
+            generation_mode=task.outreach_generation_mode,
+            subject_template=task.outreach_template_subject,
+            body_text_template=task.outreach_template_body_text,
+            body_html_template=task.outreach_template_body_html,
+        )
+    return resolve_outreach_template_config(
+        identity,
+        template=fallback_template,
+        generation_mode=task.outreach_generation_mode,
     )
 
 

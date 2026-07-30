@@ -23,6 +23,7 @@ from app.schemas.identity import (
     IdentityProfileUpdate,
     IdentityTemplateImportResult,
 )
+from app.schemas.outreach_template import IdentityDefaultOutreachTemplateUpdate
 from app.services.file_storage import delete_file
 from app.services.identity_communication_groups import (
     cleanup_communication_group_after_identity_delete,
@@ -30,6 +31,15 @@ from app.services.identity_communication_groups import (
 from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache_in_session
 from app.services.mail_runtime import test_imap_connection, test_smtp_connection
 from app.services.operation_logs import record_operation_log
+from app.services.outreach_template_library import (
+    apply_template_to_identity_legacy_fields,
+    clear_identity_default_template,
+    create_template_from_legacy_identity,
+    get_outreach_template,
+    normalize_generation_mode,
+    normalize_nullable_template_text,
+    sync_template_to_default_identities,
+)
 from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_LLM,
     OUTREACH_GENERATION_MODE_TEMPLATE,
@@ -63,6 +73,16 @@ async def create_identity(
 ) -> IdentityProfileRead:
     existing_count = await session.scalar(select(func.count(IdentityProfile.id)))
     data = _normalize_identity_payload(payload)
+    requested_template_id = data.pop("default_outreach_template_id", None)
+    template_was_explicit = "default_outreach_template_id" in payload.model_fields_set
+    requested_template = None
+    if requested_template_id is not None:
+        requested_template = await _get_active_template_or_400(
+            session,
+            int(requested_template_id),
+        )
+    elif template_was_explicit:
+        _clear_legacy_template_data(data)
     await _ensure_identity_email_available(session, str(data["email_address"]))
     identity = IdentityProfile(**data)
     if not existing_count:
@@ -73,6 +93,10 @@ async def create_identity(
     try:
         session.add(identity)
         await session.flush()
+        if requested_template is not None:
+            apply_template_to_identity_legacy_fields(identity, requested_template)
+        elif not template_was_explicit:
+            await create_template_from_legacy_identity(session, identity)
         await _record_identity_log(session, identity, "identity.created")
         await session.commit()
     except IntegrityError as exc:
@@ -91,6 +115,16 @@ async def update_identity(
 ) -> IdentityProfileRead:
     identity = await _get_identity(session, identity_id)
     data = _normalize_identity_payload(payload)
+    requested_template_id = data.pop("default_outreach_template_id", None)
+    template_was_explicit = "default_outreach_template_id" in payload.model_fields_set
+    requested_template = None
+    if requested_template_id is not None:
+        requested_template = await _get_active_template_or_400(
+            session,
+            int(requested_template_id),
+        )
+    elif template_was_explicit:
+        _clear_legacy_template_data(data)
     old_imap_signature = _identity_imap_cache_signature(identity)
     await _ensure_identity_email_available(
         session,
@@ -102,6 +136,30 @@ async def update_identity(
 
     for key, value in data.items():
         setattr(identity, key, value)
+    if requested_template is not None:
+        apply_template_to_identity_legacy_fields(identity, requested_template)
+    elif template_was_explicit:
+        clear_identity_default_template(identity)
+    elif identity.default_outreach_template is not None:
+        identity.default_outreach_template.recommended_generation_mode = (
+            normalize_generation_mode(identity.outreach_generation_mode)
+        )
+        identity.default_outreach_template.subject = normalize_nullable_template_text(
+            identity.outreach_template_subject,
+        )
+        identity.default_outreach_template.body_text = normalize_nullable_template_text(
+            identity.outreach_template_body_text,
+        )
+        identity.default_outreach_template.body_html = normalize_nullable_template_text(
+            identity.outreach_template_body_html,
+        )
+        identity.default_outreach_template.updated_at = utc_now()
+        await sync_template_to_default_identities(
+            session,
+            identity.default_outreach_template,
+        )
+    else:
+        await create_template_from_legacy_identity(session, identity)
     if _imap_cache_signature_from_data(data) != old_imap_signature:
         await clear_identity_sent_folder_discovery_cache_in_session(session, identity_id)
     identity.updated_at = utc_now()
@@ -113,6 +171,29 @@ async def update_identity(
         await session.rollback()
         _raise_email_conflict_if_needed(exc)
         raise
+    saved = await _get_identity(session, identity_id)
+    return serialize_identity(saved)
+
+
+@router.put("/{identity_id}/default-template", response_model=IdentityProfileRead)
+async def update_identity_default_template(
+    identity_id: int,
+    payload: IdentityDefaultOutreachTemplateUpdate,
+    session: AsyncSession = Depends(get_async_session),
+) -> IdentityProfileRead:
+    identity = await _get_identity(session, identity_id)
+    if payload.template_id is None:
+        clear_identity_default_template(identity)
+    else:
+        template = await _get_active_template_or_400(session, payload.template_id)
+        apply_template_to_identity_legacy_fields(identity, template)
+    await _record_identity_log(
+        session,
+        identity,
+        "identity.default_outreach_template_updated",
+        metadata={"default_outreach_template_id": identity.default_outreach_template_id},
+    )
+    await session.commit()
     saved = await _get_identity(session, identity_id)
     return serialize_identity(saved)
 
@@ -295,6 +376,16 @@ def _identity_query():
     )
 
 
+async def _get_active_template_or_400(
+    session: AsyncSession,
+    template_id: int,
+):
+    try:
+        return await get_outreach_template(session, template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProfile:
     identity = await session.scalar(
         _identity_query().where(IdentityProfile.id == identity_id),
@@ -418,6 +509,13 @@ def _normalize_identity_payload(
         data.get("outreach_template_body_html"),
     )
     return data
+
+
+def _clear_legacy_template_data(data: dict[str, object]) -> None:
+    data["outreach_generation_mode"] = OUTREACH_GENERATION_MODE_LLM
+    data["outreach_template_subject"] = None
+    data["outreach_template_body_text"] = None
+    data["outreach_template_body_html"] = None
 
 
 def _identity_imap_cache_signature(identity: IdentityProfile) -> tuple[object, ...]:

@@ -470,6 +470,266 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(remaining_task_count, 1)
         self.assertEqual(remaining_log_count, 1)
 
+    def test_outreach_template_library_migration_preserves_legacy_templates(self) -> None:
+        database_path = Path(self.temp_dir.name) / "outreach_template_library.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260721_identity_comm_groups"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            default_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="template-migration@example.com",
+            )
+            empty_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="empty-template@example.com",
+            )
+            html_only_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="html-only-template@example.com",
+            )
+            connection.execute(
+                """
+                UPDATE identity_profiles
+                SET is_default = 1,
+                    outreach_generation_mode = 'template',
+                    outreach_template_subject = ?,
+                    outreach_template_body_text = ?,
+                    outreach_template_body_html = ?
+                WHERE id = ?
+                """,
+                (
+                    " 申请与 {{name}} 老师交流 ",
+                    "{{name}} 老师您好，我是 {{sender_name}}。",
+                    "<p><strong>{{name}}</strong> 老师您好。</p>",
+                    default_identity_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE identity_profiles
+                SET outreach_template_body_html = '<p>仅 HTML 的旧草稿</p>'
+                WHERE id = ?
+                """,
+                (html_only_identity_id,),
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="迁移测试模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "template-migration@example.edu",
+            )
+            task_id = DatabaseSchemaTests._insert_workspace_root_task_into(
+                connection,
+                default_identity_id,
+                llm_profile_id,
+                professor_id,
+            )
+            fallback_professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "template-fallback-migration@example.edu",
+            )
+            fallback_task_id = DatabaseSchemaTests._insert_workspace_root_task_into(
+                connection,
+                empty_identity_id,
+                llm_profile_id,
+                fallback_professor_id,
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET outreach_generation_mode = 'template',
+                    outreach_template_subject = '任务自己的主题',
+                    outreach_template_body_text = '任务自己的正文',
+                    outreach_template_body_html = '<p>任务自己的正文</p>'
+                WHERE id = ?
+                """,
+                (task_id,),
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET outreach_generation_mode = 'template'
+                WHERE id = ?
+                """,
+                (fallback_task_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            template_rows = upgraded.execute(
+                """
+                SELECT
+                    migrated_from_identity_id,
+                    recommended_generation_mode,
+                    subject,
+                    body_text,
+                    body_html,
+                    is_default
+                FROM outreach_templates
+                ORDER BY migrated_from_identity_id
+                """
+            ).fetchall()
+            identity_links = dict(
+                upgraded.execute(
+                    """
+                    SELECT id, default_outreach_template_id
+                    FROM identity_profiles
+                    ORDER BY id
+                    """
+                ).fetchall()
+            )
+            task_row = upgraded.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            fallback_snapshot_version = upgraded.execute(
+                """
+                SELECT outreach_template_snapshot_version
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (fallback_task_id,),
+            ).fetchone()[0]
+        finally:
+            upgraded.close()
+
+        self.assertEqual(len(template_rows), 3)
+        self.assertEqual(
+            template_rows[0],
+            (
+                default_identity_id,
+                "template",
+                " 申请与 {{name}} 老师交流 ",
+                "{{name}} 老师您好，我是 {{sender_name}}。",
+                "<p><strong>{{name}}</strong> 老师您好。</p>",
+                1,
+            ),
+        )
+        self.assertEqual(
+            template_rows[1],
+            (
+                empty_identity_id,
+                "llm",
+                None,
+                None,
+                None,
+                0,
+            ),
+        )
+        self.assertEqual(
+            template_rows[2],
+            (
+                html_only_identity_id,
+                "llm",
+                None,
+                None,
+                "<p>仅 HTML 的旧草稿</p>",
+                0,
+            ),
+        )
+        self.assertIsNotNone(identity_links[default_identity_id])
+        self.assertIsNotNone(identity_links[empty_identity_id])
+        self.assertIsNotNone(identity_links[html_only_identity_id])
+        self.assertEqual(
+            task_row,
+            (
+                None,
+                1,
+                "template",
+                "任务自己的主题",
+                "任务自己的正文",
+                "<p>任务自己的正文</p>",
+            ),
+        )
+        self.assertIsNone(fallback_snapshot_version)
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            tables = {
+                row[0]
+                for row in downgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                ).fetchall()
+            }
+            restored = downgraded.execute(
+                """
+                SELECT
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM identity_profiles
+                WHERE id = ?
+                """,
+                (default_identity_id,),
+            ).fetchone()
+        finally:
+            downgraded.close()
+
+        self.assertNotIn("outreach_templates", tables)
+        self.assertEqual(
+            restored,
+            (
+                "template",
+                " 申请与 {{name}} 老师交流 ",
+                "{{name}} 老师您好，我是 {{sender_name}}。",
+                "<p><strong>{{name}}</strong> 老师您好。</p>",
+            ),
+        )
+
+    def test_outreach_template_library_downgrade_refuses_data_loss(self) -> None:
+        database_path = Path(self.temp_dir.name) / "outreach_template_downgrade.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260721_identity_comm_groups"
+
+        self._run_alembic(env, "upgrade", "head")
+        connection = sqlite3.connect(database_path)
+        try:
+            connection.execute(
+                """
+                INSERT INTO outreach_templates (
+                    name,
+                    recommended_generation_mode,
+                    subject,
+                    body_text
+                )
+                VALUES ('独立模板', 'llm', '主题', '正文')
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        result = self._run_alembic_result(env, "downgrade", previous_revision)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "cannot downgrade outreach template library without losing independent templates",
+            result.stdout + result.stderr,
+        )
+
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
         result = self._run_alembic_result(env, *args)
         if result.returncode != 0:

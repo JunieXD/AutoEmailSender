@@ -30,7 +30,7 @@ describe("ProfilePage setup sections", () => {
     expect(testSection).not.toContain("{identityActionButtons}");
   });
 
-  it("saves identity changes when completing template editing", () => {
+  it("saves templates independently when completing template editing", () => {
     const modalSource = profilePageSource.slice(
       profilePageSource.indexOf("const OutreachTemplateModal = ({"),
       profilePageSource.indexOf("const MaterialLibraryModal = ({"),
@@ -39,16 +39,17 @@ describe("ProfilePage setup sections", () => {
     expect(modalSource).toContain("savingTemplate");
     expect(modalSource).toContain("onComplete");
     expect(modalSource).toContain("onClick={onComplete}");
-    expect(modalSource).not.toContain("保存身份后生效。");
+    expect(modalSource).toContain("模板会独立保存");
 
     const modalUsageSource = profilePageSource.slice(
       profilePageSource.indexOf("<OutreachTemplateModal"),
     );
-    expect(modalUsageSource).toContain("savingTemplate={submittingIdentity}");
+    expect(modalUsageSource).toContain("savingTemplate={savingOutreachTemplate}");
     expect(modalUsageSource).toContain("onComplete={() =>");
     expect(modalUsageSource).toContain(
-      "saveIdentity({ validateTemplate: true }).then((saved) =>",
+      "saveOutreachTemplate().then((saved) =>",
     );
+    expect(modalUsageSource).not.toContain("saveIdentity({ validateTemplate");
   });
 
   it("supports drag-and-drop template import in the default template modal", () => {
@@ -88,7 +89,8 @@ describe("ProfilePage setup sections", () => {
     expect(profilePageSource).toContain("const hasVisibleTemplateBody =");
     expect(summarySource).toContain("hasVisibleTemplateBody(form)");
     expect(modalSource).toContain("hasVisibleTemplateBody(form)");
-    expect(importSource).toContain("hasVisibleTemplateBody(identityForm)");
+    expect(importSource).toContain("hasVisibleTemplateBody(");
+    expect(importSource).toContain("outreachTemplateForm");
     expect(summarySource).not.toContain("outreach_template_body_html.trim()");
     expect(modalSource).not.toContain("outreach_template_body_html.trim()");
   });

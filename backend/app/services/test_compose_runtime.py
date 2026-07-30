@@ -31,9 +31,14 @@ from app.services import llm_runtime, mail_runtime
 from app.services.mail_runtime import MailAttachment
 from app.services.materials import build_material_download_name, ensure_material_extracted_text
 from app.services.operation_logs import record_operation_log
+from app.services.outreach_template_library import (
+    get_default_outreach_template_for_identity,
+    get_outreach_template,
+)
 from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     TEST_RECIPIENT_NAME,
+    build_outreach_template_snapshot_config,
     build_test_compose_send_template_context,
     build_test_compose_template_context,
     get_identity_sender_name,
@@ -82,11 +87,61 @@ async def generate_test_compose_draft(
     *,
     identity_id: int,
     llm_profile_id: int,
+    outreach_template_id: int | None = None,
+    template_selection_explicit: bool = False,
+    subject_template: str | None = None,
+    body_text_template: str | None = None,
+    body_html_template: str | None = None,
+    template_content_explicit: bool = False,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     compose_session = await _get_or_create_test_compose_session(session, identity_id, llm_profile_id, identity)
-    outreach_config = resolve_outreach_template_config(identity)
+    if template_selection_explicit:
+        selected_template = (
+            await get_outreach_template(
+                session,
+                outreach_template_id,
+                include_archived=template_content_explicit,
+            )
+            if outreach_template_id is not None
+            else None
+        )
+    elif compose_session.outreach_template_id is not None:
+        try:
+            selected_template = await get_outreach_template(
+                session,
+                compose_session.outreach_template_id,
+            )
+        except ValueError:
+            selected_template = await get_default_outreach_template_for_identity(
+                session,
+                identity,
+            )
+    else:
+        selected_template = await get_default_outreach_template_for_identity(
+            session,
+            identity,
+        )
+    if template_content_explicit:
+        outreach_config = build_outreach_template_snapshot_config(
+            generation_mode=(
+                selected_template.recommended_generation_mode
+                if selected_template is not None
+                else identity.outreach_generation_mode
+            ),
+            subject_template=subject_template,
+            body_text_template=body_text_template,
+            body_html_template=body_html_template,
+        )
+    else:
+        outreach_config = resolve_outreach_template_config(
+            identity,
+            template=selected_template,
+        )
+    compose_session.outreach_template_id = (
+        selected_template.id if selected_template is not None else None
+    )
 
     template_subject = (outreach_config.subject_template or "").strip() or None
     template_body = (outreach_config.body_text_template or "").strip() or None
@@ -161,6 +216,17 @@ async def send_test_compose_message(
     selected_material_ids = payload.selected_material_ids or []
 
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
+
+    if "outreach_template_id" in payload.model_fields_set:
+        if payload.outreach_template_id is None:
+            compose_session.outreach_template_id = None
+        else:
+            template = await get_outreach_template(
+                session,
+                payload.outreach_template_id,
+                include_archived=True,
+            )
+            compose_session.outreach_template_id = template.id
 
     draft_subject = (payload.subject or "").strip() or None
     if payload.body_html:
@@ -257,6 +323,17 @@ async def save_test_compose_draft(
 
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
 
+    if "outreach_template_id" in payload.model_fields_set:
+        if payload.outreach_template_id is None:
+            compose_session.outreach_template_id = None
+        else:
+            template = await get_outreach_template(
+                session,
+                payload.outreach_template_id,
+                include_archived=True,
+            )
+            compose_session.outreach_template_id = template.id
+
     compose_session.subject = (payload.subject or "").strip() or None
     if payload.body_html:
         rendered = normalize_email_html(payload.body_html)
@@ -315,12 +392,23 @@ async def _get_or_create_test_compose_session(
         compose_session.updated_at = utc_now()
         return compose_session
 
+    selected_template = await get_default_outreach_template_for_identity(
+        session,
+        identity,
+    )
+    outreach_config = resolve_outreach_template_config(
+        identity,
+        template=selected_template,
+    )
     compose_session = TestComposeSession(
         identity_id=identity_id,
         llm_profile_id=llm_profile_id,
-        subject=identity.outreach_template_subject,
-        body_text=identity.outreach_template_body_text or "",
-        body_html=identity.outreach_template_body_html,
+        outreach_template_id=(
+            selected_template.id if selected_template is not None else None
+        ),
+        subject=outreach_config.subject_template,
+        body_text=outreach_config.body_text_template or "",
+        body_html=outreach_config.body_html_template,
         selected_material_ids=[],
     )
     session.add(compose_session)
@@ -460,6 +548,7 @@ def _serialize_test_compose_thread(
             for material in sorted(identity.materials, key=lambda item: item.created_at, reverse=True)
         ],
         draft=TestComposeDraftRead(
+            outreach_template_id=compose_session.outreach_template_id,
             subject=compose_session.subject,
             body_text=compose_session.body_text,
             body_html=compose_session.body_html,

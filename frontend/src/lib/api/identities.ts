@@ -20,6 +20,15 @@ export const updateIdentity = (identityId: number, payload: IdentityPayload) =>
     body: JSON.stringify(payload),
   });
 
+export const updateIdentityDefaultOutreachTemplate = (
+  identityId: number,
+  templateId: number | null,
+) =>
+  apiFetch<IdentityDTO>(`/api/identities/${identityId}/default-template`, {
+    method: 'PUT',
+    body: JSON.stringify({ template_id: templateId }),
+  });
+
 export const deleteIdentity = (identityId: number) =>
   apiFetch<void>(`/api/identities/${identityId}`, {
     method: 'DELETE',

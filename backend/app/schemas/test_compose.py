@@ -24,6 +24,7 @@ class TestComposeLLMRead(ApiSchema):
 
 
 class TestComposeDraftRead(ApiSchema):
+    outreach_template_id: int | None
     subject: str | None
     body_text: str
     body_html: str | None
@@ -55,6 +56,7 @@ class TestComposeStatusRead(ApiSchema):
 
 
 class TestComposeDraftUpdateRequest(BaseModel):
+    outreach_template_id: int | None = None
     subject: str | None = None
     body_text: str
     body_html: str | None = None
@@ -63,3 +65,10 @@ class TestComposeDraftUpdateRequest(BaseModel):
 
 class TestComposeMessageSendRequest(TestComposeDraftUpdateRequest):
     pass
+
+
+class TestComposeGenerateRequest(BaseModel):
+    outreach_template_id: int | None = None
+    subject: str | None = None
+    body_text: str | None = None
+    body_html: str | None = None

@@ -97,6 +97,11 @@ const baseProps = {
   onSubjectChange: vi.fn(),
   onContentChange: vi.fn(),
   onSelectedMaterialIdsChange: vi.fn(),
+  outreachTemplates: [],
+  selectedOutreachTemplateId: null,
+  loadingOutreachTemplates: false,
+  onOutreachTemplateChange: vi.fn(),
+  onSaveDraft: vi.fn(),
   onSendNow: vi.fn(),
   onScheduleSend: vi.fn(),
   onCancelSchedule: vi.fn(),
@@ -104,6 +109,8 @@ const baseProps = {
   onStartFollowUp: vi.fn(),
   onCalculateMatch: vi.fn(),
   onGenerateDraft: vi.fn(),
+  draftSaving: false,
+  isRewriting: false,
   onChangeMode: vi.fn(),
 };
 

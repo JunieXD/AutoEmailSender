@@ -6,6 +6,7 @@ import { TestComposePage } from "@/pages/TestComposePage";
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedGetTestComposeThread = vi.hoisted(() => vi.fn());
 const mockedSaveTestComposeDraft = vi.hoisted(() => vi.fn());
+const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedNotificationApi = vi.hoisted(() => ({
   notifyError: vi.fn(),
   notifyFormErrors: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock("@/lib/api/testComposeApi", () => ({
   sendTestComposeMessage: vi.fn(),
 }));
 
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  listOutreachTemplates: mockedListOutreachTemplates,
+}));
+
 describe("TestComposePage", () => {
   const thread = {
     identity: {
@@ -44,6 +49,7 @@ describe("TestComposePage", () => {
     },
     material_options: [],
     draft: {
+      outreach_template_id: null,
       subject: "测试主题",
       body_text: "测试正文",
       body_html: "<p>测试正文</p>",
@@ -67,6 +73,8 @@ describe("TestComposePage", () => {
   beforeEach(() => {
     mockedGetTestComposeThread.mockReset();
     mockedSaveTestComposeDraft.mockReset();
+    mockedListOutreachTemplates.mockReset();
+    mockedListOutreachTemplates.mockResolvedValue([]);
     mockedUseSelectionContext.mockReturnValue({
       selectedIdentityId: 1,
       selectedLlmProfileId: 1,
@@ -111,11 +119,102 @@ describe("TestComposePage", () => {
 
     await waitFor(() => {
       expect(mockedSaveTestComposeDraft).toHaveBeenCalledWith(1, 1, {
+        outreach_template_id: null,
         subject: "测试主题",
         body_text: "更新后的正文",
         body_html: "<p>更新后的正文</p>",
         selected_material_ids: [],
       });
+    });
+  });
+
+  it("copies a selected library template into the independent test draft", async () => {
+    mockedListOutreachTemplates.mockResolvedValue([
+      {
+        id: 7,
+        name: "测试模板",
+        recommended_generation_mode: "llm",
+        subject: "模板主题",
+        body_text: "模板正文",
+        body_html: "<p>模板正文</p>",
+        is_ready: true,
+        is_default: false,
+        archived_at: null,
+        created_at: "2026-04-23T08:00:00Z",
+        updated_at: "2026-04-23T08:00:00Z",
+      },
+    ]);
+    render(
+      <MemoryRouter>
+        <TestComposePage />
+      </MemoryRouter>,
+    );
+
+    const templateTrigger = (
+      await screen.findByText("保留当前草稿内容")
+    ).closest("button");
+    expect(templateTrigger).not.toBeNull();
+    await waitFor(() => expect(templateTrigger).toBeEnabled());
+    fireEvent.click(templateTrigger!);
+    fireEvent.click(screen.getByRole("option", { name: "测试模板" }));
+    expect(screen.getByRole("textbox", { name: "邮件主题" })).toHaveTextContent(
+      "模板主题",
+    );
+    expect(screen.getByRole("textbox", { name: "邮件正文" })).toHaveTextContent(
+      "模板正文",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+    await waitFor(() => {
+      expect(mockedSaveTestComposeDraft).toHaveBeenCalledWith(
+        1,
+        1,
+        expect.objectContaining({ outreach_template_id: 7 }),
+      );
+    });
+  });
+
+  it("keeps an archived template id as provenance for an existing draft", async () => {
+    const archivedTemplate = {
+      id: 8,
+      name: "已归档的历史模板",
+      recommended_generation_mode: "template",
+      subject: "历史主题",
+      body_text: "历史正文",
+      body_html: "<p>历史正文</p>",
+      is_ready: true,
+      is_default: false,
+      archived_at: "2026-04-24T08:00:00Z",
+      created_at: "2026-04-23T08:00:00Z",
+      updated_at: "2026-04-24T08:00:00Z",
+    };
+    mockedListOutreachTemplates.mockResolvedValue([archivedTemplate]);
+    mockedGetTestComposeThread.mockResolvedValue({
+      ...thread,
+      draft: {
+        ...thread.draft,
+        outreach_template_id: archivedTemplate.id,
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <TestComposePage />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText("已归档的历史模板 · 已归档（保留草稿来源）"),
+    ).toBeInTheDocument();
+    expect(mockedListOutreachTemplates).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+    await waitFor(() => {
+      expect(mockedSaveTestComposeDraft).toHaveBeenCalledWith(
+        1,
+        1,
+        expect.objectContaining({ outreach_template_id: archivedTemplate.id }),
+      );
     });
   });
 });

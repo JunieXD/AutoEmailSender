@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, RefreshCcw, Save, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
+import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import {
@@ -11,8 +12,13 @@ import {
   saveTestComposeDraft,
   sendTestComposeMessage,
 } from "@/lib/api/testComposeApi";
+import { listOutreachTemplates } from "@/lib/api/outreachTemplates";
 import { textToEmailHtml } from "@/lib/richEmail";
-import { MATERIAL_TYPE_LABELS, type TestComposeThreadDTO } from "@/types";
+import {
+  MATERIAL_TYPE_LABELS,
+  type OutreachTemplateDTO,
+  type TestComposeThreadDTO,
+} from "@/types";
 
 export const TestComposePage = () => {
   const navigate = useNavigate();
@@ -22,6 +28,19 @@ export const TestComposePage = () => {
   const [subject, setSubject] = useState("");
   const [bodyText, setBodyText] = useState("");
   const [bodyHtml, setBodyHtml] = useState("");
+  const [outreachTemplates, setOutreachTemplates] = useState<
+    OutreachTemplateDTO[]
+  >([]);
+  const [selectedOutreachTemplateId, setSelectedOutreachTemplateId] = useState<
+    number | null
+  >(null);
+  const [loadingOutreachTemplates, setLoadingOutreachTemplates] =
+    useState(true);
+  const [outreachTemplatesLoaded, setOutreachTemplatesLoaded] = useState(false);
+  const activeOutreachTemplates = useMemo(
+    () => outreachTemplates.filter((template) => !template.archived_at),
+    [outreachTemplates],
+  );
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
@@ -31,6 +50,9 @@ export const TestComposePage = () => {
     setSubject(nextThread.draft.subject ?? "");
     setBodyText(nextThread.draft.body_text);
     setBodyHtml(nextThread.draft.body_html || textToEmailHtml(nextThread.draft.body_text));
+    setSelectedOutreachTemplateId(
+      nextThread.draft.outreach_template_id ?? null,
+    );
     setSelectedMaterialIds(nextThread.draft.selected_material_ids);
   }, []);
 
@@ -56,6 +78,55 @@ export const TestComposePage = () => {
     void loadThread();
   }, [loadThread]);
 
+  useEffect(() => {
+    let ignore = false;
+    const loadTemplates = async () => {
+      setLoadingOutreachTemplates(true);
+      try {
+        const templates = await listOutreachTemplates(true);
+        if (!ignore) {
+          setOutreachTemplates(templates);
+          setOutreachTemplatesLoaded(true);
+        }
+      } catch (error) {
+        if (!ignore) {
+          setOutreachTemplatesLoaded(false);
+          notifyError(
+            "加载发信模板失败",
+            error instanceof Error ? error.message : "加载发信模板失败",
+          );
+        }
+      } finally {
+        if (!ignore) {
+          setLoadingOutreachTemplates(false);
+        }
+      }
+    };
+    void loadTemplates();
+    return () => {
+      ignore = true;
+    };
+  }, [notifyError]);
+
+  useEffect(() => {
+    if (
+      loadingOutreachTemplates ||
+      !outreachTemplatesLoaded ||
+      selectedOutreachTemplateId === null ||
+      outreachTemplates.some(
+        (template) => template.id === selectedOutreachTemplateId,
+      )
+    ) {
+      return;
+    }
+    setSelectedOutreachTemplateId(null);
+  }, [
+    loadingOutreachTemplates,
+    outreachTemplatesLoaded,
+    outreachTemplates,
+    selectedOutreachTemplateId,
+  ]);
+
   const runAction = useCallback(
     async (action: () => Promise<TestComposeThreadDTO>, successTitle?: string) => {
       setActing(true);
@@ -79,6 +150,28 @@ export const TestComposePage = () => {
 
   const identityProfileName = thread?.identity.profile_name || thread?.identity.name || "";
   const identitySenderName = thread?.identity.sender_name || identityProfileName;
+  const selectedOutreachTemplate =
+    outreachTemplates.find(
+      (template) => template.id === selectedOutreachTemplateId,
+    ) ?? null;
+
+  const applySelectedOutreachTemplate = (templateId: number | null) => {
+    setSelectedOutreachTemplateId(templateId);
+    if (templateId === null) {
+      return;
+    }
+    const template = outreachTemplates.find((item) => item.id === templateId);
+    if (!template) {
+      return;
+    }
+    const nextBodyText = template.body_text ?? "";
+    setSubject(template.subject ?? "");
+    setBodyText(nextBodyText);
+    setBodyHtml(
+      template.body_html ??
+        (nextBodyText ? textToEmailHtml(nextBodyText) : ""),
+    );
+  };
 
   if (!selectedIdentityId || !selectedLlmProfileId) {
     return (
@@ -93,7 +186,17 @@ export const TestComposePage = () => {
 
   const generateDraft = () =>
     runAction(
-      () => generateTestComposeDraft(selectedIdentityId, selectedLlmProfileId),
+      () =>
+        generateTestComposeDraft(
+          selectedIdentityId,
+          selectedLlmProfileId,
+          selectedOutreachTemplateId,
+          {
+            subject: subject.trim() || null,
+            body_text: bodyText,
+            body_html: bodyHtml,
+          },
+        ),
       "已生成测试草稿",
     );
 
@@ -101,6 +204,7 @@ export const TestComposePage = () => {
     runAction(
       () =>
         saveTestComposeDraft(selectedIdentityId, selectedLlmProfileId, {
+          outreach_template_id: selectedOutreachTemplateId,
           subject: subject.trim() || null,
           body_text: bodyText,
           body_html: bodyHtml,
@@ -113,6 +217,7 @@ export const TestComposePage = () => {
     runAction(
       () =>
         sendTestComposeMessage(selectedIdentityId, selectedLlmProfileId, {
+          outreach_template_id: selectedOutreachTemplateId,
           subject: subject.trim() || null,
           body_text: bodyText,
           body_html: bodyHtml,
@@ -185,6 +290,43 @@ export const TestComposePage = () => {
               </div>
 
               <div className="space-y-4">
+                <div className="rounded-2xl border border-stone-200 bg-stone-50/80 p-4">
+                  <NativeSelectField
+                    label="测试使用的发信模板"
+                    value={
+                      selectedOutreachTemplateId === null
+                        ? ""
+                        : String(selectedOutreachTemplateId)
+                    }
+                    disabled={loadingOutreachTemplates || acting}
+                    onChange={(event) =>
+                      applySelectedOutreachTemplate(
+                        event.target.value ? Number(event.target.value) : null,
+                      )
+                    }
+                  >
+                    <option value="">保留当前草稿内容</option>
+                    {selectedOutreachTemplate?.archived_at ? (
+                      <option value={selectedOutreachTemplate.id} disabled>
+                        {selectedOutreachTemplate.name} · 已归档（保留草稿来源）
+                      </option>
+                    ) : null}
+                    {activeOutreachTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                        {template.is_default ? " · 全局默认" : ""}
+                        {template.is_ready ? "" : " · 草稿"}
+                      </option>
+                    ))}
+                  </NativeSelectField>
+                  <p className="mt-2 text-xs leading-6 text-stone-500">
+                    {loadingOutreachTemplates
+                      ? "正在加载模板库…"
+                      : selectedOutreachTemplate
+                        ? `已带入“${selectedOutreachTemplate.name}”。这里的修改只保存到测试草稿。`
+                        : "当前内容作为独立测试草稿保存，不会改动模板库。"}
+                  </p>
+                </div>
                 <SubjectTemplateInput
                   label="邮件主题"
                   value={subject}

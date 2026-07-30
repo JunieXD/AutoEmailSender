@@ -11,6 +11,8 @@ const mockedGetTestComposeThread = vi.hoisted(() => vi.fn());
 const mockedGetTestComposeStatus = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifySuccess = vi.hoisted(() => vi.fn());
+const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
+const mockedUpdateOutreachTemplate = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
@@ -43,6 +45,7 @@ vi.mock("@/lib/useConfirmDialog", () => ({
 vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
   EmailTemplateEditor: ({
     label,
+    html,
     onChange,
   }: {
     label: string;
@@ -53,6 +56,7 @@ vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
       <div role="textbox" aria-label={label}>
         模拟富文本编辑器
       </div>
+      <span data-testid={`editor-html-${label}`}>{html}</span>
       <button
         type="button"
         onClick={() =>
@@ -84,6 +88,17 @@ vi.mock("@/lib/api/identities", () => ({
   testIdentityImap: vi.fn(),
   testIdentitySmtp: vi.fn(),
   updateIdentity: vi.fn(),
+  updateIdentityDefaultOutreachTemplate: vi.fn(),
+}));
+
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  archiveOutreachTemplate: vi.fn(),
+  createOutreachTemplate: vi.fn(),
+  duplicateOutreachTemplate: vi.fn(),
+  listOutreachTemplates: mockedListOutreachTemplates,
+  restoreOutreachTemplate: vi.fn(),
+  setGlobalDefaultOutreachTemplate: vi.fn(),
+  updateOutreachTemplate: mockedUpdateOutreachTemplate,
 }));
 
 vi.mock("@/lib/api/materials", () => ({
@@ -127,6 +142,7 @@ const selectedIdentity: IdentityDTO = {
   outreach_template_subject: "测试主题",
   outreach_template_body_text: "测试正文",
   outreach_template_body_html: "<p>测试正文</p>",
+  default_outreach_template_id: 1,
   current_primary_material_id: null,
   current_primary_material: null,
   communication_group_id: null,
@@ -173,6 +189,31 @@ const expectToAppearBefore = (first: HTMLElement, second: HTMLElement) => {
 describe("ProfilePage onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const template = {
+      id: 1,
+      name: "博士申请默认模板",
+      recommended_generation_mode: "template" as const,
+      subject: "测试主题",
+      body_text: "测试正文",
+      body_html: "<p>测试正文</p>",
+      is_ready: true,
+      is_default: true,
+      archived_at: null,
+      created_at: "2026-04-22T00:00:00Z",
+      updated_at: "2026-04-22T00:00:00Z",
+    };
+    mockedListOutreachTemplates.mockResolvedValue([template]);
+    mockedUpdateOutreachTemplate.mockImplementation(
+      async (_templateId: number, payload: Record<string, unknown>) => ({
+        ...template,
+        recommended_generation_mode:
+          payload.recommended_generation_mode ??
+          template.recommended_generation_mode,
+        subject: payload.subject ?? null,
+        body_text: payload.body_text ?? null,
+        body_html: payload.body_html ?? null,
+      }),
+    );
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
     vi.mocked(updateIdentity).mockResolvedValue({
       ...selectedIdentity,
@@ -560,31 +601,35 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("材料与模板");
     openSetupSection("测试写信");
 
-    fireEvent.click(screen.getByRole("button", { name: "打开默认值编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
 
     expect(
-      await screen.findByRole("textbox", { name: "默认模板正文" }),
+      await screen.findByRole("textbox", { name: "模板正文" }),
     ).toBeInTheDocument();
+    await screen.findByDisplayValue("博士申请默认模板");
     expect(screen.queryByText("默认模板正文（纯文本）")).not.toBeInTheDocument();
     expect(
       screen.queryByText("默认模板正文（HTML，可保留格式）"),
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "模拟编辑默认模板正文" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("editor-html-模板正文")).toHaveTextContent(
+        "<p>富文本更新</p>",
+      );
+    });
     fireEvent.click(screen.getByRole("button", { name: "完成编辑" }));
 
     await waitFor(() => {
-      expect(updateIdentity).toHaveBeenCalledWith(
-        selectedIdentity.id,
+      expect(mockedUpdateOutreachTemplate).toHaveBeenCalledWith(
+        1,
         expect.objectContaining({
-          outreach_template_body_text: "富文本更新",
-          outreach_template_body_html: "<p>富文本更新</p>",
+          body_text: "富文本更新",
+          body_html: "<p>富文本更新</p>",
         }),
       );
     });
-    expect(vi.mocked(updateIdentity).mock.calls[0][1]).not.toHaveProperty(
-      "match_threshold",
-    );
+    expect(updateIdentity).not.toHaveBeenCalled();
   });
 
   it("explains placeholder insertion through the template editors", async () => {
@@ -592,7 +637,7 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("材料与模板");
     openSetupSection("测试写信");
 
-    fireEvent.click(screen.getByRole("button", { name: "打开默认值编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
 
     expect(
       await screen.findByText(

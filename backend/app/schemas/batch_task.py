@@ -24,6 +24,7 @@ class CreateBatchTaskRequest(BaseModel):
     outreach_template_subject: str | None = None
     outreach_template_body_text: str | None = None
     outreach_template_body_html: str | None = None
+    outreach_template_id: int | None = None
 
 
 class BatchTaskCardRead(ApiSchema):
@@ -86,6 +87,7 @@ class BatchTaskResendContextTaskRead(ApiSchema):
 
 class BatchTaskResendDefaultsRead(ApiSchema):
     identity_id: int
+    outreach_template_id: int | None
     outreach_generation_mode: str | None
     outreach_template_subject: str | None
     outreach_template_body_text: str | None

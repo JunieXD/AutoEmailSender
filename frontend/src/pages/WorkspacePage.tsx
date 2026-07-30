@@ -19,7 +19,9 @@ import {
   rewriteDraft,
   saveDraft,
   startFollowUp,
+  updateTaskOutreachConfig,
 } from '@/lib/api/emailTasksApi';
+import { listOutreachTemplates } from '@/lib/api/outreachTemplates';
 import {
   getWorkspaceThread,
   refreshWorkspaceReplies,
@@ -35,6 +37,7 @@ import { useConfirmDialog } from '@/lib/useConfirmDialog';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
 import {
   PROFESSOR_STATUS_LABELS,
+  type OutreachTemplateDTO,
   type WorkspaceMessageDTO,
   type WorkspaceProfessorDTO,
   type WorkspaceTaskStatusLabelKey,
@@ -425,6 +428,8 @@ export const WorkspacePage = () => {
   const [subject, setSubject] = useState('');
   const [content, setContent] = useState('');
   const [contentHtml, setContentHtml] = useState<string | null>(null);
+  const [outreachTemplates, setOutreachTemplates] = useState<OutreachTemplateDTO[]>([]);
+  const [loadingOutreachTemplates, setLoadingOutreachTemplates] = useState(true);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [scheduledAt, setScheduledAt] = useState(getDefaultScheduledAtValue);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
@@ -467,6 +472,34 @@ export const WorkspacePage = () => {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    const loadTemplates = async () => {
+      setLoadingOutreachTemplates(true);
+      try {
+        const templates = await listOutreachTemplates(true);
+        if (!ignore) {
+          setOutreachTemplates(templates);
+        }
+      } catch (error) {
+        if (!ignore) {
+          notifyError(
+            '加载发信模板失败',
+            error instanceof Error ? error.message : '加载发信模板失败',
+          );
+        }
+      } finally {
+        if (!ignore) {
+          setLoadingOutreachTemplates(false);
+        }
+      }
+    };
+    void loadTemplates();
+    return () => {
+      ignore = true;
+    };
+  }, [notifyError]);
 
   const syncComposer = useCallback((data: WorkspaceThreadDTO, options: SyncComposerOptions = {}) => {
     if (options.preserveDirty && composerDirtyRef.current) {
@@ -901,6 +934,81 @@ export const WorkspacePage = () => {
     );
   }, [content, contentHtml, subject, updateComposerDirtyFromSnapshot]);
 
+  const handleOutreachTemplateChange = useCallback(
+    (templateId: number | null) => {
+      if (!currentTaskId || !currentTask) {
+        return;
+      }
+      void (async () => {
+        if (syncComposerDirtyState()) {
+          const confirmed = await confirm({
+            title: '用模板替换当前未保存的草稿？',
+            description:
+              '选择模板会把模板内容复制为当前任务的新快照，当前未保存的主题和正文会被替换。',
+            confirmLabel: '替换内容',
+            cancelLabel: '继续编辑',
+            tone: 'danger',
+          });
+          if (!confirmed) {
+            return;
+          }
+        }
+
+        const selectedTemplate =
+          templateId === null
+            ? null
+            : outreachTemplates.find((template) => template.id === templateId) ??
+              null;
+        if (templateId !== null && !selectedTemplate) {
+          notifyError('切换模板失败', '所选模板已不可用，请刷新后重试。');
+          return;
+        }
+
+        await runAction(
+          () =>
+            updateTaskOutreachConfig(currentTaskId, {
+              outreach_generation_mode:
+                selectedTemplate?.recommended_generation_mode ??
+                currentTask.outreach_generation_mode,
+              outreach_template_id: selectedTemplate?.id ?? null,
+              outreach_template_subject:
+                selectedTemplate !== null
+                  ? selectedTemplate.subject
+                  : currentTask.outreach_template_subject,
+              outreach_template_body_text:
+                selectedTemplate !== null
+                  ? selectedTemplate.body_text
+                  : currentTask.outreach_template_body_text,
+              outreach_template_body_html:
+                selectedTemplate !== null
+                  ? selectedTemplate.body_html
+                  : currentTask.outreach_template_body_html,
+            }),
+          '切换模板失败',
+          '切换任务模板失败',
+          () => {
+            notifySuccess(
+              '任务模板已更新',
+              selectedTemplate
+                ? `已复制“${selectedTemplate.name}”作为当前任务快照，后续编辑不会改动模板库。`
+                : '当前任务已与模板库解除关联，现有内容快照保持不变。',
+            );
+          },
+        );
+      })();
+    },
+    [
+      confirm,
+      currentTask,
+      currentTaskId,
+      notifyError,
+      notifySuccess,
+      outreachTemplates,
+      runAction,
+      syncComposerDirtyState,
+    ],
+  );
+
   const handleSendNow = useCallback(() => {
     if (!currentTaskId) {
       return;
@@ -1312,6 +1420,16 @@ export const WorkspacePage = () => {
                   content={content}
                   contentHtml={contentHtml || textToEmailHtml(content)}
                   selectedMaterialIds={selectedMaterialIds}
+                  outreachTemplates={outreachTemplates}
+                  selectedOutreachTemplateId={
+                    outreachTemplates.some(
+                      (template) =>
+                        template.id === currentTask.outreach_template_id,
+                    )
+                      ? (currentTask.outreach_template_id ?? null)
+                      : null
+                  }
+                  loadingOutreachTemplates={loadingOutreachTemplates}
                   scheduledAt={scheduledAt}
                   acting={acting}
                   isRewriting={isRewriting}
@@ -1329,6 +1447,7 @@ export const WorkspacePage = () => {
                   onSubjectChange={handleSubjectChange}
                   onContentChange={handleContentChange}
                   onSelectedMaterialIdsChange={handleSelectedMaterialIdsChange}
+                  onOutreachTemplateChange={handleOutreachTemplateChange}
                   onSaveDraft={handleSaveDraft}
                   onSendNow={handleSendNow}
                   onScheduleSend={handleScheduleSend}

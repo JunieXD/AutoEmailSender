@@ -13,6 +13,7 @@ import type {
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedListProfessors = vi.hoisted(() => vi.fn());
 const mockedCreateBatchTask = vi.hoisted(() => vi.fn());
+const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedConfirm = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifyFormErrors = vi.hoisted(() => vi.fn());
@@ -41,6 +42,10 @@ vi.mock("@/lib/api/professorsApi", () => ({
 
 vi.mock("@/lib/api/batchTasksApi", () => ({
   createBatchTask: mockedCreateBatchTask,
+}));
+
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  listOutreachTemplates: mockedListOutreachTemplates,
 }));
 
 const primaryMaterial: IdentityMaterialDTO = {
@@ -132,6 +137,8 @@ describe("CreateTaskPage copy", () => {
     mockedListProfessors.mockReset();
     mockedCreateBatchTask.mockReset();
     mockedCreateBatchTask.mockResolvedValue({ id: 1 });
+    mockedListOutreachTemplates.mockReset();
+    mockedListOutreachTemplates.mockResolvedValue([]);
     mockedConfirm.mockReset();
     mockedConfirm.mockResolvedValue(true);
     mockedNotifyError.mockReset();
