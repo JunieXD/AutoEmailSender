@@ -15,6 +15,7 @@ type FloatingMenuPortalProps = {
   anchorRef: RefObject<HTMLElement | null>;
   align?: "left" | "right";
   minWidth?: number;
+  maxHeight?: number;
   testId?: string;
   className?: string;
   children: ReactNode;
@@ -25,11 +26,14 @@ const VIEWPORT_MARGIN = 12;
 const MENU_GAP = 8;
 const DEFAULT_MAX_HEIGHT = 320;
 
-const getHiddenMenuStyle = (minWidth: number): CSSProperties => ({
+const getHiddenMenuStyle = (
+  minWidth: number,
+  maxHeight: number,
+): CSSProperties => ({
   left: 0,
   top: 0,
   minWidth,
-  maxHeight: DEFAULT_MAX_HEIGHT,
+  maxHeight,
   visibility: "hidden",
 });
 
@@ -48,13 +52,14 @@ const getPositionedMenuStyle = (
   anchor: HTMLElement | null,
   align: "left" | "right",
   minWidth: number,
+  maxHeight: number,
 ): FloatingMenuDomStyle => {
   if (!anchor || typeof window === "undefined") {
     return {
       left: "0px",
       top: "0px",
       minWidth: toPx(minWidth),
-      maxHeight: toPx(DEFAULT_MAX_HEIGHT),
+      maxHeight: toPx(maxHeight),
       transform: "",
       visibility: "hidden",
     };
@@ -78,7 +83,7 @@ const getPositionedMenuStyle = (
     left: toPx(left),
     top: toPx(openUpward ? rect.top - MENU_GAP : rect.bottom + MENU_GAP),
     minWidth: toPx(menuWidth),
-    maxHeight: toPx(Math.max(160, Math.min(DEFAULT_MAX_HEIGHT, availableHeight))),
+    maxHeight: toPx(Math.max(160, Math.min(maxHeight, availableHeight))),
     transform: openUpward ? "translateY(-100%)" : "",
     visibility: "visible",
   };
@@ -89,6 +94,7 @@ export const FloatingMenuPortal = ({
   anchorRef,
   align = "left",
   minWidth = 180,
+  maxHeight = DEFAULT_MAX_HEIGHT,
   testId,
   className,
   children,
@@ -103,9 +109,9 @@ export const FloatingMenuPortal = ({
 
     Object.assign(
       menu.style,
-      getPositionedMenuStyle(anchorRef.current, align, minWidth),
+      getPositionedMenuStyle(anchorRef.current, align, minWidth, maxHeight),
     );
-  }, [align, anchorRef, minWidth]);
+  }, [align, anchorRef, maxHeight, minWidth]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -168,7 +174,7 @@ export const FloatingMenuPortal = ({
         "fixed z-[80] overflow-y-auto rounded-2xl border border-stone-200 bg-white p-2 shadow-[0_18px_40px_-24px_rgba(41,37,36,0.38)]",
         className,
       )}
-      style={getHiddenMenuStyle(minWidth)}
+      style={getHiddenMenuStyle(minWidth, maxHeight)}
     >
       {children}
     </div>,

@@ -18,7 +18,7 @@ const draftGuardMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/components/molecules/DesktopUpdateButton", () => ({
-  DesktopUpdateButton: () => null,
+  DesktopUpdateButton: () => <button type="button">检查更新</button>,
 }));
 
 vi.mock("@/context/SelectionContext", () => ({
@@ -73,6 +73,19 @@ describe("TopNavBar", () => {
       "统计面板",
       "个人中心",
     ]);
+  });
+
+  it("places the QQ group entry immediately before the update button", () => {
+    render(
+      <MemoryRouter>
+        <TopNavBar />
+      </MemoryRouter>,
+    );
+
+    const qqGroupButton = screen.getByRole("button", { name: "加入 QQ 群" });
+    const updateButton = screen.getByRole("button", { name: "检查更新" });
+
+    expect(qqGroupButton.nextElementSibling).toBe(updateButton);
   });
 
   it("asks the workspace draft guard before switching identity", async () => {

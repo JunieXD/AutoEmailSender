@@ -2,6 +2,7 @@ import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
 import { BrainCircuit, Mail, UserCircle2 } from "lucide-react";
 import { DesktopUpdateButton } from "@/components/molecules/DesktopUpdateButton";
+import { QqGroupButton } from "@/components/molecules/QqGroupButton";
 import { TopBarSelectMenu } from "@/components/atoms/TopBarSelectMenu";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
@@ -59,6 +60,7 @@ export const TopNavBar = () => {
             </Link>
 
             <div className="flex flex-wrap items-center justify-end gap-3">
+              <QqGroupButton />
               <DesktopUpdateButton />
 
               <TopBarSelectMenu
