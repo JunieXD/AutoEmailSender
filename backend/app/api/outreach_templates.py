@@ -113,7 +113,7 @@ async def update_outreach_template(
     if "is_default" in fields and payload.is_default is not None:
         if payload.is_default:
             if template.archived_at is not None:
-                raise HTTPException(status_code=400, detail="归档模板不能设为默认模板")
+                raise HTTPException(status_code=400, detail="已删除模板不能设为默认模板")
             await clear_global_default_template(session, exclude_id=template.id)
             await session.flush()
         template.is_default = payload.is_default

@@ -618,7 +618,7 @@ describe("ProfilePage onboarding", () => {
         "<p>富文本更新</p>",
       );
     });
-    fireEvent.click(screen.getByRole("button", { name: "完成编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
     await waitFor(() => {
       expect(mockedUpdateOutreachTemplate).toHaveBeenCalledWith(

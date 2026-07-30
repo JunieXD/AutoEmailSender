@@ -455,7 +455,7 @@ describe("WorkspacePage draft saving", () => {
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
       "任务模板已更新",
-      "已复制“研究申请模板”作为当前任务快照，后续编辑不会改动模板库。",
+      "已将“研究申请模板”的内容复制到当前任务，后续编辑不会改动模板库。",
     );
   });
 

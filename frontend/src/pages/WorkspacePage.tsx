@@ -990,8 +990,8 @@ export const WorkspacePage = () => {
             notifySuccess(
               '任务模板已更新',
               selectedTemplate
-                ? `已复制“${selectedTemplate.name}”作为当前任务快照，后续编辑不会改动模板库。`
-                : '当前任务已与模板库解除关联，现有内容快照保持不变。',
+                ? `已将“${selectedTemplate.name}”的内容复制到当前任务，后续编辑不会改动模板库。`
+                : '当前任务已与模板库解除关联，现有内容保持不变。',
             );
           },
         );

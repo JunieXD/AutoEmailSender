@@ -336,14 +336,14 @@ export const WorkspaceComposerDock = ({
                       <option value="">当前任务独立快照</option>
                       {selectedOutreachTemplate?.archived_at ? (
                         <option value={selectedOutreachTemplate.id} disabled>
-                          {selectedOutreachTemplate.name} · 已归档（保留任务来源）
+                          {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
                         </option>
                       ) : null}
                       {activeOutreachTemplates.map((template) => (
                         <option key={template.id} value={template.id}>
                           {template.name}
                           {template.is_default ? ' · 全局默认' : ''}
-                          {template.is_ready ? '' : ' · 草稿'}
+                          {template.is_ready ? '' : ' · 内容待完善'}
                         </option>
                       ))}
                     </NativeSelectField>
@@ -352,7 +352,7 @@ export const WorkspaceComposerDock = ({
                         ? '正在加载模板库…'
                         : selectedOutreachTemplate
                           ? `来源：${selectedOutreachTemplate.name}。下方编辑只影响当前任务。`
-                          : '当前内容是任务自己的快照，不会随模板库修改。'}
+                          : '当前内容已独立保存到任务中，不会随模板库修改。'}
                     </div>
                   </div>
                   <SubjectTemplateInput

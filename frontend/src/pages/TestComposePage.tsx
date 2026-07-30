@@ -308,14 +308,14 @@ export const TestComposePage = () => {
                     <option value="">保留当前草稿内容</option>
                     {selectedOutreachTemplate?.archived_at ? (
                       <option value={selectedOutreachTemplate.id} disabled>
-                        {selectedOutreachTemplate.name} · 已归档（保留草稿来源）
+                        {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
                       </option>
                     ) : null}
                     {activeOutreachTemplates.map((template) => (
                       <option key={template.id} value={template.id}>
                         {template.name}
                         {template.is_default ? " · 全局默认" : ""}
-                        {template.is_ready ? "" : " · 草稿"}
+                        {template.is_ready ? "" : " · 内容待完善"}
                       </option>
                     ))}
                   </NativeSelectField>

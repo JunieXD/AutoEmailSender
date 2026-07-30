@@ -11,6 +11,7 @@ const mockedRequestWorkspaceDraftGuard = vi.hoisted(() => vi.fn());
 const mockedImportIdentityTemplate = vi.hoisted(() => vi.fn());
 const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedCreateOutreachTemplate = vi.hoisted(() => vi.fn());
+const mockedArchiveOutreachTemplate = vi.hoisted(() => vi.fn());
 const mockedUpdateIdentityDefaultOutreachTemplate = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifyFormErrors = vi.hoisted(() => vi.fn());
@@ -59,11 +60,10 @@ vi.mock("@/lib/api/identities", () => ({
 }));
 
 vi.mock("@/lib/api/outreachTemplates", () => ({
-  archiveOutreachTemplate: vi.fn(),
+  archiveOutreachTemplate: mockedArchiveOutreachTemplate,
   createOutreachTemplate: mockedCreateOutreachTemplate,
   duplicateOutreachTemplate: vi.fn(),
   listOutreachTemplates: mockedListOutreachTemplates,
-  restoreOutreachTemplate: vi.fn(),
   setGlobalDefaultOutreachTemplate: vi.fn(),
   updateOutreachTemplate: vi.fn(),
 }));
@@ -197,6 +197,7 @@ describe("ProfilePage default template import", () => {
     mockedImportIdentityTemplate.mockReset();
     mockedListOutreachTemplates.mockReset();
     mockedCreateOutreachTemplate.mockReset();
+    mockedArchiveOutreachTemplate.mockReset();
     mockedUpdateIdentityDefaultOutreachTemplate.mockReset();
     mockedUpdateIdentityDefaultOutreachTemplate.mockResolvedValue({
       ...selectedIdentity,
@@ -251,7 +252,7 @@ describe("ProfilePage default template import", () => {
     await waitFor(() => {
       expect(mockedConfirm).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "确认覆盖默认模板正文？",
+          title: "确认覆盖当前模板正文？",
           description: expect.stringContaining("导入模板文件会替换当前正文内容"),
         }),
       );
@@ -339,12 +340,10 @@ describe("ProfilePage default template import", () => {
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
-    await screen.findByText(
-      "还没有模板。新建后可独立保存，不需要先完善发件身份。",
-    );
+    await screen.findByText("未保存");
     const nameInput = await screen.findByRole("textbox", { name: /模板名称/ });
     fireEvent.change(nameInput, { target: { value: "稍后补充的模板" } });
-    fireEvent.click(screen.getByRole("button", { name: "完成编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建模板" }));
 
     await waitFor(() => {
       expect(mockedCreateOutreachTemplate).toHaveBeenCalledWith({
@@ -358,6 +357,126 @@ describe("ProfilePage default template import", () => {
     });
     expect(mockedNotifyFormErrors).not.toHaveBeenCalled();
     expect(refreshSelections).toHaveBeenCalled();
+  });
+
+  it("shows a new unsaved template in the list immediately", async () => {
+    await openTemplateModal();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建模板" }));
+
+    expect(screen.getByLabelText("模板列表")).toHaveTextContent("新模板");
+    expect(screen.getByLabelText("模板列表")).toHaveTextContent("未保存");
+    expect(
+      screen.getByRole("button", { name: "创建模板" }),
+    ).toBeInTheDocument();
+    expect(mockedCreateOutreachTemplate).not.toHaveBeenCalled();
+  });
+
+  it("hides deleted templates from the template list", async () => {
+    mockedListOutreachTemplates.mockResolvedValue([
+      {
+        id: 1,
+        name: "现有模板",
+        recommended_generation_mode: "template",
+        subject: "现有主题",
+        body_text: "现有正文",
+        body_html: "<p>现有正文</p>",
+        is_ready: true,
+        is_default: true,
+        archived_at: null,
+        created_at: "2026-04-22T00:00:00Z",
+        updated_at: "2026-04-22T00:00:00Z",
+      },
+      {
+        id: 2,
+        name: "已经删除的模板",
+        recommended_generation_mode: "llm",
+        subject: "历史主题",
+        body_text: "历史正文",
+        body_html: null,
+        is_ready: true,
+        is_default: false,
+        archived_at: "2026-07-30T00:00:00Z",
+        created_at: "2026-04-22T00:00:00Z",
+        updated_at: "2026-07-30T00:00:00Z",
+      },
+    ]);
+
+    await openTemplateModal();
+
+    expect(screen.getByLabelText("模板列表")).toHaveTextContent("现有模板");
+    expect(screen.getByLabelText("模板列表")).not.toHaveTextContent(
+      "已经删除的模板",
+    );
+    expect(mockedListOutreachTemplates).toHaveBeenCalledWith();
+  });
+
+  it("scrolls inside the template list when more than three templates exist", async () => {
+    mockedListOutreachTemplates.mockResolvedValue(
+      Array.from({ length: 4 }, (_, index) => ({
+        id: index + 1,
+        name: index === 0 ? "现有模板" : `模板 ${index + 1}`,
+        recommended_generation_mode: "template",
+        subject: "主题",
+        body_text: "正文",
+        body_html: "<p>正文</p>",
+        is_ready: true,
+        is_default: index === 0,
+        archived_at: null,
+        created_at: "2026-04-22T00:00:00Z",
+        updated_at: "2026-04-22T00:00:00Z",
+      })),
+    );
+
+    await openTemplateModal();
+
+    expect(screen.getByLabelText("模板列表")).toHaveClass(
+      "max-h-72",
+      "overflow-y-auto",
+    );
+  });
+
+  it("removes a deleted template from the list and keeps historical content intact", async () => {
+    const remainingTemplate = {
+      id: 2,
+      name: "保留模板",
+      recommended_generation_mode: "llm" as const,
+      subject: "保留主题",
+      body_text: "保留正文",
+      body_html: null,
+      is_ready: true,
+      is_default: false,
+      archived_at: null,
+      created_at: "2026-04-22T00:00:00Z",
+      updated_at: "2026-04-22T00:00:00Z",
+    };
+    const initialTemplates = await mockedListOutreachTemplates();
+    mockedListOutreachTemplates.mockReset();
+    mockedListOutreachTemplates
+      .mockResolvedValueOnce([...initialTemplates, remainingTemplate])
+      .mockResolvedValue([remainingTemplate]);
+    mockedArchiveOutreachTemplate.mockResolvedValue({
+      ...initialTemplates[0],
+      archived_at: "2026-07-30T00:00:00Z",
+    });
+    mockedConfirm.mockResolvedValue(true);
+
+    await openTemplateModal();
+    fireEvent.click(screen.getByRole("button", { name: "删除模板" }));
+
+    await waitFor(() => {
+      expect(mockedArchiveOutreachTemplate).toHaveBeenCalledWith(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("模板列表")).not.toHaveTextContent(
+        "现有模板",
+      );
+    });
+    expect(screen.getByLabelText("模板列表")).toHaveTextContent("保留模板");
+    expect(mockedNotifySuccess).toHaveBeenCalledWith(
+      "模板已删除",
+      "模板已从模板库移除，已创建任务和邮件内容保持不变。",
+    );
   });
 
   it("does not switch current identity when workspace draft guard blocks it", async () => {

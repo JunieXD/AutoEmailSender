@@ -30,7 +30,7 @@ describe("ProfilePage setup sections", () => {
     expect(testSection).not.toContain("{identityActionButtons}");
   });
 
-  it("saves templates independently when completing template editing", () => {
+  it("saves templates independently from the template editor", () => {
     const modalSource = profilePageSource.slice(
       profilePageSource.indexOf("const OutreachTemplateModal = ({"),
       profilePageSource.indexOf("const MaterialLibraryModal = ({"),
@@ -39,7 +39,10 @@ describe("ProfilePage setup sections", () => {
     expect(modalSource).toContain("savingTemplate");
     expect(modalSource).toContain("onComplete");
     expect(modalSource).toContain("onClick={onComplete}");
-    expect(modalSource).toContain("模板会独立保存");
+    expect(modalSource).toContain("模板可以单独保存并重复使用");
+    expect(modalSource).toContain('editorId === "new"');
+    expect(modalSource).toContain('"创建模板"');
+    expect(modalSource).toContain('"保存修改"');
 
     const modalUsageSource = profilePageSource.slice(
       profilePageSource.indexOf("<OutreachTemplateModal"),

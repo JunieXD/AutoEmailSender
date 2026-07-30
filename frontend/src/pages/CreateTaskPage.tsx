@@ -570,17 +570,17 @@ export const CreateTaskPage = () => {
                 >
                   <option value="">
                     {isResendPrefillActive
-                      ? '保留原任务内容快照'
+                      ? '保留原任务内容'
                       : '不关联模板库（保留当前内容）'}
                   </option>
                   {selectedOutreachTemplate?.archived_at ? (
                     <option value={selectedOutreachTemplate.id} disabled>
-                      {selectedOutreachTemplate.name} · 已归档（保留原任务来源）
+                      {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
                     </option>
                   ) : null}
                   {activeOutreachTemplates.map((template) => (
                     <option key={template.id} value={template.id}>
-                      {template.name}{template.is_default ? ' · 全局默认' : ''}{template.is_ready ? '' : ' · 草稿'}
+                      {template.name}{template.is_default ? ' · 全局默认' : ''}{template.is_ready ? '' : ' · 内容待完善'}
                     </option>
                   ))}
                 </NativeSelectField>
@@ -590,8 +590,8 @@ export const CreateTaskPage = () => {
                     : selectedOutreachTemplate
                       ? `已带入“${selectedOutreachTemplate.name}”。下方修改只属于本次任务，不会改动模板库。`
                       : isResendPrefillActive
-                        ? '继续使用原任务保存的内容快照；原模板后续修改或归档都不会改变它。'
-                        : '可直接编辑下方内容；创建后会保存为任务快照。'}
+                        ? '继续使用原任务中保存的内容；原模板后续修改或删除都不会改变任务内容。'
+                        : '可直接编辑下方内容；创建后会独立保存到任务中。'}
                 </p>
               </div>
 

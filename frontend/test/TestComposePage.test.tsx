@@ -204,7 +204,7 @@ describe("TestComposePage", () => {
     );
 
     expect(
-      await screen.findByText("已归档的历史模板 · 已归档（保留草稿来源）"),
+      await screen.findByText("已归档的历史模板 · 已删除（仅保留历史来源）"),
     ).toBeInTheDocument();
     expect(mockedListOutreachTemplates).toHaveBeenCalledWith(true);
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));

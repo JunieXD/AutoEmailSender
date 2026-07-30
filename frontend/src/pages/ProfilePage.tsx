@@ -58,7 +58,6 @@ import {
   createOutreachTemplate,
   duplicateOutreachTemplate,
   listOutreachTemplates,
-  restoreOutreachTemplate,
   setGlobalDefaultOutreachTemplate,
   updateOutreachTemplate,
 } from "@/lib/api/outreachTemplates";
@@ -1063,7 +1062,7 @@ const OutreachTemplateSummaryCard = ({
                   : "未选择"}
             </div>
             <div className="mt-1 text-xs leading-6 text-stone-500">
-              当前推荐模式：
+              默认写信方式：
               {effectiveMode === "template"
                 ? "直接套用模板"
                 : "AI 辅助写信"}
@@ -1072,10 +1071,10 @@ const OutreachTemplateSummaryCard = ({
           </div>
           <div className="flex flex-wrap gap-2">
             <span className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600">
-              {hasSubject ? "主题已填写" : "主题未填写（草稿）"}
+              {hasSubject ? "主题已填写" : "主题待补充"}
             </span>
             <span className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600">
-              {hasTemplateBody ? "正文已填写" : "正文未填写（草稿）"}
+              {hasTemplateBody ? "正文已填写" : "正文待补充"}
             </span>
           </div>
         </div>
@@ -1112,8 +1111,7 @@ const OutreachTemplateModal = ({
   onSetIdentityDefault,
   onClearIdentityDefault,
   onSetGlobalDefault,
-  onArchive,
-  onRestore,
+  onDelete,
   onImport,
   onNameChange,
   onModeChange,
@@ -1138,8 +1136,7 @@ const OutreachTemplateModal = ({
   onSetIdentityDefault: (template: OutreachTemplateDTO) => void;
   onClearIdentityDefault: () => void;
   onSetGlobalDefault: (templateId: number) => void;
-  onArchive: (template: OutreachTemplateDTO) => void;
-  onRestore: (templateId: number) => void;
+  onDelete: (template: OutreachTemplateDTO) => void;
   onImport: (file: File) => void;
   onNameChange: (value: string) => void;
   onModeChange: (value: OutreachGenerationMode) => void;
@@ -1166,6 +1163,8 @@ const OutreachTemplateModal = ({
     ? (templates.find((template) => template.id === editorId) ?? null)
     : null;
   const templateBusy = savingTemplate || actingOnTemplate;
+  const hasUnsavedTemplate = editorId === "new";
+  const visibleTemplateCount = templates.length + (hasUnsavedTemplate ? 1 : 0);
 
   const handleTemplateDragOver = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
@@ -1218,14 +1217,14 @@ const OutreachTemplateModal = ({
                 发信模板库
               </h3>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-500">
-                模板独立于身份保存。选择默认模板只影响之后创建的任务，已创建任务继续使用自己的快照。
+                模板可以单独保存并重复使用。修改或删除模板，不会改变已经创建的任务和邮件内容。
               </p>
             </div>
             <button
               type="button"
               onClick={onClose}
               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900"
-              aria-label="关闭默认值编辑窗口"
+              aria-label="关闭模板库"
             >
               <X className="h-4 w-4" />
             </button>
@@ -1236,23 +1235,25 @@ const OutreachTemplateModal = ({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-sm font-medium text-stone-900">
-                当前编辑摘要
+                正在编辑
               </div>
               <div className="mt-1 flex flex-wrap gap-2 text-xs text-stone-500">
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  {editorId === "new" ? "新模板" : (editingTemplate?.name ?? "请选择模板")}
+                  {editorId === "new"
+                    ? form.name.trim() || "新模板（未保存）"
+                    : (editingTemplate?.name ?? "请选择模板")}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  模式：
+                  写信方式：
                   {form.outreach_generation_mode === "template"
                     ? "直接套用模板"
                     : "AI 辅助写信"}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  {form.outreach_template_subject.trim() ? "主题已填写" : "主题未填写，可存草稿"}
+                  {form.outreach_template_subject.trim() ? "主题已填写" : "主题待补充"}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  {hasVisibleTemplateBody(form) ? "正文已填写" : "正文未填写，可存草稿"}
+                  {hasVisibleTemplateBody(form) ? "正文已填写" : "正文待补充"}
                 </span>
               </div>
             </div>
@@ -1303,7 +1304,7 @@ const OutreachTemplateModal = ({
           <div className="grid gap-6 lg:grid-cols-[260px,minmax(0,1fr)]">
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-stone-900">全部模板</div>
+                <div className="text-sm font-semibold text-stone-900">模板列表</div>
                 <button
                   type="button"
                   onClick={onCreate}
@@ -1311,66 +1312,80 @@ const OutreachTemplateModal = ({
                   className="inline-flex items-center gap-1 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:border-stone-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  新建
+                  新建模板
                 </button>
               </div>
-              <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+              <div
+                aria-label="模板列表"
+                className={clsx(
+                  "space-y-2 pr-1",
+                  visibleTemplateCount > 3 && "max-h-72 overflow-y-auto",
+                )}
+              >
                 {loadingTemplates ? (
                   <div className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-5 text-sm text-stone-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     正在加载模板
                   </div>
-                ) : templates.length === 0 ? (
+                ) : visibleTemplateCount === 0 ? (
                   <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-4 py-5 text-sm leading-6 text-stone-500">
-                    还没有模板。新建后可独立保存，不需要先完善发件身份。
+                    还没有模板。点击“新建模板”开始创建，不需要先完善发件身份。
                   </div>
                 ) : (
-                  templates.map((template) => {
-                    const active = editorId === template.id;
-                    return (
-                      <button
-                        key={template.id}
-                        type="button"
-                        onClick={() => onSelect(template.id)}
-                        className={clsx(
-                          "w-full rounded-2xl border px-4 py-3 text-left transition",
-                          active
-                            ? "border-primary/30 bg-primary/5 shadow-sm"
-                            : "border-stone-200 bg-white hover:border-stone-300",
-                          template.archived_at && "opacity-65",
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="break-words text-sm font-medium text-stone-900">
+                  <>
+                    {hasUnsavedTemplate ? (
+                      <div className="w-full rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-left shadow-sm">
+                        <div className="break-words text-sm font-medium text-stone-900">
+                          {form.name.trim() || "新模板"}
+                        </div>
+                        <div className="mt-2">
+                          <span className="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-700">
+                            未保存
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {templates.map((template) => {
+                      const active = editorId === template.id;
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => onSelect(template.id)}
+                          className={clsx(
+                            "w-full rounded-2xl border px-4 py-3 text-left transition",
+                            active
+                              ? "border-primary/30 bg-primary/5 shadow-sm"
+                              : "border-stone-200 bg-white hover:border-stone-300",
+                          )}
+                        >
+                          <div className="break-words text-sm font-medium text-stone-900">
                             {template.name}
-                          </span>
-                          {template.is_default ? (
-                            <Star className="h-4 w-4 shrink-0 fill-amber-400 text-amber-500" />
-                          ) : null}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-                          <span className={clsx(
-                            "rounded-full px-2 py-1",
-                            template.is_ready
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-amber-50 text-amber-700",
-                          )}>
-                            {template.is_ready ? "可用于发信" : "草稿"}
-                          </span>
-                          {identityDefaultTemplateId === template.id ? (
-                            <span className="rounded-full bg-sky-50 px-2 py-1 text-sky-700">
-                              身份默认
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                            <span className={clsx(
+                              "rounded-full px-2 py-1",
+                              template.is_ready
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "bg-amber-50 text-amber-700",
+                            )}>
+                              {template.is_ready ? "可用于发信" : "内容待完善"}
                             </span>
-                          ) : null}
-                          {template.archived_at ? (
-                            <span className="rounded-full bg-stone-100 px-2 py-1 text-stone-600">
-                              已归档
-                            </span>
-                          ) : null}
-                        </div>
-                      </button>
-                    );
-                  })
+                            {identityDefaultTemplateId === template.id ? (
+                              <span className="rounded-full bg-sky-50 px-2 py-1 text-sky-700">
+                                {identityLabel}默认
+                              </span>
+                            ) : null}
+                            {template.is_default ? (
+                              <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">
+                                全局默认
+                              </span>
+                            ) : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </>
                 )}
               </div>
             </div>
@@ -1386,17 +1401,24 @@ const OutreachTemplateModal = ({
                 />
               </label>
 
+            <div>
+              <div className="text-sm font-medium text-stone-900">推荐写信方式</div>
+              <p className="mt-1 text-xs leading-6 text-stone-500">
+                选择模板时会一并带入，单次任务中仍可调整。
+              </p>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               {[
                 {
                   value: "llm" as const,
                   title: "AI 辅助写信",
-                  description: "AI 基于模板生成个性化草稿。",
+                  description: "AI 以此模板为基础生成个性化邮件。",
                 },
                 {
                   value: "template" as const,
                   title: "直接套用模板",
-                  description: "按模板生成邮件，适合统一话术。",
+                  description: "直接替换占位符生成邮件，适合固定话术。",
                 },
               ].map((option) => {
                 const active = form.outreach_generation_mode === option.value;
@@ -1418,7 +1440,7 @@ const OutreachTemplateModal = ({
                       </div>
                       {active ? (
                         <span className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-white">
-                          当前推荐
+                          已选择
                         </span>
                       ) : null}
                     </div>
@@ -1456,14 +1478,13 @@ const OutreachTemplateModal = ({
 
             <div className="rounded-2xl border border-dashed border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
               {form.outreach_generation_mode === "template"
-                ? "使用时会按模板生成任务快照；后续修改模板不会改变已创建任务。"
+                ? "选用模板时会把内容复制到任务中；之后修改或删除模板，不会影响已创建任务。"
                 : "AI 只在模板基础上调整称呼、个性化理由和主题。"}
             </div>
 
               {editingTemplate ? (
                 <div className="flex flex-wrap gap-2 border-t border-stone-200 pt-4">
-                  {!editingTemplate.archived_at &&
-                  identityDefaultTemplateId === editingTemplate.id ? (
+                  {identityDefaultTemplateId === editingTemplate.id ? (
                     <button
                       type="button"
                       onClick={onClearIdentityDefault}
@@ -1472,7 +1493,7 @@ const OutreachTemplateModal = ({
                     >
                       取消{identityLabel}默认
                     </button>
-                  ) : !editingTemplate.archived_at ? (
+                  ) : (
                     <button
                       type="button"
                       onClick={() => onSetIdentityDefault(editingTemplate)}
@@ -1481,8 +1502,8 @@ const OutreachTemplateModal = ({
                     >
                       设为{identityLabel}默认
                     </button>
-                  ) : null}
-                  {!editingTemplate.archived_at && !editingTemplate.is_default ? (
+                  )}
+                  {!editingTemplate.is_default ? (
                     <button
                       type="button"
                       onClick={() => onSetGlobalDefault(editingTemplate.id)}
@@ -1502,25 +1523,14 @@ const OutreachTemplateModal = ({
                     <Copy className="h-4 w-4" />
                     复制一份
                   </button>
-                  {editingTemplate.archived_at ? (
-                    <button
-                      type="button"
-                      onClick={() => onRestore(editingTemplate.id)}
-                      disabled={templateBusy}
-                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      恢复模板
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => onArchive(editingTemplate)}
-                      disabled={templateBusy}
-                      className="ui-btn-danger disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      归档模板
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => onDelete(editingTemplate)}
+                    disabled={templateBusy}
+                    className="ui-btn-danger disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    删除模板
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -1530,7 +1540,7 @@ const OutreachTemplateModal = ({
         <div className="border-t border-stone-200/80 bg-white/80 px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs leading-6 text-stone-500">
-              模板会独立保存；只要求模板名称，主题和正文可稍后补齐。发信时才检查内容是否完整。
+              只需填写模板名称即可保存；主题和正文可稍后补充，创建或发送邮件时会再检查。
             </div>
             <button
               type="button"
@@ -1539,7 +1549,13 @@ const OutreachTemplateModal = ({
               className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
               {savingTemplate && <Loader2 className="h-4 w-4 animate-spin" />}
-              {savingTemplate ? "正在保存" : "完成编辑"}
+              {savingTemplate
+                ? editorId === "new"
+                  ? "正在创建"
+                  : "正在保存"
+                : editorId === "new"
+                  ? "创建模板"
+                  : "保存修改"}
             </button>
           </div>
         </div>
@@ -1912,7 +1928,7 @@ export const ProfilePage = () => {
   const refreshOutreachTemplates = useCallback(async () => {
     setLoadingOutreachTemplates(true);
     try {
-      const templates = await listOutreachTemplates(true);
+      const templates = await listOutreachTemplates();
       setOutreachTemplates(templates);
       return templates;
     } catch (templateError) {
@@ -2124,7 +2140,9 @@ export const ProfilePage = () => {
     }
     if (
       isExistingEditorId(templateEditorId) &&
-      outreachTemplates.some((template) => template.id === templateEditorId)
+      activeOutreachTemplates.some(
+        (template) => template.id === templateEditorId,
+      )
     ) {
       return;
     }
@@ -2148,7 +2166,6 @@ export const ProfilePage = () => {
     activeOutreachTemplates,
     identityForm.default_outreach_template_id,
     loadingOutreachTemplates,
-    outreachTemplates,
     templateEditorId,
     templateModalOpen,
   ]);
@@ -2379,7 +2396,9 @@ export const ProfilePage = () => {
   };
 
   const openOutreachTemplateEditor = (templateId: number) => {
-    const template = outreachTemplates.find((item) => item.id === templateId);
+    const template = activeOutreachTemplates.find(
+      (item) => item.id === templateId,
+    );
     if (!template) {
       return;
     }
@@ -2496,7 +2515,7 @@ export const ProfilePage = () => {
       await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
       notifySuccess(
         isCreating ? "模板创建成功" : "模板保存成功",
-        "模板已独立保存；主题或正文未填写时会保留为草稿。",
+        "模板已独立保存；主题或正文未填写时会标记为“内容待完善”。",
       );
       return saved;
     } catch (saveError) {
@@ -2606,15 +2625,15 @@ export const ProfilePage = () => {
     }
   };
 
-  const handleArchiveOutreachTemplate = async (
+  const handleDeleteOutreachTemplate = async (
     template: OutreachTemplateDTO,
   ) => {
     const confirmed = await confirm({
-      title: `确认归档模板“${template.name}”？`,
+      title: `确认删除模板“${template.name}”？`,
       description:
-        "模板仍可恢复；使用它的身份会取消默认关联，但已创建任务的内容快照不会改变。",
-      confirmLabel: "确认归档",
-      cancelLabel: "先不归档",
+        "删除后将不再显示在模板库中；使用它的身份会取消默认关联，但已创建任务和邮件内容不会改变。",
+      confirmLabel: "删除模板",
+      cancelLabel: "取消",
       tone: "danger",
     });
     if (!confirmed) {
@@ -2623,34 +2642,40 @@ export const ProfilePage = () => {
 
     setActingOnOutreachTemplate(true);
     try {
-      const archived = await archiveOutreachTemplate(template.id);
-      if (identityForm.default_outreach_template_id === template.id) {
+      const wasIdentityDefault =
+        identityForm.default_outreach_template_id === template.id;
+      await archiveOutreachTemplate(template.id);
+      if (wasIdentityDefault) {
         setIdentityForm(clearOutreachTemplateFromIdentityForm);
       }
-      setOutreachTemplateForm(toOutreachTemplateForm(archived));
-      await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
-      notifySuccess("模板已归档", "历史任务快照保持不变，可随时恢复模板。 ");
-    } catch (templateError) {
-      notifyError(
-        "归档模板失败",
-        getActionErrorMessage(templateError, "归档发信模板失败"),
+      const [remainingTemplates] = await Promise.all([
+        refreshOutreachTemplates(),
+        refreshSelections(),
+      ]);
+      const fallback =
+        (!wasIdentityDefault
+          ? remainingTemplates.find(
+              (item) =>
+                item.id === identityForm.default_outreach_template_id,
+            )
+          : null) ??
+        remainingTemplates.find((item) => item.is_default) ??
+        remainingTemplates[0] ??
+        null;
+      if (fallback) {
+        setTemplateEditorId(fallback.id);
+        setOutreachTemplateForm(toOutreachTemplateForm(fallback));
+      } else {
+        beginOutreachTemplateCreation();
+      }
+      notifySuccess(
+        "模板已删除",
+        "模板已从模板库移除，已创建任务和邮件内容保持不变。",
       );
-    } finally {
-      setActingOnOutreachTemplate(false);
-    }
-  };
-
-  const handleRestoreOutreachTemplate = async (templateId: number) => {
-    setActingOnOutreachTemplate(true);
-    try {
-      const restored = await restoreOutreachTemplate(templateId);
-      setOutreachTemplateForm(toOutreachTemplateForm(restored));
-      await refreshOutreachTemplates();
-      notifySuccess("模板已恢复", `“${restored.name}”已重新加入可用模板。`);
     } catch (templateError) {
       notifyError(
-        "恢复模板失败",
-        getActionErrorMessage(templateError, "恢复发信模板失败"),
+        "删除模板失败",
+        getActionErrorMessage(templateError, "删除发信模板失败"),
       );
     } finally {
       setActingOnOutreachTemplate(false);
@@ -2669,7 +2694,7 @@ export const ProfilePage = () => {
 
     if (hasExistingTemplateBody) {
       const shouldReplaceTemplateBody = await confirm({
-        title: "确认覆盖默认模板正文？",
+        title: "确认覆盖当前模板正文？",
         description: "导入模板文件会替换当前正文内容，主题不会被修改。",
         confirmLabel: "覆盖并导入",
         cancelLabel: "取消",
@@ -2700,7 +2725,7 @@ export const ProfilePage = () => {
         "模板导入成功",
         hasSubject
           ? `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。`
-          : `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。可补充主题后保存，也可先保存为草稿。`,
+          : `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。可以补充主题后保存，也可以先保存并稍后完善。`,
       );
     } catch (importError) {
       notifyError(
@@ -3815,7 +3840,7 @@ export const ProfilePage = () => {
         savingTemplate={savingOutreachTemplate}
         actingOnTemplate={actingOnOutreachTemplate}
         loadingTemplates={loadingOutreachTemplates}
-        templates={outreachTemplates}
+        templates={activeOutreachTemplates}
         editorId={templateEditorId}
         form={outreachTemplateForm}
         identityLabel={editingIdentity ? "当前身份" : "新身份"}
@@ -3842,10 +3867,7 @@ export const ProfilePage = () => {
         onSetGlobalDefault={(templateId) =>
           void handleSetGlobalDefaultTemplate(templateId)
         }
-        onArchive={(template) => void handleArchiveOutreachTemplate(template)}
-        onRestore={(templateId) =>
-          void handleRestoreOutreachTemplate(templateId)
-        }
+        onDelete={(template) => void handleDeleteOutreachTemplate(template)}
         onImport={(file) => void handleTemplateFileImport(file)}
         onNameChange={(value) =>
           setOutreachTemplateForm((previous) => ({

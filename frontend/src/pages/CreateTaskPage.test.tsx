@@ -273,7 +273,7 @@ describe("CreateTaskPage", () => {
 
     expect(await screen.findByText("张明")).toBeInTheDocument();
     expect(
-      await screen.findByText("可直接编辑下方内容；创建后会保存为任务快照。"),
+      await screen.findByText("可直接编辑下方内容；创建后会独立保存到任务中。"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建任务" }));
 
