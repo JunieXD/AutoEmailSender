@@ -8,10 +8,21 @@ from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobKind, CrawlPage, CrawlWorkerKind, LLMProfile
+from app.models import (
+    CrawlCandidate,
+    CrawlCandidateEnrichmentTask,
+    CrawlCandidateEnrichmentTaskStatus,
+    CrawlJob,
+    CrawlJobKind,
+    CrawlJobStatus,
+    CrawlPage,
+    CrawlWorkerKind,
+    LLMProfile,
+)
 from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_browser_fallback
 from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
+from app.services.crawler_v2_profile_text_cache import profile_text_cache
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
@@ -24,7 +35,24 @@ from app.services.operation_logs import record_operation_log, sanitize_user_visi
 from app.services.professor_information_enrichment import apply_enrichment_to_professor
 
 
-_PROFILE_TEXT_CACHE: dict[tuple[int, int, int, str], str] = {}
+_PROFILE_TEXT_CACHE = profile_text_cache
+_ACTIVE_JOB_STATUSES = {
+    CrawlJobStatus.QUEUED.value,
+    CrawlJobStatus.RUNNING.value,
+}
+_TERMINAL_ENRICHMENT_TASK_STATUSES = {
+    CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value,
+    CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,
+    CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+    CrawlCandidateEnrichmentTaskStatus.CANCELED.value,
+}
+_TERMINAL_JOB_STATUSES = {
+    CrawlJobStatus.NEEDS_REVIEW.value,
+    CrawlJobStatus.PARTIALLY_COMPLETED.value,
+    CrawlJobStatus.COMPLETED.value,
+    CrawlJobStatus.FAILED.value,
+    CrawlJobStatus.CANCELED.value,
+}
 
 
 async def run_crawler_v2_enrichment_worker_once(
@@ -41,10 +69,17 @@ async def run_crawler_v2_enrichment_worker_once(
             return 0
         candidate = await session.get(CrawlCandidate, task.candidate_id)
         if candidate is None:
+            job_id = task.job_id
+            candidate_id = task.candidate_id
             task.status = CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
             task.last_error = "candidate_missing"
             task.finished_at = utc_now()
             await session.commit()
+            _discard_cached_profile_text(
+                session_factory,
+                job_id=job_id,
+                candidate_id=candidate_id,
+            )
             return 1
         job = await session.get(CrawlJob, task.job_id)
         model_name = None
@@ -52,6 +87,7 @@ async def run_crawler_v2_enrichment_worker_once(
             profile = await _resolve_llm_profile(session, job)
             model_name = getattr(profile, "model_name", None) if profile is not None else None
         job_id = task.job_id
+        candidate_id = candidate.id
         if not (candidate.profile_url or "").strip():
             task.status = CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
             task.skip_reason = "缺少有效的导师主页链接"
@@ -60,10 +96,15 @@ async def run_crawler_v2_enrichment_worker_once(
             task.claimed_at = None
             task.lease_expires_at = None
             await session.commit()
+            _discard_cached_profile_text(
+                session_factory,
+                job_id=job_id,
+                candidate_id=candidate_id,
+            )
             return 1
 
     try:
-        enrichment_result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate.id)
+        enrichment_result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
         raw_model_text = None
         if isinstance(enrichment_result, tuple):
             if len(enrichment_result) >= 3:
@@ -74,6 +115,12 @@ async def run_crawler_v2_enrichment_worker_once(
             payload = enrichment_result
             usage = None
         if not await _enrichment_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
+            await _discard_cached_profile_text_if_terminal(
+                session_factory,
+                task_id=task_id,
+                job_id=job_id,
+                candidate_id=candidate_id,
+            )
             return 0
         append_crawler_v2_debug_event(
             job_id,
@@ -102,15 +149,35 @@ async def run_crawler_v2_enrichment_worker_once(
             )
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
-            candidate = await session.get(CrawlCandidate, candidate.id)
-            if task is None or candidate is None or not _enrichment_task_owned_by_worker(task, worker_id):
+            current_candidate = await session.get(CrawlCandidate, candidate_id)
+            if task is None or current_candidate is None:
+                _discard_cached_profile_text(
+                    session_factory,
+                    job_id=job_id,
+                    candidate_id=candidate_id,
+                )
                 return 0
-            if not await ensure_job_active(session, task.job_id):
+            job = await session.get(CrawlJob, task.job_id)
+            if (
+                not _enrichment_task_owned_by_worker(task, worker_id)
+                or job is None
+                or job.status not in _ACTIVE_JOB_STATUSES
+            ):
+                if (
+                    task.status in _TERMINAL_ENRICHMENT_TASK_STATUSES
+                    or job is None
+                    or job.status in _TERMINAL_JOB_STATUSES
+                ):
+                    _discard_cached_profile_text(
+                        session_factory,
+                        job_id=task.job_id,
+                        candidate_id=task.candidate_id,
+                    )
                 return 0
+            candidate = current_candidate
             _apply_enrichment(candidate, payload)
             enriched_fields: list[str] = []
             skip_reason = None
-            job = await session.get(CrawlJob, task.job_id)
             if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
                 enriched_fields, skip_reason = await apply_enrichment_to_professor(
                     session,
@@ -146,9 +213,17 @@ async def run_crawler_v2_enrichment_worker_once(
             task.finished_at = utc_now()
             if skip_reason is None:
                 await _append_enrichment_success_event(session, task=task, candidate=candidate)
+            terminal_job_id = task.job_id
+            terminal_candidate_id = task.candidate_id
             await session.commit()
+        _discard_cached_profile_text(
+            session_factory,
+            job_id=terminal_job_id,
+            candidate_id=terminal_candidate_id,
+        )
         return 1
     except Exception as exc:
+        terminal_cache_identity: tuple[int, int] | None = None
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             candidate = await session.get(CrawlCandidate, task.candidate_id) if task is not None else None
@@ -168,6 +243,7 @@ async def run_crawler_v2_enrichment_worker_once(
                 )
                 if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value:
                     task.finished_at = utc_now()
+                    terminal_cache_identity = (task.job_id, task.candidate_id)
                 await _append_enrichment_failure_event(
                     session,
                     task=task,
@@ -208,6 +284,20 @@ async def run_crawler_v2_enrichment_worker_once(
                         },
                     )
             await session.commit()
+        if terminal_cache_identity is not None:
+            terminal_job_id, terminal_candidate_id = terminal_cache_identity
+            _discard_cached_profile_text(
+                session_factory,
+                job_id=terminal_job_id,
+                candidate_id=terminal_candidate_id,
+            )
+        else:
+            await _discard_cached_profile_text_if_terminal(
+                session_factory,
+                task_id=task_id,
+                job_id=job_id,
+                candidate_id=candidate_id,
+            )
         return 1
 
 
@@ -301,15 +391,53 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
 
 async def get_or_fetch_profile_text(ctx: CrawlToolContext, candidate_id: int, profile_url: str) -> str:
     cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, profile_url.strip())
-    if cache_key in _PROFILE_TEXT_CACHE:
-        return _PROFILE_TEXT_CACHE[cache_key]
+    cached = _PROFILE_TEXT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     stored = await _load_successful_profile_text(ctx, profile_url)
     if stored:
-        _PROFILE_TEXT_CACHE[cache_key] = stored
+        _PROFILE_TEXT_CACHE.put(cache_key, stored)
         return stored
     page_text = await fetch_profile_text(ctx, profile_url)
-    _PROFILE_TEXT_CACHE[cache_key] = page_text
+    _PROFILE_TEXT_CACHE.put(cache_key, page_text)
     return page_text
+
+
+def _discard_cached_profile_text(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    job_id: int,
+    candidate_id: int,
+) -> None:
+    _PROFILE_TEXT_CACHE.discard_candidate(
+        session_factory_id=id(session_factory),
+        job_id=job_id,
+        candidate_id=candidate_id,
+    )
+
+
+async def _discard_cached_profile_text_if_terminal(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    job_id: int,
+    candidate_id: int,
+) -> None:
+    async with session_factory() as session:
+        task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        job = await session.get(CrawlJob, job_id)
+        should_discard = (
+            task is None
+            or task.status in _TERMINAL_ENRICHMENT_TASK_STATUSES
+            or job is None
+            or job.status in _TERMINAL_JOB_STATUSES
+        )
+    if should_discard:
+        _discard_cached_profile_text(
+            session_factory,
+            job_id=job_id,
+            candidate_id=candidate_id,
+        )
 
 
 async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str) -> str | None:

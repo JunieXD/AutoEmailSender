@@ -22,6 +22,7 @@ from app.models import (
     CrawlPageTaskStatus,
 )
 from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
+from app.services.crawler_v2_profile_text_cache import profile_text_cache
 from app.services.runtime_settings import get_runtime_settings
 from app.services.crawl_job_runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
 from app.services.llm_runtime import format_llm_runtime_error_for_user
@@ -114,6 +115,7 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
         job.error_message = error_message
         job.updated_at = now
         await mark_crawl_job_run_finished(session, job, status=final_status, error_message=error_message, now=now)
+        profile_text_cache.discard_job(job_id=job.id)
 
 
 async def _claim_page_task(

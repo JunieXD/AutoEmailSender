@@ -24,6 +24,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         cls.client.close()
 
     def setUp(self) -> None:
+        from app.services.crawler_v2_profile_text_cache import profile_text_cache
+
+        profile_text_cache.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "professor_information_enrichment_api.db"
         os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{self.db_path.as_posix()}"
@@ -42,6 +45,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.cookies.clear()
+        from app.services.crawler_v2_profile_text_cache import profile_text_cache
+
+        profile_text_cache.clear()
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
 
@@ -152,6 +158,45 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         )
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
+
+    def test_cancel_clears_cached_profile_text_for_canceled_items(self) -> None:
+        from app.services.crawler_v2_profile_text_cache import profile_text_cache
+
+        professor_id = self._create_professor(
+            name="取消补全导师",
+            email="cancel@example.edu",
+            profile_url="https://example.edu/cancel",
+        )
+        created = self.client.post(
+            "/api/professor-information-enrichment-jobs",
+            json={
+                "professor_ids": [professor_id],
+                "llm_profile_id": self.llm_profile_id,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = int(created.json()["id"])
+        with sqlite3.connect(self.db_path) as connection:
+            candidate_id = int(
+                connection.execute(
+                    "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()[0]
+            )
+        cache_key = (999, job_id, candidate_id, "https://example.edu/cancel")
+        profile_text_cache.put(cache_key, "cached profile")
+
+        canceled = self.client.post(
+            f"/api/professor-information-enrichment-jobs/{job_id}/cancel",
+        )
+
+        self.assertEqual(canceled.status_code, 200, msg=canceled.text)
+        self.assertNotIn(cache_key, profile_text_cache)
+        items = self.client.get(
+            f"/api/professor-information-enrichment-jobs/{job_id}/items",
+        )
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        self.assertEqual(items.json()[0]["status"], "canceled")
 
     def _create_llm_profile(self) -> int:
         response = self.client.post(

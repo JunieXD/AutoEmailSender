@@ -32,6 +32,7 @@ from app.services.crawl_job_runs import (
     mark_crawl_job_run_finished,
 )
 from app.services.crawler_tools import validate_safe_public_crawl_url
+from app.services.crawler_v2_profile_text_cache import profile_text_cache
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.services.professor_field_normalization import (
     normalize_recent_papers,
@@ -471,6 +472,7 @@ async def request_professor_information_enrichment_cancel(
         entity_id=str(job.id),
         metadata={"status": job.status},
     )
+    profile_text_cache.discard_job(job_id=job.id)
 
 
 async def retry_failed_professor_information_enrichment_job(
@@ -599,6 +601,7 @@ async def finalize_professor_information_enrichment_job(
             "canceled_count": canceled,
         },
     )
+    profile_text_cache.discard_job(job_id=job.id)
 
 
 async def apply_enrichment_to_professor(

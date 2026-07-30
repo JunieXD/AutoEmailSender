@@ -150,7 +150,12 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate.recent_papers, ["手动论文"])
 
     async def test_enrichment_skips_candidate_without_profile_url(self) -> None:
-        _, task_id = await self._seed_task(profile_url=None)
+        candidate_id, task_id = await self._seed_task(profile_url=None)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        cache_key = (id(self.session_factory), task.job_id, candidate_id, "https://example.edu/old")
+        crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE.put(cache_key, "old profile")
 
         processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -159,6 +164,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
         assert task is not None
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SKIPPED.value)
+        self.assertNotIn(cache_key, crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE)
 
 
     async def test_enrichment_adapter_fetches_profile_and_invokes_existing_llm(self) -> None:
@@ -175,13 +181,17 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_enrichment_worker_does_not_write_after_job_is_paused(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
         payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
+        cache_key: tuple[int, int, int, str] | None = None
 
         async def pause_job_during_enrichment(*_args, **_kwargs):
+            nonlocal cache_key
             async with self.session_factory() as session:
                 task = await session.get(CrawlCandidateEnrichmentTask, task_id)
                 assert task is not None
                 job = await session.get(CrawlJob, task.job_id)
                 assert job is not None
+                cache_key = (id(self.session_factory), job.id, candidate_id, "https://example.edu/zhang.html")
+                crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE.put(cache_key, "张三")
                 job.status = CrawlJobStatus.PAUSED.value
                 task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
                 task.worker_id = None
@@ -200,6 +210,128 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(candidate.email)
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.PENDING.value)
         self.assertEqual(token_usage, [])
+        assert cache_key is not None
+        self.assertIn(cache_key, crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE)
+
+    async def test_enrichment_worker_clears_cache_if_task_is_canceled_during_fetch(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu")
+        cache_key: tuple[int, int, int, str] | None = None
+
+        async def cancel_task_during_enrichment(*_args, **_kwargs):
+            nonlocal cache_key
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                job = await session.get(CrawlJob, task.job_id)
+                assert job is not None
+                cache_key = (id(self.session_factory), job.id, candidate_id, "https://example.edu/zhang.html")
+                crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE.put(cache_key, "张三")
+                task.status = CrawlCandidateEnrichmentTaskStatus.CANCELED.value
+                task.worker_id = None
+                job.status = CrawlJobStatus.CANCELED.value
+                await session.commit()
+            return payload, None
+
+        with patch(
+            "app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(side_effect=cancel_task_during_enrichment),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 0)
+        assert cache_key is not None
+        self.assertNotIn(cache_key, crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE)
+
+    async def test_enrichment_worker_clears_cache_if_task_is_canceled_before_final_commit(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu")
+        cache_key: tuple[int, int, int, str] | None = None
+
+        async def cache_profile_text(*_args, **_kwargs):
+            nonlocal cache_key
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                cache_key = (
+                    id(self.session_factory),
+                    task.job_id,
+                    candidate_id,
+                    "https://example.edu/zhang.html",
+                )
+            assert cache_key is not None
+            crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE.put(cache_key, "张三")
+            return payload, {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0}
+
+        async def cancel_before_final_commit(*_args, **_kwargs):
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                job = await session.get(CrawlJob, task.job_id)
+                assert job is not None
+                task.status = CrawlCandidateEnrichmentTaskStatus.CANCELED.value
+                task.worker_id = None
+                job.status = CrawlJobStatus.CANCELED.value
+                await session.commit()
+
+        with (
+            patch(
+                "app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage",
+                new=AsyncMock(side_effect=cache_profile_text),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.record_crawler_v2_token_usage",
+                new=AsyncMock(side_effect=cancel_before_final_commit),
+            ),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 0)
+        assert cache_key is not None
+        self.assertNotIn(cache_key, crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE)
+
+    async def test_enrichment_worker_clears_cache_if_task_disappears_after_fetch(self) -> None:
+        candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
+        cache_key: tuple[int, int, int, str] | None = None
+
+        async def delete_task_after_fetch(*_args, **_kwargs):
+            nonlocal cache_key
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                cache_key = (
+                    id(self.session_factory),
+                    task.job_id,
+                    candidate_id,
+                    "https://example.edu/zhang.html",
+                )
+                assert cache_key is not None
+                crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE.put(cache_key, "张三")
+                await session.delete(task)
+                await session.commit()
+            raise ValueError("task disappeared")
+
+        with patch(
+            "app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(side_effect=delete_task_after_fetch),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        assert cache_key is not None
+        self.assertNotIn(cache_key, crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE)
 
     async def test_enrichment_worker_does_not_write_after_lease_expires(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
@@ -271,6 +403,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert candidate is not None and task is not None
         self.assertIsNone(candidate.email)
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value)
+        self.assertEqual(len(crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE), 1)
 
     async def test_llm_retry_reuses_empty_profile_text_after_fetch_succeeds(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/empty.html")
@@ -294,6 +427,69 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processed_first, 1)
         self.assertEqual(processed_second, 1)
         fetch_mock.assert_awaited_once()
+        self.assertEqual(len(crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE), 1)
+
+    async def test_successful_task_clears_cached_profile_text(self) -> None:
+        _, task_id = await self._seed_task(profile_url="https://example.edu/success.html")
+        payload = CandidateEnrichmentPayload(email="zhang@example.edu")
+
+        with (
+            patch(
+                "app.services.crawler_v2_enrichment_worker.fetch_profile_text",
+                new=AsyncMock(return_value="张三 邮箱 zhang@example.edu"),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage",
+                new=AsyncMock(return_value=(payload, None, "")),
+            ),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(len(crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE), 0)
+
+    async def test_terminal_failure_clears_cached_profile_text(self) -> None:
+        _, task_id = await self._seed_task(profile_url="https://example.edu/failure.html")
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            task.attempt_count = 4
+            await session.commit()
+
+        with (
+            patch(
+                "app.services.crawler_v2_enrichment_worker.fetch_profile_text",
+                new=AsyncMock(return_value="张三"),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage",
+                new=AsyncMock(side_effect=ValueError("LLM terminal failure")),
+            ),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value)
+        self.assertEqual(len(crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE), 0)
 
     async def test_enrichment_worker_failure_appends_trace_event_with_reason(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
