@@ -800,12 +800,16 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "match_analysis_job_items",
                 "thinking_adaptation_cache",
                 "llm_endpoint_adaptation_cache",
+                "llm_structured_output_adaptation_cache",
             }.issubset(table_names),
         )
         self.assertNotIn("attachment_assets", table_names)
 
         thinking_cache_columns = self._get_columns("thinking_adaptation_cache")
         endpoint_cache_columns = self._get_columns("llm_endpoint_adaptation_cache")
+        structured_cache_columns = self._get_columns(
+            "llm_structured_output_adaptation_cache",
+        )
         self.assertTrue(
             {
                 "id",
@@ -829,6 +833,20 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "updated_at",
             }.issubset(endpoint_cache_columns),
         )
+        self.assertTrue(
+            {
+                "id",
+                "api_base_url",
+                "model_name",
+                "endpoint_kind",
+                "probe_version",
+                "learned_mode",
+                "probed_at",
+                "expires_at",
+                "created_at",
+                "updated_at",
+            }.issubset(structured_cache_columns),
+        )
         self.assertEqual(
             self._get_unique_index_columns("thinking_adaptation_cache"),
             ["api_base_url", "model_name", "endpoint_kind"],
@@ -841,6 +859,10 @@ class DatabaseSchemaTests(unittest.TestCase):
             ["api_base_url", "model_name"],
         )
         self.assertEqual(
+            self._get_unique_index_columns("llm_structured_output_adaptation_cache"),
+            ["api_base_url", "model_name", "endpoint_kind", "probe_version"],
+        )
+        self.assertEqual(
             self._get_index_columns(
                 "thinking_adaptation_cache",
                 "ix_thinking_adaptation_cache_model_name",
@@ -851,6 +873,13 @@ class DatabaseSchemaTests(unittest.TestCase):
             self._get_index_columns(
                 "llm_endpoint_adaptation_cache",
                 "ix_llm_endpoint_adaptation_cache_model_name",
+            ),
+            ["model_name"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "llm_structured_output_adaptation_cache",
+                "ix_llm_structured_output_adaptation_cache_model_name",
             ),
             ["model_name"],
         )

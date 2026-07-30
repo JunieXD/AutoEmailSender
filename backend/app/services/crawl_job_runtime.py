@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.models import CrawlCandidate, CrawlJob, CrawlJobKind, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
 from app.services.crawler_debug import append_crawler_debug_event
-from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.crawler_chunking import ChunkingConfig, build_page_chunks
 from app.services.crawler_chunk_runtime import create_chunks_for_page
 from app.services.crawl_job_events import normalize_agent_trace_event
@@ -35,8 +34,13 @@ from app.services.llm_runtime import (
     LLMRuntimeAdaptation,
     LLMRuntimeError,
     ensure_llm_runtime_adaptation,
-    parse_structured_result,
     resolve_base_url,
+)
+from app.services.crawler_structured_output import (
+    CandidateEnrichmentWirePayload,
+    ProfessorCandidateWirePayload,
+    professor_candidate_wire_to_dict,
+    request_crawler_structured_completion,
 )
 from app.services.thinking_adaptation import (
     ThinkingAdaptationFailed,
@@ -117,7 +121,6 @@ TRUNCATED_SAVE_TOOL_CALL_ERROR = (
     "抓取结果未成功保存：模型在调用 submit_page_chunk_candidates 时输出被截断"
 )
 MAX_AGENT_TRACE_EVENTS = 100
-DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS = 2
 _ACTIVE_CRAWL_JOB_IDS: set[int] = set()
 
 
@@ -640,64 +643,32 @@ async def _complete_running_job(
         await session.commit()
 
 
-def _build_structured_retry_prompt(
-    *,
-    original_prompt: str,
-    parse_error: str,
-) -> str:
-    return (
-        f"{original_prompt}\n\n"
-        "上一次回复未通过系统结构化校验，请立刻重试，并严格遵守以下要求：\n"
-        "- 只输出一个合法 JSON 对象，不要输出 Markdown、解释或前后缀文本\n"
-        "- 不要省略必填键\n"
-        "- confidence 必须是 0 到 1 的数字\n"
-        "- field_confidence 中每个值都必须是 0 到 1 的数字\n"
-        "- evidence 必须保持简短，只保留必要摘要\n"
-        f"- 上一次解析失败原因：{parse_error}"
-    )
-
-
 async def _invoke_direct_structured_llm(
     ctx: CrawlToolContext,
     *,
     llm_profile: LLMProfile,
     prompt: str,
-    result_model: type[Any],
+    wire_model: type[Any],
+    convert_result: Any,
     empty_response_error: str,
 ) -> Any:
-    current_prompt = prompt
-    last_error: Exception | None = None
-    current_adaptation = ctx.llm_adaptation
-
-    for attempt in range(DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS):
-        response, current_adaptation = await invoke_crawler_llm_with_endpoint_retry(
+    try:
+        completion, wire_result, _structured_mode = await request_crawler_structured_completion(
             ctx.session_factory,
             llm_profile,
-            current_adaptation,
-            prompt=current_prompt,
-            build_model=build_faculty_crawler_model,
+            ctx.llm_adaptation,
+            prompt=prompt,
+            result_model=wire_model,
         )
-        await _accumulate_direct_llm_response_tokens(ctx.session_factory, ctx.job_id, response)
-        content = _extract_model_message_content(response)
-        if not content:
-            last_error = ValueError(empty_response_error)
-        else:
-            try:
-                return parse_structured_result(content, result_model)
-            except LLMRuntimeError as exc:
-                last_error = exc
+    except LLMRuntimeError as exc:
+        await _accumulate_direct_llm_response_tokens(ctx.session_factory, ctx.job_id, exc)
+        raise ValueError(f"{empty_response_error}: {exc}") from exc
 
-        if attempt + 1 >= DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS:
-            break
-
-        current_prompt = _build_structured_retry_prompt(
-            original_prompt=prompt,
-            parse_error=str(last_error),
-        )
-
-    if last_error is None:
-        raise ValueError(empty_response_error)
-    raise ValueError(f"{empty_response_error}: {last_error}")
+    await _accumulate_direct_llm_response_tokens(ctx.session_factory, ctx.job_id, completion)
+    try:
+        return convert_result(wire_result)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{empty_response_error}: {exc}") from exc
 
 
 async def _run_profile_crawl_job(
@@ -1483,7 +1454,10 @@ async def enrich_candidate_profile_with_llm(
         ctx,
         llm_profile=llm_profile,
         prompt=prompt,
-        result_model=CandidateEnrichmentPayload,
+        wire_model=CandidateEnrichmentWirePayload,
+        convert_result=lambda value: CandidateEnrichmentPayload.model_validate(
+            value.model_dump()
+        ),
         empty_response_error="模型补全返回空响应",
     )
 
@@ -1503,7 +1477,10 @@ async def extract_profile_candidate_with_llm(
         ctx,
         llm_profile=llm_profile,
         prompt=prompt,
-        result_model=ProfessorCandidatePayload,
+        wire_model=ProfessorCandidateWirePayload,
+        convert_result=lambda value: ProfessorCandidatePayload.model_validate(
+            professor_candidate_wire_to_dict(value)
+        ),
         empty_response_error=PROFILE_EXTRACTION_FAILED_ERROR,
     )
     if not candidate.name.strip():

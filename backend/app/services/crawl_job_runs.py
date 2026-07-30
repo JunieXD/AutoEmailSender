@@ -191,6 +191,7 @@ def extract_token_usage(event: dict[str, object]) -> dict[str, int | None] | Non
 def extract_token_usage_from_llm_response(response: object) -> dict[str, int | None] | None:
     metadata = getattr(response, "response_metadata", None)
     usage_metadata = getattr(response, "usage_metadata", None)
+    direct_usage = getattr(response, "usage", None)
     response_usage = None
     if isinstance(metadata, dict):
         candidate = metadata.get("token_usage") or metadata.get("usage")
@@ -198,6 +199,15 @@ def extract_token_usage_from_llm_response(response: object) -> dict[str, int | N
     raw_usage = usage_metadata if isinstance(usage_metadata, dict) else None
     if raw_usage is None:
         raw_usage = response_usage
+    if raw_usage is None and isinstance(direct_usage, dict):
+        raw_usage = direct_usage
+    if raw_usage is None and direct_usage is not None:
+        raw_usage = {
+            "prompt_tokens": getattr(direct_usage, "prompt_tokens", None),
+            "completion_tokens": getattr(direct_usage, "completion_tokens", None),
+            "total_tokens": getattr(direct_usage, "total_tokens", None),
+            "cached_tokens": getattr(direct_usage, "cached_tokens", None),
+        }
     if not isinstance(raw_usage, dict):
         return None
 

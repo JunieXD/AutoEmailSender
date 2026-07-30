@@ -417,8 +417,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         {
                             "message": {
                                 "content": (
-                                    '{"subject":"申请交流","replacements":['
-                                    '{"segment_id":"seg_1","runs":[{"text":"模板正文","marks":[]}]}'
+                                    '{"replacements":['
+                                    '{"segment_id":"seg_1","text":"模板正文，关注[[F1]]。"}'
                                     ']}'
                                 ),
                             },
@@ -494,13 +494,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         {
                             "message": {
                                 "content": (
-                                    '{"subject":"申请交流","replacements":['
-                                    '{"segment_id":"seg_1","runs":[{"text":"李老师，您好：","marks":[]}]},'
-                                    '{"segment_id":"seg_2","runs":['
-                                    '{"text":"我近期关注到您在 ","marks":[]},'
-                                    '{"text":"Information Extraction","marks":["strong"]},'
-                                    '{"text":" 方向的研究。","marks":[]}'
-                                    ']}'
+                                    '{"replacements":['
+                                    '{"segment_id":"seg_1","text":"李老师，您好："},'
+                                    '{"segment_id":"seg_2","text":'
+                                    '"我近期关注到您在 [[S1]][[F1]][[/S1]] 方向的研究。"}'
                                     ']}'
                                 ),
                             },
@@ -584,8 +581,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         {
                             "message": {
                                 "content": (
-                                    '{"subject":"申请交流","replacements":['
-                                    '{"segment_id":"seg_1","runs":[{"text":"李老师，您好：","marks":[]}]}'
+                                    '{"replacements":['
+                                    '{"segment_id":"seg_1","text":'
+                                    '"李老师，您好：希望就[[F1]]方向与您交流。"}'
                                     ']}'
                                 ),
                             },
@@ -610,7 +608,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 custom_body_html=None,
             )
 
-        self.assertIn("<p>李老师，您好：</p>", result.result.body_html)
+        self.assertIn("李老师，您好：", result.result.body_html)
+        self.assertIn("Information Extraction", result.result.body_text)
 
     async def test_generate_draft_content_preserves_table_and_inline_styles(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
@@ -660,12 +659,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         {
                             "message": {
                                 "content": (
-                                    '{"subject":"申请交流","replacements":['
-                                    '{"segment_id":"seg_2","runs":['
-                                    '{"text":"我对您的 ","marks":[]},'
-                                    '{"text":"Information Extraction","marks":["strong"]},'
-                                    '{"text":" 方向很感兴趣。","marks":[]}'
-                                    ']}'
+                                    '{"replacements":['
+                                    '{"segment_id":"seg_2","text":'
+                                    '"我对您的 [[S1]][[F1]][[/S1]] 方向很感兴趣。"}'
                                     ']}'
                                 ),
                             },
@@ -700,8 +696,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["messages"][0]["content"], SYSTEM_DRAFT_REWRITE_PROMPT)
         self.assertIn("source_blocks", payload["messages"][1]["content"])
-        self.assertIn('"style_spans"', payload["messages"][1]["content"])
-        self.assertIn('"Information Extraction"', payload["messages"][1]["content"])
+        self.assertIn('"style_regions"', payload["messages"][1]["content"])
+        self.assertIn('"[[F1]]"', payload["messages"][1]["content"])
+        self.assertNotIn('"Information Extraction"', payload["messages"][1]["content"])
         self.assertNotIn("<table", payload["messages"][1]["content"])
         self.assertIn("<table", result.result.body_html)
         self.assertIn('style="font-size:11pt"', result.result.body_html)
@@ -749,18 +746,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         raw = json.dumps(
             {
-                "subject": "申请与李老师交流",
                 "replacements": [
                     {
                         "segment_id": "seg_1",
-                        "runs": [
-                            {"text": "我是王俊杰，", "marks": []},
-                            {"text": "以专业第一的成绩获得了推免资格", "marks": ["strong"]},
-                            {
-                                "text": "。冒昧来信咨询，不知老师今年是否还有硕士招生名额？附件中是我的简历。",
-                                "marks": [],
-                            },
-                        ],
+                        "text": (
+                            "我是王俊杰，[[S1]]以专业第一的成绩获得了推免资格[[/S1]]。"
+                            "冒昧来信咨询，不知老师今年是否还有硕士招生名额？"
+                            "我也希望就[[F1]]方向与您交流。附件中是我的简历。"
+                        ),
                     },
                 ],
             },
@@ -1425,8 +1418,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("输出示例", SYSTEM_DRAFT_REWRITE_PROMPT)
         self.assertIn('"replacements"', SYSTEM_DRAFT_REWRITE_PROMPT)
         self.assertIn('"segment_id"', SYSTEM_DRAFT_REWRITE_PROMPT)
-        self.assertIn('"runs"', SYSTEM_DRAFT_REWRITE_PROMPT)
-        self.assertIn('"marks"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn('"text"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn("[[S1]]", SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertNotIn('"runs"', SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertNotIn('"marks"', SYSTEM_DRAFT_REWRITE_PROMPT)
 
     def test_build_draft_rewrite_prompt_injects_custom_instruction_with_guardrails(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
@@ -1583,9 +1578,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "replacements": [
                     {
                         "segment_id": "seg_1",
-                        "runs": [
-                            {"text": "李老师，您好："},
-                        ],
+                        "text": "李老师，您好：希望就[[F1]]方向与您交流。",
                     },
                 ],
             },
@@ -1630,6 +1623,74 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.result.subject, "申请与李老师老师交流")
         self.assertIn("<table", result.result.body_html)
         self.assertNotIn("{{name}}", result.result.body_html)
+
+    async def test_generate_draft_content_skips_llm_when_template_has_no_editable_blocks(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="data/materials/resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="信息抽取经历",
+        )
+        professor = Professor(
+            id=1,
+            name="李老师",
+            email="prof@example.edu",
+            research_direction="Agent",
+        )
+        profile = LLMProfile(
+            id=5,
+            name="openai",
+            provider="openai",
+            api_key="test-key",
+            model_name="gpt-test",
+        )
+
+        with patch(
+            "app.services.llm_runtime.request_structured_completion",
+            new=AsyncMock(),
+        ) as request_mock:
+            result = await generate_draft_content(
+                identity=identity,
+                primary_material=material,
+                llm_profile=profile,
+                professor=professor,
+                available_materials=[material],
+                custom_subject="申请交流",
+                custom_body_html=(
+                    "<table><tbody><tr><td>{{research_direction}}</td></tr></tbody></table>"
+                ),
+            )
+
+        request_mock.assert_not_awaited()
+        self.assertIn("Agent", result.result.body_html)
+        estimate = estimate_draft_content_tokens(
+            identity=identity,
+            primary_material=material,
+            llm_profile=profile,
+            professor=professor,
+            available_materials=[material],
+            custom_subject="申请交流",
+            custom_body_html=(
+                "<table><tbody><tr><td>{{research_direction}}</td></tr></tbody></table>"
+            ),
+        )
+        self.assertEqual(estimate.estimated_total_tokens_upper_bound, 0)
 
     def test_build_draft_prompt_uses_default_rewrite_constraints_for_non_default_preferences(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor

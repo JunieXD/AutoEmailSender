@@ -21,7 +21,13 @@ from app.services.crawler_v2_chunk_worker import (
     run_crawler_v2_chunk_worker_once,
 )
 from app.services.crawler_tools import ProfessorCandidatePayload
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.services.crawler_structured_output import V2ChunkWirePayload
+from app.services.llm_runtime import (
+    ChatCompletionResult,
+    ChatCompletionUsage,
+    LLMRuntimeAdaptation,
+    LLMRuntimeError,
+)
 
 
 class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -164,7 +170,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidates, [])
         self.assertEqual(tasks, [])
 
-    async def test_worker_splits_real_llm_json_with_non_object_candidates_over_limit(self) -> None:
+    async def test_worker_splits_structured_result_over_limit(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
         async with self.session_factory() as session:
             chunk = await session.get(CrawlPageChunk, chunk_id)
@@ -172,12 +178,21 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             chunk.content = "\n".join(f"教师{i} 研究方向 软件工程 人工智能 数据挖掘" for i in range(80))
             await session.commit()
 
-        class FakeResponse:
-            content = '{"candidate_count": 11, "candidates": ["invalid candidate"], "discovered_urls": ["https://example.edu/faculty/list2.html"]}'
-
-        fake_model = AsyncMock()
-        fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
-        with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+        wire_payload = V2ChunkWirePayload(
+            candidate_count=11,
+            candidates=[],
+            discovered_urls=["https://example.edu/faculty/list2.html"],
+        )
+        with patch(
+            "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+            new=AsyncMock(
+                return_value=(
+                    ChatCompletionResult(content='{"candidate_count":11}'),
+                    wire_payload,
+                    "json_schema_strict",
+                )
+            ),
+        ), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -192,11 +207,10 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tasks, [])
         completed_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "chunk_completed")
         save_result = completed_call.kwargs["payload"]["save_result"]
-        self.assertEqual(save_result["contract_warning"], "candidate_count_candidates_conflict")
         self.assertEqual(save_result["candidate_count"], 11)
-        self.assertEqual(save_result["candidate_payload_count"], 1)
+        self.assertEqual(save_result["candidate_payload_count"], 0)
 
-    async def test_worker_retries_real_llm_json_with_non_integer_candidate_count(self) -> None:
+    async def test_worker_retries_when_structured_result_rejects_non_integer_count(self) -> None:
         _, first_chunk_id = await self._seed_processing_chunk(with_profile=True)
         for index, raw_count in enumerate(("true", "1.0", '"1"')):
             with self.subTest(raw_count=raw_count):
@@ -205,12 +219,14 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     _, chunk_id = await self._seed_processing_chunk()
 
-                class FakeResponse:
-                    content = f'{{"candidate_count": {raw_count}, "candidates": [], "discovered_urls": []}}'
-
-                fake_model = AsyncMock()
-                fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
-                with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model):
+                with patch(
+                    "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+                    new=AsyncMock(
+                        side_effect=LLMRuntimeError(
+                            f"模型返回的 JSON 结构无效: candidate_count={raw_count}"
+                        )
+                    ),
+                ):
                     processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
                 self.assertEqual(processed, 1)
@@ -219,24 +235,25 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 assert chunk is not None
                 self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
 
-    async def test_worker_ignores_legacy_chunk_status_in_real_llm_json(self) -> None:
-        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+    def test_wire_ignores_legacy_chunk_status_only_outside_strict_mode(self) -> None:
+        raw_payload = {
+            "candidate_count": 0,
+            "candidates": [],
+            "discovered_urls": [],
+            "chunk_status": "too_many_candidates",
+        }
 
-        class FakeResponse:
-            content = '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "confidence": 0.9}], "discovered_urls": [], "chunk_status": "too_many_candidates"}'
+        fallback = V2ChunkWirePayload.model_validate(
+            raw_payload,
+            context={"structured_output_mode": "json_object"},
+        )
 
-        fake_model = AsyncMock()
-        fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
-        with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model):
-            processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
-
-        self.assertEqual(processed, 1)
-        async with self.session_factory() as session:
-            chunk = await session.get(CrawlPageChunk, chunk_id)
-            candidates = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
-        assert chunk is not None
-        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
-        self.assertEqual([candidate.name for candidate in candidates], ["张三"])
+        self.assertEqual(fallback.candidate_count, 0)
+        with self.assertRaises(ValueError):
+            V2ChunkWirePayload.model_validate(
+                raw_payload,
+                context={"structured_output_mode": "json_schema_strict"},
+            )
 
     async def test_worker_marks_retryable_when_candidate_count_mismatches_payload(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
@@ -926,20 +943,34 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.status, CrawlPageChunkStatus.PROCESSING.value)
         self.assertEqual(len(candidates), 0)
         self.assertEqual(len(page_tasks), 0)
-    async def test_invoke_chunk_agent_passes_runtime_adaptation_to_model(self) -> None:
-        class FakeResponse:
-            content = '{"candidate_count": 0, "candidates": [], "discovered_urls": []}'
-            usage_metadata = {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0, "total_tokens": 2}
-
-        fake_model = AsyncMock()
-        fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
+    async def test_invoke_chunk_agent_passes_runtime_adaptation_to_structured_request(self) -> None:
+        completion = ChatCompletionResult(
+            content='{"candidate_count": 0, "candidates": [], "discovered_urls": []}',
+            usage=ChatCompletionUsage(
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
+                cached_tokens=0,
+            ),
+        )
+        wire_payload = V2ChunkWirePayload(
+            candidate_count=0,
+            candidates=[],
+            discovered_urls=[],
+        )
         adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
-        llm_profile = object()
+        llm_profile = LLMProfile(
+            name="test",
+            provider="openai",
+            api_key="test",
+            model_name="test-model",
+        )
 
         with patch(
-            "app.services.crawler_v2_chunk_worker.invoke_crawler_llm_with_endpoint_retry",
-            new=AsyncMock(return_value=(FakeResponse(), adaptation)),
-            create=True,
+            "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+            new=AsyncMock(
+                return_value=(completion, wire_payload, "json_schema_strict")
+            ),
         ) as invoke_mock:
             payload, usage, raw_model_text = await invoke_v2_chunk_agent(
                 llm_profile,
@@ -955,7 +986,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(invoke_mock.await_args.args[0], self.session_factory)
         self.assertIs(invoke_mock.await_args.args[1], llm_profile)
         self.assertIs(invoke_mock.await_args.args[2], adaptation)
-        self.assertIs(invoke_mock.await_args.kwargs["build_model"], __import__("app.services.crawler_v2_chunk_worker", fromlist=["build_faculty_crawler_model"]).build_faculty_crawler_model)
+        self.assertIs(invoke_mock.await_args.kwargs["result_model"], V2ChunkWirePayload)
         self.assertEqual(payload["candidate_count"], 0)
         self.assertEqual(usage["input_tokens"], 1)
         self.assertIn("candidate_count", raw_model_text)
@@ -1003,14 +1034,25 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_chunk_worker_records_llm_token_usage(self) -> None:
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
 
-        class FakeResponse:
-            content = '{"candidate_count": 0, "candidates": [], "discovered_urls": []}'
-            usage_metadata = {"input_tokens": 100, "output_tokens": 20, "cached_tokens": 80, "total_tokens": 120}
+        completion = ChatCompletionResult(
+            content='{"candidate_count":0,"candidates":[],"discovered_urls":[]}',
+            usage=ChatCompletionUsage(
+                prompt_tokens=100,
+                completion_tokens=20,
+                total_tokens=120,
+                cached_tokens=80,
+            ),
+        )
+        wire_payload = V2ChunkWirePayload(
+            candidate_count=0,
+            candidates=[],
+            discovered_urls=[],
+        )
 
-        fake_model = AsyncMock()
-        fake_model.ainvoke = AsyncMock(return_value=FakeResponse())
-
-        with patch("app.services.crawler_v2_chunk_worker.build_faculty_crawler_model", return_value=fake_model):
+        with patch(
+            "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+            new=AsyncMock(return_value=(completion, wire_payload, "json_object")),
+        ):
             processed = await run_crawler_v2_chunk_worker_once(
                 self.session_factory,
                 chunk_id=chunk_id,

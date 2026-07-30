@@ -21,8 +21,6 @@ from app.models import (
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
 from app.services.crawler_debug import append_crawler_v2_debug_event
@@ -30,26 +28,21 @@ from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
-from app.services.crawl_job_runtime import build_faculty_crawler_model
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.llm_runtime import (
     LLMRuntimeAdaptation,
     ensure_llm_runtime_adaptation,
     format_llm_runtime_error_for_user,
-    parse_structured_result,
+)
+from app.services.crawler_structured_output import (
+    CANDIDATE_WIRE_PROMPT_CONTRACT,
+    V2ChunkWirePayload,
+    professor_candidate_wire_to_dict,
+    request_crawler_structured_completion,
 )
 
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
-
-
-class V2ChunkAgentRawPayload(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    candidate_count: int = Field(strict=True, ge=0)
-    candidates: list[Any]
-    discovered_urls: list[str]
 
 
 async def invoke_v2_chunk_agent(
@@ -68,17 +61,23 @@ async def invoke_v2_chunk_agent(
         source_url=source_url,
         chunk_content=chunk_content,
     )
-    response, _ = await invoke_crawler_llm_with_endpoint_retry(
+    completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
         session_factory,
         llm_profile,
         adaptation,
         prompt=prompt,
-        build_model=build_faculty_crawler_model,
+        result_model=V2ChunkWirePayload,
     )
-    content = _extract_message_text(response)
-    payload = parse_structured_result(content, V2ChunkAgentRawPayload)
-    usage = extract_token_usage_from_llm_response(response)
-    return payload.model_dump(), usage, content
+    payload = {
+        "candidate_count": wire_payload.candidate_count,
+        "candidates": [
+            professor_candidate_wire_to_dict(candidate)
+            for candidate in wire_payload.candidates
+        ],
+        "discovered_urls": list(wire_payload.discovered_urls),
+    }
+    usage = extract_token_usage_from_llm_response(completion)
+    return payload, usage, completion.content
 
 
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
@@ -97,10 +96,9 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
         "导师个人主页链接属于候选 profile_url，不能放入 discovered_urls。\n"
         "discovered_urls 只放候选列表页、分页页、教师目录页等继续抓取入口。\n"
-        "每个候选字段使用英文键：name、email、title、university、school、department、research_direction、recent_papers、profile_url、source_url、confidence、field_confidence、evidence。\n"
-        "confidence 和 field_confidence 必须是 0 到 1 的数字；evidence 只写简短摘要，不复制大段原文。\n"
+        f"{CANDIDATE_WIRE_PROMPT_CONTRACT}\n"
         "输出示例（正常保存）：\n"
-        '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": {"name": 0.95, "email": 0.9, "profile_url": 0.95}, "evidence": {"summary": "当前 chunk 中姓名链接和邮箱明确出现"}}], "discovered_urls": []}\n'
+        '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": [{"field": "name", "confidence": 0.95}, {"field": "email", "confidence": 0.9}, {"field": "profile_url", "confidence": 0.95}], "evidence_summary": "当前 chunk 中姓名链接和邮箱明确出现"}], "discovered_urls": []}\n'
         "输出示例（当前 chunk 明确超过 10 个候选）：\n"
         '{"candidate_count": 11, "candidates": [], "discovered_urls": []}\n'
         "输出示例（无候选）：\n"
@@ -111,30 +109,6 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "当前 chunk 正文：\n"
         f"{chunk_content}"
     )
-
-
-def _extract_message_text(response: object) -> str:
-    if isinstance(response, str):
-        return response.strip()
-    content = getattr(response, "content", None)
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        pieces: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                pieces.append(item)
-            elif isinstance(item, dict):
-                value = item.get("text") or item.get("content")
-                if isinstance(value, str):
-                    pieces.append(value)
-        return "".join(pieces).strip()
-    if isinstance(response, dict):
-        value = response.get("content")
-        return value.strip() if isinstance(value, str) else ""
-    return ""
-
-
 
 
 def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,8 @@ from app.services.rich_text import (
     text_to_email_html,
 )
 from app.services.template_draft_rewrite import (
+    DraftRewriteFactToken,
+    DraftRewriteProtectedToken,
     DraftRewriteSourceBlock,
     apply_draft_rewrite_replacements,
     build_draft_rewrite_document,
@@ -40,6 +42,7 @@ from app.services.template_draft_rewrite import (
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LLM_TEMPERATURE = 0.2
 DEFAULT_LLM_MAX_TOKENS = 6000
+STRUCTURED_OUTPUT_CONTROL_KEY = "__structured_output_control__"
 SYSTEM_MATCH_ONLY_PROMPT = dedent(
     """
     你是研究生套磁助理。你必须只输出 JSON，不要输出任何解释、Markdown 代码块或多余文字。
@@ -129,24 +132,33 @@ SYSTEM_DRAFT_PROMPT = dedent(
 
     JSON 字段必须包含：
     - subject: 邮件主题
-    - rich_body: 受控富文本 JSON 正文
+    - blocks: 受控富文本块数组
 
     输出示例：
     {
       "subject": "申请与李老师交流科研方向",
-      "rich_body": {
-        "type": "doc",
-        "blocks": [
-          {
-            "type": "paragraph",
-            "children": [{"type": "text", "text": "李老师，您好："}]
-          },
-          {
-            "type": "paragraph",
-            "children": [{"type": "text", "text": "我是张三，正在关注您在……"}]
-          }
-        ]
-      }
+      "blocks": [
+        {
+          "type": "paragraph",
+          "items": [
+            {
+              "runs": [
+                {"text": "李老师，您好：", "strong": false, "emphasis": false, "href": "", "line_break_after": false}
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "items": [
+            {
+              "runs": [
+                {"text": "我是张三，正在关注您在……", "strong": false, "emphasis": false, "href": "", "line_break_after": false}
+              ]
+            }
+          ]
+        }
+      ]
     }
 
     额外要求：
@@ -158,58 +170,42 @@ SYSTEM_DRAFT_PROMPT = dedent(
     - 不要从零重写整封邮件；任何补充要求都必须基于模板、导师信息和可见材料。
     - 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
     - 尽量保留模板中可表达的富文本标记，例如加粗、斜体、链接和列表。
-    - 如果模板包含表格，尽量保留其中的信息顺序和语义，但仍按允许的 rich_body 结构输出。
-    - rich_body 根节点必须是 {"type":"doc","blocks":[...]}。
-    - blocks 只允许 paragraph、bullet_list、numbered_list。
-    - 内联节点只允许 text、strong、emphasis、link、line_break。
-    - link 的 href 只能使用 http、https、mailto。
+    - blocks 中每项必须包含 type 和 items；type 只允许 paragraph、bullet_list、numbered_list。
+    - paragraph 的 items 必须恰好包含一项；列表的每个 items 项代表一个列表项。
+    - 每个 items 项必须包含 runs；每个 run 必须完整包含 text、strong、emphasis、href、line_break_after。
+    - strong、emphasis、line_break_after 必须是布尔值；不加链接时 href 必须为空字符串。
+    - href 非空时只能使用 http、https、mailto 链接。
+    - 如果模板包含表格，尽量保留其中的信息顺序和语义，但仍按上述 blocks 结构输出。
     """
 ).strip()
 
 SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     """
     你是研究生套磁邮件改写助理。你必须只输出 JSON，不要输出任何解释、Markdown 代码块或多余文字。
-    你要基于输入的 source_blocks 改写邮件草稿，不要从零重写整封邮件。
-    你只能改写非表格块，表格块必须原样保留。
-    你不能输出 HTML、Markdown 或完整正文。
-    你不能输出任何占位符。
-
-    JSON 字段必须包含：
-    - replacements: 段落替换数组
-    不要返回 subject，邮件主题由系统保留原模板主题。
-
-    replacements 中每个块都只能返回：
-    - segment_id
-    - runs
-    runs 中每个 run 只能包含：
-    - text
-    - marks
+    基于 source_blocks 逐段改写邮件，不要从零重写，不要输出 HTML 或完整正文。
+    必须为每个 locked=false 且 type 不是 table 的块返回一个 replacement，顺序必须与输入一致。
+    每个 replacement 只能包含 segment_id 和完整连续段落 text；不要返回 runs、marks 或 subject。
+    [[S1]]...[[/S1]] 是可编辑样式区域：可以修改区域内文字，但标记必须原样、成对、按原顺序保留。
+    [[P1]] 是日期、时间或延迟占位符，必须原样保留。
+    [[F1]] 是后端事实令牌，必须按要求使用且不得改写、解释或展开。
 
     输出示例：
     {
       "replacements": [
         {
           "segment_id": "seg_1",
-          "runs": [
-            {"text": "李老师，您好：", "marks": []},
-            {"text": "我关注到您在信息抽取方向的研究。", "marks": ["strong"]}
-          ]
+          "text": "我在[[S1]]专业排名与竞赛经历[[/S1]]方面打下了扎实基础。"
         }
       ]
     }
 
-    如没有任何块需要改写，输出：
-    {"replacements": []}
-
     额外要求：
     - 只能返回输入中存在的 segment_id。
     - 不要新增、删除、合并、拆分或重排块。
-    - text 必须是真实最终内容。
-    - marks 只能使用 strong、underline、emphasis。
-    - 如果某个块不需要改写，不要返回它。
     - locked=true 的块必须原样保留，尤其是首个称呼段和表格块。
     - 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
-    - 导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。
+    - 不要添加输入事实之外的导师方向、论文、成果、日期或数字。
+    - 如果提供了导师研究方向事实令牌，必须按输入要求保留或自然使用；未提供时不要虚构事实令牌。
     """
 ).strip()
 
@@ -489,6 +485,8 @@ class LLMRuntimeError(RuntimeError):
         endpoint_kind: str | None = None,
         status_code: int | None = None,
         duration_ms: int | None = None,
+        usage: object | None = None,
+        raw_content: str | None = None,
     ) -> None:
         super().__init__(message)
         self.request_url = request_url
@@ -496,6 +494,8 @@ class LLMRuntimeError(RuntimeError):
         self.endpoint_kind = endpoint_kind
         self.status_code = status_code
         self.duration_ms = duration_ms
+        self.usage = usage
+        self.raw_content = raw_content
 
 
 class LLMEndpointProtocolError(LLMRuntimeError):
@@ -584,6 +584,16 @@ class MatchEvaluationResult(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
+class MatchEvaluationWireResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    match_score: int = Field(strict=True)
+    match_reason: str
+    fit_points: list[str]
+    risk_points: list[str]
+    keywords: list[str]
+
+
 class DraftGenerationResult(BaseModel):
     subject: str
     body_text: str | None = None
@@ -591,19 +601,47 @@ class DraftGenerationResult(BaseModel):
     rich_body: dict[str, object] | None = None
 
 
-class DraftRewriteRun(BaseModel):
+class DraftBodyRunWire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str
-    marks: list[str] = Field(default_factory=list)
+    strong: bool
+    emphasis: bool
+    href: str
+    line_break_after: bool
+
+
+class DraftBodyItemWire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runs: list[DraftBodyRunWire]
+
+
+class DraftBodyBlockWire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["paragraph", "bullet_list", "numbered_list"]
+    items: list[DraftBodyItemWire]
+
+
+class DraftGenerationWireResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    blocks: list[DraftBodyBlockWire]
 
 
 class DraftRewriteSegmentReplacement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     segment_id: str
-    runs: list[DraftRewriteRun] = Field(default_factory=list)
+    text: str
 
 
 class DraftRewriteResult(BaseModel):
-    subject: str | None = None
-    replacements: list[DraftRewriteSegmentReplacement] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    replacements: list[DraftRewriteSegmentReplacement]
 
 
 @dataclass(slots=True)
@@ -670,12 +708,7 @@ class GeneratedDraftContent:
     prompt_cache_key: str | None = None
 
 
-StructuredResultT = TypeVar(
-    "StructuredResultT",
-    MatchEvaluationResult,
-    DraftGenerationResult,
-    DraftRewriteResult,
-)
+StructuredResultT = TypeVar("StructuredResultT", bound=BaseModel)
 
 
 async def _legacy_probe_llm_profile(profile: LLMProfile) -> LLMProbeResult:
@@ -756,14 +789,15 @@ async def generate_match_evaluation(
     if prompt_parts.prompt_cache_key:
         payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
 
-    completion = await request_chat_completion(
+    completion, wire_result, _structured_mode = await request_structured_completion(
         llm_profile,
         payload,
+        MatchEvaluationWireResult,
         extra_body=thinking_extra_body,
         session=session,
         adaptation=adaptation,
     )
-    result = parse_structured_result(completion.content, MatchEvaluationResult)
+    result = MatchEvaluationResult.model_validate(wire_result.model_dump())
     return GeneratedMatchEvaluation(
         result=result,
         usage=completion.usage,
@@ -803,6 +837,20 @@ async def generate_draft_content(
         template_context = build_template_context(identity, professor)
         rewrite_document = build_draft_rewrite_document(template_html, template_context)
         rendered_subject = render_draft_template_text(custom_subject, template_context).strip()
+        editable_blocks = [
+            block
+            for block in rewrite_document.blocks
+            if block.type != "table" and not block.locked
+        ]
+        if not editable_blocks:
+            rendered = apply_draft_rewrite_replacements(rewrite_document, [])
+            return GeneratedDraftContent(
+                result=DraftGenerationResult(
+                    subject=rendered_subject,
+                    body_text=rendered.text,
+                    body_html=rendered.html,
+                ),
+            )
         prompt_parts = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
@@ -813,6 +861,8 @@ async def generate_draft_content(
             current_match=current_match,
             rewrite_preferences=rewrite_preferences,
             llm_profile=llm_profile,
+            protected_tokens=rewrite_document.protected_tokens,
+            fact_tokens=rewrite_document.fact_tokens,
         )
         payload: dict[str, object] = {
             "model": llm_profile.model_name,
@@ -831,14 +881,14 @@ async def generate_draft_content(
         }
         if prompt_parts.prompt_cache_key is not None:
             payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
-        completion = await request_chat_completion(
+        completion, rewrite_result, _structured_mode = await request_structured_completion(
             llm_profile,
             payload,
+            DraftRewriteResult,
             extra_body=thinking_extra_body,
             session=session,
             adaptation=adaptation,
         )
-        rewrite_result = parse_structured_result(completion.content, DraftRewriteResult)
         try:
             rendered = apply_draft_rewrite_replacements(
                 rewrite_document,
@@ -869,7 +919,7 @@ async def generate_draft_content(
         current_match=current_match,
         rewrite_preferences=rewrite_preferences,
     )
-    completion = await request_chat_completion(
+    completion, wire_result, _structured_mode = await request_structured_completion(
         llm_profile,
         {
             "model": llm_profile.model_name,
@@ -886,11 +936,12 @@ async def generate_draft_content(
             "temperature": llm_profile.temperature if llm_profile.temperature is not None else DEFAULT_LLM_TEMPERATURE,
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         },
+        DraftGenerationWireResult,
         extra_body=thinking_extra_body,
         session=session,
         adaptation=adaptation,
     )
-    result = parse_structured_result(completion.content, DraftGenerationResult)
+    result = _draft_generation_wire_to_result(wire_result)
     return GeneratedDraftContent(result=result, usage=completion.usage)
 
 def estimate_draft_content_tokens(
@@ -914,6 +965,15 @@ def estimate_draft_content_tokens(
     if template_html:
         template_context = build_template_context(identity, professor)
         rewrite_document = build_draft_rewrite_document(template_html, template_context)
+        if not any(
+            block.type != "table" and not block.locked
+            for block in rewrite_document.blocks
+        ):
+            return DraftTokenEstimate(
+                estimated_prompt_tokens=0,
+                estimated_completion_tokens_upper_bound=0,
+                estimated_total_tokens_upper_bound=0,
+            )
         prompt_parts = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
@@ -924,6 +984,8 @@ def estimate_draft_content_tokens(
             current_match=current_match,
             rewrite_preferences=rewrite_preferences,
             llm_profile=llm_profile,
+            protected_tokens=rewrite_document.protected_tokens,
+            fact_tokens=rewrite_document.fact_tokens,
         )
         prompt_text = f"{SYSTEM_DRAFT_REWRITE_PROMPT}\n\n{prompt_parts.prompt}"
     else:
@@ -1139,7 +1201,7 @@ async def _request_completion_endpoint(
     base_url = resolve_base_url(profile.api_base_url)
     if endpoint_kind == "chat_completions":
         url = build_endpoint_url(base_url, "chat/completions")
-        request_body = chat_payload
+        request_body = build_chat_completions_payload(chat_payload)
         content_extractor = extract_chat_completion_content
     else:
         url = build_endpoint_url(base_url, "responses")
@@ -1530,6 +1592,111 @@ async def request_chat_completion(
     return completion
 
 
+async def request_structured_completion(
+    profile: LLMProfile,
+    payload: dict[str, object],
+    result_model: type[StructuredResultT],
+    *,
+    extra_body: dict[str, object] | None = None,
+    session: "AsyncSession | None" = None,
+    adaptation: LLMRuntimeAdaptation | None = None,
+) -> tuple[ChatCompletionResult, StructuredResultT, str]:
+    """Request and validate one typed JSON result without repair calls."""
+
+    active_adaptation = adaptation
+    mode = "prompt_only"
+    request_payload = payload
+    if session is not None:
+        active_adaptation = active_adaptation or await ensure_llm_runtime_adaptation(
+            session,
+            profile,
+        )
+        from app.services.structured_output_adaptation import (
+            ensure_structured_output_adaptation,
+            invalidate_structured_output_adaptation,
+            is_structured_output_protocol_rejection,
+        )
+
+        mode = await ensure_structured_output_adaptation(
+            session,
+            profile,
+            endpoint_kind=active_adaptation.endpoint_kind,
+            thinking_extra_body=active_adaptation.thinking_extra_body,
+        )
+        if mode != "prompt_only":
+            schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", result_model.__name__).lower()
+            request_payload = with_structured_output(
+                payload,
+                mode=mode,
+                schema=(
+                    _prepare_strict_json_schema(result_model.model_json_schema())
+                    if mode == "json_schema_strict"
+                    else None
+                ),
+                schema_name=schema_name,
+            )
+        try:
+            completion = await request_chat_completion(
+                profile,
+                request_payload,
+                session=session,
+                adaptation=active_adaptation,
+            )
+        except LLMRuntimeError as error:
+            if mode != "prompt_only" and is_structured_output_protocol_rejection(error):
+                await invalidate_structured_output_adaptation(
+                    session,
+                    api_base_url=resolve_base_url(profile.api_base_url),
+                    model_name=profile.model_name,
+                    endpoint_kind=active_adaptation.endpoint_kind,
+                    expected_mode=mode,
+                )
+            raise
+    else:
+        completion = await request_chat_completion(
+            profile,
+            request_payload,
+            extra_body=extra_body,
+            adaptation=active_adaptation,
+        )
+
+    try:
+        validation_context = {"structured_output_mode": mode}
+        if mode == "prompt_only":
+            result = parse_structured_result(
+                completion.content,
+                result_model,
+                context=validation_context,
+            )
+        else:
+            data = json.loads(completion.content)
+            result = result_model.model_validate(data, context=validation_context)
+    except (json.JSONDecodeError, ValidationError) as error:
+        if session is not None and mode == "json_schema_strict" and active_adaptation is not None:
+            from app.services.structured_output_adaptation import (
+                invalidate_structured_output_adaptation,
+            )
+
+            await invalidate_structured_output_adaptation(
+                session,
+                api_base_url=resolve_base_url(profile.api_base_url),
+                model_name=profile.model_name,
+                endpoint_kind=active_adaptation.endpoint_kind,
+                expected_mode="json_schema_strict",
+            )
+        raise LLMRuntimeError(
+            f"模型返回的 JSON 结构无效: {error}",
+            request_url=completion.request_url,
+            attempted_urls=completion.attempted_urls,
+            endpoint_kind=completion.endpoint_kind,
+            status_code=completion.status_code,
+            duration_ms=completion.duration_ms,
+            usage=completion.usage,
+            raw_content=completion.content,
+        ) from error
+    return completion, result, mode
+
+
 def build_match_prompt(
     *,
     identity: IdentityProfile,
@@ -1657,7 +1824,7 @@ def build_draft_prompt(
         2. 只允许改动：称呼、个性化理由、个性化一段、结尾、主题。
         3. 遵循上面的模板结构要求，不要突破模板骨架和原始沟通目的。
         4. 用中文生成专业、克制、具体的套磁邮件。
-        5. rich_body 必须是可渲染为邮件正文的受控富文本 JSON。
+        5. blocks 必须遵守系统提示中的受控富文本 wire 结构，并能渲染为邮件正文。
         6. 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
         7. 围绕导师研究方向做一次自然个性化，不要反复堆砌同一个方向词。
         8. 按上面的默认改写约束控制改动大小，同时尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
@@ -1695,15 +1862,24 @@ def _build_base_generation_prompt(
         ],
         "response_schema": {
             "subject": "邮件主题",
-            "rich_body": {
-                "type": "doc",
-                "blocks": [
-                    {
-                        "type": "paragraph",
-                        "children": [{"type": "text", "text": "李老师，您好："}],
-                    },
-                ],
-            },
+            "blocks": [
+                {
+                    "type": "paragraph",
+                    "items": [
+                        {
+                            "runs": [
+                                {
+                                    "text": "李老师，您好：",
+                                    "strong": False,
+                                    "emphasis": False,
+                                    "href": "",
+                                    "line_break_after": False,
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ],
         },
         "input": {
             "草稿改写要求": extra_requirements,
@@ -1733,6 +1909,8 @@ def build_draft_rewrite_prompt(
     source_blocks: list[DraftRewriteSourceBlock],
     current_match: MatchEvaluationResult | None,
     rewrite_preferences: DraftRewritePreferences | None,
+    protected_tokens: list[DraftRewriteProtectedToken] | None = None,
+    fact_tokens: list[DraftRewriteFactToken] | None = None,
 ) -> str:
     return build_draft_rewrite_prompt_parts(
         identity=identity,
@@ -1743,6 +1921,8 @@ def build_draft_rewrite_prompt(
         source_blocks=source_blocks,
         current_match=current_match,
         rewrite_preferences=rewrite_preferences,
+        protected_tokens=protected_tokens,
+        fact_tokens=fact_tokens,
     ).prompt
 
 
@@ -1757,6 +1937,8 @@ def build_draft_rewrite_prompt_parts(
     current_match: MatchEvaluationResult | None,
     rewrite_preferences: DraftRewritePreferences | None,
     llm_profile: LLMProfile | None = None,
+    protected_tokens: list[DraftRewriteProtectedToken] | None = None,
+    fact_tokens: list[DraftRewriteFactToken] | None = None,
 ) -> DraftRewritePromptParts:
     # Deprecated compatibility parameter: draft rewrite prompts must ignore match results.
     _ = current_match
@@ -1765,22 +1947,30 @@ def build_draft_rewrite_prompt_parts(
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
 
     preferences = rewrite_preferences or DraftRewritePreferences()
+    protected_tokens = protected_tokens or []
+    fact_tokens = fact_tokens or []
+    fact_usage_instruction = _build_draft_fact_usage_instruction(
+        source_blocks,
+        fact_tokens,
+    )
     payload: dict[str, object] = {
         "instructions": [
             "只返回 JSON 对象。",
             "不要返回 subject。",
-            "只改写 source_blocks 中 type 不是 table 的块。",
+            "为 source_blocks 中每个 locked=false 且 type 不是 table 的块返回一个 replacement。",
+            "replacements 的 segment_id 集合和顺序必须与这些可编辑块完全一致。",
             "table 块必须原样保留，不得出现在 replacements 中。",
             "locked=true 的块必须原样保留，尤其是首个称呼段。",
-            "replacements 只能引用 source_blocks 中已有的 segment_id。",
-            "每个 runs 项只允许包含 text 和 marks。",
-            "text 必须是真实最终内容，不要再输出任何占位符。",
+            "每个 replacement 只能包含 segment_id 和完整连续段落 text。",
+            "保留 text 中全部 [[S数字]]...[[/S数字]] 样式区域，区域内文字允许改写。",
+            "保留全部 [[P数字]] 保护令牌，不得修改、删除或新增。",
+            "facts 中的 [[F数字]] 令牌必须按说明使用，不得释义或展开令牌值。",
             "不要返回 HTML。",
             "不要返回完整正文。",
             "不要新增、删除、合并、拆分或重排块。",
-            "marks 只能使用 strong、underline、emphasis。",
             "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
-            "导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。",
+            "不要添加输入中没有的导师信息、论文、成果、日期或数字。",
+            fact_usage_instruction,
             "默认在保留模板骨架的基础上优化表达、连接句和个性化内容。",
             "优先保留段落顺序、信息顺序和主要话术。",
         ],
@@ -1788,12 +1978,7 @@ def build_draft_rewrite_prompt_parts(
             "replacements": [
                 {
                     "segment_id": "seg_1",
-                    "runs": [
-                        {
-                            "text": "改写后的真实文本",
-                            "marks": ["strong"],
-                        },
-                    ],
+                    "text": "完整连续段落，[[S1]]可编辑样式区域[[/S1]]。",
                 },
             ],
         },
@@ -1815,6 +2000,14 @@ def build_draft_rewrite_prompt_parts(
                 _serialize_draft_source_block(block)
                 for block in source_blocks
             ],
+            "protected_tokens": [
+                {"token": token.token, "value": token.value}
+                for token in protected_tokens
+            ],
+            "facts": [
+                {"token": fact.token, "description": fact.description}
+                for fact in fact_tokens
+            ],
         },
     }
     prompt_input = payload["input"]
@@ -1827,7 +2020,11 @@ def build_draft_rewrite_prompt_parts(
     stable_prefix = json.dumps(payload, ensure_ascii=False, indent=2)
 
     if isinstance(prompt_input, dict):
-        prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
+        research_direction_token = fact_tokens[0].token if fact_tokens else None
+        prompt_input["professor"] = _build_draft_rewrite_professor_context(
+            professor,
+            research_direction_token=research_direction_token,
+        )
 
     prompt = json.dumps(payload, ensure_ascii=False, indent=2)
     return DraftRewritePromptParts(
@@ -1848,6 +2045,47 @@ def build_draft_rewrite_prompt_parts(
     )
 
 
+def _build_draft_fact_usage_instruction(
+    source_blocks: list[DraftRewriteSourceBlock],
+    fact_tokens: list[DraftRewriteFactToken],
+) -> str:
+    editable_blocks = [
+        block
+        for block in source_blocks
+        if block.type != "table" and not block.locked
+    ]
+    editable_source_facts = [
+        token
+        for block in editable_blocks
+        for token in re.findall(r"\[\[F\d+\]\]", block.rewrite_text)
+    ]
+    retained_source_facts = [
+        token
+        for block in source_blocks
+        if block.type == "table" or block.locked
+        for token in re.findall(
+            r"\[\[F\d+\]\]",
+            block.html_fragment or block.rewrite_text,
+        )
+    ]
+    if editable_source_facts:
+        return (
+            "可编辑块中已有事实令牌 "
+            f"{', '.join(editable_source_facts)}；必须按原顺序保留全部已有出现，且不得新增。"
+        )
+    if retained_source_facts:
+        return (
+            "导师研究方向事实已在 locked 或 table 块中使用；"
+            "replacements 中不得再次输出任何 [[F数字]] 令牌。"
+        )
+    if fact_tokens and editable_blocks:
+        tokens = ", ".join(fact.token for fact in fact_tokens)
+        return (
+            f"正文尚未引用 facts 中的 {tokens}；必须在全部 replacements 中合计自然使用每个令牌一次。"
+        )
+    return "facts 为空或没有可编辑块；不得在 replacements 中虚构任何 [[F数字]] 令牌。"
+
+
 def _serialize_draft_source_block(block: DraftRewriteSourceBlock) -> dict[str, object]:
     if block.type == "table":
         return {
@@ -1860,14 +2098,14 @@ def _serialize_draft_source_block(block: DraftRewriteSourceBlock) -> dict[str, o
     return {
         "segment_id": block.segment_id,
         "type": block.type,
-        "text": block.text,
+        "text": block.rewrite_text or block.text,
         "locked": block.locked,
-        "style_spans": [
+        "style_regions": [
             {
-                "text": span.text,
-                "marks": span.marks,
+                "style_id": region.style_id,
+                "style": region.style,
             }
-            for span in block.style_spans
+            for region in block.style_regions
         ],
     }
 
@@ -1976,15 +2214,23 @@ def _build_professor_prompt_context(professor: Professor) -> dict[str, object]:
 
     return context
 
-def _build_draft_rewrite_professor_context(professor: Professor) -> dict[str, object]:
+def _build_draft_rewrite_professor_context(
+    professor: Professor,
+    *,
+    research_direction_token: str | None = None,
+) -> dict[str, object]:
     context: dict[str, object] = {}
-    for key, value in (
-        ("name", professor.name),
-        ("research_direction", professor.research_direction),
-    ):
+    for key, value in (("name", professor.name),):
         text = _non_empty_text(value)
         if text is not None:
             context[key] = text
+
+    if research_direction_token:
+        context["research_direction_token"] = research_direction_token
+    else:
+        research_direction = _non_empty_text(professor.research_direction)
+        if research_direction is not None:
+            context["research_direction"] = research_direction
 
     recent_papers = [
         paper
@@ -2080,10 +2326,12 @@ def extract_json_object(raw_text: str) -> str:
 def parse_structured_result(
     raw_text: str,
     result_model: type[StructuredResultT],
+    *,
+    context: dict[str, object] | None = None,
 ) -> StructuredResultT:
     try:
         data = json.loads(extract_json_object(raw_text))
-        result = result_model.model_validate(data)
+        result = result_model.model_validate(data, context=context)
     except (json.JSONDecodeError, ValidationError) as exc:
         raise LLMRuntimeError(f"模型返回的 JSON 结构无效: {exc}") from exc
     if result_model is DraftGenerationResult:
@@ -2092,6 +2340,137 @@ def parse_structured_result(
 
 def resolve_base_url(api_base_url: str | None) -> str:
     return (api_base_url or DEFAULT_BASE_URL).strip().rstrip("/")
+
+
+def with_structured_output(
+    payload: dict[str, object],
+    *,
+    mode: Literal["json_schema_strict", "json_object", "prompt_only"],
+    schema: dict[str, object] | None = None,
+    schema_name: str = "structured_response",
+) -> dict[str, object]:
+    """Attach endpoint-neutral structured-output metadata to a request payload."""
+
+    if mode == "json_schema_strict" and schema is None:
+        raise ValueError("严格 JSON Schema 模式缺少 schema")
+    result = dict(payload)
+    result[STRUCTURED_OUTPUT_CONTROL_KEY] = {
+        "mode": mode,
+        "schema": dict(schema) if schema is not None else None,
+        "schema_name": schema_name,
+    }
+    return result
+
+
+def _prepare_strict_json_schema(schema: dict[str, object]) -> dict[str, object]:
+    """Remove annotation-only Pydantic keywords from the wire schema."""
+
+    def normalize(value: object) -> object:
+        if isinstance(value, dict):
+            normalized_items: dict[str, object] = {}
+            for key, item in value.items():
+                if key in {"title", "description", "default", "examples"}:
+                    continue
+                if key in {"properties", "$defs"} and isinstance(item, dict):
+                    # Field/definition names are user-controlled keys.  A field
+                    # named ``title`` is not the JSON Schema annotation keyword.
+                    normalized_items[key] = {
+                        child_key: normalize(child_value)
+                        for child_key, child_value in item.items()
+                    }
+                else:
+                    normalized_items[key] = normalize(item)
+            return normalized_items
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        return value
+
+    normalized = normalize(schema)
+    if not isinstance(normalized, dict):
+        raise ValueError("严格 JSON Schema 必须是对象")
+    _validate_strict_json_schema_contract(normalized)
+    return normalized
+
+
+def _validate_strict_json_schema_contract(
+    schema: dict[str, object],
+    *,
+    path: str = "$",
+) -> None:
+    if schema.get("type") == "object":
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            raise ValueError(f"严格 JSON Schema 的对象缺少 properties: {path}")
+        if schema.get("additionalProperties") is not False:
+            raise ValueError(
+                f"严格 JSON Schema 的对象必须禁止额外字段: {path}"
+            )
+        required = schema.get("required")
+        if not isinstance(required, list) or set(required) != set(properties):
+            raise ValueError(
+                f"严格 JSON Schema 的对象必须将全部属性标记为 required: {path}"
+            )
+
+    for key, value in schema.items():
+        if isinstance(value, dict):
+            _validate_strict_json_schema_contract(
+                value,
+                path=f"{path}.{key}",
+            )
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                if isinstance(item, dict):
+                    _validate_strict_json_schema_contract(
+                        item,
+                        path=f"{path}.{key}[{index}]",
+                    )
+
+
+def _extract_structured_output_control(
+    payload: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    request_payload = dict(payload)
+    raw_control = request_payload.pop(STRUCTURED_OUTPUT_CONTROL_KEY, None)
+    control = dict(raw_control) if isinstance(raw_control, dict) else None
+    return request_payload, control
+
+
+def _structured_output_format(control: dict[str, object]) -> dict[str, object] | None:
+    mode = control.get("mode")
+    if mode == "json_object":
+        return {"type": "json_object"}
+    if mode != "json_schema_strict":
+        return None
+    schema = control.get("schema")
+    if not isinstance(schema, dict):
+        raise ValueError("严格 JSON Schema 模式缺少有效 schema")
+    return {
+        "type": "json_schema",
+        "name": str(control.get("schema_name") or "structured_response"),
+        "strict": True,
+        "schema": schema,
+    }
+
+
+def build_chat_completions_payload(payload: dict[str, object]) -> dict[str, object]:
+    request_payload, control = _extract_structured_output_control(payload)
+    if control is None:
+        return request_payload
+    output_format = _structured_output_format(control)
+    if output_format is None:
+        return request_payload
+    if output_format.get("type") == "json_schema":
+        request_payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                key: value
+                for key, value in output_format.items()
+                if key != "type"
+            },
+        }
+    else:
+        request_payload["response_format"] = output_format
+    return request_payload
 
 
 def is_deepseek_profile(profile: LLMProfile) -> bool:
@@ -2116,6 +2495,7 @@ def compute_duration_ms(start: float) -> int:
 
 
 def build_responses_payload(payload: dict[str, object]) -> dict[str, object]:
+    payload, control = _extract_structured_output_control(payload)
     request_payload: dict[str, object] = {
         "model": payload["model"],
         "input": _build_responses_input(payload.get("messages", [])),
@@ -2133,6 +2513,10 @@ def build_responses_payload(payload: dict[str, object]) -> dict[str, object]:
         request_payload["prompt_cache_key"] = payload["prompt_cache_key"]
     if payload.get("prompt_cache_retention") is not None:
         request_payload["prompt_cache_retention"] = payload["prompt_cache_retention"]
+    if control is not None:
+        output_format = _structured_output_format(control)
+        if output_format is not None:
+            request_payload["text"] = {"format": output_format}
     return request_payload
 
 
@@ -2274,6 +2658,63 @@ def _normalize_match_evaluation_result(result: MatchEvaluationResult) -> MatchEv
     result.risk_points = _normalize_string_list(result.risk_points, 5)
     result.keywords = _normalize_string_list(result.keywords, 6)
     return result
+
+
+def _draft_generation_wire_to_result(
+    result: DraftGenerationWireResult,
+) -> DraftGenerationResult:
+    blocks: list[dict[str, object]] = []
+    for block in result.blocks:
+        if block.type == "paragraph":
+            if len(block.items) != 1:
+                raise LLMRuntimeError("模型返回的 paragraph 必须恰好包含一个 items 项")
+            blocks.append(
+                {
+                    "type": "paragraph",
+                    "children": _draft_body_item_to_nodes(block.items[0]),
+                }
+            )
+            continue
+        if not block.items:
+            raise LLMRuntimeError("模型返回的列表正文不能为空")
+        blocks.append(
+            {
+                "type": block.type,
+                "items": [
+                    _draft_body_item_to_nodes(item)
+                    for item in block.items
+                ],
+            }
+        )
+
+    return _normalize_draft_generation_result(
+        DraftGenerationResult(
+            subject=result.subject,
+            rich_body={"type": "doc", "blocks": blocks},
+        )
+    )
+
+
+def _draft_body_item_to_nodes(item: DraftBodyItemWire) -> list[dict[str, object]]:
+    if not item.runs:
+        raise LLMRuntimeError("模型返回的富文本 items.runs 不能为空")
+
+    nodes: list[dict[str, object]] = []
+    for run in item.runs:
+        node: dict[str, object] = {"type": "text", "text": run.text}
+        href = run.href.strip()
+        if href:
+            if not href.startswith(("http://", "https://", "mailto:")):
+                raise LLMRuntimeError("模型返回了不支持的富文本链接协议")
+            node = {"type": "link", "href": href, "children": [node]}
+        if run.emphasis:
+            node = {"type": "emphasis", "children": [node]}
+        if run.strong:
+            node = {"type": "strong", "children": [node]}
+        nodes.append(node)
+        if run.line_break_after:
+            nodes.append({"type": "line_break"})
+    return nodes
 
 
 def _normalize_draft_generation_result(result: DraftGenerationResult) -> DraftGenerationResult:

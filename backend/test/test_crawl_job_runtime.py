@@ -37,7 +37,42 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     save_candidates,
 )
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.services.crawler_structured_output import (
+    CandidateEnrichmentWirePayload,
+    CandidateFieldConfidenceWire,
+    ProfessorCandidateWirePayload,
+)
+from app.services.llm_runtime import (
+    ChatCompletionResult,
+    ChatCompletionUsage,
+    LLMRuntimeAdaptation,
+    LLMRuntimeError,
+)
+
+
+def _candidate_wire(
+    *,
+    name: str = "张三",
+    email: str = "",
+    confidence: float = 0.9,
+) -> ProfessorCandidateWirePayload:
+    return ProfessorCandidateWirePayload(
+        name=name,
+        email=email,
+        title="教授",
+        university="example university",
+        school="computer school",
+        department="",
+        research_direction="机器学习",
+        recent_papers=[],
+        profile_url="https://example.edu/faculty/zhang",
+        source_url="https://example.edu/faculty/zhang",
+        confidence=confidence,
+        field_confidence=[
+            CandidateFieldConfidenceWire(field="name", confidence=0.95),
+        ],
+        evidence_summary="页面包含姓名和职称",
+    )
 
 
 class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -219,7 +254,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ensure_adaptation.await_count, 1)
         invalidate_endpoint.assert_not_awaited()
 
-    async def test_direct_structured_llm_uses_shared_endpoint_retry_wrapper(self) -> None:
+    async def test_direct_structured_llm_uses_shared_structured_output_adaptation(self) -> None:
         profile = LLMProfile(
             name="relay",
             provider="openai",
@@ -236,12 +271,13 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             start_url="https://example.edu/faculty",
             llm_adaptation=adaptation,
         )
-        response = type("FakeResponse", (), {"content": '{"name":"张三"}'})()
+        completion = ChatCompletionResult(content='{"name":"张三"}')
 
         with patch(
-            "app.services.crawl_job_runtime.invoke_crawler_llm_with_endpoint_retry",
-            new=AsyncMock(return_value=(response, adaptation)),
-            create=True,
+            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            new=AsyncMock(
+                return_value=(completion, _candidate_wire(), "json_schema_strict")
+            ),
         ) as invoke_mock:
             candidate = await extract_profile_candidate_with_llm(ctx, profile, "张三 教授")
 
@@ -250,6 +286,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(invoke_mock.await_args.args[0], self.session_factory)
         self.assertIs(invoke_mock.await_args.args[1], profile)
         self.assertIs(invoke_mock.await_args.args[2], adaptation)
+        self.assertIs(
+            invoke_mock.await_args.kwargs["result_model"],
+            ProfessorCandidateWirePayload,
+        )
 
     async def test_crawl_job_has_pending_work_tracks_pending_chunks(self) -> None:
         async with self.session_factory() as session:
@@ -902,31 +942,14 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             entry_type="profile",
         )
 
-        class FakeLLMMessage:
-            content = json.dumps(
-                {
-                    "name": "张三",
-                    "email": "zhang@example.edu",
-                    "title": "教授",
-                    "research_direction": "机器学习",
-                    "profile_url": "https://example.edu/faculty/zhang",
-                    "source_url": "https://example.edu/faculty/zhang",
-                    "confidence": 0.9,
-                },
-                ensure_ascii=False,
-            )
-            response_metadata = {
-                "token_usage": {
-                    "prompt_tokens": 31,
-                    "completion_tokens": 17,
-                    "total_tokens": 48,
-                }
-            }
-
-        class FakeModel:
-            async def ainvoke(self, prompt: str) -> FakeLLMMessage:
-                _ = prompt
-                return FakeLLMMessage()
+        completion = ChatCompletionResult(
+            content='{"name":"张三"}',
+            usage=ChatCompletionUsage(
+                prompt_tokens=31,
+                completion_tokens=17,
+                total_tokens=48,
+            ),
+        )
 
         async def fake_crawl_page_with_browser_fallback(
             ctx: CrawlToolContext,
@@ -949,8 +972,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.build_faculty_crawler_model",
-            return_value=FakeModel(),
+            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            new=AsyncMock(
+                return_value=(completion, _candidate_wire(email="zhang@example.edu"), "json_object")
+            ),
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -960,7 +985,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.output_tokens, 17)
         self.assertEqual(run.total_tokens, 48)
 
-    async def test_extract_profile_candidate_with_llm_retries_after_invalid_json_response(self) -> None:
+    async def test_extract_profile_candidate_with_llm_does_not_repair_invalid_output(self) -> None:
         job_id = await self._create_default_profile_and_job(
             start_url="https://example.edu/faculty/zhang",
             entry_type="profile",
@@ -974,42 +999,20 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             session_factory=self.session_factory,
         )
 
-        class FakeModel:
-            def __init__(self) -> None:
-                self.responses = [
-                    '{"name":"zhangsan","confidence":"high"',
-                    """```json
-                    {
-                      "name": "zhangsan",
-                      "email": "zhang@example.edu",
-                      "confidence": 0.9
-                    }
-                    ```""",
-                ]
-                self.prompts: list[str] = []
-
-            async def ainvoke(self, prompt: str) -> str:
-                self.prompts.append(prompt)
-                return self.responses[len(self.prompts) - 1]
-
-        fake_model = FakeModel()
-
         with patch(
-            "app.services.crawl_job_runtime.build_faculty_crawler_model",
-            return_value=fake_model,
-        ):
-            candidate = await extract_profile_candidate_with_llm(
-                ctx,
-                llm_profile,
-                "zhangsan\nemail: zhang@example.edu",
-            )
+            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            new=AsyncMock(side_effect=LLMRuntimeError("模型返回的 JSON 结构无效")),
+        ) as request_mock:
+            with self.assertRaisesRegex(ValueError, "JSON 结构无效"):
+                await extract_profile_candidate_with_llm(
+                    ctx,
+                    llm_profile,
+                    "zhangsan\nemail: zhang@example.edu",
+                )
 
-        self.assertEqual(candidate.name, "zhangsan")
-        self.assertEqual(candidate.email, "zhang@example.edu")
-        self.assertEqual(candidate.confidence, 0.9)
-        self.assertEqual(len(fake_model.prompts), 2)
+        request_mock.assert_awaited_once()
 
-    async def test_extract_profile_candidate_with_llm_parses_wrapped_json_and_semantic_confidence(self) -> None:
+    async def test_extract_profile_candidate_with_llm_converts_wire_metadata(self) -> None:
         job_id = await self._create_default_profile_and_job(
             start_url="https://example.edu/faculty/zhang",
             entry_type="profile",
@@ -1023,21 +1026,19 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             session_factory=self.session_factory,
         )
 
-        class FakeModel:
-            async def ainvoke(self, prompt: str) -> str:
-                _ = prompt
-                return """The result is:
-```json
-{
-  "name": "zhangsan",
-  "email": "zhang@example.edu",
-  "confidence": "high"
-}
-```"""
-
         with patch(
-            "app.services.crawl_job_runtime.build_faculty_crawler_model",
-            return_value=FakeModel(),
+            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            new=AsyncMock(
+                return_value=(
+                    ChatCompletionResult(content="{}"),
+                    _candidate_wire(
+                        name="zhangsan",
+                        email="zhang@example.edu",
+                        confidence=0.9,
+                    ),
+                    "json_object",
+                )
+            ),
         ):
             candidate = await extract_profile_candidate_with_llm(
                 ctx,
@@ -1049,7 +1050,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate.email, "zhang@example.edu")
         self.assertEqual(candidate.confidence, 0.9)
 
-    async def test_enrich_candidate_profile_with_llm_parses_wrapped_json_response(self) -> None:
+    async def test_enrich_candidate_profile_with_llm_converts_wire_result(self) -> None:
         job_id = await self._create_default_profile_and_job()
         llm_profile = await self._get_default_llm_profile()
         ctx = CrawlToolContext(
@@ -1075,20 +1076,21 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             confidence=0.0,
         )
 
-        class FakeModel:
-            async def ainvoke(self, prompt: str) -> str:
-                _ = prompt
-                return """```json
-                {
-                  "email": "zhang@example.edu",
-                  "department": "AI Lab",
-                  "recent_papers": ["Paper A"]
-                }
-                ```"""
-
         with patch(
-            "app.services.crawl_job_runtime.build_faculty_crawler_model",
-            return_value=FakeModel(),
+            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            new=AsyncMock(
+                return_value=(
+                    ChatCompletionResult(content="{}"),
+                    CandidateEnrichmentWirePayload(
+                        email="zhang@example.edu",
+                        title="",
+                        department="AI Lab",
+                        research_direction="",
+                        recent_papers=["Paper A"],
+                    ),
+                    "json_schema_strict",
+                )
+            ),
         ):
             enrichment = await enrich_candidate_profile_with_llm(
                 ctx,

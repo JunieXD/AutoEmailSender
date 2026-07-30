@@ -15,8 +15,11 @@ from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 from app.services.llm_runtime import ensure_llm_runtime_adaptation
+from app.services.crawler_structured_output import (
+    CandidateEnrichmentWirePayload,
+    request_crawler_structured_completion,
+)
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.services.professor_information_enrichment import apply_enrichment_to_professor
 
@@ -272,38 +275,21 @@ async def enrich_candidate_profile_with_llm_with_usage(
     page_text: str,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     from app.services.crawl_job_runtime import build_candidate_enrichment_prompt
-    from app.services.crawl_job_runtime import _extract_model_message_content, _build_structured_retry_prompt
-    from app.services.crawl_job_runtime import DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS
-    from app.services.crawl_job_runtime import build_faculty_crawler_model
-    from app.services.llm_runtime import LLMRuntimeError, parse_structured_result
 
     prompt = build_candidate_enrichment_prompt(candidate, page_text)
-    current_prompt = prompt
-    last_error: Exception | None = None
-    current_adaptation = ctx.llm_adaptation
-    for attempt in range(DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS):
-        response, current_adaptation = await invoke_crawler_llm_with_endpoint_retry(
-            ctx.session_factory,
-            llm_profile,
-            current_adaptation,
-            prompt=current_prompt,
-            build_model=build_faculty_crawler_model,
-        )
-        content = _extract_model_message_content(response)
-        if not content:
-            last_error = ValueError("模型补全返回空响应")
-        else:
-            try:
-                payload = parse_structured_result(content, CandidateEnrichmentPayload)
-                return payload, extract_token_usage_from_llm_response(response), content
-            except LLMRuntimeError as exc:
-                last_error = exc
-        if attempt + 1 >= DIRECT_LLM_STRUCTURED_MAX_ATTEMPTS:
-            break
-        current_prompt = _build_structured_retry_prompt(original_prompt=prompt, parse_error=str(last_error))
-    if last_error is None:
-        raise ValueError("模型补全返回空响应")
-    raise ValueError(f"模型补全返回空响应: {last_error}")
+    completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
+        ctx.session_factory,
+        llm_profile,
+        ctx.llm_adaptation,
+        prompt=prompt,
+        result_model=CandidateEnrichmentWirePayload,
+    )
+    payload = CandidateEnrichmentPayload.model_validate(wire_payload.model_dump())
+    return (
+        payload,
+        extract_token_usage_from_llm_response(completion),
+        completion.content,
+    )
 
 
 async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:

@@ -592,7 +592,7 @@ class CrawlerToolTests(unittest.TestCase):
             page_text="方玉明，江西财经大学教授，研究方向：计算机视觉。",
         )
 
-        self.assertIn("必须使用英文键", prompt)
+        self.assertIn("候选对象必须完整包含英文键", prompt)
         self.assertIn("字段值尽量保持页面原文", prompt)
         self.assertIn("不要翻译、音译或拼音化", prompt)
         self.assertIn("如果正文出现该导师的邮箱", prompt)
@@ -603,7 +603,9 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("输出示例", prompt)
         self.assertIn('"field_confidence"', prompt)
         self.assertIn('"recent_papers": []', prompt)
-        self.assertIn('"evidence"', prompt)
+        self.assertIn('"evidence_summary"', prompt)
+        self.assertIn('"field": "name"', prompt)
+        self.assertNotIn('"evidence":', prompt)
 
     def test_candidate_enrichment_payload_defaults(self) -> None:
         payload = CandidateEnrichmentPayload.model_validate({})

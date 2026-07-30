@@ -147,6 +147,37 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         )
 
         self.assertEqual(document.blocks[0].text, "{{year}}年{{month}}月{{day}}日")
+        self.assertEqual(document.blocks[0].rewrite_text, "[[P1]]年[[P2]]月[[P3]]日")
+
+    def test_build_draft_rewrite_document_protects_literal_dates_and_times(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>计划于2026年5月21日 09:30联系，参考2024-2025年的经历。</p>",
+            {},
+        )
+
+        self.assertEqual(
+            document.blocks[0].rewrite_text,
+            "计划于[[P1]] [[P2]]联系，参考[[P3]]年的经历。",
+        )
+        self.assertEqual(
+            [token.value for token in document.protected_tokens],
+            ["2026年5月21日", "09:30", "2024-2025"],
+        )
+
+    def test_build_draft_rewrite_document_excludes_paragraphs_inside_table(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>正文。</p><table><tr><td><p>表格内部。</p></td></tr></table><p>结尾。</p>",
+            {"research_direction": "Agent"},
+        )
+
+        self.assertEqual(
+            [(block.segment_id, block.type, block.text) for block in document.blocks],
+            [
+                ("seg_1", "paragraph", "正文。"),
+                ("seg_2", "table", "表格内部。"),
+                ("seg_3", "paragraph", "结尾。"),
+            ],
+        )
 
     def test_select_dominant_font_and_size_uses_visible_char_count(self) -> None:
         html = (
@@ -195,7 +226,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
 
         document = build_draft_rewrite_document(
             (
-                "<p>李老师，您好：</p>"
+                "<p>李老师，您好：<u>欢迎</u></p>"
                 '<table style="border-collapse:collapse"><tbody><tr><td>原表格</td></tr></tbody></table>'
             ),
             build_template_context(identity, professor),
@@ -206,10 +237,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             [
                 {
                     "segment_id": "seg_1",
-                    "runs": [
-                        {"text": "李老师，您好："},
-                        {"text": "欢迎", "marks": ["underline"]},
-                    ],
+                    "text": "李老师，您好：[[S1]]欢迎[[/S1]]了解[[F1]]方向。",
                 }
             ],
         )
@@ -252,25 +280,107 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             document,
             [
                 {
-                    "segment_id": "seg_1",
-                    "runs": [{"text": "尊敬的王教授："}],
-                },
-                {
                     "segment_id": "seg_2",
-                    "runs": [{"text": "改写后的正文。"}],
-                },
-                {
-                    "segment_id": "seg_3",
-                    "runs": [{"text": "研一（Agent方向）"}],
+                    "text": "改写后的正文，关注[[F1]]方向。",
                 },
             ],
         )
 
         self.assertIn("尊敬的王俊杰教授：", result.text)
-        self.assertIn("改写后的正文。", result.text)
+        self.assertIn("改写后的正文，关注Agent方向。", result.text)
         self.assertIn("研一", result.html)
         self.assertNotIn("王教授", result.text)
-        self.assertNotIn("Agent方向", result.html)
+        self.assertIn("Agent方向", result.html)
+
+    def test_apply_replacements_preserves_font_region_and_block_style(self) -> None:
+        document = build_draft_rewrite_document(
+            (
+                '<p style="font-family:宋体;font-size:12pt;line-height:1.5">'
+                '我是学生，<span style="font-family:楷体;font-size:12pt">（学校说明）</span>'
+                '<strong>成绩优秀</strong>。</p>'
+            ),
+            {"research_direction": "Agent"},
+        )
+        self.assertEqual(len(document.blocks[0].style_regions), 2)
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [
+                {
+                    "segment_id": "seg_1",
+                    "text": (
+                        "我是学生，[[S1]]（学校背景）[[/S1]]"
+                        "并且[[S2]]专业排名第一[[/S2]]，希望研究[[F1]]方向。"
+                    ),
+                },
+            ],
+        )
+
+        self.assertIn("font-family:楷体", result.html)
+        self.assertIn("<strong>", result.html)
+        self.assertIn("line-height:1.5", result.html)
+        self.assertNotIn("[[S", result.html)
+        self.assertNotIn("[[F", result.html)
+
+    def test_apply_replacements_preserves_all_supported_inline_styles(self) -> None:
+        document = build_draft_rewrite_document(
+            (
+                '<p style="font-family:Arial;font-size:12pt;color:#111">普通'
+                "<u>下划线</u><em>斜体</em>"
+                '<a href="https://example.com/profile">链接</a>'
+                '<span style="font-family:KaiTi;font-size:14pt;color:#f00">彩色</span>'
+                "</p>"
+            ),
+            {"research_direction": "Agent"},
+        )
+        self.assertEqual(len(document.blocks[0].style_regions), 4)
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [
+                {
+                    "segment_id": "seg_1",
+                    "text": (
+                        "普通[[S1]]新下划线[[/S1]][[S2]]新斜体[[/S2]]"
+                        "[[S3]]新链接[[/S3]][[S4]]新彩色[[/S4]]，研究[[F1]]。"
+                    ),
+                },
+            ],
+        )
+
+        self.assertIn("<u>", result.html)
+        self.assertIn("<em>", result.html)
+        self.assertIn('href="https://example.com/profile"', result.html)
+        self.assertIn("font-family:KaiTi", result.html)
+        self.assertIn("font-size:14pt", result.html)
+        self.assertIn("color:#f00", result.html)
+        self.assertIn("Agent", result.text)
+
+    def test_apply_replacements_rejects_missing_style_region(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>普通文本<strong>重点</strong>。</p>",
+            {"research_direction": "Agent"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "样式区域"):
+            apply_draft_rewrite_replacements(
+                document,
+                [{"segment_id": "seg_1", "text": "普通文本重点，关注[[F1]]。"}],
+            )
+
+    def test_apply_replacements_does_not_duplicate_fact_already_in_table(self) -> None:
+        document = build_draft_rewrite_document(
+            "<table><tr><td>{{research_direction}}</td></tr></table><p>正文。</p>",
+            {"research_direction": "Agent"},
+        )
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [{"segment_id": "seg_2", "text": "改写后的正文。"}],
+        )
+
+        self.assertEqual(result.text.count("Agent"), 1)
+        self.assertNotIn("[[F1]]", result.html)
 
 
 if __name__ == "__main__":
