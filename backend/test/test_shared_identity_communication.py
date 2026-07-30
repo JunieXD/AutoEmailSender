@@ -384,6 +384,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
 
         summary = dashboard.email.summary
         self.assertEqual(summary.sent_count, 2)
+        self.assertEqual(summary.sent_professor_count, 2)
+        self.assertEqual(summary.total_professor_count, 2)
+        self.assertEqual(summary.sent_professor_rate, 1.0)
         self.assertEqual(summary.contacted_professor_count, 2)
         self.assertEqual(summary.replied_count, 1)
         self.assertEqual(summary.reply_rate, 0.5)

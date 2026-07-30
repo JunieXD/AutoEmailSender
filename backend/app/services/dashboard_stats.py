@@ -113,6 +113,15 @@ async def build_dashboard_overview(
     }
     latest_match_score_by_professor = _build_latest_match_score_by_professor(tasks_by_professor)
     professor_ids = [professor.id for professor in professors]
+    email_professor_ids = [
+        professor.id
+        for professor in professors
+        if _professor_matches_school_filters(
+            professor,
+            university=email_university,
+            school=email_school,
+        )
+    ]
     contact_status_by_professor = await build_contact_status_by_professor(
         session,
         identity_id=identity_id,
@@ -145,7 +154,7 @@ async def build_dashboard_overview(
         tasks=tasks,
         identity_id=identity_id,
         communication_identity_ids=communication_scope.identity_ids,
-        professor_ids=professor_ids,
+        professor_ids=email_professor_ids,
         professor_status_by_id=professor_status_by_id,
         latest_task_by_professor=latest_task_by_professor,
         threshold=identity.match_threshold or HIGH_SCORE_DEFAULT,
@@ -419,6 +428,12 @@ async def _build_email_section(
         sent_events.append((task.id, task.professor_id, source_time))
         active_sent_count += 1
 
+    scoped_professor_ids = set(professor_ids)
+    sent_professor_ids = {
+        professor_id
+        for _, professor_id, _ in sent_events
+        if professor_id in scoped_professor_ids
+    }
     contacted_professor_ids = {professor_id for _, professor_id, _ in sent_events}
     replied_professor_ids: set[int] = set()
     received_trend_events: list[tuple[int, datetime]] = []
@@ -450,6 +465,13 @@ async def _build_email_section(
         replied_fallback_tasks.append(task)
 
     sent_count = len(sent_events)
+    sent_professor_count = len(sent_professor_ids)
+    total_professor_count = len(scoped_professor_ids)
+    sent_professor_rate = (
+        sent_professor_count / total_professor_count
+        if total_professor_count
+        else 0.0
+    )
     contacted_professor_count = len(contacted_professor_ids)
     replied_count = len(replied_professor_ids)
     send_failed_count = len(failed_tasks)
@@ -478,6 +500,9 @@ async def _build_email_section(
     return DashboardEmailSectionRead(
         summary=DashboardEmailSummaryRead(
             sent_count=sent_count,
+            sent_professor_count=sent_professor_count,
+            total_professor_count=total_professor_count,
+            sent_professor_rate=sent_professor_rate,
             contacted_professor_count=contacted_professor_count,
             replied_count=replied_count,
             reply_rate=reply_rate,

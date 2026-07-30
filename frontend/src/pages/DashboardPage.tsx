@@ -25,6 +25,7 @@ import {
   Reply,
   Send,
   Star,
+  UserRoundCheck,
   Users,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -123,10 +124,6 @@ const matchTooltipHeight = 132;
 
 const mentorDetailGridStyle = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 28rem), 1fr))',
-};
-
-const emailMetricsGridStyle = {
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 16rem), 1fr))',
 };
 
 const statisticsSectionItems: StatisticsSectionNavItem[] = [
@@ -970,6 +967,17 @@ export const DashboardPage = () => {
     const contactedProfessorCount = Number.isFinite(summary.contacted_professor_count)
       ? summary.contacted_professor_count
       : summary.sent_count;
+    const sentProfessorCount = Number.isFinite(summary.sent_professor_count)
+      ? summary.sent_professor_count
+      : contactedProfessorCount;
+    const totalProfessorCount = Number.isFinite(summary.total_professor_count)
+      ? summary.total_professor_count
+      : overview.mentor.summary.total_professors;
+    const sentProfessorRate = Number.isFinite(summary.sent_professor_rate)
+      ? summary.sent_professor_rate
+      : totalProfessorCount > 0
+        ? sentProfessorCount / totalProfessorCount
+        : 0;
     return [
       {
         title: '已发送邮件',
@@ -977,6 +985,13 @@ export const DashboardPage = () => {
         helper: communicationIdentityIds.length > 1 ? '共享通信' : '当前身份下',
         icon: <Send className="h-5 w-5" />,
         tone: 'teal' as const,
+      },
+      {
+        title: '导师触达率',
+        value: formatPercent(sentProfessorRate),
+        helper: `已发送 ${formatNumber(sentProfessorCount)} / ${formatNumber(totalProfessorCount)} 位导师`,
+        icon: <UserRoundCheck className="h-5 w-5" />,
+        tone: 'amber' as const,
       },
       {
         title: '已回复',
@@ -1206,7 +1221,10 @@ export const DashboardPage = () => {
                   }}
                 />
               </div>
-              <div data-testid="email-metrics-grid" className="grid gap-4" style={emailMetricsGridStyle}>
+              <div
+                data-testid="email-metrics-grid"
+                className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+              >
                 {emailMetrics.map((metric) => (
                   <MetricCard key={metric.title} {...metric} />
                 ))}

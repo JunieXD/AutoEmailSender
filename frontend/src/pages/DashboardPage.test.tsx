@@ -192,6 +192,9 @@ const overview: DashboardOverviewDTO = {
   email: {
     summary: {
       sent_count: 2,
+      sent_professor_count: 2,
+      total_professor_count: 3,
+      sent_professor_rate: 2 / 3,
       contacted_professor_count: 2,
       replied_count: 1,
       reply_rate: 0.5,
@@ -378,9 +381,12 @@ describe("DashboardPage", () => {
     expect(screen.getByLabelText("邮件触达学院筛选")).toBeInTheDocument();
     expect(screen.getByTestId("email-outreach-filters").querySelector("select")).toBeNull();
     expect(screen.getByTestId("email-outreach-filters")).not.toHaveTextContent("刷新统计");
-    expect(screen.getByTestId("email-metrics-grid").getAttribute("style") ?? "").toContain("repeat(auto-fit");
-    expect(screen.getByTestId("email-metrics-grid")).not.toHaveClass("md:grid-cols-3");
-    expect(screen.getByTestId("email-metrics-grid")).not.toHaveClass("md:grid-cols-2");
+    expect(screen.getByTestId("email-metrics-grid")).toHaveClass("sm:grid-cols-2");
+    expect(screen.getByTestId("email-metrics-grid")).toHaveClass("lg:grid-cols-4");
+    const outreachMetric = screen.getByText("导师触达率").closest("article");
+    expect(outreachMetric).not.toBeNull();
+    expect(within(outreachMetric as HTMLElement).getByText("67%")).toBeInTheDocument();
+    expect(within(outreachMetric as HTMLElement).getByText("已发送 2 / 3 位导师")).toBeInTheDocument();
     expect(screen.getByTestId("email-trend-grid")).toHaveClass("grid-cols-1");
     expect(screen.getByTestId("email-trend-grid")).not.toHaveClass("xl:grid-cols-2");
     expect(screen.getByTestId("email-trend-card")).toBeInTheDocument();

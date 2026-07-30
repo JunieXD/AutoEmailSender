@@ -1258,6 +1258,9 @@ export interface DashboardMentorSectionDTO {
 
 export interface DashboardEmailSummaryDTO {
   sent_count: number;
+  sent_professor_count: number;
+  total_professor_count: number;
+  sent_professor_rate: number;
   contacted_professor_count: number;
   replied_count: number;
   reply_rate: number;

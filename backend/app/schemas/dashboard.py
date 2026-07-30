@@ -121,6 +121,9 @@ class DashboardMentorSectionRead(ApiSchema):
 
 class DashboardEmailSummaryRead(ApiSchema):
     sent_count: int = 0
+    sent_professor_count: int = 0
+    total_professor_count: int = 0
+    sent_professor_rate: float = 0.0
     contacted_professor_count: int = 0
     replied_count: int = 0
     reply_rate: float = 0.0

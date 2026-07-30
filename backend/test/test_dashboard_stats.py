@@ -329,6 +329,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertIn("邮箱", incomplete_by_name["赵老师"].missing_fields)
 
         self.assertEqual(result.email.summary.sent_count, 3)
+        self.assertEqual(result.email.summary.sent_professor_count, 2)
+        self.assertEqual(result.email.summary.total_professor_count, 7)
+        self.assertAlmostEqual(result.email.summary.sent_professor_rate, 2 / 7)
         self.assertEqual(result.email.summary.contacted_professor_count, 2)
         self.assertEqual(result.email.summary.replied_count, 1)
         self.assertEqual(result.email.summary.reply_rate, 0.5)
@@ -380,6 +383,7 @@ class DashboardStatsTests(unittest.TestCase):
         result = self._run_async(run_query())
 
         self.assertEqual(result.email.summary.sent_count, 3)
+        self.assertEqual(result.email.summary.sent_professor_count, 2)
         self.assertEqual(result.email.summary.contacted_professor_count, 2)
         self.assertEqual(result.email.summary.send_failed_count, 1)
         self.assertEqual(result.email.summary.send_failed_rate, 0.25)
@@ -440,6 +444,7 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertNotIn("张老师", {item.name for item in result.mentor.high_score_uncontacted})
         self.assertIn("孙老师", {item.name for item in result.mentor.high_score_uncontacted})
         self.assertEqual(result.email.summary.sent_count, 4)
+        self.assertEqual(result.email.summary.sent_professor_count, 3)
         self.assertEqual(result.email.summary.contacted_professor_count, 3)
 
     def test_dashboard_service_counts_received_log_without_task_as_contacted_and_replied(self) -> None:
@@ -491,6 +496,9 @@ class DashboardStatsTests(unittest.TestCase):
         result = self._run_async(run_query())
 
         self.assertEqual(result.email.summary.sent_count, 0)
+        self.assertEqual(result.email.summary.sent_professor_count, 0)
+        self.assertEqual(result.email.summary.total_professor_count, 1)
+        self.assertEqual(result.email.summary.sent_professor_rate, 0.0)
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 1)
         self.assertEqual(result.email.summary.reply_rate, 1.0)
@@ -621,6 +629,9 @@ class DashboardStatsTests(unittest.TestCase):
         result = self._run_async(run_query())
 
         self.assertEqual(result.email.summary.sent_count, 1)
+        self.assertEqual(result.email.summary.sent_professor_count, 1)
+        self.assertEqual(result.email.summary.total_professor_count, 1)
+        self.assertEqual(result.email.summary.sent_professor_rate, 1.0)
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 0)
         trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
@@ -697,6 +708,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.mentor.active_filter.university, None)
         self.assertEqual(result.mentor.active_filter.school, None)
         self.assertEqual(result.email.summary.sent_count, 2)
+        self.assertEqual(result.email.summary.sent_professor_count, 1)
+        self.assertEqual(result.email.summary.total_professor_count, 2)
+        self.assertEqual(result.email.summary.sent_professor_rate, 0.5)
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 0)
         self.assertEqual(result.email.summary.reply_rate, 0.0)
@@ -721,9 +735,30 @@ class DashboardStatsTests(unittest.TestCase):
         result = self._run_async(run_query())
 
         self.assertEqual(result.email.summary.sent_count, 1)
+        self.assertEqual(result.email.summary.sent_professor_count, 1)
+        self.assertEqual(result.email.summary.total_professor_count, 7)
+        self.assertAlmostEqual(result.email.summary.sent_professor_rate, 1 / 7)
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 0)
         self.assertEqual(result.email.summary.reply_rate, 0.0)
+
+    def test_dashboard_service_returns_zero_sent_professor_rate_for_empty_email_scope(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="不存在的大学",
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.sent_professor_count, 0)
+        self.assertEqual(result.email.summary.total_professor_count, 0)
+        self.assertEqual(result.email.summary.sent_professor_rate, 0.0)
 
 
     def test_dashboard_service_excludes_replies_outside_date_range(self) -> None:
@@ -775,6 +810,9 @@ class DashboardStatsTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["mentor"]["summary"]["total_professors"], 7)
         self.assertEqual(payload["email"]["summary"]["sent_count"], 3)
+        self.assertEqual(payload["email"]["summary"]["sent_professor_count"], 2)
+        self.assertEqual(payload["email"]["summary"]["total_professor_count"], 7)
+        self.assertAlmostEqual(payload["email"]["summary"]["sent_professor_rate"], 2 / 7)
         self.assertEqual(payload["email"]["follow_ups"][0]["task_id"], 4)
 
     def test_dashboard_endpoint_does_not_require_llm_profile(self) -> None:
@@ -902,6 +940,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["mentor"]["active_filter"]["university"], None)
         self.assertEqual(payload["mentor"]["active_filter"]["school"], None)
         self.assertEqual(payload["email"]["summary"]["sent_count"], 2)
+        self.assertEqual(payload["email"]["summary"]["sent_professor_count"], 1)
+        self.assertEqual(payload["email"]["summary"]["total_professor_count"], 2)
+        self.assertEqual(payload["email"]["summary"]["sent_professor_rate"], 0.5)
         self.assertEqual(payload["email"]["summary"]["contacted_professor_count"], 1)
 
     def test_dashboard_endpoint_rejects_missing_identity(self) -> None:
