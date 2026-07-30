@@ -130,7 +130,6 @@ class V2ChunkWirePayload(BaseModel):
 
     candidate_count: int
     candidates: list[ProfessorCandidateWirePayload]
-    discovered_urls: list[str]
 
     @model_validator(mode="before")
     @classmethod
@@ -144,6 +143,7 @@ class V2ChunkWirePayload(BaseModel):
             return value
         normalized = dict(value)
         normalized.pop("chunk_status", None)
+        normalized.pop("discovered_urls", None)
         candidate_count = normalized.get("candidate_count")
         if (
             isinstance(candidate_count, int)

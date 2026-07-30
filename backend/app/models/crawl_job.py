@@ -365,6 +365,18 @@ class CrawlPageTask(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
     normalized_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     original_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    parent_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    discovery_reason: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default=text("'start'"),
+    )
+    expansion_mode: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default=text("'entry'"),
+    )
+    allow_expansion: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))

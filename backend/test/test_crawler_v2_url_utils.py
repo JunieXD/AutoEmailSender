@@ -18,15 +18,50 @@ class CrawlerV2UrlUtilsTests(unittest.TestCase):
             "https://cs.example.edu/people/profile/zhang.html",
         )
 
+    def test_normalize_url_preserves_spa_route_fragments(self) -> None:
+        self.assertEqual(
+            normalize_url(
+                "#/teacher/computer?page=2",
+                base_url="https://welcome.example.edu/directory/#/teacher/computer",
+            ),
+            "https://welcome.example.edu/directory/#/teacher/computer?page=2",
+        )
+
+    def test_normalize_url_still_removes_non_route_fragments(self) -> None:
+        self.assertEqual(
+            normalize_url("https://example.edu/faculty#section"),
+            "https://example.edu/faculty",
+        )
+
     def test_same_domain_allows_subdomain_relationship(self) -> None:
         self.assertTrue(is_same_domain("https://cs.example.edu/a", "https://example.edu/b"))
         self.assertTrue(is_same_domain("https://example.edu/a", "https://cs.example.edu/b"))
         self.assertFalse(is_same_domain("https://evil-example.edu/a", "https://example.edu/b"))
 
+    def test_same_domain_uses_public_suffix_for_sibling_university_subdomains(self) -> None:
+        self.assertTrue(
+            is_same_domain(
+                "https://faculty.csu.edu.cn/teacher/a",
+                "https://cse.csu.edu.cn/faculty",
+            )
+        )
+        self.assertFalse(
+            is_same_domain(
+                "https://faculty.other.edu.cn/teacher/a",
+                "https://cse.csu.edu.cn/faculty",
+            )
+        )
+
     def test_task_dedupe_key_uses_job_and_normalized_url(self) -> None:
         self.assertEqual(
             task_dedupe_key(12, "https://EXAMPLE.edu:443/a#x"),
             "12:https://example.edu/a",
+        )
+
+    def test_task_dedupe_key_keeps_spa_pages_distinct(self) -> None:
+        self.assertNotEqual(
+            task_dedupe_key(12, "https://example.edu/#/teachers?page=1"),
+            task_dedupe_key(12, "https://example.edu/#/teachers?page=2"),
         )
 
 

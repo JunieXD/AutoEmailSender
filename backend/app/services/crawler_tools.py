@@ -4,6 +4,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from html import unescape
 import hashlib
 import ipaddress
@@ -22,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageTask
+from app.services.crawler_domain_policy import registrable_domain_from_hostname
 from app.services.crawler_page_fetch_ledger import (
     PageFetchDecision,
     get_page_fetch_decision,
@@ -53,6 +55,8 @@ MAX_TEXT_CHARS = 12000
 MAX_LINKS = 200
 MAX_HTTP_REDIRECTS = 5
 MAX_RETRIES_FOR_BROWSER_RENDER = 2
+MAX_BROWSER_INTERACTIVE_PAGES = 500
+BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 BROWSER_FALLBACK_STATUS = {403, 412, 429}
 INVALID_PROFILE_PAGE_MARKERS = (
@@ -82,7 +86,6 @@ BROWSER_USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 UNSAFE_CRAWL_URL_MESSAGE = "URL 不允许指向本机、内网或不可解析地址"
-MULTI_LABEL_PUBLIC_SUFFIXES = ("ac.cn", "com.cn", "edu.cn", "gov.cn", "net.cn", "org.cn")
 SAVE_SAME_BATCH_FAILURE_LIMIT = 2
 SAVE_TOTAL_FAILURE_LIMIT = 4
 SAME_BATCH_SAVE_FAILURE_REASON = (
@@ -117,6 +120,14 @@ class PageSnapshot(BaseModel):
     status: Literal["succeeded", "failed"]
     error_message: str | None = None
     suspicious_empty: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserPaginationExpansion:
+    status: Literal["succeeded", "failed"]
+    snapshots: tuple[PageSnapshot, ...] = ()
+    stopped_reason: str | None = None
+    error_message: str | None = None
 
 
 class ProfessorCandidatePayload(BaseModel):
@@ -779,10 +790,19 @@ def is_allowed_crawl_url(start_url: str, candidate_url: str) -> bool:
     candidate_host = (candidate.hostname or "").lower()
     start_domain = _registrable_domain(start_host)
     candidate_domain = _registrable_domain(candidate_host)
-    return start_domain == candidate_domain or _is_same_chinese_university_domain(
-        start_domain,
-        candidate_domain,
-    )
+    return bool(start_domain and start_domain == candidate_domain)
+
+
+def _is_resolved_allowed_crawl_url(start_url: str, candidate_url: str) -> bool:
+    absolute_candidate_url = urljoin(start_url, candidate_url)
+    if not is_allowed_crawl_url(start_url, absolute_candidate_url):
+        return False
+    try:
+        _resolve_safe_public_crawl_url(start_url)
+        _resolve_safe_public_crawl_url(absolute_candidate_url)
+    except ValueError:
+        return False
+    return True
 
 
 def is_safe_public_crawl_url(url: str) -> bool:
@@ -851,6 +871,8 @@ def _resolve_system_host_ips(host: str, port: int) -> tuple[str, ...]:
             ip_address = ipaddress.ip_address(ip_text)
         except ValueError as exc:
             raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+        if _is_unsafe_ip_address(ip_address):
+            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
         normalized_ip = str(ip_address)
         if normalized_ip not in resolved_ips:
             resolved_ips.append(normalized_ip)
@@ -862,30 +884,7 @@ def _default_port_for_scheme(scheme: str) -> int:
 
 
 def _registrable_domain(hostname: str) -> str:
-    normalized = hostname.rstrip(".").lower()
-    labels = [label for label in normalized.split(".") if label]
-    if len(labels) <= 2:
-        return normalized
-
-    suffix = ".".join(labels[-2:])
-    if suffix in MULTI_LABEL_PUBLIC_SUFFIXES and len(labels) >= 3:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
-
-
-def _is_same_chinese_university_domain(left: str, right: str) -> bool:
-    left_stem = _chinese_university_domain_stem(left)
-    right_stem = _chinese_university_domain_stem(right)
-    return left_stem is not None and left_stem == right_stem
-
-
-def _chinese_university_domain_stem(domain: str) -> str | None:
-    if domain.endswith(".edu.cn"):
-        labels = domain.split(".")
-        return labels[-3] if len(labels) >= 3 else None
-    if domain.endswith(".cn") and domain.count(".") == 1:
-        return domain.split(".", 1)[0]
-    return None
+    return registrable_domain_from_hostname(hostname)
 
 
 class _PinnedCrawlNetworkBackend(httpcore.AsyncNetworkBackend):
@@ -1418,7 +1417,16 @@ def _apply_runtime_url_denylist_after_fetch(
     requested_url: str,
     snapshot: PageSnapshot,
 ) -> PageSnapshot:
-    _ = ctx, requested_url
+    if snapshot.status != "succeeded":
+        return snapshot
+    final_url = snapshot.url or requested_url
+    if not is_allowed_crawl_url(ctx.start_url, final_url):
+        ctx.mark_denied_url(final_url, "最终地址不在允许的同校公网域名范围内")
+        return _failed_snapshot(
+            url=final_url,
+            fetch_method=snapshot.fetch_method,
+            error_message="最终 URL 不在允许的同校公网域名范围内，已拒绝抓取结果",
+        )
     return snapshot
 
 
@@ -1635,16 +1643,31 @@ async def _crawl_page_with_browser(
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
-    _ = ctx
+    if not _is_resolved_allowed_crawl_url(ctx.start_url, absolute_url):
+        return _failed_snapshot(
+            url=absolute_url,
+            fetch_method="browser",
+            error_message=UNSAFE_CRAWL_URL_MESSAGE,
+        )
     if _should_offload_browser_fetch_to_thread():
-        return await asyncio.to_thread(
+        snapshot = await asyncio.to_thread(
             _run_browser_fetch_with_proactor_loop,
             absolute_url,
             goal,
             intent,
         )
-
-    return await _fetch_page_with_playwright_direct(absolute_url, goal, intent)
+    else:
+        snapshot = await _fetch_page_with_playwright_direct(absolute_url, goal, intent)
+    if snapshot.status == "succeeded" and not _is_resolved_allowed_crawl_url(
+        ctx.start_url,
+        snapshot.url,
+    ):
+        return _failed_snapshot(
+            url=snapshot.url,
+            fetch_method="browser",
+            error_message="浏览器最终 URL 不在允许的同校公网域名范围内",
+        )
+    return snapshot
 
 
 async def _fetch_page_with_playwright_direct(
@@ -1667,6 +1690,269 @@ async def _fetch_page_with_playwright_direct(
         )
 
     return first_result
+
+
+async def expand_browser_pagination(
+    ctx: CrawlToolContext,
+    url: str,
+    *,
+    tag: str,
+    text: str,
+    title: str,
+    aria_label: str,
+    class_tokens: Sequence[str],
+    match_index: int,
+    intent: CrawlPageIntent = "generic",
+    max_pages: int = MAX_BROWSER_INTERACTIVE_PAGES,
+) -> BrowserPaginationExpansion:
+    """Replay one model-selected next-page control and collect each changed state."""
+
+    absolute_url = urljoin(ctx.start_url, url)
+    if not _is_resolved_allowed_crawl_url(ctx.start_url, absolute_url):
+        return BrowserPaginationExpansion(
+            status="failed",
+            stopped_reason="unsafe_url",
+            error_message=UNSAFE_CRAWL_URL_MESSAGE,
+        )
+    target = {
+        "tag": tag,
+        "text": text,
+        "title": title,
+        "ariaLabel": aria_label,
+        "classTokens": list(class_tokens),
+        "matchIndex": max(0, int(match_index)),
+    }
+    if _should_offload_browser_fetch_to_thread():
+        result = await asyncio.to_thread(
+            _run_browser_pagination_with_proactor_loop,
+            absolute_url,
+            target,
+            intent,
+            max_pages,
+        )
+    else:
+        result = await _fetch_browser_pagination_direct(
+            absolute_url,
+            target,
+            intent=intent,
+            max_pages=max_pages,
+        )
+    for snapshot in result.snapshots:
+        if not _is_resolved_allowed_crawl_url(ctx.start_url, snapshot.url):
+            return BrowserPaginationExpansion(
+                status="failed",
+                snapshots=result.snapshots,
+                stopped_reason="unsafe_final_url",
+                error_message="浏览器分页后的最终 URL 不在允许的同校公网域名范围内",
+            )
+    return result
+
+
+async def _fetch_browser_pagination_direct(
+    absolute_url: str,
+    target: dict[str, object],
+    *,
+    intent: CrawlPageIntent,
+    max_pages: int,
+) -> BrowserPaginationExpansion:
+    if async_playwright is None:
+        return BrowserPaginationExpansion(
+            status="failed",
+            stopped_reason="playwright_unavailable",
+            error_message="Playwright browser pagination unavailable",
+        )
+
+    options = _browser_fetch_options_for_intent(intent)
+    browser = None
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(**_playwright_launch_options())
+            context = await browser.new_context(user_agent=options.user_agent)
+            page = await context.new_page()
+            await page.goto(
+                absolute_url,
+                wait_until=options.wait_until,
+                timeout=options.page_timeout_ms,
+            )
+            if options.wait_for:
+                selector = options.wait_for
+                if selector.startswith("css:"):
+                    selector = selector[4:]
+                await page.wait_for_selector(
+                    selector,
+                    timeout=options.wait_for_timeout_ms,
+                )
+            if options.delay_before_return_html_seconds > 0:
+                await page.wait_for_timeout(
+                    options.delay_before_return_html_seconds * 1000
+                )
+
+            initial_html = await page.content()
+            initial_url = str(getattr(page, "url", "") or absolute_url)
+            initial_snapshot = _snapshot_from_browser_html(
+                html=initial_html,
+                final_url=initial_url,
+                absolute_url=absolute_url,
+            )
+            seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
+            initial_link_signature = await _browser_link_signature(page)
+            seen_link_signatures = {initial_link_signature}
+            dynamic_link_pagination = False
+            snapshots: list[PageSnapshot] = []
+            stopped_reason = "page_limit_reached"
+
+            for _ in range(max(1, int(max_pages)) - 1):
+                match = await page.evaluate(
+                    _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT,
+                    target,
+                )
+                if not isinstance(match, dict) or not isinstance(match.get("index"), int):
+                    if snapshots:
+                        stopped_reason = "control_disappeared"
+                        break
+                    return BrowserPaginationExpansion(
+                        status="failed",
+                        stopped_reason="control_not_found",
+                        error_message="重新打开页面后未找到模型选择的分页控件",
+                    )
+                if bool(match.get("disabled")):
+                    stopped_reason = "control_disabled"
+                    break
+
+                body_before = await page.locator("body").inner_text()
+                links_before = await _browser_link_signature(page)
+                await page.locator(str(target["tag"])).nth(int(match["index"])).click(
+                    timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
+                )
+                changed, _, links_after = await _wait_for_browser_content_change(
+                    page,
+                    body_before=body_before,
+                    links_before=links_before,
+                )
+                if not changed:
+                    stopped_reason = "content_unchanged"
+                    break
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=3000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(350)
+                links_after = await _browser_link_signature(page)
+                if links_after and links_after != links_before:
+                    dynamic_link_pagination = True
+                if dynamic_link_pagination and links_after in seen_link_signatures:
+                    stopped_reason = "content_repeated"
+                    break
+                html = await page.content()
+                final_url = str(getattr(page, "url", "") or absolute_url)
+                snapshot = _snapshot_from_browser_html(
+                    html=html,
+                    final_url=final_url,
+                    absolute_url=absolute_url,
+                )
+                fingerprint = _pagination_snapshot_fingerprint(snapshot)
+                if fingerprint in seen_fingerprints:
+                    stopped_reason = "content_repeated"
+                    break
+                seen_fingerprints.add(fingerprint)
+                seen_link_signatures.add(links_after)
+                snapshots.append(snapshot)
+
+            return BrowserPaginationExpansion(
+                status="succeeded",
+                snapshots=tuple(snapshots),
+                stopped_reason=stopped_reason,
+            )
+    except Exception as exc:
+        return BrowserPaginationExpansion(
+            status="failed",
+            stopped_reason="browser_error",
+            error_message=_format_exception_for_snapshot(
+                exc,
+                "Playwright browser pagination failed",
+            ),
+        )
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+
+
+async def _wait_for_browser_content_change(
+    page: Any,
+    *,
+    body_before: str,
+    links_before: tuple[str, ...],
+) -> tuple[bool, str, tuple[str, ...]]:
+    elapsed_ms = 0
+    latest_body = body_before
+    latest_links = links_before
+    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
+        await page.wait_for_timeout(250)
+        elapsed_ms += 250
+        latest_body = await page.locator("body").inner_text()
+        latest_links = await _browser_link_signature(page)
+        if latest_links and latest_links != links_before:
+            return True, latest_body, latest_links
+        if elapsed_ms >= 1500 and _body_content_changed_substantially(
+            body_before,
+            latest_body,
+        ):
+            return True, latest_body, latest_links
+    return False, latest_body, latest_links
+
+
+async def _browser_link_signature(page: Any) -> tuple[str, ...]:
+    values = await page.evaluate(
+        """
+        () => Array.from(document.querySelectorAll('a[href]')).map((element) => {
+          const text = String(element.innerText || '').replace(/\\s+/g, ' ').trim();
+          return `${element.href} ${text}`;
+        })
+        """
+    )
+    if not isinstance(values, list):
+        return ()
+    return tuple(str(value) for value in values)
+
+
+def _body_content_changed_substantially(before: str, after: str) -> bool:
+    if not after or after == before:
+        return False
+    return SequenceMatcher(None, before, after, autojunk=False).ratio() < 0.995
+
+
+def _pagination_snapshot_fingerprint(snapshot: PageSnapshot) -> str:
+    payload = f"{snapshot.url}\n{snapshot.text}\n" + "\n".join(snapshot.links)
+    return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+
+_BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT = """
+(target) => {
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 240);
+  const requiredClasses = Array.isArray(target.classTokens) ? target.classTokens : [];
+  const matches = [];
+  const nodes = Array.from(document.querySelectorAll(target.tag));
+  nodes.forEach((element, index) => {
+    const descendant = element.querySelector('[aria-label]');
+    const ariaLabel = normalize(
+      element.getAttribute('aria-label') || (descendant && descendant.getAttribute('aria-label'))
+    );
+    const classes = new Set(Array.from(element.classList || []));
+    if (target.text && normalize(element.innerText) !== target.text) return;
+    if (target.title && normalize(element.getAttribute('title')) !== target.title) return;
+    if (target.ariaLabel && ariaLabel !== target.ariaLabel) return;
+    if (!requiredClasses.every((token) => classes.has(token))) return;
+    const disabled = Boolean(element.disabled)
+      || normalize(element.getAttribute('aria-disabled')).toLowerCase() === 'true'
+      || Array.from(classes).some((token) => token.toLowerCase().includes('disabled'));
+    matches.push({index, disabled});
+  });
+  return matches[Math.max(0, Number(target.matchIndex) || 0)] || null;
+}
+"""
 
 
 async def _try_playwright_browser_fetch(
@@ -1771,6 +2057,25 @@ def _run_browser_fetch_with_proactor_loop(
 
     ensure_windows_proactor_event_loop_policy()
     return asyncio.run(_fetch_page_with_playwright_direct(absolute_url, goal, intent))
+
+
+def _run_browser_pagination_with_proactor_loop(
+    absolute_url: str,
+    target: dict[str, object],
+    intent: CrawlPageIntent,
+    max_pages: int,
+) -> BrowserPaginationExpansion:
+    from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
+
+    ensure_windows_proactor_event_loop_policy()
+    return asyncio.run(
+        _fetch_browser_pagination_direct(
+            absolute_url,
+            target,
+            intent=intent,
+            max_pages=max_pages,
+        )
+    )
 
 
 def _should_offload_browser_fetch_to_thread() -> bool:

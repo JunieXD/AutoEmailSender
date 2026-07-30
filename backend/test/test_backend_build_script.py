@@ -37,6 +37,7 @@ class BackendBuildScriptTest(unittest.TestCase):
             "pdfplumber",
             "pypdf",
             "playwright",
+            "tldextract",
         ]:
             self.assertIn(f"--collect-all {package_name}", content)
 
@@ -104,6 +105,7 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("--collect-all pdfplumber", content)
         self.assertIn("--collect-all pypdf", content)
         self.assertIn("--collect-all playwright", content)
+        self.assertIn("--collect-all tldextract", content)
         self.assertIn("--collect-all tiktoken", content)
         self.assertIn("--collect-submodules tiktoken_ext", content)
         self.assertIn("--hidden-import tiktoken_ext.openai_public", content)

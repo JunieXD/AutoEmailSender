@@ -34,6 +34,7 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             crawler_v2_chunk_worker,
             crawler_v2_enrichment_worker,
             crawler_v2_profile_extraction,
+            crawler_v2_routing,
             llm_runtime,
         )
 
@@ -52,6 +53,7 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             crawler_v2_chunk_worker.invoke_v2_chunk_agent,
             crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage,
             crawler_v2_profile_extraction.invoke_v2_profile_extraction_agent,
+            crawler_v2_routing._invoke_structured_routing_phase,
         ):
             with self.subTest(function=function.__name__):
                 self.assertIn(
@@ -83,6 +85,11 @@ class StructuredOutputWireContractTests(unittest.TestCase):
         self.assertEqual(violations, [])
 
     def test_every_production_wire_model_is_strict_schema_compatible(self) -> None:
+        from app.services.crawler_v2_routing import (
+            V2EntryRoutingPayload,
+            V2PaginationRoutingPayload,
+        )
+
         models = (
             MatchEvaluationWireResult,
             DraftGenerationWireResult,
@@ -91,6 +98,8 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             CandidateEnrichmentWirePayload,
             V2ChunkWirePayload,
             V2ProfileExtractionWirePayload,
+            V2EntryRoutingPayload,
+            V2PaginationRoutingPayload,
         )
 
         for model in models:

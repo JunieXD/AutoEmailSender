@@ -36,7 +36,9 @@ from app.services.crawler_tools import (
     save_candidate_payloads_shared,
     save_candidate_batch_fingerprint,
     save_candidates,
+    _body_content_changed_substantially,
     _crawl_page_with_browser,
+    _is_resolved_allowed_crawl_url,
     _resolve_safe_public_crawl_url,
 )
 from app.services import crawler_tools
@@ -51,6 +53,21 @@ class CrawlerToolTests(unittest.TestCase):
             university="示例大学",
             school="计算机学院",
             session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+
+    def test_browser_pagination_wait_ignores_only_active_page_number_change(self) -> None:
+        shared = "教师名单 " + ("张三 教授 李四 副教授 " * 80)
+        self.assertFalse(
+            _body_content_changed_substantially(
+                f"{shared} 当前页 1",
+                f"{shared} 当前页 2",
+            )
+        )
+        self.assertTrue(
+            _body_content_changed_substantially(
+                f"{shared} 张三 李四",
+                f"{shared[:300]} 王五 赵六 新一页内容",
+            )
         )
 
     def test_crawl_tool_context_tracks_denied_urls_by_normalized_exact_url(self) -> None:
@@ -353,17 +370,31 @@ class CrawlerToolTests(unittest.TestCase):
                 )
             )
 
-    def test_is_allowed_crawl_url_allows_same_chinese_university_cn_domain(self) -> None:
+    def test_is_allowed_crawl_url_rejects_different_registrable_domain(self) -> None:
         with patch(
             "app.services.crawler_tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 80)),
             ],
         ):
-            self.assertTrue(
+            self.assertFalse(
                 is_allowed_crawl_url(
                     "https://cai.jxufe.edu.cn/lists/26.html",
                     "http://sim.jxufe.cn/static/JDMKL/ymfang.html",
+                )
+            )
+
+    def test_resolved_crawl_url_policy_rejects_private_dns_address(self) -> None:
+        with patch(
+            "app.services.crawler_tools.socket.getaddrinfo",
+            return_value=[
+                (0, 0, 0, "", ("127.0.0.1", 443)),
+            ],
+        ):
+            self.assertFalse(
+                _is_resolved_allowed_crawl_url(
+                    "https://cs.example.edu/faculty",
+                    "https://faculty.example.edu/people/a",
                 )
             )
 
@@ -393,11 +424,11 @@ class CrawlerToolTests(unittest.TestCase):
         with patch(
             "app.services.crawler_tools.socket.getaddrinfo",
             return_value=[
-                (0, 0, 0, "", ("100.64.0.42", 443)),
+                (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
         ):
             resolved = _resolve_safe_public_crawl_url("https://faculty.example.edu")
-            self.assertEqual(resolved.resolved_ips, ("100.64.0.42",))
+            self.assertEqual(resolved.resolved_ips, ("93.184.216.34",))
 
     def test_is_safe_public_crawl_url_allows_domain_even_if_system_dns_would_be_private(self) -> None:
         with patch(
@@ -1320,6 +1351,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
+                "app.services.crawler_tools._is_resolved_allowed_crawl_url",
+                return_value=True,
+            ),
+            patch(
                 "app.services.crawler_tools._should_offload_browser_fetch_to_thread",
                 return_value=True,
             ),
@@ -1362,6 +1397,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return expected
 
         with (
+            patch(
+                "app.services.crawler_tools._is_resolved_allowed_crawl_url",
+                return_value=True,
+            ),
             patch(
                 "app.services.crawler_tools._should_offload_browser_fetch_to_thread",
                 return_value=False,
@@ -2316,7 +2355,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(("faculty.example.edu", 443), backend.connect_calls)
         self.assertEqual(backend.streams[0].tls_server_hostnames, ["faculty.example.edu"])
 
-    async def test_crawl_page_with_http_uses_system_proxy_ip_for_domain_fetching(
+    async def test_crawl_page_with_http_uses_system_resolved_public_ip_for_domain_fetching(
         self,
     ) -> None:
         session_factory = _FakeSessionFactory()
@@ -2340,7 +2379,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         with patch(
             "app.services.crawler_tools.socket.getaddrinfo",
             return_value=[
-                (0, 0, 0, "", ("100.64.0.42", 443)),
+                (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
         ), patch(
             "app.services.crawler_tools._default_async_network_backend",
@@ -2349,7 +2388,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             snapshot = await crawl_page_with_http(ctx, "https://faculty.example.edu/faculty")
 
         self.assertEqual(snapshot.status, "succeeded")
-        self.assertEqual(backend.connect_calls, [("100.64.0.42", 443)])
+        self.assertEqual(backend.connect_calls, [("93.184.216.34", 443)])
         self.assertEqual(backend.streams[0].tls_server_hostnames, ["faculty.example.edu"])
 
     async def test_crawl_page_with_http_filters_same_host_links_without_dns_per_link(
@@ -2377,7 +2416,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             nonlocal dns_call_count
             _ = args, kwargs
             dns_call_count += 1
-            return [(0, 0, 0, "", ("100.64.0.42", 443))]
+            return [(0, 0, 0, "", ("93.184.216.34", 443))]
 
         with patch(
             "app.services.crawler_tools.socket.getaddrinfo",

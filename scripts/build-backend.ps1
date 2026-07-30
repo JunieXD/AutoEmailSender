@@ -33,6 +33,7 @@ try {
     --collect-all pdfplumber `
     --collect-all pypdf `
     --collect-all playwright `
+    --collect-all tldextract `
     --collect-all tiktoken `
     --collect-submodules tiktoken_ext `
     --hidden-import tiktoken_ext.openai_public `

@@ -344,6 +344,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             "langchain_openai",
             "openai",
             "httpx",
+            "tldextract",
             "markitdown",
             "mammoth",
             "pdfminer",

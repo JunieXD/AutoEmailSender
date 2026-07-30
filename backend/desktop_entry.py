@@ -19,6 +19,7 @@ PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
     "langchain_openai",
     "openai",
     "httpx",
+    "tldextract",
     "markitdown",
     "mammoth",
     "pdfminer",

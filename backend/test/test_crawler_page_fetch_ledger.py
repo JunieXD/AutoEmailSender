@@ -43,6 +43,12 @@ class CrawlerPageFetchLedgerPureTests(unittest.TestCase):
             "https://cs.example.edu/faculty?page=1",
         )
 
+    def test_normalize_fetch_url_preserves_spa_route_fragment(self) -> None:
+        self.assertEqual(
+            normalize_fetch_url("HTTPS://CS.EXAMPLE.EDU/#/teachers?page=2"),
+            "https://cs.example.edu/#/teachers?page=2",
+        )
+
     def test_classifies_antibot_empty_response_as_terminal(self) -> None:
         snapshot = PageSnapshot(
             url="https://cs.example.edu/faculty",

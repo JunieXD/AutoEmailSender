@@ -4,7 +4,8 @@ from datetime import datetime
 
 from app.core.time import as_utc_aware, utc_now
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, LLMProfile
@@ -18,17 +19,29 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     browser_investigate,
     crawl_page_with_http,
+    expand_browser_pagination,
     looks_like_client_encrypted_profile_fields,
     looks_like_unrendered_dynamic_teacher_directory,
     save_candidate_payloads_shared,
 )
 from app.services.crawler_v2_profile_extraction import invoke_v2_profile_extraction_agent
+from app.services.crawler_v2_routing import (
+    ENTRY_DISCOVERY_REASON,
+    ENTRY_EXPANSION_MODE,
+    NO_EXPANSION_MODE,
+    PAGINATION_DISCOVERY_REASON,
+    PAGINATION_EXPANSION_MODE,
+    V2PageRoutingResult,
+    invoke_v2_page_routing_agent,
+)
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_scheduler import ensure_job_active
-from app.services.llm_runtime import ensure_llm_runtime_adaptation
+from app.services.crawler_v2_url_utils import has_spa_route_fragment
+from app.services.llm_runtime import ensure_llm_runtime_adaptation, format_llm_runtime_error_for_user
 
 
+MAX_PAGE_TASKS_PER_JOB = 5000
 
 async def run_crawler_v2_page_worker_once(
     session_factory: async_sessionmaker[AsyncSession],
@@ -48,6 +61,13 @@ async def run_crawler_v2_page_worker_once(
             return 1
         target_url = task.original_url
         fetch_intent = "profile" if job.entry_type == "profile" else "generic"
+        routing_profile = None
+        if job.entry_type != "profile":
+            routing_profile = await _resolve_llm_profile(session, job)
+            if routing_profile is None:
+                _mark_page_failed(task, "缺少可用的 LLM Profile")
+                await session.commit()
+                return 1
         ctx = CrawlToolContext(
             session_factory=session_factory,
             job_id=job.id,
@@ -57,7 +77,14 @@ async def run_crawler_v2_page_worker_once(
         )
 
     try:
-        if await _prefer_browser_for_task_domain(session_factory, task.job_id, target_url):
+        if has_spa_route_fragment(target_url):
+            direct_status = "skipped_for_spa_route"
+            fallback_reason = "spa_route_requires_browser"
+            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
+            browser_status = browser_snapshot.status
+            snapshot = browser_snapshot
+            fetch_mode = "browser"
+        elif await _prefer_browser_for_task_domain(session_factory, task.job_id, target_url):
             direct_status = "skipped_by_domain_browser_preference"
             fallback_reason = "same_domain_previously_required_browser"
             browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
@@ -93,9 +120,7 @@ async def run_crawler_v2_page_worker_once(
                 fallback_reason=fallback_reason,
                 browser_status=browser_status,
             )
-            if snapshot.status == "succeeded" and job.entry_type != "profile":
-                task.status = CrawlPageTaskStatus.SUCCEEDED.value
-            elif snapshot.status != "succeeded":
+            if snapshot.status != "succeeded":
                 _mark_page_failed(task, snapshot.error_message or "页面抓取失败")
             await session.commit()
         append_crawler_v2_debug_event(
@@ -122,20 +147,175 @@ async def run_crawler_v2_page_worker_once(
                     snapshot=snapshot,
                 )
             else:
-                chunk_result = await _create_chunks_for_page_snapshot(session_factory, task_id=task_id, page_id=page_id, snapshot=snapshot)
+                assert routing_profile is not None
+                routing_failure: str | None = None
+                try:
+                    async with session_factory() as adaptation_session:
+                        routing_adaptation = await ensure_llm_runtime_adaptation(
+                            adaptation_session,
+                            routing_profile,
+                        )
+                        await adaptation_session.commit()
+                    routing_result = await invoke_v2_page_routing_agent(
+                        routing_profile,
+                        session_factory=session_factory,
+                        university=job.university,
+                        school=job.school,
+                        start_url=job.start_url,
+                        source_url=snapshot.url,
+                        title=snapshot.title,
+                        page_text=snapshot.text,
+                        page_html=snapshot.html,
+                        expansion_mode=task.expansion_mode or ENTRY_EXPANSION_MODE,
+                        adaptation=routing_adaptation,
+                    )
+                except Exception as routing_exc:
+                    routing_failure = format_llm_runtime_error_for_user(routing_exc)
+                    append_crawler_v2_debug_event(
+                        job.id,
+                        worker_kind="page",
+                        event_name="page_routing_failed",
+                        work_item_id=task_id,
+                        payload={
+                            "source_url": snapshot.url,
+                            "error": routing_failure,
+                        },
+                    )
+                    routing_result = V2PageRoutingResult(
+                        discovered_urls=[],
+                        entry_discovery_reasons={},
+                        allow_expansion=False,
+                        pagination_urls=[],
+                        usage=None,
+                        attempts=[],
+                    )
+                if not await _page_task_can_commit(
+                    session_factory,
+                    task_id=task_id,
+                    worker_id=worker_id,
+                ):
+                    return 0
+                if routing_result.usage is not None:
+                    await record_crawler_v2_token_usage(
+                        session_factory,
+                        job_id=job.id,
+                        worker_kind=CrawlWorkerKind.PAGE,
+                        work_item_id=task_id,
+                        model_name=routing_profile.model_name,
+                        input_tokens=routing_result.usage.get("input_tokens") or 0,
+                        output_tokens=routing_result.usage.get("output_tokens") or 0,
+                        cached_tokens=routing_result.usage.get("cached_tokens") or 0,
+                        raw_usage=dict(routing_result.usage),
+                    )
+                for attempt in routing_result.attempts:
+                    append_crawler_v2_debug_event(
+                        job.id,
+                        worker_kind="page",
+                        event_name="page_routing_llm_response",
+                        work_item_id=task_id,
+                        payload={
+                            "source_url": snapshot.url,
+                            "phase": attempt.phase,
+                            "attempt_number": attempt.attempt_number,
+                            "raw_model_text": attempt.raw_model_text,
+                            "raw_payload": attempt.raw_payload,
+                            "error": attempt.error,
+                            "token_usage": dict(attempt.usage) if attempt.usage is not None else None,
+                        },
+                    )
+                interactive_snapshots: tuple[PageSnapshot, ...] = ()
+                interactive_stopped_reason: str | None = None
+                if routing_failure is None and routing_result.pagination_control is not None:
+                    control = routing_result.pagination_control
+                    try:
+                        interactive_result = await expand_browser_pagination(
+                            ctx,
+                            snapshot.url,
+                            tag=control.tag,
+                            text=control.text,
+                            title=control.title,
+                            aria_label=control.aria_label,
+                            class_tokens=control.class_tokens,
+                            match_index=control.match_index,
+                            intent=fetch_intent,
+                        )
+                    except Exception as interactive_exc:
+                        routing_failure = format_llm_runtime_error_for_user(interactive_exc)
+                    else:
+                        interactive_snapshots = interactive_result.snapshots
+                        interactive_stopped_reason = interactive_result.stopped_reason
+                        if interactive_result.status != "succeeded":
+                            routing_failure = (
+                                interactive_result.error_message
+                                or "交互式分页执行失败"
+                            )
+                    append_crawler_v2_debug_event(
+                        job.id,
+                        worker_kind="page",
+                        event_name="browser_pagination_expanded",
+                        work_item_id=task_id,
+                        payload={
+                            "source_url": snapshot.url,
+                            "control_id": control.control_id,
+                            "additional_page_count": len(interactive_snapshots),
+                            "stopped_reason": interactive_stopped_reason,
+                            "error": routing_failure,
+                        },
+                    )
+                if not await _page_task_can_commit(
+                    session_factory,
+                    task_id=task_id,
+                    worker_id=worker_id,
+                ):
+                    return 0
+                chunk_result = await _create_chunks_for_page_snapshot(
+                    session_factory,
+                    task_id=task_id,
+                    page_id=page_id,
+                    snapshot=snapshot,
+                )
+                for interactive_snapshot in interactive_snapshots:
+                    chunk_result += await _create_chunks_for_page_snapshot(
+                        session_factory,
+                        task_id=task_id,
+                        page_id=page_id,
+                        snapshot=interactive_snapshot,
+                    )
+                if routing_failure is None:
+                    expansion_result = await _complete_list_page_routing(
+                        session_factory,
+                        task_id=task_id,
+                        worker_id=worker_id,
+                        source_url=snapshot.url,
+                        routing_result=routing_result,
+                    )
+                else:
+                    expansion_result = await _mark_list_page_routing_failed(
+                        session_factory,
+                        task_id=task_id,
+                        worker_id=worker_id,
+                        error_message=routing_failure,
+                    )
                 append_crawler_v2_debug_event(
                     job.id,
                     worker_kind="page",
                     event_name="page_chunked",
                     work_item_id=task_id,
-                    payload={"page_id": page_id, "target_url": target_url, "chunk_result": chunk_result},
+                    payload={
+                        "page_id": page_id,
+                        "target_url": target_url,
+                        "chunk_result": chunk_result,
+                        "interactive_page_count": len(interactive_snapshots),
+                        "interactive_stopped_reason": interactive_stopped_reason,
+                        "expansion_result": expansion_result,
+                    },
                 )
         return 1
     except Exception as exc:
         async with session_factory() as session:
             task = await session.get(CrawlPageTask, task_id)
             if task is not None and _page_task_owned_by_worker(task, worker_id):
-                _mark_page_failed(task, str(exc))
+                _mark_page_failed(task, format_llm_runtime_error_for_user(exc))
             await session.commit()
         return 1
 
@@ -203,6 +383,8 @@ async def _skip_page_task_from_ledger(session: AsyncSession, task: CrawlPageTask
     if state is None:
         return False
     if state.status == CrawlPageFetchStatus.PROCESSED.value:
+        if task.expansion_mode != NO_EXPANSION_MODE and task.allow_expansion is None:
+            return False
         task.status = CrawlPageTaskStatus.SKIPPED_DUPLICATE.value
         task.last_error = "页面已处理完成，跳过重复抓取"
         task.worker_id = None
@@ -250,8 +432,9 @@ async def _record_page_and_state(
         page = CrawlPage(
             job_id=task.job_id,
             url=snapshot.url,
-            parent_url=None,
+            parent_url=task.parent_url,
             fetch_method=snapshot.fetch_method,
+            page_type=task.expansion_mode or "unknown",
             status=snapshot.status,
             title=snapshot.title,
             text_excerpt=(snapshot.text or "")[:2000],
@@ -259,6 +442,9 @@ async def _record_page_and_state(
         )
         session.add(page)
         await session.flush()
+    else:
+        page.parent_url = task.parent_url
+        page.page_type = task.expansion_mode or page.page_type
     state = await session.scalar(
         select(CrawlPageFetchState).where(
             CrawlPageFetchState.job_id == task.job_id,
@@ -282,6 +468,125 @@ async def _record_page_and_state(
     state.last_page_id = page.id
     state.last_error_message = snapshot.error_message
     return page.id
+
+
+async def _complete_list_page_routing(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    worker_id: str,
+    source_url: str,
+    routing_result: V2PageRoutingResult,
+) -> dict[str, int | bool | str]:
+    async with session_factory() as session:
+        task = await session.get(CrawlPageTask, task_id)
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
+            return {"status": "not_claimed", "queued_count": 0}
+        if not await ensure_job_active(session, task.job_id):
+            return {"status": "inactive", "queued_count": 0}
+
+        proposals: list[tuple[str, str]] = []
+        proposals.extend(
+            (url, routing_result.entry_discovery_reasons.get(url, ENTRY_DISCOVERY_REASON))
+            for url in routing_result.discovered_urls
+        )
+        proposals.extend(
+            (url, PAGINATION_DISCOVERY_REASON)
+            for url in routing_result.pagination_urls
+        )
+
+        task_count = int(
+            await session.scalar(
+                select(func.count()).select_from(CrawlPageTask).where(
+                    CrawlPageTask.job_id == task.job_id,
+                )
+            )
+            or 0
+        )
+        queued_count = 0
+        seen_urls: set[str] = set()
+        limit_reached = False
+        for normalized_url, discovery_reason in proposals:
+            if normalized_url in seen_urls:
+                continue
+            seen_urls.add(normalized_url)
+            if task_count >= MAX_PAGE_TASKS_PER_JOB:
+                limit_reached = True
+                break
+            exists = await session.scalar(
+                select(CrawlPageTask.id).where(
+                    CrawlPageTask.job_id == task.job_id,
+                    CrawlPageTask.normalized_url == normalized_url,
+                )
+            )
+            if exists is not None:
+                continue
+            try:
+                async with session.begin_nested():
+                    session.add(
+                        CrawlPageTask(
+                            job_id=task.job_id,
+                            normalized_url=normalized_url,
+                            original_url=normalized_url,
+                            parent_url=source_url,
+                            discovery_reason=discovery_reason,
+                            expansion_mode=PAGINATION_EXPANSION_MODE,
+                            allow_expansion=None,
+                            depth=task.depth + 1,
+                            priority=task.priority,
+                            status=CrawlPageTaskStatus.PENDING.value,
+                        )
+                    )
+                    await session.flush()
+            except IntegrityError:
+                continue
+            queued_count += 1
+            task_count += 1
+
+        effective_allow_expansion = bool(
+            routing_result.discovered_urls
+            or routing_result.pagination_urls
+            or routing_result.pagination_control
+        )
+        task.allow_expansion = effective_allow_expansion
+        task.status = CrawlPageTaskStatus.SUCCEEDED.value
+        task.worker_id = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        await session.commit()
+        result: dict[str, int | bool | str] = {
+            "status": "completed",
+            "queued_count": queued_count,
+            "entry_url_count": len(routing_result.discovered_urls),
+            "pagination_url_count": len(routing_result.pagination_urls),
+            "allow_expansion": effective_allow_expansion,
+            "task_limit_reached": limit_reached,
+        }
+        if routing_result.pagination_control is not None:
+            result["pagination_control_id"] = (
+                routing_result.pagination_control.control_id
+            )
+        return result
+
+
+async def _mark_list_page_routing_failed(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    task_id: int,
+    worker_id: str,
+    error_message: str,
+) -> dict[str, int | str]:
+    async with session_factory() as session:
+        task = await session.get(CrawlPageTask, task_id)
+        if task is None or not _page_task_owned_by_worker(task, worker_id):
+            return {"status": "not_claimed", "queued_count": 0}
+        if not await ensure_job_active(session, task.job_id):
+            return {"status": "inactive", "queued_count": 0}
+        task.allow_expansion = None
+        _mark_page_failed(task, f"页面扩展决策失败：{error_message}")
+        status = task.status
+        await session.commit()
+        return {"status": status, "queued_count": 0}
 
 
 async def _extract_profile_for_page_snapshot(
@@ -488,14 +793,14 @@ async def _create_chunks_for_page_snapshot(
     task_id: int,
     page_id: int | None,
     snapshot: PageSnapshot,
-) -> None:
+) -> int:
     async with session_factory() as session:
         task = await session.get(CrawlPageTask, task_id)
         if task is None:
-            return
+            return 0
         job = await session.get(CrawlJob, task.job_id)
         if job is None or not await ensure_job_active(session, task.job_id):
-            return
+            return 0
         drafts = build_page_chunks(
             source_url=snapshot.url,
             html=snapshot.html,
@@ -503,7 +808,12 @@ async def _create_chunks_for_page_snapshot(
             config=ChunkingConfig(),
         )
         job_id = task.job_id
-    await create_chunks_for_page(session_factory, job_id=job_id, page_id=page_id, drafts=drafts)
+    return await create_chunks_for_page(
+        session_factory,
+        job_id=job_id,
+        page_id=page_id,
+        drafts=drafts,
+    )
 
 
 def _snapshot_debug_payload(snapshot: PageSnapshot) -> dict[str, object]:

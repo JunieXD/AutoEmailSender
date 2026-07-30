@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.crawl_job import CrawlPageFetchState, CrawlPageFetchStatus
+from app.services.crawler_v2_url_utils import is_spa_route_fragment
 
 TRANSIENT_FETCH_RETRY_LIMIT = 2
 
@@ -55,7 +56,8 @@ def normalize_fetch_url(url: str) -> str:
     scheme = parsed.scheme.lower()
     netloc = parsed.netloc.lower()
     path = parsed.path or "/"
-    return urlunsplit((scheme, netloc, path, parsed.query, ""))
+    fragment = parsed.fragment if is_spa_route_fragment(parsed.fragment) else ""
+    return urlunsplit((scheme, netloc, path, parsed.query, fragment))
 
 
 def fetch_url_host(url: str | None) -> str | None:

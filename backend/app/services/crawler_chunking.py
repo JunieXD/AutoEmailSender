@@ -65,6 +65,16 @@ class _LinkTextHTMLParser(HTMLParser):
             href = dict(attrs).get("href")
             self.current_href = urljoin(self.base_url, href) if href else None
             self.current_anchor = []
+        elif tag == "iframe":
+            attributes = dict(attrs)
+            src = attributes.get("src")
+            if src:
+                label = _normalize_space(
+                    attributes.get("title")
+                    or attributes.get("name")
+                    or "嵌入页面"
+                )
+                self.parts.append(f"\n[iframe: {label}]({urljoin(self.base_url, src)})\n")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._SKIPPED_TAGS and self.skip_depth:

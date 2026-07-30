@@ -1267,6 +1267,15 @@ class DatabaseSchemaTests(unittest.TestCase):
         )
         self.assertTrue(
             {
+                "parent_url",
+                "discovery_reason",
+                "expansion_mode",
+                "allow_expansion",
+                "depth",
+            }.issubset(self._get_columns("crawl_page_tasks")),
+        )
+        self.assertTrue(
+            {
                 "job_id",
                 "attempt_number",
                 "active_seconds",

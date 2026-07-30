@@ -26,6 +26,20 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertIn("[李四](https://cs.example.edu/li.htm)", chunks[0].content)
         self.assertNotIn("alert", chunks[0].content)
 
+    def test_build_page_chunks_exposes_iframe_source_as_a_link(self) -> None:
+        chunks = build_page_chunks(
+            source_url="https://cs.example.edu/faculty/index.htm",
+            html='<main>人员目录</main><iframe title="人员名单" src="https://welcome.example.edu/#/teachers"></iframe>',
+            text="人员目录",
+            config=ChunkingConfig(),
+        )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertIn(
+            "[iframe: 人员名单](https://welcome.example.edu/#/teachers)",
+            chunks[0].content,
+        )
+
     def test_build_page_chunks_splits_long_text_with_overlap(self) -> None:
         blocks = "\n".join(f"教师{i} 研究方向 数据库 [详情](https://cs.example.edu/t{i}.htm)" for i in range(80))
         chunks = build_page_chunks(

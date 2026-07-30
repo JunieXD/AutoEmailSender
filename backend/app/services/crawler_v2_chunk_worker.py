@@ -9,7 +9,6 @@ from app.core.time import as_utc_aware, utc_now
 
 from sqlalchemy import select
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
@@ -18,8 +17,6 @@ from app.models import (
     CrawlWorkerKind,
     CrawlPageChunk,
     CrawlPageChunkStatus,
-    CrawlPageTask,
-    CrawlPageTaskStatus,
 )
 from app.services.crawler_tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_payloads_shared
 from app.services.crawler_chunk_runtime import split_page_chunk_for_retry
@@ -27,7 +24,7 @@ from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
-from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
+from app.services.crawler_v2_url_utils import normalize_url
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import (
     LLMRuntimeAdaptation,
@@ -74,7 +71,6 @@ async def invoke_v2_chunk_agent(
             professor_candidate_wire_to_dict(candidate)
             for candidate in wire_payload.candidates
         ],
-        "discovered_urls": list(wire_payload.discovered_urls),
     }
     usage = extract_token_usage_from_llm_response(completion)
     return payload, usage, completion.content
@@ -83,7 +79,7 @@ async def invoke_v2_chunk_agent(
 def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chunk_content: str) -> str:
     return (
         "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
-        "只输出一个 JSON 对象，字段为 candidate_count、candidates、discovered_urls。不要输出解释文字，也不能输出 chunk_status。\n"
+        "只输出一个 JSON 对象，字段为 candidate_count、candidates。不要输出解释文字，也不能输出 chunk_status 或任何 URL 扩展决策。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
         "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且链接文本像人名、URL 像个人主页时，这就是明确的姓名 + profile_url 候选证据。\n"
         "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
@@ -91,18 +87,19 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "candidate_count 是当前 chunk 内明确候选的总数。candidate_count 为 0 时 candidates 必须为空；1 到 10 时 candidates 数组长度必须与 candidate_count 相等；candidate_count 必须为 11 或更大时 candidates 必须为空。\n"
         "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，candidate_count 必须为 11 或更大，不要输出前 10 个，也不要返回 0。\n"
         "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能把 candidate_count 填为 11 或更大。\n"
+        "candidate_count 只数当前 chunk 中逐条出现、能够分别指出姓名的人员；页面中表示整份名单或分页规模的汇总数字一律不参与计数。\n"
+        "无法在当前 chunk 中指出第 11 个不同人员时，candidate_count 不得大于 10。\n"
         "缺少 email 且缺少 profile_url 的候选不可提交；但有姓名 + profile_url 的候选即使缺少 email 也可提交。\n"
         "no_candidates 只允许在当前 chunk 内没有任何姓名+邮箱、姓名+profile_url、教师卡片或教师表格行时使用。\n"
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
-        "导师个人主页链接属于候选 profile_url，不能放入 discovered_urls。\n"
-        "discovered_urls 只放候选列表页、分页页、教师目录页等继续抓取入口。\n"
+        "导师个人主页链接只属于候选 profile_url；当前 Worker 不发现、不选择、也不访问任何后续页面。\n"
         f"{CANDIDATE_WIRE_PROMPT_CONTRACT}\n"
         "输出示例（正常保存）：\n"
-        '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": [{"field": "name", "confidence": 0.95}, {"field": "email", "confidence": 0.9}, {"field": "profile_url", "confidence": 0.95}], "evidence_summary": "当前 chunk 中姓名链接和邮箱明确出现"}], "discovered_urls": []}\n'
+        '{"candidate_count": 1, "candidates": [{"name": "张三", "email": "zhang@example.edu", "title": "教授", "university": "示例大学", "school": "计算机学院", "department": "", "research_direction": "软件工程", "recent_papers": [], "profile_url": "https://example.edu/zhang.html", "source_url": "https://example.edu/faculty", "confidence": 0.9, "field_confidence": [{"field": "name", "confidence": 0.95}, {"field": "email", "confidence": 0.9}, {"field": "profile_url", "confidence": 0.95}], "evidence_summary": "当前 chunk 中姓名链接和邮箱明确出现"}]}\n'
         "输出示例（当前 chunk 明确超过 10 个候选）：\n"
-        '{"candidate_count": 11, "candidates": [], "discovered_urls": []}\n'
+        '{"candidate_count": 11, "candidates": []}\n'
         "输出示例（无候选）：\n"
-        '{"candidate_count": 0, "candidates": [], "discovered_urls": []}\n'
+        '{"candidate_count": 0, "candidates": []}\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"来源 URL：{source_url}\n"
@@ -114,7 +111,7 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
 def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Chunk Worker 返回结构不是 JSON 对象")
-    required = {"candidate_count", "candidates", "discovered_urls"}
+    required = {"candidate_count", "candidates"}
     missing = required.difference(payload)
     if missing:
         raise ValueError(f"Chunk Worker 返回缺少字段：{', '.join(sorted(missing))}")
@@ -124,8 +121,6 @@ def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
     candidates = payload["candidates"]
     if not isinstance(candidates, list):
         raise ValueError("Chunk Worker 返回的 candidates 必须是数组")
-    if not isinstance(payload["discovered_urls"], list):
-        raise ValueError("Chunk Worker 返回的 discovered_urls 必须是数组")
     if candidate_count <= MAX_CANDIDATES_PER_CHUNK_RESULT and len(candidates) != candidate_count:
         raise ValueError("Chunk Worker 返回的 candidate_count 与 candidates 数量不一致")
     return payload
@@ -227,7 +222,6 @@ async def run_crawler_v2_chunk_worker_once(
             chunk_id=chunk_id,
             worker_id=worker_id,
             candidates=candidates,
-            discovered_urls=[str(url) for url in payload["discovered_urls"]],
             candidate_count=candidate_count,
         )
         save_result["candidate_count"] = candidate_count
@@ -335,9 +329,12 @@ async def complete_current_chunk(
     chunk_id: int,
     worker_id: str,
     candidates: Sequence[ProfessorCandidatePayload],
-    discovered_urls: Sequence[str],
     candidate_count: int,
+    discovered_urls: Sequence[str] = (),
 ) -> dict[str, int | str]:
+    # Kept as a compatibility-only argument for older callers. Page expansion is
+    # now decided exclusively by the page routing worker.
+    _ = discovered_urls
     async with session_factory() as session:
         chunk = await session.get(CrawlPageChunk, chunk_id)
         if chunk is None:
@@ -369,19 +366,12 @@ async def complete_current_chunk(
                 "child_count": split_result["child_count"],
                 "derived_chunk_status": derived_chunk_status,
             }
-        discovered_listing_urls = {
-            normalized
-            for url in discovered_urls
-            if (normalized := normalize_url(url, base_url=chunk.source_url))
-            if is_same_domain(normalized, job.start_url)
-        }
         ctx = CrawlToolContext(
             job_id=chunk.job_id,
             start_url=job.start_url,
             university=job.university,
             school=job.school,
             session_factory=session_factory,
-            known_listing_urls=discovered_listing_urls,
         )
         enriched_candidates = _fill_candidate_profile_urls_from_chunk(
             candidates,
@@ -390,44 +380,7 @@ async def complete_current_chunk(
         )
         save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
         enrichment_count = 0
-        candidate_profile_urls = {
-            normalized
-            for candidate in enriched_candidates
-            if candidate.profile_url
-            if (normalized := normalize_url(candidate.profile_url, base_url=chunk.source_url))
-            if normalized not in discovered_listing_urls
-        }
         url_count = 0
-        seen_urls: set[str] = set()
-        for url in discovered_urls:
-            normalized = normalize_url(url, base_url=chunk.source_url)
-            if normalized in candidate_profile_urls:
-                continue
-            if normalized in seen_urls or not is_same_domain(normalized, job.start_url):
-                continue
-            seen_urls.add(normalized)
-            exists = await session.scalar(
-                select(CrawlPageTask.id).where(
-                    CrawlPageTask.job_id == chunk.job_id,
-                    CrawlPageTask.normalized_url == normalized,
-                )
-            )
-            if exists is not None:
-                continue
-            try:
-                async with session.begin_nested():
-                    session.add(
-                        CrawlPageTask(
-                            job_id=chunk.job_id,
-                            normalized_url=normalized,
-                            original_url=url,
-                            status=CrawlPageTaskStatus.PENDING.value,
-                        )
-                    )
-                    await session.flush()
-            except IntegrityError:
-                continue
-            url_count += 1
 
         chunk.status = derived_chunk_status
         chunk.worker_id = None

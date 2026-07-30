@@ -13,9 +13,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.schema_database import create_schema_sqlite_database
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
-from app.services.crawler_tools import PageSnapshot
+from app.services.crawler_tools import BrowserPaginationExpansion, PageSnapshot
 from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
+from app.services.crawler_v2_routing import (
+    IFRAME_DISCOVERY_REASON,
+    PAGINATION_DISCOVERY_REASON,
+    PAGINATION_EXPANSION_MODE,
+    PageRouteControl,
+    V2PageRoutingResult,
+)
 
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -78,8 +85,29 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         create_schema_sqlite_database(Path(self.db_path))
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.adaptation_patcher = patch(
+            "app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+        )
+        self.adaptation_patcher.start()
+        self.routing_patcher = patch(
+            "app.services.crawler_v2_page_worker.invoke_v2_page_routing_agent",
+            new=AsyncMock(
+                return_value=V2PageRoutingResult(
+                    discovered_urls=[],
+                    entry_discovery_reasons={},
+                    allow_expansion=False,
+                    pagination_urls=[],
+                    usage=None,
+                    attempts=[],
+                )
+            ),
+        )
+        self.routing_mock = self.routing_patcher.start()
 
     async def asyncTearDown(self) -> None:
+        self.routing_patcher.stop()
+        self.adaptation_patcher.stop()
         await self.engine.dispose()
         try:
             os.unlink(self.db_path)
@@ -117,6 +145,239 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             any("[张三](https://example.edu/profile/zhang.html)" in chunk.content for chunk in chunks),
             "chunk content should retain link context for Chunk Worker URL discovery",
         )
+
+    async def test_page_routing_enqueues_entry_and_pagination_with_auditable_metadata(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        iframe_url = "https://welcome.example.edu/#/teacher/computer"
+        page2_url = "https://example.edu/faculty?page=2"
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员入口",
+            text="人员入口",
+            html=(
+                f'<iframe title="主名单" src="{iframe_url}"></iframe>'
+                f'<a href="{page2_url}">2</a>'
+            ),
+            links=[iframe_url, page2_url],
+            fetch_method="http",
+            status="succeeded",
+        )
+        self.routing_mock.return_value = V2PageRoutingResult(
+            discovered_urls=[iframe_url],
+            entry_discovery_reasons={iframe_url: IFRAME_DISCOVERY_REASON},
+            allow_expansion=True,
+            pagination_urls=[page2_url],
+            usage=None,
+            attempts=[],
+        )
+
+        with patch(
+            "app.services.crawler_v2_page_worker.fetch_page_direct",
+            new=AsyncMock(return_value=snapshot),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            tasks = list(
+                await session.scalars(
+                    select(CrawlPageTask)
+                    .where(CrawlPageTask.job_id == job_id)
+                    .order_by(CrawlPageTask.id)
+                )
+            )
+            page = await session.scalar(select(CrawlPage).where(CrawlPage.job_id == job_id))
+        self.assertEqual([task.normalized_url for task in tasks], [snapshot.url, iframe_url, page2_url])
+        self.assertTrue(tasks[0].allow_expansion)
+        self.assertEqual(
+            [task.discovery_reason for task in tasks[1:]],
+            [IFRAME_DISCOVERY_REASON, PAGINATION_DISCOVERY_REASON],
+        )
+        self.assertEqual(
+            [task.expansion_mode for task in tasks[1:]],
+            [PAGINATION_EXPANSION_MODE, PAGINATION_EXPANSION_MODE],
+        )
+        self.assertEqual([task.parent_url for task in tasks[1:]], [snapshot.url, snapshot.url])
+        self.assertEqual([task.depth for task in tasks[1:]], [1, 1])
+        assert page is not None
+        self.assertIsNone(page.parent_url)
+        self.assertEqual(page.page_type, "entry")
+
+    async def test_non_url_pagination_control_collects_additional_page_chunks(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员名单",
+            text="张三 教授",
+            html="<p>张三 教授</p>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        page_two = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员名单",
+            text="李四 教授",
+            html="<p>李四 教授</p>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        control = PageRouteControl(
+            control_id="control-2",
+            tag="button",
+            text="",
+            title="下一页",
+            aria_label="",
+            class_tokens=("pager-next",),
+            match_index=0,
+        )
+        self.routing_mock.return_value = V2PageRoutingResult(
+            discovered_urls=[],
+            entry_discovery_reasons={},
+            allow_expansion=True,
+            pagination_urls=[],
+            usage=None,
+            pagination_control=control,
+            attempts=[],
+        )
+        pagination_mock = AsyncMock(
+            return_value=BrowserPaginationExpansion(
+                status="succeeded",
+                snapshots=(page_two,),
+                stopped_reason="control_disabled",
+            )
+        )
+
+        with (
+            patch(
+                "app.services.crawler_v2_page_worker.fetch_page_direct",
+                new=AsyncMock(return_value=snapshot),
+            ),
+            patch(
+                "app.services.crawler_v2_page_worker.expand_browser_pagination",
+                new=pagination_mock,
+            ),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        pagination_mock.assert_awaited_once()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            tasks = list(
+                await session.scalars(
+                    select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+                )
+            )
+            chunks = list(
+                await session.scalars(
+                    select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)
+                )
+            )
+        assert task is not None
+        self.assertTrue(task.allow_expansion)
+        self.assertEqual(len(tasks), 1)
+        self.assertGreaterEqual(len(chunks), 2)
+
+    async def test_spa_route_uses_browser_without_direct_fetch(self) -> None:
+        spa_url = "https://welcome.example.edu/#/teacher/computer?page=2"
+        parent_url = "https://cs.example.edu/faculty"
+        job_id, task_id = await self._seed_page_task(
+            original_url=spa_url,
+            expansion_mode=PAGINATION_EXPANSION_MODE,
+            parent_url=parent_url,
+            depth=1,
+        )
+        snapshot = PageSnapshot(
+            url=spa_url,
+            title="人员名单",
+            text="张三",
+            html="<a href='#/teacher/computer?page=3'>3</a>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        browser_mock = AsyncMock(return_value=snapshot)
+        direct_mock = AsyncMock()
+
+        with (
+            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=browser_mock),
+            patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=direct_mock),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        browser_mock.assert_awaited_once()
+        direct_mock.assert_not_awaited()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            page = await session.scalar(select(CrawlPage).where(CrawlPage.job_id == job_id))
+        assert task is not None
+        self.assertEqual(task.fetch_mode, "browser")
+        self.assertEqual(task.direct_status, "skipped_for_spa_route")
+        assert page is not None
+        self.assertEqual(page.parent_url, parent_url)
+        self.assertEqual(page.page_type, PAGINATION_EXPANSION_MODE)
+        self.assertEqual(
+            self.routing_mock.await_args.kwargs["expansion_mode"],
+            PAGINATION_EXPANSION_MODE,
+        )
+
+    async def test_routing_failure_keeps_current_page_chunks_and_schedules_retry(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员名单",
+            text="张三 教授",
+            html="<a href='/zhang'>张三</a><a href='/page2'>2</a>",
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+        self.routing_mock.side_effect = RuntimeError("routing unavailable")
+
+        with patch(
+            "app.services.crawler_v2_page_worker.fetch_page_direct",
+            new=AsyncMock(return_value=snapshot),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            chunks = list(
+                await session.scalars(
+                    select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)
+                )
+            )
+            tasks = list(
+                await session.scalars(
+                    select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+                )
+            )
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.FAILED_RETRYABLE.value)
+        self.assertIsNone(task.allow_expansion)
+        self.assertIn("页面扩展决策失败", task.last_error or "")
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertEqual(len(tasks), 1)
 
     async def test_profile_entry_extracts_candidate_without_creating_chunks(self) -> None:
         job_id, task_id = await self._seed_page_task(
@@ -727,6 +988,9 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_page_worker_skips_processed_url_without_fetching_again(self) -> None:
         job_id, task_id = await self._seed_page_task()
         async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            assert task is not None
+            task.allow_expansion = False
             session.add(
                 CrawlPageFetchState(
                     job_id=job_id,
@@ -842,7 +1106,15 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual([item.normalized_url for item in tasks], ["https://example.edu/faculty"])
-    async def _seed_page_task(self, *, original_url: str = "https://example.edu/faculty", entry_type: str = "list") -> tuple[int, int]:
+    async def _seed_page_task(
+        self,
+        *,
+        original_url: str = "https://example.edu/faculty",
+        entry_type: str = "list",
+        expansion_mode: str = "entry",
+        parent_url: str | None = None,
+        depth: int = 0,
+    ) -> tuple[int, int]:
         async with self.session_factory() as session:
             profile = LLMProfile(name="默认模型", provider="openai", api_key="test", model_name="test-model", is_default=True)
             session.add(profile)
@@ -850,7 +1122,17 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             job = CrawlJob(university="示例大学", school="计算机学院", start_url=original_url, start_urls=[original_url], status=CrawlJobStatus.RUNNING.value, runtime_version="v2", entry_type=entry_type, llm_profile_id=profile.id)
             session.add(job)
             await session.flush()
-            task = CrawlPageTask(job_id=job.id, normalized_url=original_url, original_url=original_url, status=CrawlPageTaskStatus.PROCESSING.value, worker_id="w1")
+            task = CrawlPageTask(
+                job_id=job.id,
+                normalized_url=original_url,
+                original_url=original_url,
+                parent_url=parent_url,
+                discovery_reason="start" if parent_url is None else "pagination",
+                expansion_mode=expansion_mode,
+                depth=depth,
+                status=CrawlPageTaskStatus.PROCESSING.value,
+                worker_id="w1",
+            )
             session.add(task)
             await session.commit()
             return job.id, task.id

@@ -61,6 +61,11 @@ from app.services.operation_logs import record_operation_log
 from app.services.professor_management import is_valid_professor_email, normalize_professor_email
 from app.services.crawl_job_runtime import enrich_selected_crawl_candidates
 from app.services.crawler_v2_url_utils import normalize_url
+from app.services.crawler_v2_routing import (
+    ENTRY_EXPANSION_MODE,
+    NO_EXPANSION_MODE,
+    START_DISCOVERY_REASON,
+)
 from app.core.database import get_session_factory
 
 
@@ -114,6 +119,14 @@ async def create_crawl_job(
                 job_id=job.id,
                 normalized_url=normalized_url,
                 original_url=start_url,
+                parent_url=None,
+                discovery_reason=START_DISCOVERY_REASON,
+                expansion_mode=(
+                    NO_EXPANSION_MODE
+                    if job.entry_type == "profile"
+                    else ENTRY_EXPANSION_MODE
+                ),
+                depth=0,
                 status=CrawlPageTaskStatus.PENDING.value,
             )
         )
@@ -932,6 +945,14 @@ async def retry_crawl_job(
                     job_id=job.id,
                     normalized_url=normalized_url,
                     original_url=start_url,
+                    parent_url=None,
+                    discovery_reason=START_DISCOVERY_REASON,
+                    expansion_mode=(
+                        NO_EXPANSION_MODE
+                        if job.entry_type == "profile"
+                        else ENTRY_EXPANSION_MODE
+                    ),
+                    depth=0,
                     status=CrawlPageTaskStatus.PENDING.value,
                 )
             )

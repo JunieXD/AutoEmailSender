@@ -91,6 +91,14 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201, msg=response.text)
         self.assertEqual(response.json()["entry_type"], "list")
+        import sqlite3
+
+        with sqlite3.connect(self.db_path) as connection:
+            task = connection.execute(
+                "SELECT parent_url, discovery_reason, expansion_mode, depth FROM crawl_page_tasks WHERE job_id = ?",
+                (response.json()["id"],),
+            ).fetchone()
+        self.assertEqual(task, (None, "start", "entry", 0))
 
     def test_create_crawl_job_accepts_multiple_start_urls(self) -> None:
         response = self.client.post(
@@ -264,6 +272,14 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201, msg=response.text)
         self.assertEqual(response.json()["entry_type"], "profile")
+        import sqlite3
+
+        with sqlite3.connect(self.db_path) as connection:
+            task = connection.execute(
+                "SELECT discovery_reason, expansion_mode, depth FROM crawl_page_tasks WHERE job_id = ?",
+                (response.json()["id"],),
+            ).fetchone()
+        self.assertEqual(task, ("start", "none", 0))
 
     def test_create_crawl_job_allows_domain_without_dns_resolution(self) -> None:
         with patch(
