@@ -80,8 +80,14 @@ describe("filterDashboardProfessors", () => {
       research_direction: "Robotics planning",
       match_score: null,
       status: "replied",
+      has_active_schedule: true,
     }),
   ];
+
+  it("filters active schedules without replacing the relationship status", () => {
+    expect(namesFor(professors, { statuses: ["scheduled"] })).toEqual(["Carol"]);
+    expect(namesFor(professors, { statuses: ["replied"] })).toEqual(["Carol"]);
+  });
 
   it("matches keyword against school, department, title, and research direction", () => {
     expect(namesFor(professors, { keyword: "robotics" })).toEqual(["Carol"]);

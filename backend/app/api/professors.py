@@ -41,6 +41,7 @@ from app.schemas.professor import (
 from app.services.contact_status import build_contact_status_by_professor
 from app.services.identity_communication_groups import resolve_identity_communication_scope
 from app.services.operation_logs import record_operation_log
+from app.services.professor_schedule import load_active_scheduled_professor_ids
 from app.services.professor_management import (
     build_professor_export,
     build_professor_template,
@@ -82,6 +83,7 @@ async def list_professors(
     professor_ids = [professor.id for professor in professors]
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
     contact_status_by_professor = {}
+    active_scheduled_professor_ids: set[int] = set()
 
     if identity_id is not None:
         try:
@@ -123,6 +125,11 @@ async def list_professors(
             tasks_by_professor=tasks_by_professor,
             communication_identity_ids=communication_scope.identity_ids,
         )
+        active_scheduled_professor_ids = await load_active_scheduled_professor_ids(
+            session,
+            identity_id=identity_id,
+            professor_ids=professor_ids,
+        )
 
     latest_match_task_by_professor: dict[int, EmailTask] = {}
     for professor_id, tasks in tasks_by_professor.items():
@@ -148,6 +155,7 @@ async def list_professors(
                 match_score=latest_match_task.match_score if latest_match_task else None,
                 sent_count=contact_status.sent_count if contact_status else 0,
                 status=contact_status.status if contact_status else "not_contacted",
+                has_active_schedule=professor.id in active_scheduled_professor_ids,
                 last_sent_at=contact_status.last_sent_at if contact_status else None,
                 last_replied_at=contact_status.last_replied_at if contact_status else None,
                 personal_note=professor.personal_note,

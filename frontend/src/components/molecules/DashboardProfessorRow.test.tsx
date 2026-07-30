@@ -30,6 +30,27 @@ const professor: ProfessorDashboardItemDTO = {
 };
 
 describe("DashboardProfessorRow", () => {
+  it("shows an active schedule alongside the relationship status", () => {
+    render(
+      <DashboardProfessorRow
+        professor={{ ...professor, status: "replied", has_active_schedule: true }}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="已回复"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("已排程")).toBeInTheDocument();
+    expect(screen.getByText("已回复")).toBeInTheDocument();
+  });
+
   it("shows professor tags in the same line as the name", () => {
     render(
       <DashboardProfessorRow

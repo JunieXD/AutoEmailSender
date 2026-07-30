@@ -1,6 +1,12 @@
-import type { ProfessorDashboardItemDTO, ProfessorDashboardStatus } from "@/types";
+import type {
+  ProfessorDashboardFilterStatus,
+  ProfessorDashboardItemDTO,
+  ProfessorDashboardStatus,
+} from "@/types";
 
-export type ProfessorDashboardStatusFilter = "all" | ProfessorDashboardStatus;
+export type ProfessorDashboardStatusFilter =
+  | "all"
+  | ProfessorDashboardFilterStatus;
 
 export const PROFESSOR_DASHBOARD_STATUS_LABELS: Record<ProfessorDashboardStatus, string> = {
   not_contacted: "未开始",
@@ -11,9 +17,14 @@ export const PROFESSOR_DASHBOARD_STATUS_LABELS: Record<ProfessorDashboardStatus,
   failed: "失败",
 };
 
-export const PROFESSOR_DASHBOARD_STATUS_OPTIONS = Object.entries(
-  PROFESSOR_DASHBOARD_STATUS_LABELS,
-) as Array<[ProfessorDashboardStatus, string]>;
+export const PROFESSOR_DASHBOARD_STATUS_OPTIONS: Array<
+  [ProfessorDashboardFilterStatus, string]
+> = [
+  ...(Object.entries(PROFESSOR_DASHBOARD_STATUS_LABELS) as Array<
+    [ProfessorDashboardStatus, string]
+  >),
+  ["scheduled", "已排程"],
+];
 
 export const filterProfessorsByDashboardStatus = (
   professors: ProfessorDashboardItemDTO[],
@@ -22,9 +33,16 @@ export const filterProfessorsByDashboardStatus = (
   if (status === "all") {
     return professors;
   }
-  return professors.filter((professor) => professor.status === status);
+  return professors.filter((professor) =>
+    status === "scheduled"
+      ? Boolean(professor.has_active_schedule)
+      : professor.status === status,
+  );
 };
 
 export const getProfessorDashboardStatusLabel = (
-  status: ProfessorDashboardStatus,
-): string => PROFESSOR_DASHBOARD_STATUS_LABELS[status];
+  status: ProfessorDashboardFilterStatus,
+): string =>
+  status === "scheduled"
+    ? "已排程"
+    : PROFESSOR_DASHBOARD_STATUS_LABELS[status];

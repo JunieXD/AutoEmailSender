@@ -88,8 +88,8 @@ import {
   setStoredPageSize,
 } from "@/lib/pagination";
 import type {
+  ProfessorDashboardFilterStatus,
   ProfessorDashboardItemDTO,
-  ProfessorDashboardStatus,
   ProfessorBulkTagModeDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
@@ -119,12 +119,12 @@ const readStringArray = (value: unknown): string[] =>
     ? value.filter((item): item is string => typeof item === "string")
     : [];
 
-const readStatusArray = (value: unknown): ProfessorDashboardStatus[] =>
+const readStatusArray = (value: unknown): ProfessorDashboardFilterStatus[] =>
   Array.isArray(value)
     ? value.filter(
-        (item): item is ProfessorDashboardStatus =>
+        (item): item is ProfessorDashboardFilterStatus =>
           typeof item === "string" &&
-          dashboardStatusValues.has(item as ProfessorDashboardStatus),
+          dashboardStatusValues.has(item as ProfessorDashboardFilterStatus),
       )
     : [];
 
@@ -798,7 +798,7 @@ export const HomePage = () => {
     });
   };
 
-  const toggleStatusFilterValue = (value: ProfessorDashboardStatus) => {
+  const toggleStatusFilterValue = (value: ProfessorDashboardFilterStatus) => {
     setFilters((previous) => {
       const nextValues = previous.statuses.includes(value)
         ? previous.statuses.filter((item) => item !== value)

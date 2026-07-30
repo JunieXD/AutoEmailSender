@@ -2,7 +2,10 @@ import {
   matchesProfessorSearchField,
   normalizeProfessorSearchText,
 } from "@/lib/professorSearchField";
-import type { ProfessorDashboardItemDTO, ProfessorDashboardStatus } from "@/types";
+import type {
+  ProfessorDashboardFilterStatus,
+  ProfessorDashboardItemDTO,
+} from "@/types";
 
 export const DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS = [
   { value: "name", label: "姓名" },
@@ -57,7 +60,7 @@ export type DashboardFilterState = {
   schools: string[];
   departments: string[];
   titles: string[];
-  statuses: ProfessorDashboardStatus[];
+  statuses: ProfessorDashboardFilterStatus[];
   tagIds: string[];
   minMatchScore: string;
 };
@@ -221,9 +224,12 @@ const matchesAnyTitle = (
 };
 
 const matchesAnyStatus = (
-  value: ProfessorDashboardStatus,
-  selectedValues: ProfessorDashboardStatus[],
-): boolean => selectedValues.length === 0 || selectedValues.includes(value);
+  professor: ProfessorDashboardItemDTO,
+  selectedValues: ProfessorDashboardFilterStatus[],
+): boolean =>
+  selectedValues.length === 0 ||
+  selectedValues.includes(professor.status) ||
+  (Boolean(professor.has_active_schedule) && selectedValues.includes("scheduled"));
 
 const matchesAnyTag = (
   professor: ProfessorDashboardItemDTO,
@@ -313,7 +319,7 @@ export const filterDashboardProfessors = (
       matchesAny(professor.school, filters.schools) &&
       matchesAny(professor.department, filters.departments) &&
       matchesAnyTitle(professor.title, filters.titles) &&
-      matchesAnyStatus(professor.status, filters.statuses) &&
+      matchesAnyStatus(professor, filters.statuses) &&
       matchesAnyTag(professor, filters.tagIds) &&
       matchScoreMatched
     );

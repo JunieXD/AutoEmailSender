@@ -258,6 +258,7 @@ export interface ProfessorDashboardItemDTO {
   match_score: number | null;
   sent_count: number;
   status: ProfessorDashboardStatus;
+  has_active_schedule?: boolean;
   last_sent_at: string | null;
   last_replied_at: string | null;
   tags: ProfessorTagDTO[];
@@ -270,6 +271,10 @@ export type ProfessorDashboardStatus =
   | 'contacted'
   | 'replied'
   | 'failed';
+
+export type ProfessorDashboardFilterStatus =
+  | ProfessorDashboardStatus
+  | 'scheduled';
 
 export interface ProfessorDTO {
   id: number;

@@ -492,6 +492,68 @@ class ContactStatusTests(unittest.TestCase):
         tasks_by_professor = build_status.await_args.kwargs["tasks_by_professor"]
         self.assertEqual([task.id for task in tasks_by_professor[items[0].id]], [task_id])
 
+    def test_dashboard_keeps_contact_status_and_exposes_active_schedule(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                now = datetime.now(UTC)
+                identity = self._build_identity()
+                llm_profile = self._build_llm_profile()
+                professor = Professor(
+                    name="已联系且排程老师",
+                    email="contacted-scheduled@example.edu",
+                )
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                sent_task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm_profile.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.SENT.value,
+                    sent_at=now - timedelta(days=1),
+                    created_at=now - timedelta(days=1),
+                    updated_at=now - timedelta(days=1),
+                )
+                session.add(sent_task)
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailLog(
+                            email_task_id=sent_task.id,
+                            identity_id=identity.id,
+                            llm_profile_id=llm_profile.id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="首次联系",
+                            content="老师您好",
+                            created_at=now - timedelta(days=1),
+                        ),
+                        EmailTask(
+                            identity_id=identity.id,
+                            llm_profile_id=llm_profile.id,
+                            professor_id=professor.id,
+                            parent_task_id=sent_task.id,
+                            status=EmailTaskStatus.SCHEDULED.value,
+                            scheduled_at=now + timedelta(hours=1),
+                            created_at=now,
+                            updated_at=now,
+                        ),
+                    ],
+                )
+                await session.commit()
+
+                items = await list_professors(
+                    identity_id=identity.id,
+                    llm_profile_id=None,
+                    ids=None,
+                    session=session,
+                )
+                return items[0]
+
+        item = self._run_async(scenario())
+
+        self.assertEqual(item.status, "contacted")
+        self.assertTrue(item.has_active_schedule)
+
     @staticmethod
     def _build_identity() -> IdentityProfile:
         return IdentityProfile(

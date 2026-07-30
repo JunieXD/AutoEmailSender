@@ -131,6 +131,11 @@ export const DashboardProfessorRow = ({
           {timeLabel}
         </span>
       ) : null}
+      {professor.has_active_schedule ? (
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800">
+          已排程
+        </span>
+      ) : null}
       <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
         {statusLabel}
       </span>

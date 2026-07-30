@@ -13,6 +13,7 @@ import {
 const createProfessor = (
   id: number,
   status: ProfessorDashboardItemDTO["status"],
+  overrides: Partial<ProfessorDashboardItemDTO> = {},
 ): ProfessorDashboardItemDTO => ({
   id,
   name: `${status}-导师`,
@@ -26,6 +27,7 @@ const createProfessor = (
   match_score: null,
   sent_count: 0,
   status,
+  ...overrides,
 });
 
 describe("professor dashboard status helper", () => {
@@ -49,7 +51,7 @@ describe("professor dashboard status helper", () => {
     });
   });
 
-  it("exposes relationship status labels in homepage order", () => {
+  it("keeps relationship labels and adds the scheduled homepage filter", () => {
     expect(PROFESSOR_DASHBOARD_STATUS_LABELS).toEqual({
       not_contacted: "未开始",
       preparing: "准备中",
@@ -66,10 +68,11 @@ describe("professor dashboard status helper", () => {
       ["contacted", "已联系"],
       ["replied", "已回复"],
       ["failed", "失败"],
+      ["scheduled", "已排程"],
     ]);
   });
 
-  it("filters professors by relationship status without caring about task internals", () => {
+  it("filters relationship status and active schedules independently", () => {
     const professors = [
       createProfessor(1, "not_contacted"),
       createProfessor(2, "preparing"),
@@ -77,6 +80,7 @@ describe("professor dashboard status helper", () => {
       createProfessor(4, "contacted"),
       createProfessor(5, "replied"),
       createProfessor(6, "failed"),
+      createProfessor(7, "replied", { has_active_schedule: true }),
     ];
 
     expect(filterProfessorsByDashboardStatus(professors, "all")).toEqual(professors);
@@ -85,6 +89,9 @@ describe("professor dashboard status helper", () => {
     ]);
     expect(filterProfessorsByDashboardStatus(professors, "failed")).toEqual([
       professors[5],
+    ]);
+    expect(filterProfessorsByDashboardStatus(professors, "scheduled")).toEqual([
+      professors[6],
     ]);
   });
 });

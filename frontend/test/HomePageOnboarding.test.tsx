@@ -351,7 +351,7 @@ describe("HomePage onboarding", () => {
     expect(screen.queryByText("当前状态")).not.toBeInTheDocument();
   });
 
-  it("renders six relationship filter options and filters the list through the UI", async () => {
+  it("renders relationship and scheduled filter options and filters the list through the UI", async () => {
     mockedListProfessors.mockResolvedValue([
       createProfessor(101, "未开始导师", "not_contacted"),
       createProfessor(102, "准备中导师", "preparing"),
@@ -384,6 +384,7 @@ describe("HomePage onboarding", () => {
     expect(screen.getByRole("option", { name: "已联系" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "已回复" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "失败" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "已排程" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("option", { name: "已联系" }));
 

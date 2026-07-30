@@ -85,6 +85,7 @@ class ProfessorDashboardItemRead(ApiSchema):
     match_score: int | None
     sent_count: int
     status: ProfessorDashboardStatus
+    has_active_schedule: bool = False
     last_sent_at: datetime | None = None
     last_replied_at: datetime | None = None
     personal_note: str | None = None
