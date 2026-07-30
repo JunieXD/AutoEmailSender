@@ -14,6 +14,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 $OutputEncoding = [System.Text.UTF8Encoding]::new()
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 $ReleaseTag = "v$Version"
+$ReleaseVersionChecker = Join-Path $PSScriptRoot "check-release-version.mjs"
 $CuratedReleaseNotesPath = Join-Path $RepoRoot "docs\releases\$ReleaseTag.md"
 $DesktopReleaseNotesPath = Join-Path $RepoRoot "desktop\release-notes.md"
 
@@ -70,6 +71,12 @@ function Assert-ReleaseNotes {
   }
 }
 
+function Assert-ReleaseVersion {
+  Invoke-CheckedCommand "release version preflight" {
+    node $ReleaseVersionChecker --version $Version --repo-root $RepoRoot
+  }
+}
+
 function Copy-ReleaseNotes {
   if ($DryRun) {
     Write-Host "[dry-run] copy docs/releases/$ReleaseTag.md to desktop/release-notes.md"
@@ -104,6 +111,9 @@ function Invoke-Verification {
     Invoke-CheckedCommand "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" {
       uv run python -m unittest test.test_database_schema test.test_migrations_runtime
     }
+    Invoke-CheckedCommand "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract" {
+      uv run python -m unittest test.test_crawl_mentors_skill_contract
+    }
   } finally {
     Pop-Location
   }
@@ -131,6 +141,7 @@ function Set-NpmVersion {
   }
 }
 
+Assert-ReleaseVersion
 Assert-CleanRepository
 Assert-ReleaseNotes
 Invoke-Verification
@@ -147,5 +158,5 @@ Run-Git push origin $ReleaseTag
 if ($DryRun) {
   Write-Host "[dry-run] 未创建提交、tag 或推送。真实发布会触发 GitHub Actions 创建 Release。"
 } else {
-  Write-Host "已发布 $ReleaseTag。GitHub Actions 将自动创建 Release。"
+  Write-Host "已推送 $ReleaseTag。GitHub Actions 将继续构建并发布 Release。"
 }

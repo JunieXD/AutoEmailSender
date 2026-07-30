@@ -8,7 +8,9 @@ usage() {
 version=""
 dry_run=0
 skip_verify=0
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+release_version_checker="$script_dir/check-release-version.mjs"
 
 while (($#)); do
   case "$1" in
@@ -109,6 +111,11 @@ assert_release_notes() {
   fi
 }
 
+assert_release_version() {
+  invoke_checked_command "release version preflight" \
+    node "$release_version_checker" --version "$version" --repo-root "$repo_root"
+}
+
 copy_release_notes() {
   if ((dry_run)); then
     echo "[dry-run] copy docs/releases/$release_tag.md to desktop/release-notes.md"
@@ -139,6 +146,8 @@ invoke_verification() {
       uv run python -m unittest test.test_desktop_runtime
     invoke_checked_command "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" \
       uv run python -m unittest test.test_database_schema test.test_migrations_runtime
+    invoke_checked_command "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract" \
+      uv run python -m unittest test.test_crawl_mentors_skill_contract
   )
 
   echo "=== 验证 desktop ==="
@@ -160,6 +169,7 @@ set_npm_version() {
   )
 }
 
+assert_release_version
 assert_clean_repository
 assert_release_notes
 invoke_verification
@@ -176,5 +186,5 @@ run_git push origin "$release_tag"
 if ((dry_run)); then
   echo "[dry-run] 未创建提交、tag 或推送。真实发布会触发 GitHub Actions 创建 Release。"
 else
-  echo "已发布 ${release_tag}。GitHub Actions 将自动创建 Release。"
+  echo "已推送 ${release_tag}。GitHub Actions 将继续构建并发布 Release。"
 fi

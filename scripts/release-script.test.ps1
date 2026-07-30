@@ -68,6 +68,7 @@ exit /b 0
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "docs\releases") -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "desktop") -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "frontend") -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $releaseRepo "backend") -Force | Out-Null
   Set-Content -Encoding UTF8 -Path (Join-Path $releaseRepo "docs\releases\v9.9.9.md") -Value @"
 # v9.9.9
 
@@ -142,6 +143,7 @@ exit /b 0
     }
     $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_database_schema test.test_migrations_runtime" -Message "release.ps1 没有执行迁移相关后端测试。`n$uvCalls"
+    Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_crawl_mentors_skill_contract" -Message "release.ps1 没有执行导师抓取 Skill 契约测试。`n$uvCalls"
 
     if (Test-Path $uvCallsPath) {
       Remove-Item -LiteralPath $uvCallsPath -Force
@@ -166,8 +168,8 @@ exit /b 0
       if (-not (Test-Path (Join-Path $releaseRepo "desktop\release-notes.md"))) {
         throw "release.ps1 应该把公告复制到 desktop\\release-notes.md。`n$output"
       }
-      if ($output -notmatch "已发布 v9.9.9") {
-        throw "release.ps1 成功时没有输出发布完成信息。`n$output"
+      if ($output -notmatch "已推送 v9.9.9") {
+        throw "release.ps1 成功时没有输出 tag 已推送信息。`n$output"
       }
     } else {
       throw "release.ps1 在允许的未跟踪公告文件存在时应该成功。`n$output"

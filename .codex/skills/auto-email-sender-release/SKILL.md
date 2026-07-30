@@ -1,6 +1,6 @@
 ---
 name: auto-email-sender-release
-description: "Use when preparing, publishing, monitoring, or verifying an AutoEmailSender release; polishing docs/releases/vX.md release notes; or running the cross-platform release scripts and macOS Sparkle release workflow on Linux, macOS, or Windows."
+description: "Use when preparing, publishing, monitoring, or verifying an AutoEmailSender release; releasing repository-delivered Skills such as crawl-mentors-to-xlsx; polishing docs/releases/vX.md release notes; or running the cross-platform release scripts and macOS Sparkle release workflow on Linux, macOS, or Windows."
 ---
 
 # Auto Email Sender Release
@@ -9,28 +9,41 @@ description: "Use when preparing, publishing, monitoring, or verifying an AutoEm
 
 Drive the project release flow from a version number to a verified public GitHub Release. Keep release notes clear for ordinary users, use the repository release scripts, investigate failures instead of bypassing checks, and verify the Windows and macOS artifacts after the tag is pushed.
 
+Publish repository-delivered Skills under the same AutoEmailSender version and tag. Keep `crawl-mentors-to-xlsx` canonical under `.agents/skills/crawl-mentors-to-xlsx` and keep `.claude/skills/crawl-mentors-to-xlsx` as its Claude Code entry. Do not add a separate Skill release, plugin-marketplace submission, or Electron installer payload unless the project explicitly changes that distribution policy.
+
 Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, read `docs/sparkle-release-operations.md`. Treat that repository document as the detailed source of truth and keep this skill focused on the release procedure.
 
 ## Release Flow
 
 1. Confirm the version matches `x.y.z` or the supported prerelease form `x.y.z-suffix`, without a leading `v`.
-2. Check the repository state. Do not stage or touch unrelated changes. A real release must run from `master` with no changes except the prepared `docs/releases/v<version>.md`.
-3. Choose the release scripts for the current shell:
+2. Fetch current tags from `origin`, then run `node scripts/check-release-version.mjs --version <version> --repo-root .`. Require `v<version>` to be absent and the requested version to be greater than the repository's highest valid release tag. Never publish a downgrade from `master` or reuse a tag.
+3. Check the repository state. Do not stage or touch unrelated changes. A real release must run from `master` with no changes except the prepared `docs/releases/v<version>.md`.
+4. Choose the release scripts for the current shell:
    - Linux/macOS/Git Bash: `./scripts/prepare-release.sh <version>` and later `./scripts/release.sh <version>`.
    - Windows PowerShell: `pwsh -NoLogo -NoProfile -File .\scripts\prepare-release.ps1 <version>` and later `pwsh -NoLogo -NoProfile -File .\scripts\release.ps1 <version>`.
-4. Run the prepare-release command. It creates a release note template only; it is not a generated changelog.
-5. Find the previous release tag with `git describe --tags --abbrev=0 --match "v*" HEAD^`.
-6. Inspect the release context from the previous tag to `HEAD` before writing `docs/releases/v<version>.md`:
+5. Run the prepare-release command. It creates a release note template only; it is not a generated changelog.
+6. Find the previous release tag with `git describe --tags --abbrev=0 --match "v*" HEAD^`.
+7. Inspect the release context from the previous tag to `HEAD` before writing `docs/releases/v<version>.md`:
    - commit list: `git log --oneline <previousTag>..HEAD`
    - changed-file summary: `git diff --stat <previousTag>..HEAD` and `git diff --name-only <previousTag>..HEAD`
    - key product diffs under `frontend/src`, `backend/app`, `desktop/src`, `desktop`, and `scripts`
+   - repository Skill diffs under `.agents/skills`, `.claude/skills`, and `.codex/skills`, plus their installation documentation under `website/docs`
    - changed tests under `backend/test`, `frontend/test`, `frontend/src/**/*.test.*`, `desktop/test`, and `website/test`
    - related `docs/superpowers/specs/**` and `docs/superpowers/plans/**` files when they changed in the release range
-7. Write `docs/releases/v<version>.md` directly from that context as a user-friendly announcement.
-8. Keep these sections in order: `### 新增功能`, `### 体验优化`, `### 问题修复`. Put higher-impact changes first.
-9. Run the Sparkle preflight below, then run the platform-specific release command from step 3.
-10. If local verification fails, follow Test Failure Handling before retrying.
-11. After the tag is pushed, follow Post-Tag Verification. Do not report the release complete merely because the release script exited successfully.
+8. Write `docs/releases/v<version>.md` directly from that context as a user-friendly announcement.
+9. Keep these sections in order: `### 新增功能`, `### 体验优化`, `### 问题修复`. Put higher-impact changes first.
+10. Run Repository Skill Preflight and Sparkle Preflight below, then run the platform-specific release command from step 4.
+11. If local verification fails, follow Test Failure Handling before retrying.
+12. After the tag is pushed, follow Post-Tag Verification. Do not report the release complete merely because the release script exited successfully.
+
+## Repository Skill Preflight
+
+- Treat `crawl-mentors-to-xlsx` as a source-repository deliverable that shares the application's version and tag. It is distributed through the tagged repository/source archives and the installation guide, not through the EXE, DMG, GitHub Release asset list, or a plugin marketplace.
+- Inspect `git ls-tree -r --name-only HEAD -- .agents/skills/crawl-mentors-to-xlsx .claude/skills/crawl-mentors-to-xlsx`. Compare the result with `expected_canonical_files` in `backend/test/test_crawl_mentors_skill_contract.py`; require all ten canonical files plus the Claude Code forwarding `SKILL.md` to be present in the release commit.
+- Use the available `skill-creator` `quick_validate.py` against both Skill directories when either entry changed. Then run `cd backend` and `uv run python -m unittest test.test_crawl_mentors_skill_contract`. The normal release scripts run the contract test automatically; do not remove or bypass it.
+- When the release range changes the Skill guide or website navigation, run `npm test` and `npm run build` in `website` before publishing.
+- Confirm the public guide still explains repository/path installation, whole-directory copying, the shared AutoEmailSender tag, and the absence of a marketplace release. Do not imply that installing the desktop application installs the Skill.
+- Treat `--dry-run` only as a command-sequence rehearsal: it does not enforce `master` or a clean worktree. Independently complete the branch, status, tracked-file, and version checks before treating the release as ready.
 
 ## Sparkle Preflight
 
@@ -60,6 +73,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - Prefer concrete results over technical causes: use `模型连接失败时会显示更明确的错误原因。` instead of `新增 SOCKS 初始化错误包装。`
 - Keep bullets to one sentence in most cases and avoid sub-bullets or marketing language.
 - Omit development-only, packaging-only, documentation-only, README, badge, and website-copy changes unless they affect installation, upgrade, onboarding, data safety, reliability, or ordinary product usage.
+- Describe a new or materially changed repository Skill as a user-facing capability, but say that Codex or Claude Code can use it from the repository. Do not describe it as built into the desktop installer. Omit contract-test-only or internal Skill maintenance when behavior and installation are unchanged.
 
 ## Platform Note Rules
 
@@ -76,6 +90,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 ## Post-Tag Verification
 
+- Inspect the exact tag with `git ls-tree -r --name-only v<version> -- .agents/skills/crawl-mentors-to-xlsx .claude/skills/crawl-mentors-to-xlsx`, compare it with the tested manifest, and inspect a `git archive` of the same paths. Require all canonical files and the Claude Code entry in the tagged source payload. Do not expect a separate Skill asset in the GitHub Release or inside the desktop installers.
 - Locate the `Release Desktop` workflow run for the exact tag with `gh run list`, then wait for it with `gh run watch <run-id> --exit-status`.
 - Require `build-windows`, `build-macos`, and `publish` to succeed. The publish job must upload installers and deltas before `appcast.xml`, then publish the staged draft Release.
 - Inspect the exact tag with `gh release view v<version> --json isDraft,assets,url`. Require a non-draft release containing:
@@ -84,6 +99,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
   - `appcast.xml`
   - up to three `.delta` files when prior Sparkle releases exist
 - For the first Sparkle-enabled release, no delta is expected because no earlier appcast exists. Do not treat that as a failure.
+- If `website/**` changed in the release range, locate the `Deploy Website` run for the exact release commit, wait for it to succeed, and verify the public Skill guide opens and still names both repository paths correctly.
 - If macOS functional QA is in scope, verify from an installed previous version that Sparkle displays the release notes, validates the update, and restarts into the new version. Follow Update QA Safety.
 - For a transient Actions failure, rerun only after identifying the cause. For a product or packaging defect, fix `master` and publish a new version. Do not move or recreate a pushed tag, manually replace signed assets, or rotate Sparkle keys without explicit user approval.
 

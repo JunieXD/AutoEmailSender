@@ -23,6 +23,7 @@ Auto Email Sender 的安装、使用和开发说明。
 
 - [首页](./dashboard)
 - [导师管理](./mentors)
+- [导师官网转导入表 Skill](./mentor-crawler-skill)
 - [匹配分析](./matching)
 - [任务与工作区](./tasks-workspace)
 

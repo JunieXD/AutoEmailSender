@@ -6,6 +6,12 @@ node_modules/
 .env
 .obsidian
 .claude
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/crawl-mentors-to-xlsx/
+!.claude/skills/crawl-mentors-to-xlsx/**
 .playwright-mcp
 data/*.db
 data/*.db-*
@@ -30,6 +36,14 @@ desktop/native/sparkle/vendor/
 !.codex/skills/auto-email-sender-release/
 !.codex/skills/auto-email-sender-release/**
 .agents
+!.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/crawl-mentors-to-xlsx/
+!.agents/skills/crawl-mentors-to-xlsx/**
+.agents/skills/crawl-mentors-to-xlsx/**/__pycache__/
+.agents/skills/crawl-mentors-to-xlsx/**/*.py[cod]
 skills-lock.json
 .env
 logs

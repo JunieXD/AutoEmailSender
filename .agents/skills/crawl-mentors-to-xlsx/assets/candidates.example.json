@@ -1,0 +1,48 @@
+{
+  "records": [
+    {
+      "name": "张明远",
+      "email": "zhang@example.edu",
+      "title": "教授",
+      "university": "示例大学",
+      "school": "人工智能学院",
+      "department": "计算机科学系",
+      "research_direction": ["大语言模型", "智能体"],
+      "recent_papers": ["Paper A", "Paper B"],
+      "profile_url": "https://example.edu/faculty/zhang",
+      "source_url": "https://example.edu/faculty/zhang",
+      "tags": [],
+      "personal_note": ""
+    }
+  ],
+  "review": [
+    {
+      "name": "李老师",
+      "email": "",
+      "profile_url": "https://example.edu/faculty/li",
+      "source_url": "https://example.edu/faculty/li",
+      "reason": "missing_email",
+      "details": "官方主页未展示邮箱，需要人工确认。"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://example.edu/faculty",
+      "role": "listing",
+      "status": "used",
+      "note": "导师列表入口。"
+    },
+    {
+      "url": "https://example.edu/faculty/zhang",
+      "role": "profile",
+      "status": "used",
+      "note": "姓名、邮箱和研究方向来源。"
+    },
+    {
+      "url": "https://example.edu/faculty/li",
+      "role": "profile",
+      "status": "used",
+      "note": "页面可访问，但未展示可验证邮箱。"
+    }
+  ]
+}

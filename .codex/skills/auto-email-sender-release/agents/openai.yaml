@@ -1,4 +1,4 @@
 interface:
   display_name: "AutoEmailSender Release"
-  short_description: "Prepare, publish, and verify AutoEmailSender releases."
-  default_prompt: "Use $auto-email-sender-release to prepare release notes, publish the version, and verify GitHub Actions plus Windows and macOS Sparkle artifacts."
+  short_description: "Prepare and verify app, Skill, and update releases."
+  default_prompt: "Use $auto-email-sender-release to prepare and publish an AutoEmailSender version, including repository Skills, desktop artifacts, and post-tag verification."

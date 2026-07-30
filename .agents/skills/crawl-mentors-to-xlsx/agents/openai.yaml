@@ -1,0 +1,4 @@
+interface:
+  display_name: "导师官网转导入表"
+  short_description: "抓取高校导师公开信息并生成可直接导入系统的 XLSX"
+  default_prompt: "使用 $crawl-mentors-to-xlsx 从学校或学院官网导师列表页抓取公开信息，并生成可直接导入 Auto Email Sender 的 XLSX。"
