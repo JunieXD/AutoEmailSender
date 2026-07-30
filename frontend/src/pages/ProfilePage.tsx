@@ -15,6 +15,8 @@ import {
   ChevronDown,
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   FolderOpen,
   Loader2,
@@ -1558,6 +1560,7 @@ export const ProfilePage = () => {
   const [identityForm, setIdentityForm] = useState<IdentityFormState>(
     createEmptyIdentityForm(),
   );
+  const [smtpPasswordVisible, setSmtpPasswordVisible] = useState(false);
   const [llmForm, setLlmForm] = useState<LLMFormState>(createEmptyLLMForm());
   const [submittingIdentity, setSubmittingIdentity] = useState(false);
   const [submittingLLM, setSubmittingLLM] = useState(false);
@@ -1678,6 +1681,7 @@ export const ProfilePage = () => {
 
   const applyIdentityEditorState = useCallback(
     (nextEditor: IdentityDTO | "new") => {
+      setSmtpPasswordVisible(false);
       if (nextEditor === "new") {
         setIdentityEditorId("new");
         setIdentityForm(createEmptyIdentityForm());
@@ -2251,6 +2255,7 @@ export const ProfilePage = () => {
       await refreshSelections();
       setIdentityEditorId(saved.id);
       setIdentityForm(toIdentityForm(saved));
+      setSmtpPasswordVisible(false);
       notifySuccess(
         "身份保存成功",
         isCreatingIdentity ? "身份已创建。" : "身份已保存。",
@@ -2486,6 +2491,7 @@ export const ProfilePage = () => {
                   await refreshSelections();
                   setIdentityEditorId(null);
                   setIdentityForm(createEmptyIdentityForm());
+                  setSmtpPasswordVisible(false);
                   notifySuccess(
                     "删除身份成功",
                     `身份“${getIdentityProfileName(editingIdentity)}”已删除。`,
@@ -2736,21 +2742,40 @@ export const ProfilePage = () => {
                   placeholder="示例：465"
                 />
               </label>
-              <label className="block md:col-span-2">
-                {renderFieldLabel("SMTP 密码", true)}
-                <input
-                  type="password"
-                  value={identityForm.smtp_password}
-                  onChange={(event) =>
-                    setIdentityForm((previous) => ({
-                      ...previous,
-                      smtp_password: event.target.value,
-                    }))
-                  }
-                  className={inputClassName}
-                  placeholder="示例：邮箱授权码或应用专用密码（可从网页版邮箱设置页面中获取）"
-                />
-              </label>
+              <div className="block md:col-span-2">
+                <label htmlFor="smtp-password">
+                  {renderFieldLabel("SMTP 密码", true)}
+                </label>
+                <div className="group relative">
+                  <input
+                    id="smtp-password"
+                    type={smtpPasswordVisible ? "text" : "password"}
+                    value={identityForm.smtp_password}
+                    onChange={(event) =>
+                      setIdentityForm((previous) => ({
+                        ...previous,
+                        smtp_password: event.target.value,
+                      }))
+                    }
+                    className={clsx(inputClassName, "pr-11")}
+                    placeholder="示例：邮箱授权码或应用专用密码（可从网页版邮箱设置页面中获取）"
+                  />
+                  <button
+                    type="button"
+                    aria-label={smtpPasswordVisible ? "隐藏授权码" : "显示授权码"}
+                    aria-pressed={smtpPasswordVisible}
+                    title={smtpPasswordVisible ? "隐藏授权码" : "显示授权码"}
+                    onClick={() => setSmtpPasswordVisible((visible) => !visible)}
+                    className="pointer-events-none absolute inset-y-0 right-2 my-auto flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                  >
+                    {smtpPasswordVisible ? (
+                      <EyeOff aria-hidden="true" className="h-4 w-4" />
+                    ) : (
+                      <Eye aria-hidden="true" className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
               <label className="block">
                 {renderFieldLabel("IMAP Host", true)}
                 <input

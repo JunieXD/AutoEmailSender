@@ -478,6 +478,26 @@ describe("ProfilePage onboarding", () => {
     ).toBeInTheDocument();
   });
 
+  it("reveals the smtp authorization code so it can be selected and copied", () => {
+    renderPage();
+    openSetupSection("发件身份");
+
+    const passwordInput = screen.getByLabelText(/SMTP 密码/);
+    expect(passwordInput).toHaveAttribute("type", "password");
+
+    fireEvent.click(screen.getByRole("button", { name: "显示授权码" }));
+
+    expect(passwordInput).toHaveAttribute("type", "text");
+    expect(passwordInput).toHaveValue("secret");
+    expect(screen.getByRole("button", { name: "隐藏授权码" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "隐藏授权码" }));
+    expect(passwordInput).toHaveAttribute("type", "password");
+  });
+
   it("shows smtp test failures as failures when the backend returns ok false", async () => {
     vi.mocked(testIdentitySmtp).mockResolvedValueOnce({
       ok: false,

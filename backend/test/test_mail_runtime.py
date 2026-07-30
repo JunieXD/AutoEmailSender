@@ -10,6 +10,7 @@ from unittest.mock import patch
 from app.models import IdentityProfile
 from app.services.mail_runtime import (
     MailRuntimeError,
+    SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE,
     discover_sent_folder,
     fetch_inbox_messages_from_sender,
     fetch_incremental_inbox_messages,
@@ -27,6 +28,7 @@ from app.services.mail_runtime import (
     parse_received_email,
     search_mailbox_uids_since_date,
     send_email_to_recipient,
+    test_smtp_connection,
 )
 
 
@@ -158,12 +160,15 @@ class _FakeImapClient:
 
 
 class _FakeSmtpClient:
-    def __init__(self) -> None:
+    def __init__(self, login_error: Exception | None = None) -> None:
         self.commands: list[str] = []
         self.messages: list[object] = []
+        self.login_error = login_error
 
     def login(self, username: str, password: str):
         self.commands.append("login")
+        if self.login_error is not None:
+            raise self.login_error
         return "OK", [b"logged in"]
 
     def send_message(self, message: object):
@@ -472,6 +477,28 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("授权码", message)
         self.assertIn("IMAP/SMTP", message)
 
+    def test_smtp_test_reports_and_logs_invalid_authorization_code_characters(self) -> None:
+        client = _FakeSmtpClient(
+            UnicodeEncodeError(
+                "ascii",
+                "错误",
+                0,
+                2,
+                "ordinal not in range(128)",
+            ),
+        )
+
+        with (
+            patch("app.services.mail_runtime._open_smtp_client", return_value=client),
+            patch("app.services.mail_runtime.logger.exception") as log_exception,
+        ):
+            ok, message = asyncio.run(test_smtp_connection(_build_identity()))
+
+        self.assertFalse(ok)
+        self.assertEqual(message, SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE)
+        log_exception.assert_called_once()
+        self.assertEqual(client.commands, ["login", "quit"])
+
     def test_imap_connection_sends_client_id_before_selecting_inbox(self) -> None:
         client = _FakeImapClient(select_status="OK")
         previous_id_command = imaplib.Commands.pop("ID", None)
@@ -526,6 +553,37 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         open_imap.assert_not_called()
         self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
+
+    def test_send_email_reports_invalid_authorization_code_characters(self) -> None:
+        client = _FakeSmtpClient(
+            UnicodeEncodeError(
+                "ascii",
+                "错误",
+                0,
+                2,
+                "ordinal not in range(128)",
+            ),
+        )
+
+        with (
+            patch("app.services.mail_runtime._open_smtp_client", return_value=client),
+            patch("app.services.mail_runtime.logger.exception") as log_exception,
+        ):
+            with self.assertRaisesRegex(MailRuntimeError, "授权码格式不正确"):
+                asyncio.run(
+                    send_email_to_recipient(
+                        identity=_build_identity(),
+                        recipient_name="Teacher",
+                        recipient_email="teacher@example.com",
+                        subject="hello",
+                        body_text="hello",
+                        body_html=None,
+                        attachments=[],
+                    ),
+                )
+
+        log_exception.assert_called_once()
+        self.assertEqual(client.commands, ["login", "quit"])
 
     def test_send_email_skips_sent_folder_sync_when_imap_is_not_configured(self) -> None:
         identity = _build_identity()

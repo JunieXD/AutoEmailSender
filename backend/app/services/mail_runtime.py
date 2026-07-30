@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import time
-import mimetypes
-import smtplib
 import imaplib
+import logging
+import mimetypes
 import re
+import smtplib
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from email import policy
@@ -49,6 +50,8 @@ from app.services.imap_message_fetcher import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 IMAP_CLIENT_ID_NAME = "AutoEmailSender"
 IMAP_CLIENT_ID_VERSION = "3.0.0"
 IMAP_CLIENT_ID_VENDOR = "AutoEmailSender"
@@ -77,6 +80,10 @@ REPLY_QUOTE_HTML_PATTERNS = (
     re.compile(r"<[^>]*>\s*-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
     re.compile(r"-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
     re.compile(r"<blockquote\b", re.IGNORECASE),
+)
+SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE = (
+    "SMTP 登录失败：授权码格式不正确。请从邮箱设置页面重新复制客户端授权码，"
+    "并确认没有中文、全角符号或不可见字符。"
 )
 CHINESE_REPLY_HEADER_PATTERN = re.compile(
     r"(?:^|\n)\s*发件人：[^\n]*"
@@ -626,7 +633,7 @@ def _test_smtp_connection_sync(identity: IdentityProfile) -> None:
     server = None
     try:
         server = _open_smtp_client(identity)
-        server.login(identity.smtp_username, identity.smtp_password)
+        _login_smtp_client(server, identity)
     except (OSError, smtplib.SMTPException, SocketTimeout) as exc:
         raise MailRuntimeError(f"SMTP 连接失败: {exc}") from exc
     finally:
@@ -658,7 +665,7 @@ def _send_email_sync(identity: IdentityProfile, message: EmailMessage) -> SentFo
     server = None
     try:
         server = _open_smtp_client(identity)
-        server.login(identity.smtp_username, identity.smtp_password)
+        _login_smtp_client(server, identity)
         server.send_message(message)
     except (OSError, smtplib.SMTPException, SocketTimeout) as exc:
         raise MailRuntimeError(f"SMTP 发信失败: {exc}") from exc
@@ -669,6 +676,18 @@ def _send_email_sync(identity: IdentityProfile, message: EmailMessage) -> SentFo
             except OSError:
                 pass
     return SentFolderSyncResult(status="sent_folder_sync_disabled")
+
+
+def _login_smtp_client(server: smtplib.SMTP, identity: IdentityProfile) -> None:
+    try:
+        server.login(identity.smtp_username, identity.smtp_password)
+    except UnicodeEncodeError as exc:
+        logger.exception(
+            "SMTP 登录凭据编码失败: host=%s port=%s",
+            identity.smtp_host,
+            identity.smtp_port,
+        )
+        raise MailRuntimeError(SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE) from exc
 
 
 def format_imap_login_error(identity: IdentityProfile, detail: object) -> str:
