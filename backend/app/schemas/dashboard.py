@@ -141,6 +141,35 @@ class DashboardEmailTrendBucketRead(ApiSchema):
     failed_count: int = 0
 
 
+class DashboardOutreachCoverageItemRead(ApiSchema):
+    university: str
+    school: str | None = None
+    label: str
+    sent_professor_count: int = 0
+    total_professor_count: int = 0
+    unsent_professor_count: int = 0
+    sent_professor_rate: float = 0.0
+
+
+class DashboardOutreachCoverageRead(ApiSchema):
+    universities: list[DashboardOutreachCoverageItemRead] = Field(default_factory=list)
+    schools: list[DashboardOutreachCoverageItemRead] = Field(default_factory=list)
+
+
+class DashboardReplyWaitBucketRead(ApiSchema):
+    key: Literal["within_24h", "1_3_days", "3_7_days", "7_14_days", "over_14_days"]
+    label: str
+    count: int = 0
+    rate: float = 0.0
+
+
+class DashboardReplyWaitRead(ApiSchema):
+    sample_count: int = 0
+    median_hours: float | None = None
+    p75_hours: float | None = None
+    distribution: list[DashboardReplyWaitBucketRead] = Field(default_factory=list)
+
+
 class DashboardEmailFunnelBucketRead(ApiSchema):
     key: str
     label: str
@@ -170,6 +199,8 @@ class DashboardEmailFollowUpRead(ApiSchema):
 class DashboardEmailSectionRead(ApiSchema):
     summary: DashboardEmailSummaryRead
     trend_30_days: list[DashboardEmailTrendBucketRead] = Field(default_factory=list)
+    outreach_coverage: DashboardOutreachCoverageRead = Field(default_factory=DashboardOutreachCoverageRead)
+    reply_wait: DashboardReplyWaitRead = Field(default_factory=DashboardReplyWaitRead)
     funnel: list[DashboardEmailFunnelBucketRead] = Field(default_factory=list)
     status_distribution: list[DashboardEmailStatusBucketRead] = Field(default_factory=list)
     follow_ups: list[DashboardEmailFollowUpRead] = Field(default_factory=list)

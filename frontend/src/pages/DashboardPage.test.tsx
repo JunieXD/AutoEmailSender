@@ -207,6 +207,60 @@ const overview: DashboardOverviewDTO = {
       { date: "2026-05-21", label: "05/21", sent_count: 1, replied_count: 0, failed_count: 0 },
       { date: "2026-05-22", label: "05/22", sent_count: 1, replied_count: 1, failed_count: 1 },
     ],
+    outreach_coverage: {
+      universities: [
+        {
+          university: "示例大学",
+          school: null,
+          label: "示例大学",
+          sent_professor_count: 1,
+          total_professor_count: 2,
+          unsent_professor_count: 1,
+          sent_professor_rate: 0.5,
+        },
+        {
+          university: "第二大学",
+          school: null,
+          label: "第二大学",
+          sent_professor_count: 1,
+          total_professor_count: 1,
+          unsent_professor_count: 0,
+          sent_professor_rate: 1,
+        },
+      ],
+      schools: [
+        {
+          university: "示例大学",
+          school: "计算机学院",
+          label: "计算机学院",
+          sent_professor_count: 1,
+          total_professor_count: 2,
+          unsent_professor_count: 1,
+          sent_professor_rate: 0.5,
+        },
+        {
+          university: "第二大学",
+          school: "工程学院",
+          label: "工程学院",
+          sent_professor_count: 1,
+          total_professor_count: 1,
+          unsent_professor_count: 0,
+          sent_professor_rate: 1,
+        },
+      ],
+    },
+    reply_wait: {
+      sample_count: 8,
+      median_hours: 54,
+      p75_hours: 120,
+      distribution: [
+        { key: "within_24h", label: "24 小时内", count: 3, rate: 3 / 8 },
+        { key: "1_3_days", label: "1–3 天", count: 2, rate: 2 / 8 },
+        { key: "3_7_days", label: "3–7 天", count: 2, rate: 2 / 8 },
+        { key: "7_14_days", label: "7–14 天", count: 1, rate: 1 / 8 },
+        { key: "over_14_days", label: "14 天以上", count: 0, rate: 0 },
+      ],
+    },
     funnel: [
       { key: "matched", label: "已匹配", count: 3 },
       { key: "generating_draft", label: "草稿生成中", count: 2 },
@@ -391,6 +445,23 @@ describe("DashboardPage", () => {
     expect(screen.getByTestId("email-trend-grid")).not.toHaveClass("xl:grid-cols-2");
     expect(screen.getByTestId("email-trend-card")).toBeInTheDocument();
     expect(screen.getByTestId("dashboard-email-line-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("email-insight-grid")).toHaveClass(
+      "xl:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]",
+    );
+    const coverageCard = screen.getByTestId("outreach-coverage-card");
+    const replyWaitCard = screen.getByTestId("reply-wait-card");
+    expect(coverageCard).toHaveClass("h-[24rem]");
+    expect(replyWaitCard).toHaveClass("h-[24rem]");
+    expect(within(coverageCard).getByRole("heading", { name: "院校触达覆盖率" })).toBeInTheDocument();
+    expect(within(replyWaitCard).getByRole("heading", { name: "首次回复用时分布" })).toBeInTheDocument();
+    expect(within(coverageCard).getByText("全部时间内 · 覆盖率低优先")).toBeInTheDocument();
+    expect(within(coverageCard).getByTestId("coverage-ranking-row-university-示例大学-all"))
+      .toHaveTextContent(/示例大学\s*1 \/ 2 · 50%/);
+    expect(within(replyWaitCard).getByText("2.3 天")).toBeInTheDocument();
+    expect(within(replyWaitCard).getByText("8 位")).toBeInTheDocument();
+    expect(within(replyWaitCard).getByText("5 天")).toBeInTheDocument();
+    expect(within(replyWaitCard).getByRole("img", { name: "24 小时内，3 位导师，占比 38%" }))
+      .toBeInTheDocument();
     expect(screen.queryByText("全部导师")).not.toBeInTheDocument();
     expect(screen.queryByText("发送 / 回复")).not.toBeInTheDocument();
     expect(screen.queryByText("近 30 天发送 / 回复 / 失败趋势")).not.toBeInTheDocument();
@@ -441,6 +512,115 @@ describe("DashboardPage", () => {
 
     await waitFor(() => expect(getDashboardOverview).toHaveBeenCalledTimes(2));
     expect(screen.getByText("共享通信 · 3 个身份")).toBeInTheDocument();
+  });
+
+  it("switches the outreach coverage ranking between universities and colleges", async () => {
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    const coverageCard = await screen.findByTestId("outreach-coverage-card");
+    const levelGroup = within(coverageCard).getByRole("group", { name: "院校覆盖率排行层级" });
+    const universityButton = within(levelGroup).getByRole("button", { name: "学校" });
+    const schoolButton = within(levelGroup).getByRole("button", { name: "学院" });
+
+    expect(universityButton).toHaveAttribute("aria-pressed", "true");
+    expect(within(coverageCard).getByTestId("coverage-ranking-row-university-示例大学-all"))
+      .toHaveTextContent(/示例大学\s*1 \/ 2 · 50%/);
+
+    fireEvent.click(schoolButton);
+
+    expect(schoolButton).toHaveAttribute("aria-pressed", "true");
+    expect(within(coverageCard).getByTestId("coverage-ranking-row-school-示例大学-计算机学院"))
+      .toHaveTextContent(/示例大学 · 计算机学院\s*1 \/ 2 · 50%/);
+    expect(within(coverageCard).getByTestId("coverage-ranking-row-school-第二大学-工程学院"))
+      .toHaveTextContent(/第二大学 · 工程学院\s*1 \/ 1 · 100%/);
+  });
+
+  it("updates email filters when a coverage ranking row is selected", async () => {
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByTestId("coverage-ranking-row-university-示例大学-all"));
+
+    await waitFor(() => {
+      expect(getDashboardOverview).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          emailUniversity: "示例大学",
+          emailSchool: null,
+        }),
+      );
+    });
+
+    const schoolRow = await screen.findByTestId("coverage-ranking-row-school-示例大学-计算机学院");
+    expect(schoolRow).toHaveTextContent(/计算机学院\s*1 \/ 2 · 50%/);
+    fireEvent.click(schoolRow);
+
+    await waitFor(() => {
+      expect(getDashboardOverview).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          emailUniversity: "示例大学",
+          emailSchool: "计算机学院",
+        }),
+      );
+    });
+    expect(screen.getByText("已高亮：计算机学院")).toBeInTheDocument();
+  });
+
+  it("marks a small reply-wait sample and renders an empty state without samples", async () => {
+    getDashboardOverview.mockResolvedValueOnce({
+      ...overview,
+      email: {
+        ...overview.email,
+        reply_wait: {
+          sample_count: 4,
+          median_hours: 18,
+          p75_hours: 48,
+          distribution: [
+            { key: "within_24h", label: "24 小时内", count: 3, rate: 0.75 },
+            { key: "1_3_days", label: "1–3 天", count: 1, rate: 0.25 },
+            { key: "3_7_days", label: "3–7 天", count: 0, rate: 0 },
+            { key: "7_14_days", label: "7–14 天", count: 0, rate: 0 },
+            { key: "over_14_days", label: "14 天以上", count: 0, rate: 0 },
+          ],
+        },
+      },
+    });
+
+    const firstView = render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("样本较少")).toBeInTheDocument();
+
+    firstView.unmount();
+    getDashboardOverview.mockResolvedValueOnce({
+      ...overview,
+      email: {
+        ...overview.email,
+        reply_wait: {
+          sample_count: 0,
+          median_hours: null,
+          p75_hours: null,
+          distribution: [],
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("当前范围暂无可计算的首次回复用时")).toBeInTheDocument();
   });
 
   it("renders email sending trend as an index-hover line chart", async () => {

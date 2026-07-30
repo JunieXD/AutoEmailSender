@@ -394,6 +394,17 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
         self.assertEqual(summary.scheduled_count, 0)
         self.assertEqual(summary.send_failed_count, 1)
         self.assertEqual(summary.send_failed_rate, 0.5)
+        self.assertEqual(dashboard.email.reply_wait.sample_count, 1)
+        self.assertEqual(dashboard.email.reply_wait.median_hours, 2.0)
+        self.assertEqual(dashboard.email.reply_wait.p75_hours, 2.0)
+        self.assertEqual(
+            dashboard.email.outreach_coverage.universities[0].sent_professor_count,
+            2,
+        )
+        self.assertEqual(
+            dashboard.email.outreach_coverage.universities[0].total_professor_count,
+            2,
+        )
         self.assertEqual(dashboard.mentor.summary.high_score_uncontacted_count, 0)
         self.assertEqual(
             [item.professor_id for item in dashboard.email.follow_ups],

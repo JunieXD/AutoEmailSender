@@ -339,6 +339,34 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.send_failed_count, 1)
         self.assertEqual(result.email.summary.review_required_count, 1)
         self.assertEqual(result.email.summary.scheduled_count, 1)
+        university_coverage = {
+            item.university: item
+            for item in result.email.outreach_coverage.universities
+        }
+        self.assertEqual(university_coverage["示例大学"].sent_professor_count, 1)
+        self.assertEqual(university_coverage["示例大学"].total_professor_count, 3)
+        self.assertAlmostEqual(university_coverage["示例大学"].sent_professor_rate, 1 / 3)
+        self.assertEqual(university_coverage["第二大学"].sent_professor_count, 1)
+        self.assertEqual(university_coverage["第二大学"].total_professor_count, 2)
+        self.assertEqual(university_coverage["第二大学"].sent_professor_rate, 0.5)
+        school_coverage = {
+            (item.university, item.school): item
+            for item in result.email.outreach_coverage.schools
+        }
+        computer_school = school_coverage[("示例大学", "计算机学院")]
+        self.assertEqual(computer_school.sent_professor_count, 1)
+        self.assertEqual(computer_school.total_professor_count, 2)
+        self.assertEqual(computer_school.unsent_professor_count, 1)
+        self.assertEqual(computer_school.sent_professor_rate, 0.5)
+        self.assertEqual(result.email.reply_wait.sample_count, 1)
+        self.assertEqual(result.email.reply_wait.median_hours, 48.0)
+        self.assertEqual(result.email.reply_wait.p75_hours, 48.0)
+        reply_wait_distribution = {
+            item.key: item
+            for item in result.email.reply_wait.distribution
+        }
+        self.assertEqual(reply_wait_distribution["1_3_days"].count, 1)
+        self.assertEqual(reply_wait_distribution["1_3_days"].rate, 1.0)
         status_distribution = {item.status: item.count for item in result.email.status_distribution}
         self.assertEqual(status_distribution["send_failed"], 1)
         self.assertEqual(status_distribution["review_required"], 1)
@@ -528,6 +556,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 1)
         self.assertEqual(result.email.summary.reply_rate, 1.0)
+        self.assertEqual(result.email.reply_wait.sample_count, 0)
+        self.assertIsNone(result.email.reply_wait.median_hours)
+        self.assertTrue(all(item.count == 0 for item in result.email.reply_wait.distribution))
         trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
         self.assertEqual(trend_by_date[reply_date].replied_count, 1)
         self.assertEqual(
@@ -767,6 +798,157 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 0)
         self.assertEqual(result.email.summary.reply_rate, 0.0)
+        coverage_by_university = {
+            item.university: item
+            for item in result.email.outreach_coverage.universities
+        }
+        self.assertEqual(coverage_by_university["示例大学"].sent_professor_count, 0)
+        self.assertEqual(coverage_by_university["第二大学"].sent_professor_count, 1)
+
+    def test_dashboard_service_filters_reply_wait_by_first_reply_date(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+        reply_date = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="第二大学",
+                    email_school="工程学院",
+                    start_date=reply_date,
+                    end_date=reply_date,
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.sent_count, 0)
+        self.assertEqual(result.email.reply_wait.sample_count, 1)
+        self.assertEqual(result.email.reply_wait.median_hours, 48.0)
+        self.assertEqual(result.email.reply_wait.p75_hours, 48.0)
+
+    def test_dashboard_service_reply_wait_does_not_reset_after_follow_up(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+
+        async def seed_follow_up() -> None:
+            async with self.session_factory() as session:
+                task = await session.scalar(
+                    select(EmailTask).where(EmailTask.match_score == 82)
+                )
+                assert task is not None
+                session.add(
+                    EmailLog(
+                        email_task_id=task.id,
+                        identity_id=identity_id,
+                        llm_profile_id=llm_profile_id,
+                        professor_id=task.professor_id,
+                        direction=EmailDirection.SENT.value,
+                        subject="再次申请交流",
+                        content="王老师您好，再次打扰",
+                        created_at=datetime.now(UTC) - timedelta(days=2),
+                    ),
+                )
+                await session.commit()
+
+        self._run_async(seed_follow_up())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="第二大学",
+                    email_school="工程学院",
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.reply_wait.sample_count, 1)
+        self.assertEqual(result.email.reply_wait.median_hours, 48.0)
+
+    def test_dashboard_service_uses_first_successful_send_after_failed_copy(self) -> None:
+        identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
+        now = datetime.now(UTC)
+        anchor = now.replace(hour=12, minute=0, second=0, microsecond=0)
+        today = now.date().isoformat()
+
+        async def seed_retry_logs() -> None:
+            async with self.session_factory() as session:
+                professor = Professor(
+                    name="重试成功老师",
+                    email="retry-success@example.edu",
+                    university="第七大学",
+                    school="自动化学院",
+                    research_direction="机器人",
+                    recent_papers=["Robotics Paper"],
+                    profile_url="https://example.edu/retry-success",
+                    created_at=anchor - timedelta(days=2),
+                    updated_at=anchor - timedelta(days=2),
+                )
+                session.add(professor)
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="申请交流",
+                            content="首次发送失败",
+                            normalized_message_id="retry-success@example.com",
+                            failure_summary="SMTP 暂时不可用",
+                            created_at=anchor - timedelta(days=1),
+                        ),
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="申请交流",
+                            content="重试发送成功",
+                            rfc_message_id="<retry-success@example.com>",
+                            created_at=anchor - timedelta(hours=2),
+                        ),
+                        EmailLog(
+                            email_task_id=None,
+                            identity_id=identity_id,
+                            llm_profile_id=llm_profile_id,
+                            professor_id=professor.id,
+                            direction=EmailDirection.RECEIVED.value,
+                            subject="Re: 申请交流",
+                            content="收到",
+                            normalized_message_id="retry-success-reply@example.com",
+                            created_at=anchor - timedelta(hours=1),
+                        ),
+                    ],
+                )
+                await session.commit()
+
+        self._run_async(seed_retry_logs())
+
+        async def run_query():
+            async with self.session_factory() as session:
+                return await build_dashboard_overview(
+                    session,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    email_university="第七大学",
+                    email_school="自动化学院",
+                    start_date=today,
+                    end_date=today,
+                )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.email.summary.sent_count, 1)
+        self.assertEqual(result.email.summary.sent_professor_count, 1)
+        self.assertEqual(result.email.reply_wait.sample_count, 1)
+        self.assertEqual(result.email.reply_wait.median_hours, 1.0)
 
     def test_dashboard_service_returns_zero_sent_professor_rate_for_empty_email_scope(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
@@ -785,6 +967,10 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.sent_professor_count, 0)
         self.assertEqual(result.email.summary.total_professor_count, 0)
         self.assertEqual(result.email.summary.sent_professor_rate, 0.0)
+        self.assertGreater(len(result.email.outreach_coverage.universities), 0)
+        self.assertGreater(len(result.email.outreach_coverage.schools), 0)
+        self.assertEqual(result.email.reply_wait.sample_count, 0)
+        self.assertIsNone(result.email.reply_wait.median_hours)
 
 
     def test_dashboard_service_excludes_replies_outside_date_range(self) -> None:
@@ -839,6 +1025,13 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["email"]["summary"]["sent_professor_count"], 2)
         self.assertEqual(payload["email"]["summary"]["total_professor_count"], 7)
         self.assertAlmostEqual(payload["email"]["summary"]["sent_professor_rate"], 2 / 7)
+        self.assertEqual(payload["email"]["reply_wait"]["sample_count"], 1)
+        coverage_by_university = {
+            item["university"]: item
+            for item in payload["email"]["outreach_coverage"]["universities"]
+        }
+        self.assertEqual(coverage_by_university["示例大学"]["sent_professor_count"], 1)
+        self.assertEqual(coverage_by_university["示例大学"]["total_professor_count"], 3)
         self.assertEqual(payload["email"]["follow_ups"][0]["task_id"], 4)
 
     def test_dashboard_endpoint_does_not_require_llm_profile(self) -> None:

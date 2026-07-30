@@ -1278,6 +1278,42 @@ export interface DashboardEmailTrendBucketDTO {
   failed_count: number;
 }
 
+export interface DashboardOutreachCoverageItemDTO {
+  university: string;
+  school: string | null;
+  label: string;
+  sent_professor_count: number;
+  total_professor_count: number;
+  unsent_professor_count: number;
+  sent_professor_rate: number;
+}
+
+export interface DashboardOutreachCoverageDTO {
+  universities: DashboardOutreachCoverageItemDTO[];
+  schools: DashboardOutreachCoverageItemDTO[];
+}
+
+export type DashboardReplyWaitBucketKey =
+  | 'within_24h'
+  | '1_3_days'
+  | '3_7_days'
+  | '7_14_days'
+  | 'over_14_days';
+
+export interface DashboardReplyWaitBucketDTO {
+  key: DashboardReplyWaitBucketKey;
+  label: string;
+  count: number;
+  rate: number;
+}
+
+export interface DashboardReplyWaitDTO {
+  sample_count: number;
+  median_hours: number | null;
+  p75_hours: number | null;
+  distribution: DashboardReplyWaitBucketDTO[];
+}
+
 export interface DashboardEmailFunnelBucketDTO {
   key: string;
   label: string;
@@ -1307,6 +1343,8 @@ export interface DashboardEmailFollowUpDTO {
 export interface DashboardEmailSectionDTO {
   summary: DashboardEmailSummaryDTO;
   trend_30_days: DashboardEmailTrendBucketDTO[];
+  outreach_coverage: DashboardOutreachCoverageDTO;
+  reply_wait: DashboardReplyWaitDTO;
   funnel: DashboardEmailFunnelBucketDTO[];
   status_distribution: DashboardEmailStatusBucketDTO[];
   follow_ups: DashboardEmailFollowUpDTO[];

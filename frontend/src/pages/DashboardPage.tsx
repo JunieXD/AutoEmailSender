@@ -46,6 +46,7 @@ import type {
   DashboardEmailTrendBucketDTO,
   DashboardOverviewDTO,
   DashboardProfileCompletenessBucketDTO,
+  DashboardReplyWaitDTO,
   DashboardSchoolFilterDTO,
 } from '@/types';
 
@@ -109,6 +110,30 @@ const getEmailDateRange = (preset: string): { startDate: string | null; endDate:
     startDate: formatLocalDate(start),
     endDate: formatLocalDate(now),
   };
+};
+
+const emailDatePresetLabels: Record<string, string> = {
+  all: '全部时间',
+  '7d': '最近 7 天',
+  '30d': '最近 30 天',
+  '90d': '最近 90 天',
+};
+
+type CoverageRankingLevel = 'university' | 'school';
+
+const formatDurationHours = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) {
+    return '—';
+  }
+  if (value < 1) {
+    return '< 1 小时';
+  }
+  if (value < 24) {
+    return `${Math.round(value)} 小时`;
+  }
+  const days = value / 24;
+  const formattedDays = days >= 10 ? Math.round(days).toString() : days.toFixed(1).replace(/\.0$/, '');
+  return `${formattedDays} 天`;
 };
 
 type MetricTone = 'teal' | 'amber' | 'rose' | 'sky' | 'violet' | 'stone';
@@ -556,6 +581,216 @@ const TrendChart = ({ data }: { data: DashboardEmailTrendBucketDTO[] }) => {
   );
 };
 
+const OutreachCoverageRanking = ({
+  data,
+  level,
+  selectedUniversity,
+  selectedSchool,
+  dateLabel,
+  onLevelChange,
+  onSelectUniversity,
+  onSelectSchool,
+  onClearSchool,
+}: {
+  data: DashboardOverviewDTO['email']['outreach_coverage'];
+  level: CoverageRankingLevel;
+  selectedUniversity: string | null;
+  selectedSchool: string | null;
+  dateLabel: string;
+  onLevelChange: (level: CoverageRankingLevel) => void;
+  onSelectUniversity: (university: string) => void;
+  onSelectSchool: (university: string, school: string) => void;
+  onClearSchool: () => void;
+}) => {
+  const visibleData = useMemo(() => {
+    const items = level === 'university' ? data.universities : data.schools;
+    const scopedItems =
+      level === 'school' && selectedUniversity
+        ? items.filter((item) => item.university === selectedUniversity)
+        : items;
+    return [...scopedItems].sort(
+      (first, second) =>
+        first.sent_professor_rate - second.sent_professor_rate
+        || second.unsent_professor_count - first.unsent_professor_count
+        || second.total_professor_count - first.total_professor_count
+        || first.university.localeCompare(second.university, 'zh-CN')
+        || (first.school ?? '').localeCompare(second.school ?? '', 'zh-CN'),
+    );
+  }, [data.schools, data.universities, level, selectedUniversity]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="outreach-coverage-ranking">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-stone-500">{dateLabel} · 覆盖率低优先</p>
+        <div
+          role="group"
+          aria-label="院校覆盖率排行层级"
+          className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
+        >
+          {([
+            ['university', '学校'],
+            ['school', '学院'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={level === value}
+              onClick={() => onLevelChange(value)}
+              className={clsx(
+                'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                level === value
+                  ? 'bg-white text-stone-900 shadow-sm ring-1 ring-stone-200'
+                  : 'text-stone-500 hover:text-stone-800',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {level === 'school' && selectedSchool ? (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800">
+          <span className="truncate">已高亮：{selectedSchool}</span>
+          <button type="button" onClick={onClearSchool} className="shrink-0 font-medium hover:text-teal-950">
+            清除学院筛选
+          </button>
+        </div>
+      ) : null}
+      {visibleData.length === 0 ? (
+        <EmptyState>当前范围暂无院校覆盖率数据</EmptyState>
+      ) : (
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          {visibleData.map((item) => {
+            const label =
+              level === 'school' && !selectedUniversity
+                ? `${item.university} · ${item.label}`
+                : item.label;
+            const selected =
+              level === 'university'
+                ? selectedUniversity === item.university
+                : selectedUniversity === item.university && selectedSchool === item.school;
+            const percentage = Math.min(100, Math.max(0, item.sent_professor_rate * 100));
+            const handleSelect = () => {
+              if (level === 'university') {
+                onSelectUniversity(item.university);
+                return;
+              }
+              if (item.school) {
+                onSelectSchool(item.university, item.school);
+              }
+            };
+
+            return (
+              <button
+                key={`${level}-${item.university}-${item.school ?? ''}`}
+                type="button"
+                data-testid={`coverage-ranking-row-${level}-${item.university}-${item.school ?? 'all'}`}
+                aria-label={`${label}，已发送 ${item.sent_professor_count} / ${item.total_professor_count} 位导师，覆盖率 ${formatPercent(item.sent_professor_rate)}`}
+                onClick={handleSelect}
+                className={clsx(
+                  'grid w-full gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors sm:grid-cols-[minmax(7rem,0.9fr)_minmax(8rem,1.2fr)_auto] sm:items-center',
+                  selected
+                    ? 'border-teal-200 bg-teal-50/80'
+                    : 'border-transparent bg-stone-50 hover:border-stone-200 hover:bg-white',
+                )}
+              >
+                <span className="min-w-0 truncate text-xs font-medium text-stone-700" title={label}>
+                  {label}
+                </span>
+                <span className="h-2.5 overflow-hidden rounded-full bg-stone-200" aria-hidden="true">
+                  <span
+                    className="block h-full rounded-full bg-teal-500 transition-[width] duration-300"
+                    style={{ width: `${percentage}%` }}
+                  />
+                </span>
+                <span className="whitespace-nowrap text-xs text-stone-500">
+                  <strong className="font-semibold text-stone-900">
+                    {formatNumber(item.sent_professor_count)} / {formatNumber(item.total_professor_count)}
+                  </strong>
+                  {' · '}{formatPercent(item.sent_professor_rate)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ReplyWaitDistribution = ({
+  data,
+  dateLabel,
+}: {
+  data: DashboardReplyWaitDTO;
+  dateLabel: string;
+}) => {
+  if (data.sample_count === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col" data-testid="reply-wait-distribution">
+        <p className="mb-3 text-xs leading-5 text-stone-500">
+          {dateLabel} · 首次收到回复的导师 · 从首次成功发送开始计算
+        </p>
+        <EmptyState>当前范围暂无可计算的首次回复用时</EmptyState>
+      </div>
+    );
+  }
+
+  const maxCount = Math.max(...data.distribution.map((item) => item.count), 1);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="reply-wait-distribution">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <p className="text-xs leading-5 text-stone-500">
+          {dateLabel} · 首次收到回复的导师 · 从首次成功发送开始计算
+        </p>
+        {data.sample_count < 5 ? (
+          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">样本较少</span>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3">
+          <div className="text-xs text-stone-500">中位回复用时</div>
+          <div className="mt-1.5 text-xl font-semibold text-stone-950">{formatDurationHours(data.median_hours)}</div>
+        </div>
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3">
+          <div className="text-xs text-stone-500">已回复样本</div>
+          <div className="mt-1.5 text-xl font-semibold text-stone-950">{formatNumber(data.sample_count)} 位</div>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-stone-500">
+        75% 的首次回复发生在 <span className="font-medium text-stone-700">{formatDurationHours(data.p75_hours)}</span> 内
+      </p>
+      <div className="relative mt-3 min-h-0 flex-1 rounded-xl border border-stone-200 bg-white px-3 pb-3 pt-4">
+        <div className="flex h-28 items-end gap-2 sm:gap-3">
+          {data.distribution.map((item) => {
+            const height = item.count > 0 ? Math.max((item.count / maxCount) * 100, 5) : 0;
+            return (
+              <div key={item.key} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end">
+                <span className="mb-1 text-xs font-medium text-stone-600">{formatNumber(item.count)}</span>
+                <div
+                  role="img"
+                  aria-label={`${item.label}，${item.count} 位导师，占比 ${formatPercent(item.rate)}`}
+                  title={`${item.label}：${item.count} 位导师 · ${formatPercent(item.rate)}`}
+                  className="w-full max-w-12 rounded-t-md bg-sky-500 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]"
+                  style={{ height: `${height}%` }}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-2 grid grid-cols-5 gap-2 sm:gap-3">
+          {data.distribution.map((item) => (
+            <span key={item.key} className="min-w-0 text-center text-[11px] leading-4 text-stone-500">
+              {item.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const MentorFilterBar = ({
   schoolFilters,
   selectedUniversity,
@@ -739,6 +974,7 @@ export const DashboardPage = () => {
   const [emailUniversity, setEmailUniversity] = useState<string | null>(null);
   const [emailSchool, setEmailSchool] = useState<string | null>(null);
   const [emailDatePreset, setEmailDatePreset] = useState('all');
+  const [coverageRankingLevel, setCoverageRankingLevel] = useState<CoverageRankingLevel>('university');
   const [activeSectionId, setActiveSectionId] = useState<string>('mentor');
   const [sectionNavTop, setSectionNavTop] = useState<number | null>(null);
   const requestIdRef = useRef(0);
@@ -861,6 +1097,7 @@ export const DashboardPage = () => {
     setEmailUniversity(null);
     setEmailSchool(null);
     setEmailDatePreset('all');
+    setCoverageRankingLevel('university');
   }, [selectedIdentityId]);
 
   useEffect(() => {
@@ -1192,7 +1429,7 @@ export const DashboardPage = () => {
             >
               <ModuleHeader
                 title="邮件触达"
-                description="发送进度、回复效果和触达趋势"
+                description="发送进度、院校覆盖、回复效率和触达趋势"
                 icon={<ClipboardCheck className="h-5 w-5" />}
               />
               {communicationIdentityIds.length > 1 ? (
@@ -1211,13 +1448,20 @@ export const DashboardPage = () => {
                   onUniversityChange={(value) => {
                     setEmailUniversity(value);
                     setEmailSchool(null);
+                    setCoverageRankingLevel(value ? 'school' : 'university');
                   }}
-                  onSchoolChange={setEmailSchool}
+                  onSchoolChange={(value) => {
+                    setEmailSchool(value);
+                    if (value) {
+                      setCoverageRankingLevel('school');
+                    }
+                  }}
                   onDatePresetChange={setEmailDatePreset}
                   onClear={() => {
                     setEmailUniversity(null);
                     setEmailSchool(null);
                     setEmailDatePreset('all');
+                    setCoverageRankingLevel('university');
                   }}
                 />
               </div>
@@ -1232,6 +1476,51 @@ export const DashboardPage = () => {
               <div data-testid="email-trend-grid" className="mt-4 grid grid-cols-1 gap-4">
                 <ChartCard testId="email-trend-card" title="发送趋势">
                   <TrendChart data={overview.email.trend_30_days} />
+                </ChartCard>
+              </div>
+              <div
+                data-testid="email-insight-grid"
+                className="mt-4 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(22rem,0.9fr)]"
+              >
+                <ChartCard
+                  className="flex h-[24rem] min-w-0 flex-col overflow-hidden"
+                  testId="outreach-coverage-card"
+                  title="院校触达覆盖率"
+                >
+                  <OutreachCoverageRanking
+                    data={overview.email.outreach_coverage ?? { universities: [], schools: [] }}
+                    level={coverageRankingLevel}
+                    selectedUniversity={emailUniversity}
+                    selectedSchool={emailSchool}
+                    dateLabel={`${emailDatePresetLabels[emailDatePreset] ?? '当前时间范围'}内`}
+                    onLevelChange={setCoverageRankingLevel}
+                    onSelectUniversity={(university) => {
+                      setEmailUniversity(university);
+                      setEmailSchool(null);
+                      setCoverageRankingLevel('school');
+                    }}
+                    onSelectSchool={(university, school) => {
+                      setEmailUniversity(university);
+                      setEmailSchool(school);
+                      setCoverageRankingLevel('school');
+                    }}
+                    onClearSchool={() => setEmailSchool(null)}
+                  />
+                </ChartCard>
+                <ChartCard
+                  className="flex h-[24rem] min-w-0 flex-col overflow-hidden"
+                  testId="reply-wait-card"
+                  title="首次回复用时分布"
+                >
+                  <ReplyWaitDistribution
+                    data={overview.email.reply_wait ?? {
+                      sample_count: 0,
+                      median_hours: null,
+                      p75_hours: null,
+                      distribution: [],
+                    }}
+                    dateLabel={`${emailDatePresetLabels[emailDatePreset] ?? '当前时间范围'}内`}
+                  />
                 </ChartCard>
               </div>
             </section>

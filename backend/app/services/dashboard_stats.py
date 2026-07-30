@@ -25,12 +25,16 @@ from app.schemas.dashboard import (
     DashboardMentorSectionRead,
     DashboardMentorSummaryRead,
     DashboardOverviewRead,
+    DashboardOutreachCoverageItemRead,
+    DashboardOutreachCoverageRead,
+    DashboardReplyWaitBucketRead,
+    DashboardReplyWaitRead,
     DashboardSchoolDistributionRead,
     DashboardSchoolFilterRead,
     DashboardSchoolFilterSchoolRead,
 )
 from app.services.contact_status import build_contact_status_by_professor
-from app.services.communication_events import load_communication_events
+from app.services.communication_events import CommunicationEvent, load_communication_events
 from app.services.identity_communication_groups import resolve_identity_communication_scope
 
 
@@ -134,15 +138,6 @@ async def build_dashboard_overview(
     }
     latest_match_score_by_professor = _build_latest_match_score_by_professor(tasks_by_professor)
     professor_ids = [professor.id for professor in professors]
-    email_professor_ids = [
-        professor.id
-        for professor in professors
-        if _professor_matches_school_filters(
-            professor,
-            university=email_university,
-            school=email_school,
-        )
-    ]
     contact_status_by_professor = await build_contact_status_by_professor(
         session,
         identity_id=identity_id,
@@ -175,7 +170,7 @@ async def build_dashboard_overview(
         tasks=tasks,
         identity_id=identity_id,
         communication_identity_ids=communication_scope.identity_ids,
-        professor_ids=email_professor_ids,
+        professors=professors,
         professor_status_by_id=professor_status_by_id,
         latest_task_by_professor=latest_task_by_professor,
         threshold=identity.match_threshold or HIGH_SCORE_DEFAULT,
@@ -348,7 +343,7 @@ async def _build_email_section(
     tasks: list[EmailTask],
     identity_id: int,
     communication_identity_ids: tuple[int, ...],
-    professor_ids: list[int],
+    professors: list[Professor],
     professor_status_by_id: dict[int, str],
     latest_task_by_professor: dict[int, EmailTask],
     threshold: int,
@@ -362,14 +357,16 @@ async def _build_email_section(
     if start_at is not None and end_at is not None and start_at > end_at:
         raise ValueError("start_date 不能晚于 end_date")
 
-    task_ids = [task.id for task in tasks]
-    task_by_id = {task.id: task for task in tasks}
+    professor_by_id = {professor.id: professor for professor in professors}
+    professor_ids = list(professor_by_id)
+    active_professor_ids = set(professor_ids)
     communication_events = await load_communication_events(
         session,
         identity_ids=communication_identity_ids,
         professor_ids=professor_ids,
         include_message_content=False,
         include_source_identities=False,
+        include_professors=False,
     )
     sent_events_from_logs = [
         event
@@ -411,50 +408,71 @@ async def _build_email_section(
         if task.id in received_log_task_ids or task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value
     ]
 
-    sent_events: list[EmailTrendEvent] = []
+    all_sent_events: list[EmailTrendEvent] = []
     seen_sent_log_task_ids: set[int] = set()
     active_sent_count = 0
     for event in sent_events_from_logs:
         log = event.log
-        if log.professor_id is None:
+        if log.professor_id is None or log.professor_id not in active_professor_ids:
             continue
-        task = task_by_id.get(log.email_task_id)
-        professor = task.professor if task is not None else log.professor
-        if not _professor_matches_school_filters(
-            professor,
-            university=email_university,
-            school=email_school,
-        ):
+        sent_at = _successful_sent_event_timestamp(event)
+        if not _datetime_in_range(sent_at, start_at=start_at, end_at=end_at):
             continue
-        if not _datetime_in_range(event.created_at, start_at=start_at, end_at=end_at):
-            continue
-        sent_events.append((log.email_task_id, log.professor_id, event.created_at))
+        all_sent_events.append((log.email_task_id, log.professor_id, sent_at))
         event_task_ids = {
             event_log.email_task_id
             for event_log in event.logs
             if event_log.email_task_id is not None
         }
         seen_sent_log_task_ids.update(event_task_ids)
-        if any(event_log.identity_id == identity_id for event_log in event.logs):
+        if (
+            _professor_matches_school_filters(
+                professor_by_id[log.professor_id],
+                university=email_university,
+                school=email_school,
+            )
+            and any(
+                event_log.identity_id == identity_id
+                and not (event_log.failure_summary or "").strip()
+                for event_log in event.logs
+            )
+        ):
             active_sent_count += 1
 
     for task in all_sent_tasks:
-        if task.id in seen_sent_log_task_ids:
-            continue
-        if not _professor_matches_school_filters(task.professor, university=email_university, school=email_school):
+        if task.id in seen_sent_log_task_ids or task.professor_id not in active_professor_ids:
             continue
         source_time = task.sent_at or task.updated_at
         if not _datetime_in_range(source_time, start_at=start_at, end_at=end_at):
             continue
-        sent_events.append((task.id, task.professor_id, source_time))
-        active_sent_count += 1
+        all_sent_events.append((task.id, task.professor_id, source_time))
+        if _professor_matches_school_filters(
+            professor_by_id[task.professor_id],
+            university=email_university,
+            school=email_school,
+        ):
+            active_sent_count += 1
 
-    scoped_professor_ids = set(professor_ids)
-    sent_professor_ids = {
-        professor_id
-        for _, professor_id, _ in sent_events
-        if professor_id in scoped_professor_ids
+    sent_events = [
+        event
+        for event in all_sent_events
+        if _professor_matches_school_filters(
+            professor_by_id[event[1]],
+            university=email_university,
+            school=email_school,
+        )
+    ]
+
+    scoped_professor_ids = {
+        professor.id
+        for professor in professors
+        if _professor_matches_school_filters(
+            professor,
+            university=email_university,
+            school=email_school,
+        )
     }
+    sent_professor_ids = {professor_id for _, professor_id, _ in sent_events}
     contacted_professor_ids = {professor_id for _, professor_id, _ in sent_events}
     replied_professor_ids: set[int] = set()
     received_trend_events: list[tuple[int, datetime]] = []
@@ -465,7 +483,7 @@ async def _build_email_section(
         if not _datetime_in_range(event.created_at, start_at=start_at, end_at=end_at):
             continue
         if not _professor_matches_school_filters(
-            log.professor,
+            professor_by_id.get(log.professor_id),
             university=email_university,
             school=email_school,
         ):
@@ -510,6 +528,19 @@ async def _build_email_section(
         start_at=start_at,
         end_at=end_at,
     )
+    outreach_coverage = _build_outreach_coverage(
+        professors=professors,
+        sent_professor_ids={professor_id for _, professor_id, _ in all_sent_events},
+    )
+    reply_wait = _build_reply_wait(
+        professors=professors,
+        tasks=tasks,
+        communication_events=communication_events,
+        university=email_university,
+        school=email_school,
+        start_at=start_at,
+        end_at=end_at,
+    )
     funnel = _build_email_funnel(tasks)
     status_distribution = _build_email_status_distribution(tasks)
     follow_ups = _build_email_follow_ups(
@@ -533,6 +564,8 @@ async def _build_email_section(
             scheduled_count=scheduled_count,
         ),
         trend_30_days=trend_30_days,
+        outreach_coverage=outreach_coverage,
+        reply_wait=reply_wait,
         funnel=funnel,
         status_distribution=status_distribution,
         follow_ups=follow_ups,
@@ -756,6 +789,209 @@ def _build_mentor_follow_up_reason(*, status: str) -> str:
         "replied": "已回复",
         "failed": "发送失败",
     }.get(status, "待处理")
+
+
+def _build_outreach_coverage(
+    *,
+    professors: list[Professor],
+    sent_professor_ids: set[int],
+) -> DashboardOutreachCoverageRead:
+    university_totals: Counter[str] = Counter()
+    university_sent: Counter[str] = Counter()
+    school_totals: Counter[tuple[str, str]] = Counter()
+    school_sent: Counter[tuple[str, str]] = Counter()
+
+    for professor in professors:
+        university = _normalize_school_label(professor.university)
+        school = _normalize_college_label(professor.school)
+        school_key = (university, school)
+        university_totals[university] += 1
+        school_totals[school_key] += 1
+        if professor.id in sent_professor_ids:
+            university_sent[university] += 1
+            school_sent[school_key] += 1
+
+    universities = [
+        _build_outreach_coverage_item(
+            university=university,
+            school=None,
+            label=university,
+            sent_count=university_sent[university],
+            total_count=total_count,
+        )
+        for university, total_count in university_totals.items()
+    ]
+    schools = [
+        _build_outreach_coverage_item(
+            university=university,
+            school=school,
+            label=school,
+            sent_count=school_sent[(university, school)],
+            total_count=total_count,
+        )
+        for (university, school), total_count in school_totals.items()
+    ]
+    universities.sort(key=_outreach_coverage_sort_key)
+    schools.sort(key=_outreach_coverage_sort_key)
+    return DashboardOutreachCoverageRead(universities=universities, schools=schools)
+
+
+def _build_outreach_coverage_item(
+    *,
+    university: str,
+    school: str | None,
+    label: str,
+    sent_count: int,
+    total_count: int,
+) -> DashboardOutreachCoverageItemRead:
+    return DashboardOutreachCoverageItemRead(
+        university=university,
+        school=school,
+        label=label,
+        sent_professor_count=sent_count,
+        total_professor_count=total_count,
+        unsent_professor_count=total_count - sent_count,
+        sent_professor_rate=(sent_count / total_count) if total_count else 0.0,
+    )
+
+
+def _outreach_coverage_sort_key(item: DashboardOutreachCoverageItemRead) -> tuple[float, int, int, str, str]:
+    return (
+        item.sent_professor_rate,
+        -item.unsent_professor_count,
+        -item.total_professor_count,
+        item.university,
+        item.school or "",
+    )
+
+
+REPLY_WAIT_BUCKETS: tuple[tuple[str, str, float | None], ...] = (
+    ("within_24h", "24 小时内", 24.0),
+    ("1_3_days", "1–3 天", 72.0),
+    ("3_7_days", "3–7 天", 168.0),
+    ("7_14_days", "7–14 天", 336.0),
+    ("over_14_days", "14 天以上", None),
+)
+
+
+def _build_reply_wait(
+    *,
+    professors: list[Professor],
+    tasks: list[EmailTask],
+    communication_events: list[CommunicationEvent],
+    university: str | None,
+    school: str | None,
+    start_at: datetime | None,
+    end_at: datetime | None,
+) -> DashboardReplyWaitRead:
+    scoped_professor_ids = {
+        professor.id
+        for professor in professors
+        if _professor_matches_school_filters(
+            professor,
+            university=university,
+            school=school,
+        )
+    }
+    first_sent_at_by_professor: dict[int, datetime] = {}
+    received_at_by_professor: dict[int, list[datetime]] = defaultdict(list)
+
+    for event in communication_events:
+        professor_id = event.log.professor_id
+        if professor_id is None or professor_id not in scoped_professor_ids:
+            continue
+        if event.log.direction == EmailDirection.SENT.value and event.successful:
+            _keep_earliest_timestamp(
+                first_sent_at_by_professor,
+                professor_id,
+                _successful_sent_event_timestamp(event),
+            )
+        elif event.log.direction == EmailDirection.RECEIVED.value:
+            received_at_by_professor[professor_id].append(_as_utc_datetime(event.created_at))
+
+    # Legacy task rows can contain an exact send timestamp even when their send log is unavailable.
+    for task in tasks:
+        if task.professor_id not in scoped_professor_ids or task.sent_at is None:
+            continue
+        _keep_earliest_timestamp(
+            first_sent_at_by_professor,
+            task.professor_id,
+            task.sent_at,
+        )
+
+    wait_hours: list[float] = []
+    for professor_id, first_sent_at in first_sent_at_by_professor.items():
+        first_sent_utc = _as_utc_datetime(first_sent_at)
+        eligible_replies = [
+            reply_at
+            for reply_at in received_at_by_professor.get(professor_id, [])
+            if reply_at >= first_sent_utc
+        ]
+        if not eligible_replies:
+            continue
+        first_reply_at = min(eligible_replies)
+        if not _datetime_in_range(first_reply_at, start_at=start_at, end_at=end_at):
+            continue
+        wait_hours.append((first_reply_at - first_sent_utc).total_seconds() / 3600)
+
+    wait_hours.sort()
+    sample_count = len(wait_hours)
+    counts: Counter[str] = Counter(_reply_wait_bucket_key(value) for value in wait_hours)
+    distribution = [
+        DashboardReplyWaitBucketRead(
+            key=key,
+            label=label,
+            count=counts[key],
+            rate=(counts[key] / sample_count) if sample_count else 0.0,
+        )
+        for key, label, _ in REPLY_WAIT_BUCKETS
+    ]
+    return DashboardReplyWaitRead(
+        sample_count=sample_count,
+        median_hours=_percentile(wait_hours, 0.5),
+        p75_hours=_percentile(wait_hours, 0.75),
+        distribution=distribution,
+    )
+
+
+def _successful_sent_event_timestamp(event: CommunicationEvent) -> datetime:
+    successful_sent_timestamps = [
+        log.created_at
+        for log in event.logs
+        if log.direction == EmailDirection.SENT.value
+        and not (log.failure_summary or "").strip()
+    ]
+    if not successful_sent_timestamps:
+        return event.created_at
+    return min(successful_sent_timestamps)
+
+
+def _keep_earliest_timestamp(
+    values: dict[int, datetime],
+    professor_id: int,
+    timestamp: datetime,
+) -> None:
+    normalized = _as_utc_datetime(timestamp)
+    current = values.get(professor_id)
+    if current is None or normalized < _as_utc_datetime(current):
+        values[professor_id] = normalized
+
+
+def _reply_wait_bucket_key(wait_hours: float) -> str:
+    for key, _, upper_bound in REPLY_WAIT_BUCKETS:
+        if upper_bound is None or wait_hours < upper_bound:
+            return key
+    return "over_14_days"
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    position = (len(values) - 1) * percentile
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(values) - 1)
+    fraction = position - lower_index
+    return values[lower_index] + (values[upper_index] - values[lower_index]) * fraction
 
 
 def _build_email_trend(
@@ -992,10 +1228,14 @@ def _end_of_day(value: datetime | None) -> datetime | None:
     return value.replace(hour=23, minute=59, second=59, microsecond=999999)
 
 
-def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: datetime | None) -> bool:
+def _as_utc_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         value = as_utc_aware(value)
-    value = value.astimezone(UTC)
+    return value.astimezone(UTC)
+
+
+def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: datetime | None) -> bool:
+    value = _as_utc_datetime(value)
     if start_at is not None and value < start_at:
         return False
     if end_at is not None and value > end_at:
