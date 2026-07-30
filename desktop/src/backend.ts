@@ -58,6 +58,12 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
     AUTO_EMAIL_SENDER_APP_VERSION: input.appVersion,
     ENABLE_BACKGROUND_WORKERS: "true",
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
+    ...(input.isPackaged
+      ? {
+          PLAYWRIGHT_NODEJS_PATH: input.electronExecutablePath,
+          ELECTRON_RUN_AS_NODE: "1",
+        }
+      : {}),
   };
 }
 
@@ -99,6 +105,7 @@ export async function startBackend(options: {
       repoRoot: options.repoRoot,
       userDataPath: options.userDataPath,
       appVersion: app.getVersion(),
+      electronExecutablePath: process.execPath,
     }),
     repoRoot: options.repoRoot,
   });

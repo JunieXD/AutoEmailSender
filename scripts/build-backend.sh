@@ -21,6 +21,7 @@ AlembicIni="$BackendDir/alembic.ini"
 AlembicDir="$BackendDir/alembic"
 DocumentExtractionNotice="$BackendDir/app/services/document_extraction/MARKITDOWN_NOTICE.txt"
 PlaywrightBrowsersDir="$BackendDir/ms-playwright"
+PlaywrightHooksDir="$RepoRoot/scripts/pyinstaller-hooks"
 
 cd "$BackendDir"
 
@@ -38,6 +39,7 @@ uv run pyinstaller \
   --debug noarchive \
   --name backend \
   --specpath build \
+  --additional-hooks-dir "$PlaywrightHooksDir" \
   --hidden-import main \
   --hidden-import aiosqlite \
   --hidden-import app.services.document_extraction \
@@ -45,7 +47,6 @@ uv run pyinstaller \
   --collect-all mammoth \
   --collect-all pdfminer \
   --collect-all pypdf \
-  --collect-all playwright \
   --collect-all tldextract \
   --collect-all tiktoken \
   --collect-submodules tiktoken_ext \
@@ -62,5 +63,17 @@ uv run pyinstaller \
   desktop_entry.py
 
 PackagedBackendExe="$BackendDir/dist/backend/backend"
+PackagedPlaywrightDriverDir="$BackendDir/dist/backend/_internal/playwright/driver"
+for BundledNode in "$PackagedPlaywrightDriverDir/node" "$PackagedPlaywrightDriverDir/node.exe"; do
+  if [[ -e "$BundledNode" ]]; then
+    echo "Playwright bundled Node must be excluded: $BundledNode" >&2
+    exit 1
+  fi
+done
+PackagedPlaywrightCli="$PackagedPlaywrightDriverDir/package/cli.js"
+if [[ ! -f "$PackagedPlaywrightCli" ]]; then
+  echo "Playwright driver package is incomplete: $PackagedPlaywrightCli" >&2
+  exit 1
+fi
 "$PackagedBackendExe" --self-check
 "$PackagedBackendExe" --document-self-check "$BackendDir/test/fixtures/document_extraction"

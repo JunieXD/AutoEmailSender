@@ -29,6 +29,7 @@ PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
     "pdfplumber",
     "pypdf",
     "playwright.async_api",
+    "playwright.sync_api",
     "docx",
     "openpyxl",
 )

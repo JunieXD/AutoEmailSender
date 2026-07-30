@@ -12,6 +12,7 @@ export type BackendEnvInput = {
   repoRoot: string;
   userDataPath: string;
   appVersion: string;
+  electronExecutablePath: string;
 };
 
 export type BackendController = {

@@ -126,13 +126,15 @@ describe("desktop backend helpers", () => {
   });
 
   it("builds backend environment with desktop data dir", () => {
+    const baseEnv = { PATH: "C:\\Windows" };
     const env = buildBackendEnv({
-      baseEnv: { PATH: "C:\\Windows" },
+      baseEnv,
       isPackaged: true,
       repoRoot: "C:\\Repo",
       resourcesPath: "C:\\App\\resources",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
+      electronExecutablePath: "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",
     });
 
     expect(env.PATH).toBe("C:\\Windows");
@@ -142,6 +144,11 @@ describe("desktop backend helpers", () => {
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
     expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\App\\resources", "ms-playwright"));
+    expect(env.PLAYWRIGHT_NODEJS_PATH).toBe(
+      "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",
+    );
+    expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(baseEnv).toEqual({ PATH: "C:\\Windows" });
   });
 
   it("uses repo browser cache for dev backend environment", () => {
@@ -152,9 +159,12 @@ describe("desktop backend helpers", () => {
       repoRoot: "C:\\Repo",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
+      electronExecutablePath: "C:\\Repo\\desktop\\node_modules\\electron\\dist\\electron.exe",
     });
 
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\Repo", "backend", "ms-playwright"));
+    expect(env.PLAYWRIGHT_NODEJS_PATH).toBeUndefined();
+    expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
   });
 
   it("allows backend controllers to expose readiness separately from process launch", async () => {

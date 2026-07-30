@@ -369,6 +369,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             "pdfplumber",
             "pypdf",
             "playwright.async_api",
+            "playwright.sync_api",
             "docx",
             "openpyxl",
         ]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import runpy
 import unittest
 
 
@@ -34,7 +35,7 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
 
-    def test_collects_document_extraction_and_playwright_dependencies_for_packaging(self) -> None:
+    def test_collects_document_extraction_dependencies_for_packaging(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
         content = script.resolve().read_text(encoding="utf-8")
 
@@ -42,7 +43,6 @@ class BackendBuildScriptTest(unittest.TestCase):
             "mammoth",
             "pdfminer",
             "pypdf",
-            "playwright",
             "tldextract",
         ]:
             self.assertIn(f"--collect-all {package_name}", content)
@@ -76,6 +76,55 @@ class BackendBuildScriptTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Microsoft MarkItDown 0.1.5", notice)
         self.assertIn("MIT License", notice)
+
+    def test_backend_build_scripts_use_precise_playwright_hooks(self) -> None:
+        scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+
+        for script_name in ["build-backend.ps1", "build-backend.sh"]:
+            with self.subTest(script_name=script_name):
+                content = (scripts_dir / script_name).read_text(encoding="utf-8")
+                self.assertIn("pyinstaller-hooks", content)
+                self.assertIn("--additional-hooks-dir", content)
+                self.assertNotIn("--collect-all playwright", content)
+
+    def test_precise_playwright_hooks_keep_driver_package_without_bundled_node(self) -> None:
+        import playwright
+
+        hooks_dir = Path(__file__).resolve().parents[2] / "scripts" / "pyinstaller-hooks"
+        hook_namespace = runpy.run_path(str(hooks_dir / "hook-playwright.py"))
+        package_dir = Path(playwright.__file__).resolve().parent
+        collected_sources = {Path(source).resolve() for source, _destination in hook_namespace["datas"]}
+        expected_driver_files = {
+            source.resolve()
+            for source in (package_dir / "driver" / "package").rglob("*")
+            if source.is_file()
+        }
+
+        self.assertTrue(expected_driver_files)
+        self.assertTrue(expected_driver_files.issubset(collected_sources))
+        self.assertIn("playwright.async_api", hook_namespace["hiddenimports"])
+        self.assertIn("playwright.sync_api", hook_namespace["hiddenimports"])
+        self.assertFalse(
+            any(
+                source.is_relative_to(package_dir) and source.suffix == ".py"
+                for source in collected_sources
+            )
+        )
+
+        for node_name in ["node", "node.exe"]:
+            bundled_node = (package_dir / "driver" / node_name).resolve()
+            self.assertNotIn(bundled_node, collected_sources)
+
+        hook_source = (hooks_dir / "hook-playwright.py").read_text(encoding="utf-8")
+        self.assertIn('"driver/node"', hook_source)
+        self.assertIn('"driver/node.exe"', hook_source)
+
+        for api_name in ["async_api", "sync_api"]:
+            with self.subTest(api_name=api_name):
+                api_hook = runpy.run_path(str(hooks_dir / f"hook-playwright.{api_name}.py"))
+                self.assertEqual(api_hook["datas"], [])
+                self.assertEqual(api_hook["binaries"], [])
+                self.assertEqual(api_hook["hiddenimports"], [])
 
     def test_collects_llm_tokenizer_namespace_dependencies_for_packaging(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
@@ -131,7 +180,8 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("--collect-all mammoth", content)
         self.assertIn("--collect-all pdfminer", content)
         self.assertIn("--collect-all pypdf", content)
-        self.assertIn("--collect-all playwright", content)
+        self.assertIn("--additional-hooks-dir", content)
+        self.assertNotIn("--collect-all playwright", content)
         self.assertIn("--collect-all tldextract", content)
         self.assertIn("--collect-all tiktoken", content)
         self.assertIn("--collect-submodules tiktoken_ext", content)
