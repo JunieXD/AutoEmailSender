@@ -499,13 +499,10 @@ const getActionErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
 const intakeActionToneClassNames: Record<IntakeActionTone, string> = {
-  primary:
-    "border-primary/25 bg-[linear-gradient(135deg,#fff7ed,#fff1f2)] shadow-[0_18px_40px_-28px_rgba(153,27,27,0.55)]",
-  amber:
-    "border-amber-200 bg-[linear-gradient(135deg,#fffbeb,#ffffff)] shadow-[0_18px_40px_-30px_rgba(180,83,9,0.45)]",
-  stone: "border-stone-200 bg-white shadow-sm",
-  emerald:
-    "border-emerald-200 bg-[linear-gradient(135deg,#ecfdf5,#ffffff)] shadow-[0_18px_40px_-30px_rgba(5,150,105,0.45)]",
+  primary: "border-primary/25 bg-[linear-gradient(135deg,#fff7ed,#fff1f2)]",
+  amber: "border-amber-200 bg-[linear-gradient(135deg,#fffbeb,#ffffff)]",
+  stone: "border-stone-200 bg-white",
+  emerald: "border-emerald-200 bg-[linear-gradient(135deg,#ecfdf5,#ffffff)]",
 };
 
 const intakeActionIconClassNames: Record<IntakeActionTone, string> = {
@@ -530,7 +527,7 @@ const IntakeActionCard = ({
   <article
     data-testid={`professor-intake-${label}`}
     className={clsx(
-      "flex min-h-[7.5rem] flex-col justify-between gap-3 rounded-[24px] border px-4 py-4 transition hover:-translate-y-0.5 hover:shadow-md",
+      "flex min-h-[7.5rem] flex-col justify-between gap-3 rounded-[24px] border px-4 py-4",
       intakeActionToneClassNames[tone],
     )}
   >
