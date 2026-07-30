@@ -3095,10 +3095,17 @@ export const ProfessorsPage = () => {
                 <Plus className="h-4 w-4" />
               </button>
             </div>
+            <p
+              id="crawler-url-hint"
+              className="text-xs leading-5 text-stone-500"
+            >
+              可一次粘贴多个 URL，每行一个，系统会自动拆分。
+            </p>
             {crawlerFormState.start_urls.map((url, index) => (
               <div key={index} className="flex items-center gap-2">
                 <input
                   aria-label="页面 URL"
+                  aria-describedby="crawler-url-hint"
                   ref={(element) => {
                     crawlerUrlInputRefs.current[index] = element;
                   }}

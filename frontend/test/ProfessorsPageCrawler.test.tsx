@@ -89,6 +89,11 @@ describe("ProfessorsPage crawler job entry", () => {
     fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
+    expect(
+      within(dialog).getByText(
+        "可一次粘贴多个 URL，每行一个，系统会自动拆分。",
+      ),
+    ).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText("学校"), {
       target: { value: "示例大学" },
     });
