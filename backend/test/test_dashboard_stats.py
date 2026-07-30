@@ -5,9 +5,10 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -19,7 +20,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services.dashboard_stats import build_dashboard_overview
+from app.services.dashboard_stats import _build_email_section, build_dashboard_overview
 from test.schema_database import create_schema_sqlite_database
 
 
@@ -345,6 +346,31 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(len(result.email.trend_30_days), 30)
         self.assertEqual(result.email.follow_ups[0].name, "赵老师")
         self.assertEqual(result.email.follow_ups[0].reason, "发送失败")
+
+    def test_dashboard_keeps_large_task_columns_unloaded(self) -> None:
+        async def scenario():
+            identity_id, llm_profile_id, _ = await self._seed_dashboard_data()
+            async with self.session_factory() as session:
+                with patch(
+                    "app.services.dashboard_stats._build_email_section",
+                    new_callable=AsyncMock,
+                    wraps=_build_email_section,
+                ) as build_email_section:
+                    await build_dashboard_overview(
+                        session,
+                        identity_id=identity_id,
+                        llm_profile_id=llm_profile_id,
+                    )
+
+                loaded_task = build_email_section.await_args.kwargs["tasks"][0]
+                return build_email_section.await_count, inspect(loaded_task).unloaded
+
+        call_count, unloaded = self._run_async(scenario())
+
+        self.assertEqual(call_count, 1)
+        self.assertIn("match_reason", unloaded)
+        self.assertIn("generated_content_text", unloaded)
+        self.assertIn("generated_content_html", unloaded)
 
     def test_dashboard_service_ignores_failed_send_logs_for_sent_metrics(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())

@@ -9,7 +9,7 @@ from app.core.time import local_now, utc_now
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 
 from app.core.database import get_async_session, get_session_factory
 from app.models import (
@@ -87,7 +87,13 @@ async def list_batch_tasks(
 ) -> list[BatchTaskCardRead]:
     statement = (
         select(BatchTask)
-        .options(selectinload(BatchTask.email_tasks))
+        .options(
+            selectinload(BatchTask.email_tasks).load_only(
+                EmailTask.id,
+                EmailTask.status,
+                EmailTask.cancellation_reason,
+            ),
+        )
         .order_by(BatchTask.created_at.desc())
     )
     if identity_id is not None:
@@ -440,9 +446,40 @@ async def list_batch_task_items(
     statement = (
         select(EmailTask)
         .options(
-            selectinload(EmailTask.batch_task),
-            selectinload(EmailTask.professor),
-            selectinload(EmailTask.primary_material),
+            load_only(
+                EmailTask.id,
+                EmailTask.batch_task_id,
+                EmailTask.professor_id,
+                EmailTask.primary_material_id,
+                EmailTask.status,
+                EmailTask.cancellation_reason,
+                EmailTask.match_score,
+                EmailTask.outreach_generation_mode,
+                EmailTask.scheduled_at,
+                EmailTask.last_send_attempt_at,
+                EmailTask.sent_at,
+                EmailTask.is_replied,
+                EmailTask.last_error,
+                EmailTask.created_at,
+                EmailTask.updated_at,
+            ),
+            selectinload(EmailTask.batch_task).load_only(
+                BatchTask.id,
+                BatchTask.schedule_type,
+            ),
+            selectinload(EmailTask.professor)
+            .load_only(
+                Professor.id,
+                Professor.name,
+                Professor.email,
+                Professor.title,
+                Professor.school,
+                Professor.research_direction,
+            )
+            .lazyload(Professor.tags),
+            selectinload(EmailTask.primary_material).load_only(
+                IdentityMaterial.id,
+            ),
         )
         .where(
             EmailTask.batch_task_id == task_id,

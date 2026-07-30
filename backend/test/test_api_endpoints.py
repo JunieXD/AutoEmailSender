@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from openpyxl import Workbook, load_workbook
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.migrations import get_alembic_config, get_head_revision
 from app.services.llm_runtime import LLMRuntimeAdaptation
@@ -4803,13 +4803,32 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
 
-        listed = self.client.get(
-            "/api/batch-tasks",
-            params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
-        )
+        from app.api.batch_tasks import _serialize_batch_task
+
+        unloaded_item_columns: list[set[str]] = []
+
+        def capture_batch_task_projection(task):
+            unloaded_item_columns.extend(
+                inspect(email_task).unloaded
+                for email_task in task.email_tasks
+            )
+            return _serialize_batch_task(task)
+
+        with patch(
+            "app.api.batch_tasks._serialize_batch_task",
+            side_effect=capture_batch_task_projection,
+        ):
+            listed = self.client.get(
+                "/api/batch-tasks",
+                params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
+            )
 
         self.assertEqual(listed.status_code, 200, msg=listed.text)
         self.assertEqual([item["id"] for item in listed.json()], [created.json()["id"]])
+        self.assertTrue(unloaded_item_columns)
+        self.assertIn("match_reason", unloaded_item_columns[0])
+        self.assertIn("generated_content_text", unloaded_item_columns[0])
+        self.assertIn("generated_content_html", unloaded_item_columns[0])
 
     def test_remove_batch_task_item_soft_deletes_single_draft_and_updates_target_count(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -5632,12 +5651,27 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(len(listed.json()), 1)
 
-        items = self.client.get(
-            f"/api/match-analysis-jobs/{created.json()['id']}/items",
+        from app.services.match_analysis_job_runtime import (
+            serialize_match_analysis_job_item,
         )
+
+        unloaded_professor_columns: list[set[str]] = []
+
+        def capture_match_item_projection(item):
+            unloaded_professor_columns.append(inspect(item.professor).unloaded)
+            return serialize_match_analysis_job_item(item)
+
+        with patch(
+            "app.api.match_analysis_jobs.serialize_match_analysis_job_item",
+            side_effect=capture_match_item_projection,
+        ):
+            items = self.client.get(
+                f"/api/match-analysis-jobs/{created.json()['id']}/items",
+            )
         self.assertEqual(items.status_code, 200, msg=items.text)
         self.assertEqual(items.json()[0]["professor_university"], "Example University")
         self.assertEqual(items.json()[0]["professor_school"], "School of Computing")
+        self.assertIn("recent_papers", unloaded_professor_columns[0])
 
     def test_match_analysis_jobs_list_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -8894,7 +8928,21 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        from app.api.batch_tasks import _serialize_batch_task_item
+
+        unloaded_task_columns: list[set[str]] = []
+        unloaded_professor_columns: list[set[str]] = []
+
+        def capture_batch_item_projection(email_task):
+            unloaded_task_columns.append(inspect(email_task).unloaded)
+            unloaded_professor_columns.append(inspect(email_task.professor).unloaded)
+            return _serialize_batch_task_item(email_task)
+
+        with patch(
+            "app.api.batch_tasks._serialize_batch_task_item",
+            side_effect=capture_batch_item_projection,
+        ):
+            response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
         self.assertEqual(len(payload), 2)
@@ -8908,6 +8956,9 @@ class ApiEndpointTests(unittest.TestCase):
             "SMTP 发信失败: (550, b'Requested action aborted: flow over limit')",
         )
         self.assertIn("发送限流", payload[1]["possible_cause"])
+        self.assertIn("generated_content_text", unloaded_task_columns[0])
+        self.assertIn("generated_content_html", unloaded_task_columns[0])
+        self.assertIn("recent_papers", unloaded_professor_columns[0])
 
     def test_batch_task_items_include_next_action_for_blocked_draft_generation(self) -> None:
         identity_id = self._create_identity(with_imap=False)

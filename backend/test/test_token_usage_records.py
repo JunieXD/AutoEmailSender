@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -28,7 +29,11 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
-from app.services.token_usage_records import list_token_usage_records
+from app.schemas.token_usage import TokenUsageRecordRead
+from app.services.token_usage_records import (
+    build_token_usage_visualization,
+    list_token_usage_records,
+)
 from test.schema_database import create_schema_sqlite_database
 
 
@@ -750,6 +755,44 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
         self.assertEqual(payload["pagination"]["page_size"], 5)
         self.assertEqual(payload["pagination"]["total_records"], 7)
         self.assertEqual(len(payload["records"]), 2)
+
+    def test_visualization_scans_candidate_records_once(self) -> None:
+        now = datetime(2026, 4, 30, 10, 0, 0, tzinfo=UTC)
+        record = TokenUsageRecordRead(
+            id="match_analysis:1",
+            feature_type="match_analysis",
+            feature_label="匹配分析",
+            title="李老师 - 匹配分析",
+            input_tokens=100,
+            output_tokens=10,
+            cached_tokens=5,
+            total_tokens=110,
+            model_name="gpt-test",
+            identity_name="博士申请邮箱",
+            created_at=now - timedelta(hours=1),
+            status="success",
+        )
+
+        async def run_query():
+            async with self.session_factory() as session:
+                loader = AsyncMock(return_value=[record])
+                with patch(
+                    "app.services.token_usage_records._list_all_candidate_records",
+                    loader,
+                ):
+                    result = await build_token_usage_visualization(
+                        session,
+                        preset="last_6_hours",
+                        now=now,
+                    )
+                return result, loader.await_count
+
+        result, scan_count = self._run_async(run_query())
+
+        self.assertEqual(scan_count, 1)
+        self.assertEqual(result.summary.record_count, 1)
+        self.assertEqual(result.summary.total_tokens, 110)
+        self.assertEqual(result.chart.buckets[-2].total_tokens, 110)
 
     def test_builds_hourly_chart_for_recent_6_hours(self) -> None:
         self._run_async(self._seed_history_records())

@@ -7,7 +7,7 @@ from app.core.time import as_utc_aware, utc_now
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import lazyload, load_only, selectinload
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, Professor
 from app.schemas.dashboard import (
@@ -85,6 +85,7 @@ async def build_dashboard_overview(
     professors = list(
         await session.scalars(
             select(Professor)
+            .options(lazyload(Professor.tags))
             .where(Professor.archived_at.is_(None))
             .order_by(Professor.updated_at.desc(), Professor.created_at.desc()),
         ),
@@ -93,7 +94,27 @@ async def build_dashboard_overview(
     tasks = list(
         await session.scalars(
             select(EmailTask)
-            .options(selectinload(EmailTask.professor))
+            .options(
+                load_only(
+                    EmailTask.id,
+                    EmailTask.professor_id,
+                    EmailTask.status,
+                    EmailTask.created_at,
+                    EmailTask.match_score,
+                    EmailTask.sent_at,
+                    EmailTask.is_replied,
+                    EmailTask.updated_at,
+                ),
+                selectinload(EmailTask.professor)
+                .load_only(
+                    Professor.id,
+                    Professor.name,
+                    Professor.university,
+                    Professor.school,
+                    Professor.department,
+                )
+                .lazyload(Professor.tags),
+            )
             .where(
                 EmailTask.identity_id == identity_id,
                 EmailTask.parent_task_id.is_(None),

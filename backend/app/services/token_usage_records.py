@@ -8,7 +8,7 @@ from app.core.time import as_utc_aware, as_utc_naive, utc_now
 from sqlalchemy import select
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 
 from app.models import (
     CrawlJob,
@@ -17,11 +17,13 @@ from app.models import (
     CrawlJobStatus,
     EmailDirection,
     EmailLog,
+    IdentityProfile,
     LLMProfile,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
     MatchAnalysisJobStatus,
     MatchAnalysisRun,
+    Professor,
 )
 from app.schemas.token_usage import (
     TokenUsageChartBucketRead,
@@ -119,6 +121,75 @@ async def build_token_usage_chart(
         start_at=filter_start,
         end_at=filter_end,
     )
+    return _build_token_usage_chart_from_records(
+        records,
+        preset=preset,
+        range_start=range_start,
+        range_end=range_end,
+        granularity=granularity,
+    )
+
+
+async def build_token_usage_visualization(
+    session: AsyncSession,
+    *,
+    preset: TokenUsageChartPreset = "last_24_hours",
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    now: datetime | None = None,
+) -> TokenUsageVisualizationRead:
+    range_start, range_end, granularity = _resolve_chart_range(
+        preset=preset,
+        start_at=start_at,
+        end_at=end_at,
+        now=now,
+    )
+    filter_start, filter_end = _resolve_chart_filter_range(
+        preset=preset,
+        start_at=start_at,
+        end_at=end_at,
+        range_start=range_start,
+        range_end=range_end,
+        granularity=granularity,
+    )
+    candidates = await _list_all_candidate_records(session)
+    records = sorted(
+        _filter_records(
+            candidates,
+            feature_type="all",
+            model_name=None,
+            start_at=filter_start,
+            end_at=filter_end,
+        ),
+        key=lambda item: item.created_at,
+        reverse=True,
+    )
+    chart = _build_token_usage_chart_from_records(
+        records,
+        preset=preset,
+        range_start=range_start,
+        range_end=range_end,
+        granularity=granularity,
+    )
+
+    return TokenUsageVisualizationRead(
+        preset=preset,
+        summary=_build_summary(records),
+        chart=chart,
+        feature_distribution=_build_feature_distribution(records),
+        model_ranking=_build_model_ranking(records, limit=5),
+        recent_records=records[:8],
+    )
+
+
+def _build_token_usage_chart_from_records(
+    records: list[TokenUsageRecordRead],
+    *,
+    preset: TokenUsageChartPreset,
+    range_start: datetime,
+    range_end: datetime,
+    granularity: TokenUsageChartGranularity,
+) -> TokenUsageChartRead:
     bucket_totals = _aggregate_chart_buckets(records, granularity=granularity)
     buckets = [
         TokenUsageChartBucketRead(
@@ -142,54 +213,6 @@ async def build_token_usage_chart(
         range_start=range_start,
         range_end=range_end,
         buckets=buckets,
-    )
-
-
-async def build_token_usage_visualization(
-    session: AsyncSession,
-    *,
-    preset: TokenUsageChartPreset = "last_24_hours",
-    start_at: datetime | None = None,
-    end_at: datetime | None = None,
-    now: datetime | None = None,
-) -> TokenUsageVisualizationRead:
-    chart = await build_token_usage_chart(
-        session,
-        preset=preset,
-        feature_type="all",
-        model_name=None,
-        start_at=start_at,
-        end_at=end_at,
-        now=now,
-    )
-    candidates = await _list_all_candidate_records(session)
-    filter_start, filter_end = _resolve_chart_filter_range(
-        preset=preset,
-        start_at=start_at,
-        end_at=end_at,
-        range_start=chart.range_start,
-        range_end=chart.range_end,
-        granularity=chart.granularity,
-    )
-    records = sorted(
-        _filter_records(
-            candidates,
-            feature_type="all",
-            model_name=None,
-            start_at=filter_start,
-            end_at=filter_end,
-        ),
-        key=lambda item: item.created_at,
-        reverse=True,
-    )
-
-    return TokenUsageVisualizationRead(
-        preset=preset,
-        summary=_build_summary(records),
-        chart=chart,
-        feature_distribution=_build_feature_distribution(records),
-        model_ranking=_build_model_ranking(records, limit=5),
-        recent_records=records[:8],
     )
 
 
@@ -260,7 +283,31 @@ async def _list_crawl_records(
     statement = (
         select(CrawlJobRun)
         .options(
-            selectinload(CrawlJobRun.job).selectinload(CrawlJob.llm_profile),
+            load_only(
+                CrawlJobRun.id,
+                CrawlJobRun.job_id,
+                CrawlJobRun.status,
+                CrawlJobRun.input_tokens,
+                CrawlJobRun.output_tokens,
+                CrawlJobRun.cached_tokens,
+                CrawlJobRun.total_tokens,
+                CrawlJobRun.created_at,
+            ),
+            selectinload(CrawlJobRun.job)
+            .load_only(
+                CrawlJob.id,
+                CrawlJob.llm_profile_id,
+                CrawlJob.university,
+                CrawlJob.school,
+                CrawlJob.start_url,
+                CrawlJob.job_kind,
+                CrawlJob.display_name,
+            )
+            .selectinload(CrawlJob.llm_profile)
+            .load_only(
+                LLMProfile.id,
+                LLMProfile.model_name,
+            ),
         )
         .order_by(CrawlJobRun.created_at.desc())
     )
@@ -286,9 +333,35 @@ async def _list_match_records(
     statement = (
         select(MatchAnalysisRun)
         .options(
-            selectinload(MatchAnalysisRun.professor),
-            selectinload(MatchAnalysisRun.identity),
-            selectinload(MatchAnalysisRun.llm_profile),
+            load_only(
+                MatchAnalysisRun.id,
+                MatchAnalysisRun.professor_id,
+                MatchAnalysisRun.identity_id,
+                MatchAnalysisRun.llm_profile_id,
+                MatchAnalysisRun.success,
+                MatchAnalysisRun.prompt_tokens,
+                MatchAnalysisRun.completion_tokens,
+                MatchAnalysisRun.cached_tokens,
+                MatchAnalysisRun.total_tokens,
+                MatchAnalysisRun.created_at,
+            ),
+            selectinload(MatchAnalysisRun.professor)
+            .load_only(
+                Professor.id,
+                Professor.name,
+            )
+            .lazyload(Professor.tags),
+            selectinload(MatchAnalysisRun.identity)
+            .load_only(
+                IdentityProfile.id,
+                IdentityProfile.name,
+                IdentityProfile.profile_name,
+            )
+            .lazyload(IdentityProfile.default_outreach_template),
+            selectinload(MatchAnalysisRun.llm_profile).load_only(
+                LLMProfile.id,
+                LLMProfile.model_name,
+            ),
         )
         .where(MatchAnalysisRun.id.not_in(linked_run_ids_statement))
         .order_by(MatchAnalysisRun.created_at.desc())
@@ -313,8 +386,29 @@ async def _list_match_job_records(
     statement = (
         select(MatchAnalysisJob)
         .options(
-            selectinload(MatchAnalysisJob.identity),
-            selectinload(MatchAnalysisJob.llm_profile),
+            load_only(
+                MatchAnalysisJob.id,
+                MatchAnalysisJob.identity_id,
+                MatchAnalysisJob.llm_profile_id,
+                MatchAnalysisJob.name,
+                MatchAnalysisJob.status,
+                MatchAnalysisJob.total_prompt_tokens,
+                MatchAnalysisJob.total_completion_tokens,
+                MatchAnalysisJob.total_cached_tokens,
+                MatchAnalysisJob.total_tokens,
+                MatchAnalysisJob.created_at,
+            ),
+            selectinload(MatchAnalysisJob.identity)
+            .load_only(
+                IdentityProfile.id,
+                IdentityProfile.name,
+                IdentityProfile.profile_name,
+            )
+            .lazyload(IdentityProfile.default_outreach_template),
+            selectinload(MatchAnalysisJob.llm_profile).load_only(
+                LLMProfile.id,
+                LLMProfile.model_name,
+            ),
         )
         .order_by(MatchAnalysisJob.created_at.desc())
     )
@@ -332,9 +426,31 @@ async def _list_draft_records(
     statement = (
         select(EmailLog)
         .options(
-            selectinload(EmailLog.professor),
-            selectinload(EmailLog.identity),
-            selectinload(EmailLog.llm_profile),
+            load_only(
+                EmailLog.id,
+                EmailLog.professor_id,
+                EmailLog.identity_id,
+                EmailLog.llm_profile_id,
+                EmailLog.provider_payload,
+                EmailLog.created_at,
+            ),
+            selectinload(EmailLog.professor)
+            .load_only(
+                Professor.id,
+                Professor.name,
+            )
+            .lazyload(Professor.tags),
+            selectinload(EmailLog.identity)
+            .load_only(
+                IdentityProfile.id,
+                IdentityProfile.name,
+                IdentityProfile.profile_name,
+            )
+            .lazyload(IdentityProfile.default_outreach_template),
+            selectinload(EmailLog.llm_profile).load_only(
+                LLMProfile.id,
+                LLMProfile.model_name,
+            ),
         )
         .where(EmailLog.direction == EmailDirection.DRAFT.value)
         .order_by(EmailLog.created_at.desc())

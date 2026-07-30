@@ -10,7 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session, get_session_factory
-from app.models import MatchAnalysisJob, MatchAnalysisJobItem, MatchAnalysisJobStatus
+from app.models import (
+    EmailTask,
+    MatchAnalysisJob,
+    MatchAnalysisJobItem,
+    MatchAnalysisJobStatus,
+    Professor,
+)
 from app.schemas.match_analysis_job import (
     CreateMatchAnalysisJobRequest,
     MatchAnalysisJobActionResponse,
@@ -91,8 +97,20 @@ async def list_match_analysis_job_items(
         await session.scalars(
             select(MatchAnalysisJobItem)
             .options(
-                selectinload(MatchAnalysisJobItem.professor),
-                selectinload(MatchAnalysisJobItem.email_task),
+                selectinload(MatchAnalysisJobItem.professor)
+                .load_only(
+                    Professor.id,
+                    Professor.name,
+                    Professor.email,
+                    Professor.title,
+                    Professor.university,
+                    Professor.school,
+                )
+                .lazyload(Professor.tags),
+                selectinload(MatchAnalysisJobItem.email_task).load_only(
+                    EmailTask.id,
+                    EmailTask.match_score,
+                ),
             )
             .where(MatchAnalysisJobItem.job_id == job_id)
             .order_by(MatchAnalysisJobItem.id.asc()),
@@ -206,5 +224,3 @@ async def _record_match_analysis_job_action(
             "previous_deleted_at": previous_deleted_at.isoformat() if previous_deleted_at else None,
         },
     )
-
-
