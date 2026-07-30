@@ -454,7 +454,7 @@ describe("DashboardPage", () => {
     expect(replyWaitCard).toHaveClass("h-[24rem]");
     expect(within(coverageCard).getByRole("heading", { name: "院校触达覆盖率" })).toBeInTheDocument();
     expect(within(replyWaitCard).getByRole("heading", { name: "首次回复用时分布" })).toBeInTheDocument();
-    expect(within(coverageCard).getByText("全部时间内 · 覆盖率低优先")).toBeInTheDocument();
+    expect(within(coverageCard).getByText("全部时间内")).toBeInTheDocument();
     expect(within(coverageCard).getByTestId("coverage-ranking-row-university-示例大学-all"))
       .toHaveTextContent(/示例大学\s*1 \/ 2 · 50%/);
     expect(within(replyWaitCard).getByText("2.3 天")).toBeInTheDocument();
@@ -514,7 +514,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("共享通信 · 3 个身份")).toBeInTheDocument();
   });
 
-  it("switches the outreach coverage ranking between universities and colleges", async () => {
+  it("switches the outreach coverage ranking level and sort direction", async () => {
     render(
       <MemoryRouter>
         <DashboardPage />
@@ -523,12 +523,33 @@ describe("DashboardPage", () => {
 
     const coverageCard = await screen.findByTestId("outreach-coverage-card");
     const levelGroup = within(coverageCard).getByRole("group", { name: "院校覆盖率排行层级" });
+    const sortGroup = within(coverageCard).getByRole("group", { name: "院校覆盖率排序方向" });
     const universityButton = within(levelGroup).getByRole("button", { name: "学校" });
     const schoolButton = within(levelGroup).getByRole("button", { name: "学院" });
+    const ascendingButton = within(sortGroup).getByRole("button", { name: "升序" });
+    const descendingButton = within(sortGroup).getByRole("button", { name: "降序" });
+    const universityRowIds = () =>
+      Array.from(
+        coverageCard.querySelectorAll<HTMLElement>('[data-testid^="coverage-ranking-row-university-"]'),
+      ).map((row) => row.dataset.testid);
 
     expect(universityButton).toHaveAttribute("aria-pressed", "true");
+    expect(ascendingButton).toHaveAttribute("aria-pressed", "true");
+    expect(universityRowIds()).toEqual([
+      "coverage-ranking-row-university-示例大学-all",
+      "coverage-ranking-row-university-第二大学-all",
+    ]);
     expect(within(coverageCard).getByTestId("coverage-ranking-row-university-示例大学-all"))
       .toHaveTextContent(/示例大学\s*1 \/ 2 · 50%/);
+
+    fireEvent.click(descendingButton);
+
+    expect(descendingButton).toHaveAttribute("aria-pressed", "true");
+    expect(universityRowIds()).toEqual([
+      "coverage-ranking-row-university-第二大学-all",
+      "coverage-ranking-row-university-示例大学-all",
+    ]);
+    expect(getDashboardOverview).toHaveBeenCalledTimes(1);
 
     fireEvent.click(schoolButton);
 

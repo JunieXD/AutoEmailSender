@@ -15,6 +15,8 @@ import type { ChartData, ChartOptions, TooltipItem } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { parseApiDateTime } from '@/lib/dateTime';
 import {
+  ArrowDown,
+  ArrowUp,
   BadgeCheck,
   ClipboardCheck,
   GraduationCap,
@@ -120,6 +122,7 @@ const emailDatePresetLabels: Record<string, string> = {
 };
 
 type CoverageRankingLevel = 'university' | 'school';
+type CoverageSortDirection = 'asc' | 'desc';
 
 const formatDurationHours = (value: number | null) => {
   if (value === null || !Number.isFinite(value)) {
@@ -584,20 +587,24 @@ const TrendChart = ({ data }: { data: DashboardEmailTrendBucketDTO[] }) => {
 const OutreachCoverageRanking = ({
   data,
   level,
+  sortDirection,
   selectedUniversity,
   selectedSchool,
   dateLabel,
   onLevelChange,
+  onSortDirectionChange,
   onSelectUniversity,
   onSelectSchool,
   onClearSchool,
 }: {
   data: DashboardOverviewDTO['email']['outreach_coverage'];
   level: CoverageRankingLevel;
+  sortDirection: CoverageSortDirection;
   selectedUniversity: string | null;
   selectedSchool: string | null;
   dateLabel: string;
   onLevelChange: (level: CoverageRankingLevel) => void;
+  onSortDirectionChange: (direction: CoverageSortDirection) => void;
   onSelectUniversity: (university: string) => void;
   onSelectSchool: (university: string, school: string) => void;
   onClearSchool: () => void;
@@ -610,42 +617,71 @@ const OutreachCoverageRanking = ({
         : items;
     return [...scopedItems].sort(
       (first, second) =>
-        first.sent_professor_rate - second.sent_professor_rate
+        (sortDirection === 'asc' ? 1 : -1)
+          * (first.sent_professor_rate - second.sent_professor_rate)
         || second.unsent_professor_count - first.unsent_professor_count
         || second.total_professor_count - first.total_professor_count
         || first.university.localeCompare(second.university, 'zh-CN')
         || (first.school ?? '').localeCompare(second.school ?? '', 'zh-CN'),
     );
-  }, [data.schools, data.universities, level, selectedUniversity]);
+  }, [data.schools, data.universities, level, selectedUniversity, sortDirection]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="outreach-coverage-ranking">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-stone-500">{dateLabel} · 覆盖率低优先</p>
-        <div
-          role="group"
-          aria-label="院校覆盖率排行层级"
-          className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
-        >
-          {([
-            ['university', '学校'],
-            ['school', '学院'],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={level === value}
-              onClick={() => onLevelChange(value)}
-              className={clsx(
-                'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                level === value
-                  ? 'bg-white text-stone-900 shadow-sm ring-1 ring-stone-200'
-                  : 'text-stone-500 hover:text-stone-800',
-              )}
-            >
-              {label}
-            </button>
-          ))}
+        <p className="text-xs text-stone-500">{dateLabel}</p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div
+            role="group"
+            aria-label="院校覆盖率排行层级"
+            className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
+          >
+            {([
+              ['university', '学校'],
+              ['school', '学院'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={level === value}
+                onClick={() => onLevelChange(value)}
+                className={clsx(
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  level === value
+                    ? 'bg-white text-stone-900 shadow-sm ring-1 ring-stone-200'
+                    : 'text-stone-500 hover:text-stone-800',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div
+            role="group"
+            aria-label="院校覆盖率排序方向"
+            className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
+          >
+            {([
+              ['asc', '升序', ArrowUp],
+              ['desc', '降序', ArrowDown],
+            ] as const).map(([value, label, DirectionIcon]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={sortDirection === value}
+                onClick={() => onSortDirectionChange(value)}
+                className={clsx(
+                  'inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                  sortDirection === value
+                    ? 'bg-white text-stone-900 shadow-sm ring-1 ring-stone-200'
+                    : 'text-stone-500 hover:text-stone-800',
+                )}
+              >
+                <DirectionIcon className="h-3 w-3" aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       {level === 'school' && selectedSchool ? (
@@ -975,6 +1011,7 @@ export const DashboardPage = () => {
   const [emailSchool, setEmailSchool] = useState<string | null>(null);
   const [emailDatePreset, setEmailDatePreset] = useState('all');
   const [coverageRankingLevel, setCoverageRankingLevel] = useState<CoverageRankingLevel>('university');
+  const [coverageSortDirection, setCoverageSortDirection] = useState<CoverageSortDirection>('asc');
   const [activeSectionId, setActiveSectionId] = useState<string>('mentor');
   const [sectionNavTop, setSectionNavTop] = useState<number | null>(null);
   const requestIdRef = useRef(0);
@@ -1098,6 +1135,7 @@ export const DashboardPage = () => {
     setEmailSchool(null);
     setEmailDatePreset('all');
     setCoverageRankingLevel('university');
+    setCoverageSortDirection('asc');
   }, [selectedIdentityId]);
 
   useEffect(() => {
@@ -1490,10 +1528,12 @@ export const DashboardPage = () => {
                   <OutreachCoverageRanking
                     data={overview.email.outreach_coverage ?? { universities: [], schools: [] }}
                     level={coverageRankingLevel}
+                    sortDirection={coverageSortDirection}
                     selectedUniversity={emailUniversity}
                     selectedSchool={emailSchool}
                     dateLabel={`${emailDatePresetLabels[emailDatePreset] ?? '当前时间范围'}内`}
                     onLevelChange={setCoverageRankingLevel}
+                    onSortDirectionChange={setCoverageSortDirection}
                     onSelectUniversity={(university) => {
                       setEmailUniversity(university);
                       setEmailSchool(null);
