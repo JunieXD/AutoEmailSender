@@ -7,7 +7,7 @@ from app.core.time import utc_now
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -41,6 +41,15 @@ class MatchAnalysisJobItemStatus(StrEnum):
 
 class MatchAnalysisJob(Base):
     __tablename__ = "match_analysis_jobs"
+    __table_args__ = (
+        Index(
+            "ix_match_analysis_jobs_status_deleted_created_id",
+            "status",
+            "deleted_at",
+            "created_at",
+            "id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)

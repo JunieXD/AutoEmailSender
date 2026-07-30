@@ -67,6 +67,51 @@ class EmailTask(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_email_tasks_dispatch_ready",
+            "approved_at",
+            "created_at",
+            "id",
+            sqlite_where=text("status = 'approved' OR status = 'scheduled'"),
+            postgresql_where=text("status = 'approved' OR status = 'scheduled'"),
+        ),
+        Index(
+            "ix_email_tasks_unstarted_generation_recovery",
+            "updated_at",
+            sqlite_where=text(
+                "status = 'generating_draft' "
+                "AND draft_generation_started_at IS NULL"
+            ),
+            postgresql_where=text(
+                "status = 'generating_draft' "
+                "AND draft_generation_started_at IS NULL"
+            ),
+        ),
+        Index(
+            "ix_email_tasks_started_generation_recovery",
+            "draft_generation_started_at",
+            sqlite_where=text(
+                "status = 'generating_draft' "
+                "AND draft_generation_started_at IS NOT NULL"
+            ),
+            postgresql_where=text(
+                "status = 'generating_draft' "
+                "AND draft_generation_started_at IS NOT NULL"
+            ),
+        ),
+        Index(
+            "ix_email_tasks_batch_sent_at",
+            "batch_task_id",
+            "sent_at",
+            sqlite_where=text(
+                "batch_task_id IS NOT NULL "
+                "AND (status = 'sent' OR status = 'reply_detected')"
+            ),
+            postgresql_where=text(
+                "batch_task_id IS NOT NULL "
+                "AND (status = 'sent' OR status = 'reply_detected')"
+            ),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

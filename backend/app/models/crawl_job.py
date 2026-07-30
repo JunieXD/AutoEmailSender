@@ -97,6 +97,15 @@ class CrawlCandidateReviewStatus(str, Enum):
 
 class CrawlJob(Base):
     __tablename__ = "crawl_jobs"
+    __table_args__ = (
+        Index(
+            "ix_crawl_jobs_kind_deleted_created_id",
+            "job_kind",
+            "deleted_at",
+            "created_at",
+            "id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     university: Mapped[str] = mapped_column(String(255), nullable=False)

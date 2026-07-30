@@ -265,16 +265,14 @@ async def dispatch_due_tasks_once(
                     await session.execute(
                         select(EmailTask)
                         .options(
-                            selectinload(EmailTask.batch_task).selectinload(BatchTask.email_tasks),
+                            selectinload(EmailTask.batch_task),
                             selectinload(EmailTask.identity),
                         )
                         .join(BatchTask, EmailTask.batch_task_id == BatchTask.id, isouter=True)
                         .where(
-                            EmailTask.status.in_(
-                                [
-                                    EmailTaskStatus.APPROVED.value,
-                                    EmailTaskStatus.SCHEDULED.value,
-                                ],
+                            or_(
+                                EmailTask.status == EmailTaskStatus.APPROVED.value,
+                                EmailTask.status == EmailTaskStatus.SCHEDULED.value,
                             ),
                             or_(
                                 EmailTask.scheduled_at.is_(None),
@@ -594,11 +592,9 @@ async def _batch_task_sent_count_on_date(
         await session.scalar(
             select(func.count(EmailTask.id)).where(
                 EmailTask.batch_task_id == batch_task_id,
-                EmailTask.status.in_(
-                    [
-                        EmailTaskStatus.SENT.value,
-                        EmailTaskStatus.REPLY_DETECTED.value,
-                    ],
+                or_(
+                    EmailTask.status == EmailTaskStatus.SENT.value,
+                    EmailTask.status == EmailTaskStatus.REPLY_DETECTED.value,
                 ),
                 EmailTask.sent_at >= start_utc,
                 EmailTask.sent_at < end_utc,

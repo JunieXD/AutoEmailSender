@@ -22,6 +22,20 @@ from test.migrated_database import create_migrated_sqlite_database
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 HEAD_REVISION = get_head_revision(get_alembic_config())
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
+PERFORMANCE_INDEXES = {
+    "email_tasks": {
+        "ix_email_tasks_dispatch_ready",
+        "ix_email_tasks_unstarted_generation_recovery",
+        "ix_email_tasks_started_generation_recovery",
+        "ix_email_tasks_batch_sent_at",
+    },
+    "match_analysis_jobs": {
+        "ix_match_analysis_jobs_status_deleted_created_id",
+    },
+    "crawl_jobs": {
+        "ix_crawl_jobs_kind_deleted_created_id",
+    },
+}
 
 
 def run_alembic_in_process(env: dict[str, str], *args: str) -> None:
@@ -755,6 +769,56 @@ class MigrationScriptTests(unittest.TestCase):
             result.stdout + result.stderr,
         )
 
+    def test_database_performance_index_migration_upgrades_and_downgrades(self) -> None:
+        database_path = Path(self.temp_dir.name) / "database_performance_indexes.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260730_crawler_expansion"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        before_upgrade = sqlite3.connect(database_path)
+        try:
+            for table_name, expected_indexes in PERFORMANCE_INDEXES.items():
+                existing_indexes = {
+                    row[1]
+                    for row in before_upgrade.execute(
+                        f"PRAGMA index_list('{table_name}')",
+                    ).fetchall()
+                }
+                self.assertTrue(expected_indexes.isdisjoint(existing_indexes))
+        finally:
+            before_upgrade.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            for table_name, expected_indexes in PERFORMANCE_INDEXES.items():
+                existing_indexes = {
+                    row[1]
+                    for row in upgraded.execute(
+                        f"PRAGMA index_list('{table_name}')",
+                    ).fetchall()
+                }
+                self.assertTrue(expected_indexes.issubset(existing_indexes))
+        finally:
+            upgraded.close()
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            for table_name, expected_indexes in PERFORMANCE_INDEXES.items():
+                existing_indexes = {
+                    row[1]
+                    for row in downgraded.execute(
+                        f"PRAGMA index_list('{table_name}')",
+                    ).fetchall()
+                }
+                self.assertTrue(expected_indexes.isdisjoint(existing_indexes))
+        finally:
+            downgraded.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
         try:
             run_alembic_in_process(env, *args)
@@ -1123,6 +1187,141 @@ class DatabaseSchemaTests(unittest.TestCase):
             ),
             ["identity_id", "professor_id", "direction", "created_at", "id"],
         )
+
+    def test_database_performance_indexes_support_hot_queries(self) -> None:
+        self.assertEqual(
+            self._get_index_columns("email_tasks", "ix_email_tasks_dispatch_ready"),
+            ["approved_at", "created_at", "id"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "email_tasks",
+                "ix_email_tasks_unstarted_generation_recovery",
+            ),
+            ["updated_at"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "email_tasks",
+                "ix_email_tasks_started_generation_recovery",
+            ),
+            ["draft_generation_started_at"],
+        )
+        self.assertEqual(
+            self._get_index_columns("email_tasks", "ix_email_tasks_batch_sent_at"),
+            ["batch_task_id", "sent_at"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "match_analysis_jobs",
+                "ix_match_analysis_jobs_status_deleted_created_id",
+            ),
+            ["status", "deleted_at", "created_at", "id"],
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "crawl_jobs",
+                "ix_crawl_jobs_kind_deleted_created_id",
+            ),
+            ["job_kind", "deleted_at", "created_at", "id"],
+        )
+
+        plans = {
+            "ix_email_tasks_dispatch_ready": (
+                """
+                SELECT email_tasks.id
+                FROM email_tasks
+                LEFT JOIN batch_tasks ON email_tasks.batch_task_id = batch_tasks.id
+                WHERE (
+                    email_tasks.status = ?
+                    OR email_tasks.status = ?
+                )
+                  AND (
+                    email_tasks.scheduled_at IS NULL
+                    OR email_tasks.scheduled_at <= ?
+                  )
+                  AND (
+                    batch_tasks.id IS NULL
+                    OR (
+                      batch_tasks.status = 'running'
+                      AND batch_tasks.deleted_at IS NULL
+                    )
+                  )
+                ORDER BY email_tasks.approved_at, email_tasks.created_at, email_tasks.id
+                LIMIT ?
+                """,
+                ("approved", "scheduled", "2026-07-30 00:00:00", 10),
+            ),
+            "ix_email_tasks_unstarted_generation_recovery": (
+                """
+                SELECT id
+                FROM email_tasks
+                WHERE status = ?
+                  AND draft_generation_started_at IS NULL
+                  AND updated_at < ?
+                """,
+                ("generating_draft", "2026-07-30 00:00:00"),
+            ),
+            "ix_email_tasks_started_generation_recovery": (
+                """
+                SELECT id
+                FROM email_tasks
+                WHERE status = ?
+                  AND draft_generation_started_at IS NOT NULL
+                  AND draft_generation_started_at <= ?
+                """,
+                ("generating_draft", "2026-07-30 00:00:00"),
+            ),
+            "ix_email_tasks_batch_sent_at": (
+                """
+                SELECT count(id)
+                FROM email_tasks
+                WHERE batch_task_id = ?
+                  AND (status = ? OR status = ?)
+                  AND sent_at >= ?
+                  AND sent_at < ?
+                """,
+                (
+                    1,
+                    "sent",
+                    "reply_detected",
+                    "2026-07-30 00:00:00",
+                    "2026-07-31 00:00:00",
+                ),
+            ),
+            "ix_match_analysis_jobs_status_deleted_created_id": (
+                """
+                SELECT id
+                FROM match_analysis_jobs
+                WHERE status = ? AND deleted_at IS NULL
+                ORDER BY created_at, id
+                LIMIT ?
+                """,
+                ("queued", 1),
+            ),
+            "ix_crawl_jobs_kind_deleted_created_id": (
+                """
+                SELECT id
+                FROM crawl_jobs
+                WHERE job_kind = ? AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                ("faculty_crawl", 50),
+            ),
+        }
+        for expected_index, (query, parameters) in plans.items():
+            details = [
+                row[3]
+                for row in self.connection.execute(
+                    f"EXPLAIN QUERY PLAN {query}",
+                    parameters,
+                ).fetchall()
+            ]
+            self.assertTrue(
+                any(expected_index in detail for detail in details),
+                f"{expected_index} not used by query plan: {details}",
+            )
 
     def test_llm_endpoint_adaptation_upgrade_discards_old_cache_and_is_recoverable(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "llm_endpoint_adaptation_upgrade.db"
