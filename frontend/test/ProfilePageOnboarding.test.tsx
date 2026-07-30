@@ -482,7 +482,9 @@ describe("ProfilePage onboarding", () => {
     renderPage();
     openSetupSection("发件身份");
 
-    const passwordInput = screen.getByLabelText(/SMTP 密码/);
+    const passwordInput = screen.getByLabelText(/邮箱授权码/);
+    const smtpPortInput = screen.getByLabelText(/SMTP Port/);
+    expectToAppearBefore(passwordInput, smtpPortInput);
     expect(passwordInput).toHaveAttribute("type", "password");
 
     fireEvent.click(screen.getByRole("button", { name: "显示授权码" }));

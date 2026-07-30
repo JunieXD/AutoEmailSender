@@ -2727,24 +2727,9 @@ export const ProfilePage = () => {
                   placeholder="示例：smtp.163.com"
                 />
               </label>
-              <label className="block">
-                {renderFieldLabel("SMTP Port", true)}
-                <input
-                  type="number"
-                  value={identityForm.smtp_port}
-                  onChange={(event) =>
-                    setIdentityForm((previous) => ({
-                      ...previous,
-                      smtp_port: event.target.value,
-                    }))
-                  }
-                  className={inputClassName}
-                  placeholder="示例：465"
-                />
-              </label>
-              <div className="block md:col-span-2">
+              <div className="block">
                 <label htmlFor="smtp-password">
-                  {renderFieldLabel("SMTP 密码", true)}
+                  {renderFieldLabel("邮箱授权码", true)}
                 </label>
                 <div className="group relative">
                   <input
@@ -2776,6 +2761,21 @@ export const ProfilePage = () => {
                   </button>
                 </div>
               </div>
+              <label className="block">
+                {renderFieldLabel("SMTP Port", true)}
+                <input
+                  type="number"
+                  value={identityForm.smtp_port}
+                  onChange={(event) =>
+                    setIdentityForm((previous) => ({
+                      ...previous,
+                      smtp_port: event.target.value,
+                    }))
+                  }
+                  className={inputClassName}
+                  placeholder="示例：465"
+                />
+              </label>
               <label className="block">
                 {renderFieldLabel("IMAP Host", true)}
                 <input
