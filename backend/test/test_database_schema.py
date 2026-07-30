@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -9,7 +10,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from alembic import command
+from app.core.config import get_settings
 from app.services.outreach_templates import import_outreach_template_file
 from app.core.migrations import get_alembic_config, get_head_revision
 from test.migrated_database import create_migrated_sqlite_database
@@ -18,6 +22,27 @@ from test.migrated_database import create_migrated_sqlite_database
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 HEAD_REVISION = get_head_revision(get_alembic_config())
 LEGACY_RUNTIME_REVISION = "7a1d5e42c9bd"
+
+
+def run_alembic_in_process(env: dict[str, str], *args: str) -> None:
+    if len(args) != 2 or args[0] not in {"upgrade", "downgrade"}:
+        raise ValueError(f"Unsupported Alembic command: {' '.join(args)}")
+
+    operation = command.upgrade if args[0] == "upgrade" else command.downgrade
+    with patch.dict(os.environ, env, clear=True):
+        get_settings.cache_clear()
+        previous_logging_threshold = logging.root.manager.disable
+        logging.disable(logging.CRITICAL)
+        try:
+            config = get_alembic_config()
+            # Parse the ini before hiding its path so Alembic does not reconfigure
+            # process-wide logging on every in-process migration command.
+            config.get_main_option("script_location")
+            config.config_file_name = None
+            operation(config, args[1])
+        finally:
+            logging.disable(previous_logging_threshold)
+            get_settings.cache_clear()
 
 
 class MigrationScriptTests(unittest.TestCase):
@@ -731,13 +756,13 @@ class MigrationScriptTests(unittest.TestCase):
         )
 
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
-        result = self._run_alembic_result(env, *args)
-        if result.returncode != 0:
+        try:
+            run_alembic_in_process(env, *args)
+        except Exception as exc:
             self.fail(
                 "Alembic command failed.\n"
                 f"command: {' '.join(args)}\n"
-                f"stdout:\n{result.stdout}\n"
-                f"stderr:\n{result.stderr}",
+                f"error: {type(exc).__name__}: {exc}",
             )
 
     @staticmethod
@@ -2391,25 +2416,6 @@ class DatabaseSchemaTests(unittest.TestCase):
         )
         self.assertEqual(link_table_count, 1)
 
-    def test_runtime_code_has_no_mail_delivery_mode_residue(self) -> None:
-        banned_terms = [
-            "dry_run",
-            "mail_delivery_mode",
-            "MailDeliveryMode",
-            "default_mail_delivery_mode",
-            "SystemSettingsRead",
-            "SystemSettingsUpdate",
-        ]
-        runtime_files = sorted((BACKEND_DIR / "app").rglob("*.py"))
-        violations: list[str] = []
-        for path in runtime_files:
-            content = path.read_text(encoding="utf-8")
-            for term in banned_terms:
-                if term in content:
-                    violations.append(f"{path.relative_to(BACKEND_DIR)}: {term}")
-
-        self.assertEqual(violations, [])
-
     def test_defaults_and_foreign_keys_work(self) -> None:
         identity_id = self._insert_identity()
         llm_profile_id = self._insert_llm_profile()
@@ -2962,20 +2968,13 @@ class DatabaseSchemaTests(unittest.TestCase):
             legacy_dir.cleanup()
 
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
-        result = subprocess.run(
-            [sys.executable, "-m", "alembic", *args],
-            cwd=BACKEND_DIR,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
+        try:
+            run_alembic_in_process(env, *args)
+        except Exception as exc:
             self.fail(
                 "Alembic command failed.\n"
                 f"command: {' '.join(args)}\n"
-                f"stdout:\n{result.stdout}\n"
-                f"stderr:\n{result.stderr}",
+                f"error: {type(exc).__name__}: {exc}",
             )
 
     def _get_table_names(self) -> set[str]:

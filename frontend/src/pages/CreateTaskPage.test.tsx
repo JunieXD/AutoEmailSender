@@ -287,20 +287,6 @@ describe("CreateTaskPage", () => {
     );
   });
 
-  it("does not show the legacy placeholder hint in template mode", async () => {
-    render(
-      <MemoryRouter>
-        <CreateTaskPage />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
-    expect(
-      screen.queryByText("支持 {{name}}、{{university}}、{{sender_name}}、{{year}}、{{month}}、{{day}} 等占位符。"),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("AI 写信参考材料")).not.toBeInTheDocument();
-  });
-
   it("defaults the AI reference material from the selected primary material", async () => {
     const previousPrimaryMaterial = selectedIdentity.current_primary_material;
     const previousPrimaryMaterialId = selectedIdentity.current_primary_material_id;

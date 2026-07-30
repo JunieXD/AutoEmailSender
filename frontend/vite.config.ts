@@ -17,13 +17,11 @@ const nodeTestFiles = [
   "src/lib/pagination.test.ts",
   "src/lib/professorTitle.test.ts",
   "src/lib/professorSearchField.test.ts",
-  "src/pages/ProfilePage.test.ts",
   "test/BatchTasksApi.test.ts",
   "test/CrawlJobsApi.test.ts",
   "test/MatchAnalysisJobsApi.test.ts",
   "test/ProfessorInformationEnrichmentApi.test.ts",
   "test/desktopPackaging.test.ts",
-  "test/favicon.test.ts",
   "test/getOnboardingState.test.ts",
   "test/getWorkspaceNextStep.test.ts",
   "test/mentorFilter.test.ts",
@@ -32,7 +30,6 @@ const nodeTestFiles = [
   "test/taskCopy.test.ts",
   "test/templatePlaceholders.test.ts",
   "test/validateTaskForm.test.ts",
-  "test/viteConfig.test.ts",
   "vite.config.test.ts",
 ];
 

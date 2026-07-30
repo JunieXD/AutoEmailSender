@@ -28,6 +28,16 @@ HEAD_REVISION = get_head_revision(get_alembic_config())
 
 
 class ApiEndpointTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        from main import create_app
+
+        cls.client = TestClient(create_app())
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client.close()
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "api_test.db"
@@ -37,7 +47,6 @@ class ApiEndpointTests(unittest.TestCase):
 
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
-        from main import create_app
 
         get_settings.cache_clear()
         if get_engine.cache_info().currsize:
@@ -45,7 +54,6 @@ class ApiEndpointTests(unittest.TestCase):
         get_session_factory.cache_clear()
         get_settings.cache_clear()
 
-        self.client = TestClient(create_app())
         self._task_runtime_adaptation_patch = patch(
             "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
@@ -60,7 +68,7 @@ class ApiEndpointTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._test_compose_runtime_adaptation_patch.stop()
         self._task_runtime_adaptation_patch.stop()
-        self.client.close()
+        self.client.cookies.clear()
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
 
@@ -269,11 +277,6 @@ class ApiEndpointTests(unittest.TestCase):
             conflict_response.json()["detail"],
             "该发件邮箱已存在，请改用编辑已有身份或更换邮箱",
         )
-
-    def test_system_settings_endpoint_is_removed(self) -> None:
-        response = self.client.get("/api/system-settings")
-
-        self.assertEqual(response.status_code, 404)
 
     def test_llm_model_catalog_endpoint(self) -> None:
         llm_id = self._create_llm()

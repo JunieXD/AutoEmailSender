@@ -152,15 +152,6 @@ describe("CreateTaskPage copy", () => {
     });
   });
 
-  it("shows the task mode controls without the retired mode labels", async () => {
-    renderPage();
-
-    const modeCards = await screen.findAllByRole("button", { name: /AI 辅助写信|直接套用模板/ });
-    expect(modeCards).toHaveLength(2);
-    expect(screen.queryByText("模板润色")).not.toBeInTheDocument();
-    expect(screen.queryByText("固定模板")).not.toBeInTheDocument();
-  });
-
   it("asks for confirmation before creating a real batch task", async () => {
     renderPage();
 

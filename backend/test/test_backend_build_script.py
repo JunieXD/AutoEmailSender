@@ -20,11 +20,9 @@ class BackendBuildScriptTest(unittest.TestCase):
     def test_installs_only_playwright_browsers_to_packaged_resource_dir(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
         content = script.resolve().read_text(encoding="utf-8")
-        legacy_browser_driver = "patch" + "right"
 
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
-        self.assertNotIn(f"uv run python -m {legacy_browser_driver} install", content)
 
     def test_collects_document_extraction_and_playwright_dependencies_for_packaging(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
@@ -40,18 +38,6 @@ class BackendBuildScriptTest(unittest.TestCase):
             "tldextract",
         ]:
             self.assertIn(f"--collect-all {package_name}", content)
-
-        legacy_fetch_backend = "crawl" + "4ai"
-        legacy_browser_driver = "patch" + "right"
-
-        self.assertNotIn(f"--collect-all {legacy_fetch_backend}", content)
-        self.assertNotIn(f"--collect-all {legacy_browser_driver}", content)
-        self.assertNotIn(f"--exclude-module {legacy_browser_driver}", content)
-        self.assertNotIn(
-            "$Packaged" + legacy_browser_driver[:1].upper() + legacy_browser_driver[1:] + "Dir",
-            content,
-        )
-        self.assertNotIn(f"_internal\\{legacy_browser_driver}", content)
 
     def test_collects_llm_tokenizer_namespace_dependencies_for_packaging(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
@@ -82,11 +68,9 @@ class BackendBuildScriptTest(unittest.TestCase):
             / "install-backend-playwright.ps1"
         )
         content = script.resolve().read_text(encoding="utf-8")
-        legacy_browser_driver = "patch" + "right"
 
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
-        self.assertNotIn(f"uv run python -m {legacy_browser_driver} install", content)
 
     def test_macos_backend_build_script_matches_packaged_runtime_dependencies(self) -> None:
         script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.sh"

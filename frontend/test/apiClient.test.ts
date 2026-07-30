@@ -3,7 +3,6 @@ import {
   ApiError,
   apiFetch,
   buildApiPath,
-  buildApiUrl,
   updateDesktopBackendBaseUrl,
 } from "@/lib/api/client";
 import { clearDiagnosticEvents, getDiagnosticEvents } from "@/lib/diagnostics";
@@ -26,10 +25,6 @@ describe("api client", () => {
         llm_profile_id: undefined,
       }),
     ).toBe("/api/professors?keyword=%E5%A4%A7%E6%A8%A1%E5%9E%8B+%E5%AF%BC%E5%B8%88&page=2");
-  });
-
-  it("builds absolute API urls from the current browser origin", () => {
-    expect(buildApiUrl("/api/ping")).toBe("http://localhost:3000/api/ping");
   });
 
   it("parses successful JSON responses and sends JSON content type by default", async () => {

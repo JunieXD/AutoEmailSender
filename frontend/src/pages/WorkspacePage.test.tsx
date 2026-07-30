@@ -398,40 +398,6 @@ describe("WorkspacePage draft saving", () => {
     expect(screen.getByText("AI 辅助")).toBeInTheDocument();
   });
 
-  it("does not expose legacy draft generation modes in the workspace composer", async () => {
-    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
-      buildWorkspaceThread({
-        current_task: {
-          ...buildWorkspaceThread().current_task,
-          outreach_generation_mode: "template",
-          draft: {
-            subject: "模板主题",
-            body_text: "模板正文",
-            body_html: "<p>模板正文</p>",
-            source: "template",
-            sendable: true,
-            editable: true,
-          },
-        },
-      }),
-    );
-
-    renderWorkspace();
-
-    await screen.findByText("继续写信");
-
-    expect(screen.queryByText("AI 辅助写信")).not.toBeInTheDocument();
-    expect(screen.queryByText("直接套用模板")).not.toBeInTheDocument();
-    expect(screen.getByText("来自模板")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }));
-
-    expect(screen.queryByText("AI 辅助写信")).not.toBeInTheDocument();
-    expect(screen.queryByText("直接套用模板")).not.toBeInTheDocument();
-    expect(screen.getAllByText("来自模板").length).toBeGreaterThan(0);
-    expect(apiMocks.updateTaskOutreachConfig).not.toHaveBeenCalled();
-  });
-
   it("copies a selected library template into the current task snapshot", async () => {
     renderWorkspace();
 

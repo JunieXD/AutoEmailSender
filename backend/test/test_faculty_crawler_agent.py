@@ -380,7 +380,7 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             )
         )
 
-    def test_legacy_save_tool_is_not_exposed_to_agent(self) -> None:
+    def test_agent_exposes_only_supported_tools(self) -> None:
         captured_tools: dict[str, object] = {}
 
         def fake_create_deep_agent(**kwargs: object) -> object:
@@ -414,8 +414,6 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
                 "submit_page_chunk_candidates",
             },
         )
-        self.assertNotIn("save_professor_candidates", tool_names)
-        self.assertNotIn("submit_chunk_candidates", tool_names)
 
     def test_browser_investigate_chunks_successful_page_snapshot(self) -> None:
         async def run() -> dict[str, object]:
@@ -685,9 +683,7 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
         self.assertNotIn("extra_body", chat_openai.call_args.kwargs)
         self.assertFalse(chat_openai.call_args.kwargs["use_responses_api"])
 
-    def test_crawler_model_no_longer_relies_on_is_deepseek_profile(self) -> None:
-        # Even an unmistakeably DeepSeek profile must not implicitly enable any extra_body
-        # when the caller did not pass one. Adaptation now happens upstream.
+    def test_deepseek_profile_does_not_implicitly_add_extra_body(self) -> None:
         profile = LLMProfile(
             name="DeepSeek",
             provider="deepseek",

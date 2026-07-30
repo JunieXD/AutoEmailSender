@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import unittest
-import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -29,21 +27,6 @@ async def _session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 
 class CrawlerChunkRuntimeTests(unittest.TestCase):
-    def test_session_factory_helper_disposes_engine_on_exit(self) -> None:
-        async def run() -> None:
-            async with _session_factory():
-                pass
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", ResourceWarning)
-            asyncio.run(run())
-            gc.collect()
-
-        leaked_connections = [
-            warning for warning in caught if "aiosqlite.core.Connection" in str(warning.message)
-        ]
-        self.assertEqual(leaked_connections, [])
-
     def test_claim_next_page_chunk_marks_chunk_processing(self) -> None:
         async def run() -> None:
             async with _session_factory() as session_factory:

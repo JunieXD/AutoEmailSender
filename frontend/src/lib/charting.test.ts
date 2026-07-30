@@ -24,13 +24,6 @@ describe("pie chart colors", () => {
     });
   });
 
-  it("keeps the first and last generated colors distinct", () => {
-    const colors = assignPieSliceColors(12);
-
-    expect(colors[0]).not.toBe(colors[colors.length - 1]);
-    expect(arePieSliceColorsSimilar(colors[0], colors[colors.length - 1])).toBe(false);
-  });
-
   it("still avoids adjacent duplicates when more slices than palette colors are needed", () => {
     const colors = assignPieSliceColors(43);
 

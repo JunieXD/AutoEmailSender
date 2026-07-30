@@ -18,6 +18,16 @@ from app.services.professor_management import PROFESSOR_TEMPLATE_COLUMNS
 
 
 class ProfessorTagsApiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        from main import create_app
+
+        cls.client = TestClient(create_app(), raise_server_exceptions=False)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client.close()
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "professor_tags_api.db"
@@ -27,7 +37,6 @@ class ProfessorTagsApiTests(unittest.TestCase):
 
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
-        from main import create_app
 
         get_settings.cache_clear()
         if get_engine.cache_info().currsize:
@@ -35,10 +44,8 @@ class ProfessorTagsApiTests(unittest.TestCase):
         get_session_factory.cache_clear()
         get_settings.cache_clear()
 
-        self.client = TestClient(create_app(), raise_server_exceptions=False)
-
     def tearDown(self) -> None:
-        self.client.close()
+        self.client.cookies.clear()
 
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory

@@ -320,14 +320,6 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertTrue(options["headless"])
         self.assertNotIn("channel", options)
 
-    def test_crawler_runtime_code_no_longer_mentions_legacy_fetch_backend(self) -> None:
-        source = Path(crawler_tools.__file__).read_text(encoding="utf-8")
-        legacy_name = "crawl" + "4ai"
-        legacy_display_name = "Crawl" + "4AI"
-
-        self.assertNotIn(legacy_name, source.lower())
-        self.assertNotIn(legacy_display_name, source)
-
     def test_is_allowed_crawl_url_allows_same_host(self) -> None:
         with patch(
             "app.services.crawler_tools.socket.getaddrinfo",

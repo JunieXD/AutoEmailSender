@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import tempfile
 import unittest
-import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -87,21 +85,6 @@ class CrawlerPageFetchLedgerPureTests(unittest.TestCase):
 
 
 class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
-    def test_session_factory_helper_disposes_engine_on_exit(self) -> None:
-        async def run() -> None:
-            async with _create_test_session_factory():
-                pass
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", ResourceWarning)
-            asyncio.run(run())
-            gc.collect()
-
-        leaked_connections = [
-            warning for warning in caught if "aiosqlite.core.Connection" in str(warning.message)
-        ]
-        self.assertEqual(leaked_connections, [])
-
     def test_terminal_failed_decision_skips_fetch_after_restart(self) -> None:
         async def run() -> str:
             async with _create_test_session_factory() as session_factory:

@@ -15,21 +15,23 @@ UUID_PATTERN = re.compile(
 
 
 class RequestContextTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.app = create_app()
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = create_app()
 
-        @self.app.get("/test/request-id")
+        @cls.app.get("/test/request-id")
         async def read_request_id() -> dict[str, str | None]:
             return {"request_id": get_request_id()}
 
-        @self.app.get("/test/request-id-error")
+        @cls.app.get("/test/request-id-error")
         async def raise_request_error() -> None:
             raise RuntimeError("boom")
 
-        self.client = TestClient(self.app)
+        cls.client = TestClient(cls.app)
 
-    def tearDown(self) -> None:
-        self.client.close()
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client.close()
 
     def test_missing_request_id_header_generates_uuid_response_header(self) -> None:
         response = self.client.get("/api/ping")
