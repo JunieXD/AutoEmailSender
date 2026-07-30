@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
 
@@ -66,7 +65,7 @@ def extract_text_from_document(file_path: str) -> str | None:
     if suffix in {".txt", ".md"}:
         return _extract_text_file(path)
 
-    content = _extract_text_with_markitdown(path)
+    content = _extract_text_with_structured_converter(path)
     if content:
         return content
 
@@ -78,13 +77,14 @@ def extract_text_from_document(file_path: str) -> str | None:
     return None
 
 
-def _extract_text_with_markitdown(path: Path) -> str | None:
+def _extract_text_with_structured_converter(path: Path) -> str | None:
     try:
-        result = _get_markitdown().convert(path)
-        content = (result.markdown or result.text_content or "").strip()
+        from app.services.document_extraction import extract_document
+
+        content = extract_document(path).strip()
         return content or None
     except Exception:
-        logger.exception("材料 Markdown 提取失败: %s", path.as_posix())
+        logger.exception("材料结构化文本提取失败: %s", path.as_posix())
         return None
 
 
@@ -155,9 +155,3 @@ def _hash_bytes(content: bytes) -> str:
     from hashlib import sha256
 
     return sha256(content).hexdigest()
-
-@lru_cache(maxsize=1)
-def _get_markitdown():
-    from markitdown import MarkItDown
-
-    return MarkItDown(enable_plugins=False)

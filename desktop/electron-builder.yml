@@ -21,6 +21,11 @@ extraResources:
 win:
   artifactName: "AutoEmailSender-Setup-${version}.${ext}"
   icon: build/icon.ico
+  electronLanguages:
+    - en-US
+    - en-GB
+    - zh-CN
+    - zh-TW
   target:
     - target: nsis
       arch:
@@ -28,6 +33,11 @@ win:
 mac:
   artifactName: "AutoEmailSender-${version}-${arch}.${ext}"
   icon: build/icon.icns
+  electronLanguages:
+    - en
+    - en_GB
+    - zh_CN
+    - zh_TW
   category: public.app-category.productivity
   identity: "-"
   extendInfo:

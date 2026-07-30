@@ -4474,11 +4474,12 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [material_id])
 
-    def test_material_upload_keeps_working_when_text_extraction_fails(self) -> None:
+    def test_material_upload_defers_structured_text_extraction(self) -> None:
         identity_id = self._create_identity(with_imap=False)
 
-        with patch("app.services.file_storage._get_markitdown") as mocked_markitdown:
-            mocked_markitdown.return_value.convert.side_effect = RuntimeError("boom")
+        with patch(
+            "app.services.file_storage._extract_text_with_structured_converter",
+        ) as mocked_extractor:
             response = self.client.post(
                 f"/api/identities/{identity_id}/materials",
                 files={"file": ("transcript.pdf", b"%PDF-pretend-transcript", "application/pdf")},
@@ -4486,6 +4487,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 201, msg=response.text)
+        mocked_extractor.assert_not_called()
         body = response.json()
         self.assertEqual(body["material_type"], "transcript")
         self.assertEqual(body["display_name"], "transcript")

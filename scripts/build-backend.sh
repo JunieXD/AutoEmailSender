@@ -19,6 +19,7 @@ RepoRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BackendDir="$RepoRoot/backend"
 AlembicIni="$BackendDir/alembic.ini"
 AlembicDir="$BackendDir/alembic"
+DocumentExtractionNotice="$BackendDir/app/services/document_extraction/MARKITDOWN_NOTICE.txt"
 PlaywrightBrowsersDir="$BackendDir/ms-playwright"
 
 cd "$BackendDir"
@@ -39,19 +40,27 @@ uv run pyinstaller \
   --specpath build \
   --hidden-import main \
   --hidden-import aiosqlite \
-  --collect-all markitdown \
+  --hidden-import app.services.document_extraction \
+  --hidden-import lxml.etree \
   --collect-all mammoth \
   --collect-all pdfminer \
-  --collect-all pdfplumber \
   --collect-all pypdf \
   --collect-all playwright \
   --collect-all tldextract \
   --collect-all tiktoken \
   --collect-submodules tiktoken_ext \
   --hidden-import tiktoken_ext.openai_public \
+  --exclude-module markitdown \
+  --exclude-module magika \
+  --exclude-module onnxruntime \
+  --exclude-module numpy \
+  --exclude-module PIL \
+  --exclude-module pypdfium2 \
   --add-data "$AlembicIni:." \
   --add-data "$AlembicDir:alembic" \
+  --add-data "$DocumentExtractionNotice:licenses" \
   desktop_entry.py
 
 PackagedBackendExe="$BackendDir/dist/backend/backend"
 "$PackagedBackendExe" --self-check
+"$PackagedBackendExe" --document-self-check "$BackendDir/test/fixtures/document_extraction"

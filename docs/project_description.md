@@ -75,7 +75,7 @@
 - 后端：FastAPI
 - 数据库：SQLite + SQLAlchemy + Alembic
 - 模型调用：OpenAI 兼容接口
-- 文本提取：MarkItDown 按需提取匹配默认材料或 AI 写信参考材料文本
+- 文本提取：内置 PDF/DOCX 结构化提取器按需提取匹配默认材料或 AI 写信参考材料文本
 - 发信与收信：SMTP + IMAP
 
 ## 7. 相关文档

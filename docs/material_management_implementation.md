@@ -35,7 +35,7 @@
   - `original_filename`
   - `size_bytes`
   - `sha256`
-- 上传阶段不主动做文本提取；`extracted_text` 由后续匹配分析或草稿生成时通过 MarkItDown 按需补齐。
+- 上传阶段不主动做文本提取；`extracted_text` 由后续匹配分析或草稿生成时通过内置结构化文档提取器按需补齐。
 
 ## 3. 后端 DTO
 ### 3.1 `IdentityMaterialDTO`
@@ -89,7 +89,7 @@
 - 草稿生成读取：
   - `task.primary_material`
   - `task.identity.materials`
-- 系统会先通过 MarkItDown 对本次使用的材料做一次按需 Markdown 提取；如果文件不可提取或解析失败，则继续按“无可提取文本”处理。
+- 系统会先通过内置 PDF/DOCX 结构化提取器对本次使用的材料做一次按需 Markdown 提取；如果文件不可提取或解析失败，则继续按“无可提取文本”处理。
 - `llm_runtime.generate_match_evaluation()` 使用个人页当前默认材料生成匹配结果。
 - `llm_runtime.generate_draft_content()` 使用 AI 写信参考材料生成草稿，不读取匹配结果。
 - 草稿生成不再由后台 worker 自动推进，而是通过 `POST /api/email-tasks/{id}/regenerate-draft` 手动触发。

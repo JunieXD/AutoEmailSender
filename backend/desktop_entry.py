@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -20,7 +21,9 @@ PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
     "openai",
     "httpx",
     "tldextract",
-    "markitdown",
+    "app.services.document_extraction",
+    "defusedxml",
+    "lxml.etree",
     "mammoth",
     "pdfminer",
     "pdfplumber",
@@ -36,6 +39,7 @@ def parse_desktop_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--document-self-check", type=Path)
     return parser.parse_args(argv)
 
 
@@ -60,10 +64,32 @@ def run_packaged_runtime_self_check() -> int:
     return 0
 
 
+def run_packaged_document_self_check(fixture_dir: Path) -> int:
+    from app.services.file_storage import extract_text_from_document
+
+    cases = {
+        "borderless_form_resume.pdf": ("FORM-TABLE-SENTINEL", "| 时间", "| ----"),
+        "docx_named_pdf.pdf": ("RICH-DOCX-SENTINEL",),
+        "equation_resume.docx": ("EQUATION-DOCX-SENTINEL", "$x+1=2$", "$$E=mc\\^2$$"),
+        "pdf_named_docx.docx": ("研究生申请简历",),
+    }
+    for file_name, sentinels in cases.items():
+        path = fixture_dir / file_name
+        content = extract_text_from_document(path.as_posix()) or ""
+        missing = [sentinel for sentinel in sentinels if sentinel not in content]
+        if missing:
+            raise RuntimeError(f"packaged document self-check failed for {file_name}: {missing}")
+
+    print("packaged document self-check ok")
+    return 0
+
+
 def main() -> None:
     args = parse_desktop_args()
     if args.self_check:
         raise SystemExit(run_packaged_runtime_self_check())
+    if args.document_self_check is not None:
+        raise SystemExit(run_packaged_document_self_check(args.document_self_check))
 
     options = build_uvicorn_options()
     app_path = options.pop("app")

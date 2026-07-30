@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +11,27 @@ from app.services.file_storage import extract_text_from_document
 
 
 class FileStorageExtractionTests(unittest.TestCase):
-    def test_extract_docx_text_falls_back_when_markitdown_fails(self) -> None:
+    def test_import_keeps_heavy_document_dependencies_lazy(self) -> None:
+        script = """
+import sys
+import app.services.file_storage
+
+heavy_roots = {"lxml", "mammoth", "pdfminer", "pdfplumber"}
+loaded = sorted(name for name in sys.modules if name.split(".", 1)[0] in heavy_roots)
+if loaded:
+    raise SystemExit(f"heavy document modules loaded eagerly: {loaded}")
+"""
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
+    def test_extract_docx_text_falls_back_when_structured_converter_fails(self) -> None:
         from docx import Document
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -18,17 +40,23 @@ class FileStorageExtractionTests(unittest.TestCase):
             document.add_paragraph("DOCX fallback sentinel information extraction")
             document.save(path)
 
-            with patch("app.services.file_storage._extract_text_with_markitdown", return_value=None):
+            with patch(
+                "app.services.file_storage._extract_text_with_structured_converter",
+                return_value=None,
+            ):
                 text = extract_text_from_document(path.as_posix())
 
         self.assertIn("DOCX fallback sentinel", text or "")
 
-    def test_extract_pdf_text_falls_back_when_markitdown_fails(self) -> None:
+    def test_extract_pdf_text_falls_back_when_structured_converter_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "resume.pdf"
             path.write_bytes(_build_minimal_pdf("PDF fallback sentinel information extraction"))
 
-            with patch("app.services.file_storage._extract_text_with_markitdown", return_value=None):
+            with patch(
+                "app.services.file_storage._extract_text_with_structured_converter",
+                return_value=None,
+            ):
                 text = extract_text_from_document(path.as_posix())
 
         self.assertIn("PDF fallback sentinel", text or "")

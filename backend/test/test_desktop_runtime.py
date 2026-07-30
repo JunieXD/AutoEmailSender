@@ -327,10 +327,26 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         self.assertTrue(args.self_check)
 
+    def test_desktop_entry_parses_document_self_check_fixture_dir(self) -> None:
+        from desktop_entry import parse_desktop_args
+
+        fixture_dir = Path(__file__).resolve().parent / "fixtures" / "document_extraction"
+        args = parse_desktop_args(["--document-self-check", fixture_dir.as_posix()])
+
+        self.assertEqual(args.document_self_check, fixture_dir)
+
     def test_packaged_runtime_self_check_imports_dynamic_dependencies(self) -> None:
         from desktop_entry import run_packaged_runtime_self_check
 
         result = run_packaged_runtime_self_check()
+
+        self.assertEqual(result, 0)
+
+    def test_packaged_document_self_check_extracts_high_risk_fixtures(self) -> None:
+        from desktop_entry import run_packaged_document_self_check
+
+        fixture_dir = Path(__file__).resolve().parent / "fixtures" / "document_extraction"
+        result = run_packaged_document_self_check(fixture_dir)
 
         self.assertEqual(result, 0)
 
@@ -345,7 +361,9 @@ class DesktopRuntimeTests(unittest.TestCase):
             "openai",
             "httpx",
             "tldextract",
-            "markitdown",
+            "app.services.document_extraction",
+            "defusedxml",
+            "lxml.etree",
             "mammoth",
             "pdfminer",
             "pdfplumber",

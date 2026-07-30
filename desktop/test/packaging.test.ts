@@ -34,6 +34,17 @@ describe("windows installer packaging", () => {
     expect(existsSync(path.resolve("build", "icon.ico"))).toBe(true);
   });
 
+  it("keeps only supported Electron locale packs with Windows names", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+    const windowsConfig = config.slice(config.indexOf("win:"), config.indexOf("mac:"));
+
+    expect(windowsConfig).toContain(
+      "  electronLanguages:\n    - en-US\n    - en-GB\n    - zh-CN\n    - zh-TW",
+    );
+    expect(windowsConfig).not.toContain("- zh_CN");
+    expect(windowsConfig).not.toContain("- zh_TW");
+  });
+
   it("packages the window icon as a runtime resource", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
 
@@ -101,6 +112,17 @@ describe("macOS desktop packaging", () => {
     expect(config).toContain('identity: "-"');
     expect(config).not.toContain("identity: null");
     expect(existsSync(path.resolve("build", "icon.icns"))).toBe(true);
+  });
+
+  it("keeps only supported Electron locale packs with macOS names", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+    const macConfig = config.slice(config.indexOf("mac:"), config.indexOf("nsis:"));
+
+    expect(macConfig).toContain(
+      "  electronLanguages:\n    - en\n    - en_GB\n    - zh_CN\n    - zh_TW",
+    );
+    expect(macConfig).not.toContain("- en-US");
+    expect(macConfig).not.toContain("- zh-CN");
   });
 
   it("embeds Sparkle with a signed feed and user-confirmed installation", () => {

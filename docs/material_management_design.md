@@ -69,6 +69,6 @@
 - LLM 匹配与草稿生成只在用户手动触发时执行。
 - 匹配分析读取 `identity_profiles.current_primary_material_id` 对应的个人页默认材料。
 - 草稿生成读取 `email_tasks.primary_material_id` 对应的 AI 写信参考材料。
-- 系统会在触发时通过 MarkItDown 按需读取对应材料的 Markdown 内容，并把结果缓存到 `extracted_text`。
+- 系统会在触发时通过内置 PDF/DOCX 结构化提取器按需读取对应材料的 Markdown 内容，并把结果缓存到 `extracted_text`。
 - 邮件发送只读取 `selected_material_ids` 对应的文件实体。
 - 切换默认材料或 AI 写信参考材料不会自动把它加入随信材料列表；两者仍然分开控制。
