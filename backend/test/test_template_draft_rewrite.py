@@ -5,6 +5,7 @@ import unittest
 from app.models import IdentityProfile, Professor
 from app.services.outreach_templates import build_template_context
 from app.services.template_draft_rewrite import (
+    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
     apply_draft_rewrite_replacements,
     build_draft_rewrite_document,
     select_dominant_font_and_size,
@@ -381,6 +382,43 @@ class TemplateDraftRewriteTests(unittest.TestCase):
 
         self.assertEqual(result.text.count("Agent"), 1)
         self.assertNotIn("[[F1]]", result.html)
+
+    def test_apply_replacements_uses_friendly_research_direction_error(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>正文。</p>",
+            {"research_direction": "Agent"},
+        )
+
+        for text in ("没有结合导师方向。", "重复[[F1]]与[[F1]]。"):
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError) as raised:
+                    apply_draft_rewrite_replacements(
+                        document,
+                        [{"segment_id": "seg_1", "text": text}],
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
+                )
+                self.assertNotIn("令牌", str(raised.exception))
+
+    def test_apply_replacements_preserves_existing_literal_research_direction_once(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>我关注您在 Agent 方向的工作。</p>",
+            {"research_direction": "Agent"},
+        )
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [
+                {
+                    "segment_id": "seg_1",
+                    "text": "我认真了解了您在 Agent 方向的工作。",
+                },
+            ],
+        )
+
+        self.assertEqual(result.text.count("Agent"), 1)
 
 
 if __name__ == "__main__":

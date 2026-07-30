@@ -30,6 +30,7 @@ from app.services.rich_text import (
     text_to_email_html,
 )
 from app.services.template_draft_rewrite import (
+    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
     DraftRewriteFactToken,
     DraftRewriteProtectedToken,
     DraftRewriteSourceBlock,
@@ -43,6 +44,7 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LLM_TEMPERATURE = 0.2
 DEFAULT_LLM_MAX_TOKENS = 6000
 STRUCTURED_OUTPUT_CONTROL_KEY = "__structured_output_control__"
+DRAFT_RESEARCH_PLACEHOLDER = "{{professor_research}}"
 SYSTEM_MATCH_ONLY_PROMPT = dedent(
     """
     你是研究生套磁助理。你必须只输出 JSON，不要输出任何解释、Markdown 代码块或多余文字。
@@ -187,7 +189,7 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     每个 replacement 只能包含 segment_id 和完整连续段落 text；不要返回 runs、marks 或 subject。
     [[S1]]...[[/S1]] 是可编辑样式区域：可以修改区域内文字，但标记必须原样、成对、按原顺序保留。
     [[P1]] 是日期、时间或延迟占位符，必须原样保留。
-    [[F1]] 是后端事实令牌，必须按要求使用且不得改写、解释或展开。
+    [[F1]] 是系统保护的导师研究方向占位，必须按输入要求原样保留，不得解释或展开。
 
     输出示例：
     {
@@ -205,7 +207,18 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     - locked=true 的块必须原样保留，尤其是首个称呼段和表格块。
     - 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
     - 不要添加输入事实之外的导师方向、论文、成果、日期或数字。
-    - 如果提供了导师研究方向事实令牌，必须按输入要求保留或自然使用；未提供时不要虚构事实令牌。
+    - 如果输入中已有导师研究方向占位，必须按输入要求保留；未提供时不要自行虚构内部占位。
+    """
+).strip()
+
+SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT = dedent(
+    """
+    你是研究生套磁邮件改写助理。只能输出一个 JSON 对象，不要输出解释、Markdown、HTML 或完整正文。
+    基于 source_blocks 逐段改写邮件，不要从零重写。
+    replacements 必须按输入顺序返回全部可编辑段落；另选其中一个段落返回 research_direction_personalization，系统会用这个个性化版本覆盖同段普通版本。
+    {{professor_research}} 代表“导师围绕其研究方向开展的研究”这一完整名词短语，只能在个性化版本中自然出现一次；不要自行输出导师研究方向原文或 [[F数字]] 标记。
+    原样、成对、按顺序保留所选段落中的 [[S数字]]...[[/S数字]] 样式区域和全部 [[P数字]] 保护占位。
+    不得返回或改动 locked=true 的段落和表格。
     """
 ).strip()
 
@@ -644,6 +657,20 @@ class DraftRewriteResult(BaseModel):
     replacements: list[DraftRewriteSegmentReplacement]
 
 
+class DraftResearchPersonalization(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: str
+    text: str
+
+
+class DraftRewriteWithResearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    replacements: list[DraftRewriteSegmentReplacement]
+    research_direction_personalization: DraftResearchPersonalization
+
+
 @dataclass(slots=True)
 class DraftRewritePreferences:
     draft_rewrite_intensity: str = "moderate"
@@ -851,6 +878,10 @@ async def generate_draft_content(
                     body_html=rendered.html,
                 ),
             )
+        requires_research_personalization = _draft_requires_research_personalization(
+            rewrite_document.blocks,
+            rewrite_document.fact_tokens,
+        )
         prompt_parts = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
@@ -869,7 +900,11 @@ async def generate_draft_content(
             "messages": [
                 {
                     "role": "system",
-                    "content": SYSTEM_DRAFT_REWRITE_PROMPT,
+                    "content": (
+                        SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT
+                        if requires_research_personalization
+                        else SYSTEM_DRAFT_REWRITE_PROMPT
+                    ),
                 },
                 {
                     "role": "user",
@@ -881,21 +916,53 @@ async def generate_draft_content(
         }
         if prompt_parts.prompt_cache_key is not None:
             payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
-        completion, rewrite_result, _structured_mode = await request_structured_completion(
-            llm_profile,
-            payload,
-            DraftRewriteResult,
-            extra_body=thinking_extra_body,
-            session=session,
-            adaptation=adaptation,
-        )
+        if requires_research_personalization:
+            completion, rewrite_result, _structured_mode = await request_structured_completion(
+                llm_profile,
+                payload,
+                DraftRewriteWithResearchResult,
+                extra_body=thinking_extra_body,
+                session=session,
+                adaptation=adaptation,
+                validation_error_message=DRAFT_RESEARCH_PERSONALIZATION_ERROR,
+            )
+            replacements = [item.model_dump() for item in rewrite_result.replacements]
+            research_personalization = rewrite_result.research_direction_personalization
+        else:
+            completion, rewrite_result, _structured_mode = await request_structured_completion(
+                llm_profile,
+                payload,
+                DraftRewriteResult,
+                extra_body=thinking_extra_body,
+                session=session,
+                adaptation=adaptation,
+            )
+            replacements = [item.model_dump() for item in rewrite_result.replacements]
+            research_personalization = None
         try:
+            if research_personalization is not None:
+                replacements = _merge_draft_research_personalization(
+                    rewrite_document.blocks,
+                    rewrite_document.fact_tokens,
+                    replacements,
+                    research_personalization,
+                    language=identity.default_language,
+                )
             rendered = apply_draft_rewrite_replacements(
                 rewrite_document,
-                [item.model_dump() for item in rewrite_result.replacements],
+                replacements,
             )
         except ValueError as exc:
-            raise LLMRuntimeError(str(exc)) from exc
+            raise LLMRuntimeError(
+                str(exc),
+                request_url=completion.request_url,
+                attempted_urls=completion.attempted_urls,
+                endpoint_kind=completion.endpoint_kind,
+                status_code=completion.status_code,
+                duration_ms=completion.duration_ms,
+                usage=completion.usage,
+                raw_content=completion.content,
+            ) from exc
         return GeneratedDraftContent(
             result=DraftGenerationResult(
                 subject=rendered_subject,
@@ -987,7 +1054,15 @@ def estimate_draft_content_tokens(
             protected_tokens=rewrite_document.protected_tokens,
             fact_tokens=rewrite_document.fact_tokens,
         )
-        prompt_text = f"{SYSTEM_DRAFT_REWRITE_PROMPT}\n\n{prompt_parts.prompt}"
+        rewrite_system_prompt = (
+            SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT
+            if _draft_requires_research_personalization(
+                rewrite_document.blocks,
+                rewrite_document.fact_tokens,
+            )
+            else SYSTEM_DRAFT_REWRITE_PROMPT
+        )
+        prompt_text = f"{rewrite_system_prompt}\n\n{prompt_parts.prompt}"
     else:
         prompt = build_draft_prompt(
             identity=identity,
@@ -1600,6 +1675,7 @@ async def request_structured_completion(
     extra_body: dict[str, object] | None = None,
     session: "AsyncSession | None" = None,
     adaptation: LLMRuntimeAdaptation | None = None,
+    validation_error_message: str | None = None,
 ) -> tuple[ChatCompletionResult, StructuredResultT, str]:
     """Request and validate one typed JSON result without repair calls."""
 
@@ -1671,6 +1747,17 @@ async def request_structured_completion(
         else:
             data = json.loads(completion.content)
             result = result_model.model_validate(data, context=validation_context)
+    except LLMRuntimeError as error:
+        raise LLMRuntimeError(
+            validation_error_message or str(error),
+            request_url=completion.request_url,
+            attempted_urls=completion.attempted_urls,
+            endpoint_kind=completion.endpoint_kind,
+            status_code=completion.status_code,
+            duration_ms=completion.duration_ms,
+            usage=completion.usage,
+            raw_content=completion.content,
+        ) from error
     except (json.JSONDecodeError, ValidationError) as error:
         if session is not None and mode == "json_schema_strict" and active_adaptation is not None:
             from app.services.structured_output_adaptation import (
@@ -1685,7 +1772,7 @@ async def request_structured_completion(
                 expected_mode="json_schema_strict",
             )
         raise LLMRuntimeError(
-            f"模型返回的 JSON 结构无效: {error}",
+            validation_error_message or f"模型返回的 JSON 结构无效: {error}",
             request_url=completion.request_url,
             attempted_urls=completion.attempted_urls,
             endpoint_kind=completion.endpoint_kind,
@@ -1949,82 +2036,117 @@ def build_draft_rewrite_prompt_parts(
     preferences = rewrite_preferences or DraftRewritePreferences()
     protected_tokens = protected_tokens or []
     fact_tokens = fact_tokens or []
-    fact_usage_instruction = _build_draft_fact_usage_instruction(
+    has_literal_research_direction = _draft_has_literal_research_direction(
         source_blocks,
         fact_tokens,
     )
-    payload: dict[str, object] = {
-        "instructions": [
-            "只返回 JSON 对象。",
-            "不要返回 subject。",
-            "为 source_blocks 中每个 locked=false 且 type 不是 table 的块返回一个 replacement。",
-            "replacements 的 segment_id 集合和顺序必须与这些可编辑块完全一致。",
-            "table 块必须原样保留，不得出现在 replacements 中。",
-            "locked=true 的块必须原样保留，尤其是首个称呼段。",
-            "每个 replacement 只能包含 segment_id 和完整连续段落 text。",
-            "保留 text 中全部 [[S数字]]...[[/S数字]] 样式区域，区域内文字允许改写。",
-            "保留全部 [[P数字]] 保护令牌，不得修改、删除或新增。",
-            "facts 中的 [[F数字]] 令牌必须按说明使用，不得释义或展开令牌值。",
-            "不要返回 HTML。",
-            "不要返回完整正文。",
-            "不要新增、删除、合并、拆分或重排块。",
-            "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
-            "不要添加输入中没有的导师信息、论文、成果、日期或数字。",
-            fact_usage_instruction,
-            "默认在保留模板骨架的基础上优化表达、连接句和个性化内容。",
-            "优先保留段落顺序、信息顺序和主要话术。",
+    requires_research_personalization = _draft_requires_research_personalization(
+        source_blocks,
+        fact_tokens,
+    )
+    instructions = [
+        "只返回 JSON 对象。",
+        "不要返回 subject。",
+        "为 source_blocks 中每个 locked=false 且 type 不是 table 的块返回一个 replacement。",
+        "replacements 的 segment_id 集合和顺序必须与这些可编辑块完全一致。",
+        "table 块必须原样保留，不得出现在 replacements 中。",
+        "locked=true 的块必须原样保留，尤其是首个称呼段。",
+        "每个 replacement 只能包含 segment_id 和完整连续段落 text。",
+        "保留 text 中全部 [[S数字]]...[[/S数字]] 样式区域，区域内文字允许改写。",
+        "保留全部 [[P数字]] 保护占位，不得修改、删除或新增。",
+        "不要返回 HTML。",
+        "不要返回完整正文。",
+        "不要新增、删除、合并、拆分或重排块。",
+        "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
+        "不要添加输入中没有的导师信息、论文、成果、日期或数字。",
+        "默认在保留模板骨架的基础上优化表达、连接句和个性化内容。",
+        "优先保留段落顺序、信息顺序和主要话术。",
+    ]
+    response_schema: dict[str, object] = {
+        "replacements": [
+            {
+                "segment_id": "seg_1",
+                "text": "完整连续段落，[[S1]]可编辑样式区域[[/S1]]。",
+            },
         ],
-        "response_schema": {
-            "replacements": [
-                {
-                    "segment_id": "seg_1",
-                    "text": "完整连续段落，[[S1]]可编辑样式区域[[/S1]]。",
-                },
+    }
+    prompt_input: dict[str, object] = {
+        "rewrite_preferences": _serialize_draft_rewrite_preferences(preferences),
+        "user_custom_instruction": _serialize_draft_custom_instruction(
+            preferences.draft_custom_instruction,
+        ),
+        "student_material_text": primary_material_text,
+        "available_materials": [
+            {
+                "id": material.id,
+                "name": _format_nullable(material.display_name),
+                "type": _format_nullable(material.material_type),
+            }
+            for material in available_materials
+        ],
+        "source_blocks": [
+            _serialize_draft_source_block(block)
+            for block in source_blocks
+        ],
+        "protected_tokens": [
+            {"token": token.token, "value": token.value}
+            for token in protected_tokens
+        ],
+    }
+    if requires_research_personalization:
+        instructions.extend(
+            [
+                "research_direction_personalization.segment_id 必须选自可编辑块，系统会用其 text 覆盖同段普通 replacement。",
+                f"个性化 text 必须是完整段落，并把 {DRAFT_RESEARCH_PLACEHOLDER} 作为完整名词短语自然使用一次且仅一次。",
+                f"替换后必须语法自然；优先写‘我对{DRAFT_RESEARCH_PLACEHOLDER}产生了浓厚兴趣’或‘{DRAFT_RESEARCH_PLACEHOLDER}与我的经历契合’，不要使用‘向往、憧憬’等生硬搭配。",
+                "不要输出导师方向原文或 [[F数字]] 标记；保留所选段落全部样式区域和受保护内容。",
             ],
-        },
-        "input": {
-            "rewrite_preferences": _serialize_draft_rewrite_preferences(preferences),
-            "user_custom_instruction": _serialize_draft_custom_instruction(
-                preferences.draft_custom_instruction,
-            ),
-            "student_material_text": primary_material_text,
-            "available_materials": [
-                {
-                    "id": material.id,
-                    "name": _format_nullable(material.display_name),
-                    "type": _format_nullable(material.material_type),
-                }
-                for material in available_materials
+        )
+        response_schema["research_direction_personalization"] = {
+            "segment_id": "seg_3",
+            "text": f"我对{DRAFT_RESEARCH_PLACEHOLDER}很感兴趣，希望有机会进一步学习。",
+        }
+    else:
+        instructions.extend(
+            [
+                "facts 中的 [[F数字]] 占位必须按说明使用，不得释义或展开其值。",
+                _build_draft_fact_usage_instruction(source_blocks, fact_tokens),
             ],
-            "source_blocks": [
-                _serialize_draft_source_block(block)
-                for block in source_blocks
-            ],
-            "protected_tokens": [
-                {"token": token.token, "value": token.value}
-                for token in protected_tokens
-            ],
-            "facts": [
+        )
+        prompt_input["facts"] = (
+            []
+            if has_literal_research_direction
+            else [
                 {"token": fact.token, "description": fact.description}
                 for fact in fact_tokens
-            ],
-        },
+            ]
+        )
+
+    payload: dict[str, object] = {
+        "instructions": instructions,
+        "response_schema": response_schema,
+        "input": prompt_input,
     }
-    prompt_input = payload["input"]
-    if isinstance(prompt_input, dict):
-        if not prompt_input["rewrite_preferences"]:
-            del prompt_input["rewrite_preferences"]
-        if not prompt_input["user_custom_instruction"]:
-            del prompt_input["user_custom_instruction"]
+    if not prompt_input["rewrite_preferences"]:
+        del prompt_input["rewrite_preferences"]
+    if not prompt_input["user_custom_instruction"]:
+        del prompt_input["user_custom_instruction"]
 
     stable_prefix = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    if isinstance(prompt_input, dict):
-        research_direction_token = fact_tokens[0].token if fact_tokens else None
-        prompt_input["professor"] = _build_draft_rewrite_professor_context(
-            professor,
-            research_direction_token=research_direction_token,
+    research_direction_token = (
+        fact_tokens[0].token
+        if (
+            fact_tokens
+            and not requires_research_personalization
+            and not has_literal_research_direction
         )
+        else None
+    )
+    prompt_input["professor"] = _build_draft_rewrite_professor_context(
+        professor,
+        research_direction_token=research_direction_token,
+    )
 
     prompt = json.dumps(payload, ensure_ascii=False, indent=2)
     return DraftRewritePromptParts(
@@ -2043,6 +2165,106 @@ def build_draft_rewrite_prompt_parts(
             else None
         ),
     )
+
+
+def _draft_requires_research_personalization(
+    source_blocks: list[DraftRewriteSourceBlock],
+    fact_tokens: list[DraftRewriteFactToken],
+) -> bool:
+    if not fact_tokens:
+        return False
+    editable_blocks = [
+        block
+        for block in source_blocks
+        if block.type != "table" and not block.locked
+    ]
+    if not editable_blocks:
+        return False
+
+    for block in source_blocks:
+        source = "\n".join(
+            value
+            for value in (block.rewrite_text, block.html_fragment or "")
+            if value
+        )
+        if any(fact.token in source for fact in fact_tokens):
+            return False
+    if _draft_has_literal_research_direction(source_blocks, fact_tokens):
+        return False
+    return True
+
+
+def _draft_has_literal_research_direction(
+    source_blocks: list[DraftRewriteSourceBlock],
+    fact_tokens: list[DraftRewriteFactToken],
+) -> bool:
+    return any(
+        fact.value.strip()
+        and fact.value.strip()
+        in (
+            (block.html_fragment or "")
+            if block.type == "table"
+            else block.rewrite_text
+        )
+        for fact in fact_tokens
+        for block in source_blocks
+    )
+
+
+def _merge_draft_research_personalization(
+    source_blocks: list[DraftRewriteSourceBlock],
+    fact_tokens: list[DraftRewriteFactToken],
+    replacements: list[dict[str, object]],
+    personalization: DraftResearchPersonalization,
+    *,
+    language: str | None,
+) -> list[dict[str, object]]:
+    editable_ids = [
+        block.segment_id
+        for block in source_blocks
+        if block.type != "table" and not block.locked
+    ]
+    if personalization.segment_id not in editable_ids:
+        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+    if personalization.text.count(DRAFT_RESEARCH_PLACEHOLDER) != 1:
+        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+    if not fact_tokens or re.search(r"\[\[F\d+\]\]", personalization.text):
+        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+
+    direction = fact_tokens[0].value.strip()
+    model_texts = [personalization.text, *[str(item.get("text", "")) for item in replacements]]
+    if direction and any(direction in text for text in model_texts):
+        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+    for replacement in replacements:
+        if (
+            replacement.get("segment_id") != personalization.segment_id
+            and DRAFT_RESEARCH_PLACEHOLDER in str(replacement.get("text", ""))
+        ):
+            raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+
+    fact_placeholder = fact_tokens[0].token
+    language_code = (language or "").strip().lower()
+    research_phrase = (
+        f"your research on {fact_placeholder}"
+        if language_code.startswith("en")
+        else f"您围绕{fact_placeholder}开展的研究"
+    )
+    personalized_text = personalization.text.replace(
+        DRAFT_RESEARCH_PLACEHOLDER,
+        research_phrase,
+    )
+
+    merged: list[dict[str, object]] = []
+    personalized_count = 0
+    for replacement in replacements:
+        item = dict(replacement)
+        if item.get("segment_id") == personalization.segment_id:
+            item["text"] = personalized_text
+            personalized_count += 1
+        merged.append(item)
+    if personalized_count != 1:
+        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+    return merged
 
 
 def _build_draft_fact_usage_instruction(
@@ -2070,20 +2292,39 @@ def _build_draft_fact_usage_instruction(
     ]
     if editable_source_facts:
         return (
-            "可编辑块中已有事实令牌 "
+            "可编辑块中已有研究方向占位 "
             f"{', '.join(editable_source_facts)}；必须按原顺序保留全部已有出现，且不得新增。"
         )
     if retained_source_facts:
         return (
             "导师研究方向事实已在 locked 或 table 块中使用；"
-            "replacements 中不得再次输出任何 [[F数字]] 令牌。"
+            "replacements 中不得再次输出任何 [[F数字]] 标记。"
+        )
+    literal_values = [
+        fact.value.strip()
+        for fact in fact_tokens
+        if fact.value.strip()
+        and any(
+            fact.value.strip()
+            in (
+                (block.html_fragment or "")
+                if block.type == "table"
+                else block.rewrite_text
+            )
+            for block in source_blocks
+        )
+    ]
+    if literal_values:
+        return (
+            "模板中已经写有导师研究方向原文；必须保留原有出现次数，"
+            "不得再添加该原文或任何 [[F数字]] 标记。"
         )
     if fact_tokens and editable_blocks:
         tokens = ", ".join(fact.token for fact in fact_tokens)
         return (
-            f"正文尚未引用 facts 中的 {tokens}；必须在全部 replacements 中合计自然使用每个令牌一次。"
+            f"正文尚未引用 facts 中的 {tokens}；必须在全部 replacements 中合计自然使用每个占位一次。"
         )
-    return "facts 为空或没有可编辑块；不得在 replacements 中虚构任何 [[F数字]] 令牌。"
+    return "facts 为空或没有可编辑块；不得在 replacements 中虚构任何 [[F数字]] 标记。"
 
 
 def _serialize_draft_source_block(block: DraftRewriteSourceBlock) -> dict[str, object]:

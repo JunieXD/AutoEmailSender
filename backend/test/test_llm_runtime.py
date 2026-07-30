@@ -15,7 +15,10 @@ from app.models import LLMProfile
 from app.services.llm_runtime import (
     ChatCompletionResult,
     DEFAULT_LLM_MAX_TOKENS,
+    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
+    DraftResearchPersonalization,
     MatchEvaluationResult,
+    SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT,
     SYSTEM_DRAFT_REWRITE_PROMPT,
     build_match_prompt_parts,
     build_draft_prompt,
@@ -35,6 +38,7 @@ from app.services.llm_runtime import (
     _request_completion_endpoint,
     request_chat_completion,
     resolve_base_url,
+    _merge_draft_research_personalization,
 )
 
 
@@ -418,8 +422,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             "message": {
                                 "content": (
                                     '{"replacements":['
-                                    '{"segment_id":"seg_1","text":"模板正文，关注[[F1]]。"}'
-                                    ']}'
+                                    '{"segment_id":"seg_1","text":"模板正文。"}'
+                                    '],"research_direction_personalization":'
+                                    '{"segment_id":"seg_1","text":'
+                                    '"模板正文，我想进一步了解{{professor_research}}。"}}'
                                 ),
                             },
                         },
@@ -583,8 +589,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                 "content": (
                                     '{"replacements":['
                                     '{"segment_id":"seg_1","text":'
-                                    '"李老师，您好：希望就[[F1]]方向与您交流。"}'
-                                    ']}'
+                                    '"李老师，您好："}'
+                                    '],"research_direction_personalization":'
+                                    '{"segment_id":"seg_1","text":'
+                                    '"李老师，您好：希望进一步了解{{professor_research}}。"}}'
                                 ),
                             },
                         },
@@ -694,7 +702,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         payload = calls[0][1]
         self.assertIsNotNone(payload)
-        self.assertEqual(payload["messages"][0]["content"], SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertEqual(
+            payload["messages"][0]["content"],
+            SYSTEM_DRAFT_REWRITE_PROMPT,
+        )
         self.assertIn("source_blocks", payload["messages"][1]["content"])
         self.assertIn('"style_regions"', payload["messages"][1]["content"])
         self.assertIn('"[[F1]]"', payload["messages"][1]["content"])
@@ -752,10 +763,18 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         "text": (
                             "我是王俊杰，[[S1]]以专业第一的成绩获得了推免资格[[/S1]]。"
                             "冒昧来信咨询，不知老师今年是否还有硕士招生名额？"
-                            "我也希望就[[F1]]方向与您交流。附件中是我的简历。"
+                            "附件中是我的简历。"
                         ),
                     },
                 ],
+                "research_direction_personalization": {
+                    "segment_id": "seg_1",
+                    "text": (
+                        "我是王俊杰，[[S1]]以专业第一的成绩获得了推免资格[[/S1]]。"
+                        "冒昧来信咨询，不知老师今年是否还有硕士招生名额？"
+                        "我也希望进一步了解{{professor_research}}。附件中是我的简历。"
+                    ),
+                },
             },
             ensure_ascii=False,
         )
@@ -778,12 +797,257 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         payload = request_mock.call_args.args[1]
-        self.assertEqual(payload["messages"][0]["content"], SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertEqual(
+            payload["messages"][0]["content"],
+            SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT,
+        )
         self.assertIn("source_blocks", payload["messages"][1]["content"])
         self.assertNotIn("rewrite_segments", payload["messages"][1]["content"])
         self.assertIn("以专业第一的成绩获得了推免资格", generated.result.body_text)
         self.assertNotIn("{{name}}", generated.result.body_text)
         self.assertIn("<strong>以专业第一的成绩获得了推免资格</strong>", generated.result.body_html)
+
+    async def test_generate_draft_content_overrides_the_selected_research_paragraph_once(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="我做过智能体项目。",
+        )
+        professor = Professor(name="李老师", research_direction="Agent")
+        raw = json.dumps(
+            {
+                "replacements": [
+                    {"segment_id": "seg_1", "text": "我有相关项目经验。"},
+                    {
+                        "segment_id": "seg_2",
+                        "text": "[[S1]]普通版本误写了[[F1]]和[[F1]]。[[/S1]]",
+                    },
+                ],
+                "research_direction_personalization": {
+                    "segment_id": "seg_2",
+                    "text": "[[S1]]我尤其希望进一步了解{{professor_research}}。[[/S1]]",
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        with patch(
+            "app.services.llm_runtime.request_chat_completion",
+            return_value=ChatCompletionResult(content=raw),
+        ) as request_mock:
+            generated = await generate_draft_content(
+                identity=identity,
+                primary_material=material,
+                llm_profile=LLMProfile(
+                    provider="openai",
+                    model_name="test-model",
+                    api_key="secret",
+                ),
+                professor=professor,
+                available_materials=[material],
+                custom_subject="申请交流",
+                custom_body_html=(
+                    "<p>我有相关项目经验。</p>"
+                    "<p><strong>期待进一步交流。</strong></p>"
+                ),
+            )
+
+        payload = request_mock.call_args.args[1]
+        self.assertEqual(
+            payload["messages"][0]["content"],
+            SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT,
+        )
+        self.assertEqual(generated.result.body_text.count("Agent"), 1)
+        self.assertNotIn("[[F1]]", generated.result.body_html)
+        self.assertNotIn("普通版本误写", generated.result.body_text)
+        self.assertIn("<strong>", generated.result.body_html)
+
+    def test_merge_research_personalization_validates_slot_and_supports_english(self) -> None:
+        from app.services.template_draft_rewrite import (
+            apply_draft_rewrite_replacements,
+            build_draft_rewrite_document,
+        )
+
+        document = build_draft_rewrite_document(
+            "<p>First paragraph.</p><p>Second paragraph.</p>",
+            {"research_direction": "Multi-agent collaboration"},
+        )
+        replacements = [
+            {"segment_id": "seg_1", "text": "First paragraph."},
+            {"segment_id": "seg_2", "text": "Second paragraph."},
+        ]
+
+        merged = _merge_draft_research_personalization(
+            document.blocks,
+            document.fact_tokens,
+            replacements,
+            DraftResearchPersonalization(
+                segment_id="seg_2",
+                text="I am particularly interested in {{professor_research}}.",
+            ),
+            language="en-US",
+        )
+        rendered = apply_draft_rewrite_replacements(document, merged)
+
+        self.assertIn(
+            "your research on Multi-agent collaboration",
+            rendered.text,
+        )
+        self.assertEqual(rendered.text.count("Multi-agent collaboration"), 1)
+
+        invalid_personalizations = [
+            DraftResearchPersonalization(
+                segment_id="seg_2",
+                text="This paragraph omits the required placeholder.",
+            ),
+            DraftResearchPersonalization(
+                segment_id="seg_2",
+                text="{{professor_research}} and {{professor_research}}",
+            ),
+            DraftResearchPersonalization(
+                segment_id="seg_missing",
+                text="I read {{professor_research}}.",
+            ),
+        ]
+        for personalization in invalid_personalizations:
+            with self.subTest(personalization=personalization.model_dump()):
+                with self.assertRaises(ValueError) as raised:
+                    _merge_draft_research_personalization(
+                        document.blocks,
+                        document.fact_tokens,
+                        replacements,
+                        personalization,
+                        language="en-US",
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
+                )
+                self.assertNotIn("令牌", str(raised.exception))
+
+    async def test_generate_draft_content_maps_missing_personalization_to_friendly_error(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="智能体项目经历",
+        )
+        professor = Professor(name="李老师", research_direction="Agent")
+        raw = '{"replacements":[{"segment_id":"seg_1","text":"正文。"}]}'
+
+        with patch(
+            "app.services.llm_runtime.request_chat_completion",
+            return_value=ChatCompletionResult(
+                content=raw,
+                request_url="https://api.example.com/chat/completions",
+                endpoint_kind="chat_completions",
+                status_code=200,
+            ),
+        ):
+            with self.assertRaises(LLMRuntimeError) as raised:
+                await generate_draft_content(
+                    identity=identity,
+                    primary_material=material,
+                    llm_profile=LLMProfile(
+                        provider="openai",
+                        model_name="test-model",
+                        api_key="secret",
+                    ),
+                    professor=professor,
+                    available_materials=[material],
+                    custom_subject="申请交流",
+                    custom_body="正文。",
+                )
+
+        error = raised.exception
+        self.assertEqual(str(error), DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+        self.assertNotIn("令牌", str(error))
+        self.assertNotIn("validation error", str(error))
+        self.assertEqual(error.raw_content, raw)
+        self.assertEqual(error.status_code, 200)
+
+    async def test_generate_draft_content_does_not_repeat_literal_research_direction(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+
+        identity = IdentityProfile(
+            id=1,
+            name="张三",
+            email_address="sender@example.com",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        material = IdentityMaterial(
+            id=12,
+            identity_id=1,
+            display_name="简历",
+            file_path="resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="智能体项目经历",
+        )
+        professor = Professor(name="李老师", research_direction="Agent")
+        raw = json.dumps(
+            {
+                "replacements": [
+                    {
+                        "segment_id": "seg_1",
+                        "text": "我认真了解了您在 Agent 方向的工作。",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        with patch(
+            "app.services.llm_runtime.request_chat_completion",
+            return_value=ChatCompletionResult(content=raw),
+        ) as request_mock:
+            generated = await generate_draft_content(
+                identity=identity,
+                primary_material=material,
+                llm_profile=LLMProfile(
+                    provider="openai",
+                    model_name="test-model",
+                    api_key="secret",
+                ),
+                professor=professor,
+                available_materials=[material],
+                custom_subject="申请交流",
+                custom_body="我认真了解了您在 Agent 方向的工作。",
+            )
+
+        prompt_payload = json.loads(request_mock.call_args.args[1]["messages"][1]["content"])
+        self.assertNotIn(
+            "research_direction_personalization",
+            prompt_payload["response_schema"],
+        )
+        self.assertEqual(prompt_payload["input"]["facts"], [])
+        self.assertEqual(generated.result.body_text.count("Agent"), 1)
 
     def test_match_only_prompt_includes_explicit_score_rubric(self) -> None:
         from app.services.llm_runtime import SYSTEM_MATCH_ONLY_PROMPT
@@ -1578,9 +1842,13 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "replacements": [
                     {
                         "segment_id": "seg_1",
-                        "text": "李老师，您好：希望就[[F1]]方向与您交流。",
+                        "text": "李老师，您好。",
                     },
                 ],
+                "research_direction_personalization": {
+                    "segment_id": "seg_1",
+                    "text": "李老师，您好：希望进一步了解{{professor_research}}。",
+                },
             },
             ensure_ascii=False,
         )

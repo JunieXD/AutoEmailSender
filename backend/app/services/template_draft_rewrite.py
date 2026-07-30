@@ -22,6 +22,10 @@ STYLE_MARKER_PATTERN = re.compile(r"\[\[(/?)S(\d+)\]\]")
 STYLE_REGION_PATTERN = re.compile(r"\[\[S(\d+)\]\](.*?)\[\[/S\1\]\]", re.DOTALL)
 PROTECTED_TOKEN_PATTERN = re.compile(r"\[\[P\d+\]\]")
 FACT_TOKEN_PATTERN = re.compile(r"\[\[F\d+\]\]")
+DRAFT_RESEARCH_PERSONALIZATION_ERROR = (
+    "AI 没有正确将导师研究方向融入草稿。请重新生成；"
+    "若仍失败，请检查该导师的研究方向是否填写完整。"
+)
 
 SEGMENT_TAG_NAMES = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "table"}
 CJK_FONT_HINTS = (
@@ -107,7 +111,7 @@ def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRew
         fact_token = DraftRewriteFactToken(
             token="[[F1]]",
             value=research_direction,
-            description="导师研究方向；该令牌代表原始事实，不得改写、解释或展开",
+            description="导师研究方向原文；该系统占位不得改写、解释或展开",
         )
         fact_tokens.append(fact_token)
         rendered_context["research_direction"] = fact_token.token
@@ -543,6 +547,44 @@ def _validate_replacements(
     if actual_protected != expected_protected:
         raise ValueError("日期、时间或延迟占位符被修改")
 
+    source_literal_fact_counts = {
+        fact.value: sum(
+            (
+                (block.html_fragment or "")
+                if block.type == "table"
+                else block.rewrite_text
+            ).count(fact.value)
+            for block in document.blocks
+        )
+        for fact in document.fact_tokens
+        if fact.value.strip()
+        and any(
+            fact.value
+            in (
+                (block.html_fragment or "")
+                if block.type == "table"
+                else block.rewrite_text
+            )
+            for block in document.blocks
+        )
+    }
+    if source_literal_fact_counts:
+        rendered_texts = [
+            str(replacement["text"])
+            for replacement in validated
+        ]
+        rendered_texts.extend(
+            (block.html_fragment or "") if block.type == "table" else block.rewrite_text
+            for block in document.blocks
+            if block.type == "table" or block.locked
+        )
+        rendered_text = "\n".join(rendered_texts)
+        if any(
+            rendered_text.count(value) != expected_count
+            for value, expected_count in source_literal_fact_counts.items()
+        ):
+            raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+
     retained_source_facts = [
         token
         for block in document.blocks
@@ -551,12 +593,12 @@ def _validate_replacements(
     ]
     if expected_facts_from_source:
         expected_facts = expected_facts_from_source
-    elif retained_source_facts or not editable_blocks:
+    elif retained_source_facts or source_literal_fact_counts or not editable_blocks:
         expected_facts = []
     else:
         expected_facts = [fact.token for fact in document.fact_tokens]
     if actual_facts != expected_facts:
-        raise ValueError("导师事实令牌缺失、重复或顺序错误")
+        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
     return validated
 
 

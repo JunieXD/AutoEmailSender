@@ -18,6 +18,7 @@ from app.services.crawler_structured_output import (
 from app.services.llm_runtime import (
     DraftGenerationWireResult,
     DraftRewriteResult,
+    DraftRewriteWithResearchResult,
     MatchEvaluationWireResult,
     _prepare_strict_json_schema,
 )
@@ -94,6 +95,7 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             MatchEvaluationWireResult,
             DraftGenerationWireResult,
             DraftRewriteResult,
+            DraftRewriteWithResearchResult,
             ProfessorCandidateWirePayload,
             CandidateEnrichmentWirePayload,
             V2ChunkWirePayload,
