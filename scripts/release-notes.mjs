@@ -32,6 +32,11 @@ export function buildReleaseNotes(version) {
     "- macOS Apple Silicon：应用会自动检查更新，也可点击“检查更新”；确认后由 Sparkle 下载并重启安装。",
     "- 如果当前 macOS 旧版本仍打开 GitHub Releases，请手动覆盖安装本版本一次；之后即可使用应用内更新。",
     "",
+    "## 从导师官网生成导入表",
+    "",
+    "- 想让 Codex 或 Claude Code 从学院官网生成可直接导入的 XLSX？查看[导师官网转导入表 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)。",
+    `- 也可以直接下载 [\`crawl-mentors-to-xlsx-v${normalizedVersion}.zip\`](https://github.com/JunieXD/AutoEmailSender/releases/download/v${normalizedVersion}/crawl-mentors-to-xlsx-v${normalizedVersion}.zip) 手动安装。`,
+    "",
   ].join("\n");
 }
 

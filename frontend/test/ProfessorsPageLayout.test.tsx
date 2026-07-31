@@ -814,6 +814,31 @@ describe("ProfessorsPage layout", () => {
     click.mockRestore();
   });
 
+  it("opens the mentor crawler Skill guide from the import dialog", async () => {
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    fireEvent.click(within(screen.getByTestId("professor-intake-模板批量新增")).getByRole("button", { name: "模板导入" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "用 Codex / Claude Code 从导师官网生成导入表",
+      }),
+    );
+
+    expect(openWindow).toHaveBeenCalledWith(
+      "https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(
+      screen.getByText(/Skill 默认生成安全的 10 列 XLSX/),
+    ).toBeInTheDocument();
+  });
+
   it("opens professor export dialog and downloads without opening a blank window", async () => {
     renderPage();
 

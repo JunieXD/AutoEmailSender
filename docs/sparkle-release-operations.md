@@ -10,7 +10,7 @@ macOS Apple Silicon 版使用 Sparkle 2.9.4 更新，Windows 的 `electron-updat
 - `.app` 实际是目录包，直接作为 GitHub Release 资产上传不可靠，也不能保证目录结构、权限和符号链接在传输中保持完整。
 - Sparkle 原生支持从 DMG 提取 `.app`；差分更新不可用时，同一个 DMG 也是全量回退包。
 
-因此不需要再增加 ZIP。每个 Release 的 macOS 资产包括当前 DMG、`appcast.xml`，以及存在旧 Sparkle 版本时生成的 `.delta` 文件。
+因此不需要再增加 macOS 应用 ZIP。每个 Release 的 macOS 更新资产包括当前 DMG、`appcast.xml`，以及存在旧 Sparkle 版本时生成的 `.delta` 文件；供 Codex 或 Claude Code 手动安装的 `crawl-mentors-to-xlsx-vx.y.z.zip` 是独立的 Skill 附件，不参与 Sparkle 更新。
 
 ## 一次性密钥配置
 
@@ -61,6 +61,8 @@ tag 触发的 workflow 会：
 3. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
 4. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`，全部成功后再发布为稳定 Release。
 
+工作流失败后可以在 Release 仍为 draft 时重跑；一旦 Release 已公开，重跑必须在上传任何资产前失败。已公开版本不得用 `--clobber` 替换安装包、Skill ZIP 或 appcast，修复后应发布新版本。
+
 首个集成 Sparkle 的版本没有旧 appcast，因此只生成当前 DMG 的 appcast，不会生成差分包。这是正常结果。尚未集成 Sparkle 的旧 macOS 客户端必须手动覆盖安装这个过渡版本一次；之后才能使用原生更新。
 
 ## 发布后检查
@@ -69,6 +71,7 @@ tag 触发的 workflow 会：
 
 - `AutoEmailSender-Setup-x.y.z.exe`、对应 blockmap 和 `latest.yml`
 - `AutoEmailSender-x.y.z-arm64.dmg`
+- `crawl-mentors-to-xlsx-vx.y.z.zip`
 - `appcast.xml`
 - 从第二个 Sparkle 版本起，最多 3 个面向最近旧版本的 `.delta`
 

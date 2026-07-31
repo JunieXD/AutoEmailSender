@@ -143,7 +143,7 @@ exit /b 0
     }
     $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_database_schema test.test_migrations_runtime" -Message "release.ps1 没有执行迁移相关后端测试。`n$uvCalls"
-    Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_crawl_mentors_skill_contract" -Message "release.ps1 没有执行导师抓取 Skill 契约测试。`n$uvCalls"
+    Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" -Message "release.ps1 没有执行导师抓取 Skill 契约和打包测试。`n$uvCalls"
 
     if (Test-Path $uvCallsPath) {
       Remove-Item -LiteralPath $uvCallsPath -Force

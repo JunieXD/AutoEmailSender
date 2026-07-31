@@ -22,6 +22,16 @@ describe("release notes generator", () => {
     expect(notes).toContain("Windows：应用内可下载并安装更新。");
     expect(notes).toContain("macOS Apple Silicon：应用会自动检查更新，也可点击“检查更新”；确认后由 Sparkle 下载并重启安装。");
     expect(notes).toContain("如果当前 macOS 旧版本仍打开 GitHub Releases，请手动覆盖安装本版本一次；之后即可使用应用内更新。");
+    expect(notes).toContain("## 从导师官网生成导入表");
+    expect(notes).toContain(
+      "[导师官网转导入表 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
+    );
+    expect(notes).toContain(
+      "[`crawl-mentors-to-xlsx-v2.0.2.zip`](https://github.com/JunieXD/AutoEmailSender/releases/download/v2.0.2/crawl-mentors-to-xlsx-v2.0.2.zip)",
+    );
+    expect(notes.lastIndexOf("导师官网转导入表 Skill 安装与使用教程")).toBeGreaterThan(
+      notes.lastIndexOf("## 自动更新"),
+    );
     expect(notes).not.toContain("fix(后端)");
     expect(notes).not.toContain("AutoEmailSender Setup 2.0.2.exe");
   });

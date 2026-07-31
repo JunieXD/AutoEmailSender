@@ -173,6 +173,31 @@ describe("DesktopUpdateButton", () => {
     expect(within(dialog).getByText("console.log('ok');")).toBeInTheDocument();
   });
 
+  it("opens release note links in the system browser", async () => {
+    const openExternalUrl = vi.fn(async () => undefined);
+    window.autoEmailSender = buildDesktopApi({
+      openExternalUrl,
+      checkForUpdate: async () => ({
+        state: "available",
+        version: "2.1.5",
+        nextVersion: "2.1.6",
+        fullDownloadBytes: 200 * 1024 * 1024,
+        releaseNotes:
+          "[Skill 安装教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
+      }),
+    });
+
+    render(<DesktopUpdateButton />);
+    fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Skill 安装教程" }),
+    );
+
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      "https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill",
+    );
+  });
+
   it("starts the selected download mode from the release notes dialog", async () => {
     const downloadUpdate = vi.fn(async () => ({
       state: "downloaded_pending_install" as const,

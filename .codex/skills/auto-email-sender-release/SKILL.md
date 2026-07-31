@@ -9,7 +9,7 @@ description: "Use when preparing, publishing, monitoring, or verifying an AutoEm
 
 Drive the project release flow from a version number to a verified public GitHub Release. Keep release notes clear for ordinary users, use the repository release scripts, investigate failures instead of bypassing checks, and verify the Windows and macOS artifacts after the tag is pushed.
 
-Publish repository-delivered Skills under the same AutoEmailSender version and tag. Keep `crawl-mentors-to-xlsx` canonical under `.agents/skills/crawl-mentors-to-xlsx` and keep `.claude/skills/crawl-mentors-to-xlsx` as its Claude Code entry. Do not add a separate Skill release, plugin-marketplace submission, or Electron installer payload unless the project explicitly changes that distribution policy.
+Publish repository-delivered Skills under the same AutoEmailSender version and tag. Keep `crawl-mentors-to-xlsx` canonical under `.agents/skills/crawl-mentors-to-xlsx`, keep `.claude/skills/crawl-mentors-to-xlsx` as its Claude Code entry, and attach `crawl-mentors-to-xlsx-v<version>.zip` to the same GitHub Release. Do not create a separate Skill-only release, submit to a plugin marketplace, or put the Skill inside Electron installers unless the project explicitly changes that distribution policy.
 
 Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, read `docs/sparkle-release-operations.md`. Treat that repository document as the detailed source of truth and keep this skill focused on the release procedure.
 
@@ -38,11 +38,11 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 ## Repository Skill Preflight
 
-- Treat `crawl-mentors-to-xlsx` as a source-repository deliverable that shares the application's version and tag. It is distributed through the tagged repository/source archives and the installation guide, not through the EXE, DMG, GitHub Release asset list, or a plugin marketplace.
+- Treat `crawl-mentors-to-xlsx` as a versioned deliverable that shares the application's version and tag. Distribute its canonical directory through the tagged repository and as the standalone `crawl-mentors-to-xlsx-v<version>.zip` asset in the same GitHub Release, never through the EXE, DMG, or a plugin marketplace.
 - Inspect `git ls-tree -r --name-only HEAD -- .agents/skills/crawl-mentors-to-xlsx .claude/skills/crawl-mentors-to-xlsx`. Compare the result with `expected_canonical_files` in `backend/test/test_crawl_mentors_skill_contract.py`; require all ten canonical files plus the Claude Code forwarding `SKILL.md` to be present in the release commit.
-- Use the available `skill-creator` `quick_validate.py` against both Skill directories when either entry changed. Then run `cd backend` and `uv run python -m unittest test.test_crawl_mentors_skill_contract`. The normal release scripts run the contract test automatically; do not remove or bypass it.
+- Use the available `skill-creator` `quick_validate.py` against both Skill directories when either entry changed. Then run `cd backend` and `uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package`. Generate a local ZIP with `python scripts/package_crawl_mentors_skill.py --version <version> --output-dir <temporary-dir>` and inspect its top-level directory and canonical file list. The normal release scripts run both tests automatically; do not remove or bypass them.
 - When the release range changes the Skill guide or website navigation, run `npm test` and `npm run build` in `website` before publishing.
-- Confirm the public guide still explains repository/path installation, whole-directory copying, the shared AutoEmailSender tag, and the absence of a marketplace release. Do not imply that installing the desktop application installs the Skill.
+- Confirm the public guide is written for ordinary users who have not cloned the repository. Require paste-ready global installation flows for Codex and Claude Code, a manual Release ZIP flow for Windows/macOS/Linux, the complete-directory requirement, latest `master` versus reproducible tag behavior, the local-global directory scope, and the absence of a marketplace release. Do not imply that installing or updating the desktop application installs or updates the Skill.
 - Treat `--dry-run` only as a command-sequence rehearsal: it does not enforce `master` or a clean worktree. Independently complete the branch, status, tracked-file, and version checks before treating the release as ready.
 
 ## Sparkle Preflight
@@ -73,11 +73,14 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - Prefer concrete results over technical causes: use `模型连接失败时会显示更明确的错误原因。` instead of `新增 SOCKS 初始化错误包装。`
 - Keep bullets to one sentence in most cases and avoid sub-bullets or marketing language.
 - Omit development-only, packaging-only, documentation-only, README, badge, and website-copy changes unless they affect installation, upgrade, onboarding, data safety, reliability, or ordinary product usage.
-- Describe a new or materially changed repository Skill as a user-facing capability, but say that Codex or Claude Code can use it from the repository. Do not describe it as built into the desktop installer. Omit contract-test-only or internal Skill maintenance when behavior and installation are unchanged.
+- Describe a new or materially changed repository Skill as a user-facing capability, and direct ordinary users to the global installation guide backed by the repository version. Do not describe it as built into the desktop installer. Omit contract-test-only or internal Skill maintenance when behavior and installation are unchanged.
+- Keep the generated announcement's final `## 从导师官网生成导入表` section and its public installation-guide link. This fixed onboarding entry belongs at the bottom even when the release range contains no Skill changes.
 
 ## Platform Note Rules
 
 - Keep the generated `## 安装说明` and `## 自动更新` sections in the final public release note.
+- Keep `## 从导师官网生成导入表` after `## 自动更新`, with the clickable public guide URL `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`.
+- Name the standalone Skill asset exactly `crawl-mentors-to-xlsx-v<version>.zip`, and keep that exact versioned filename in the generated announcement.
 - Keep the exact package names:
   - Windows: `AutoEmailSender-Setup-x.y.z.exe`
   - macOS Apple Silicon: `AutoEmailSender-x.y.z-arm64.dmg`
@@ -90,16 +93,17 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 ## Post-Tag Verification
 
-- Inspect the exact tag with `git ls-tree -r --name-only v<version> -- .agents/skills/crawl-mentors-to-xlsx .claude/skills/crawl-mentors-to-xlsx`, compare it with the tested manifest, and inspect a `git archive` of the same paths. Require all canonical files and the Claude Code entry in the tagged source payload. Do not expect a separate Skill asset in the GitHub Release or inside the desktop installers.
+- Inspect the exact tag with `git ls-tree -r --name-only v<version> -- .agents/skills/crawl-mentors-to-xlsx .claude/skills/crawl-mentors-to-xlsx`, compare it with the tested manifest, and inspect a `git archive` of the same paths. Require all canonical files and the Claude Code entry in the tagged source payload. Download and inspect `crawl-mentors-to-xlsx-v<version>.zip`; require one top-level `crawl-mentors-to-xlsx` directory containing the same canonical files and no forwarding entry, caches, or extra nesting.
 - Locate the `Release Desktop` workflow run for the exact tag with `gh run list`, then wait for it with `gh run watch <run-id> --exit-status`.
-- Require `build-windows`, `build-macos`, and `publish` to succeed. The publish job must upload installers and deltas before `appcast.xml`, then publish the staged draft Release.
+- Require `build-windows`, `build-macos`, and `publish` to succeed. The publish job must generate and upload the standalone Skill ZIP with installers and deltas before `appcast.xml`, then publish the staged draft Release. A rerun may continue an existing draft, but it must refuse to edit or replace assets on an already published Release before any upload begins.
 - Inspect the exact tag with `gh release view v<version> --json isDraft,assets,url`. Require a non-draft release containing:
   - `AutoEmailSender-Setup-x.y.z.exe`, its `.blockmap`, and `latest.yml`
   - `AutoEmailSender-x.y.z-arm64.dmg`
+  - `crawl-mentors-to-xlsx-v<version>.zip`
   - `appcast.xml`
   - up to three `.delta` files when prior Sparkle releases exist
 - For the first Sparkle-enabled release, no delta is expected because no earlier appcast exists. Do not treat that as a failure.
-- If `website/**` changed in the release range, locate the `Deploy Website` run for the exact release commit, wait for it to succeed, and verify the public Skill guide opens and still names both repository paths correctly.
+- If `website/**` changed in the release range, locate the `Deploy Website` run for the exact release commit, wait for it to succeed, and verify the public Skill guide opens and still documents the Codex and Claude Code user-level installation paths, paste-ready installation requests, manual Release ZIP installation, complete-directory requirement, and update instructions.
 - If macOS functional QA is in scope, verify from an installed previous version that Sparkle displays the release notes, validates the update, and restarts into the new version. Follow Update QA Safety.
 - For a transient Actions failure, rerun only after identifying the cause. For a product or packaging defect, fix `master` and publish a new version. Do not move or recreate a pushed tag, manually replace signed assets, or rotate Sparkle keys without explicit user approval.
 
