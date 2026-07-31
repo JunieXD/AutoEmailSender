@@ -154,6 +154,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
@@ -166,12 +171,23 @@ jobs:
           name: macos-release
           path: release-assets/macos
 
+      - name: Package mentor crawler Skill
+        run: >-
+          python scripts/package_crawl_mentors_skill.py
+          --version "${{ github.ref_name }}"
+          --output-dir release-assets/skill
+
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${{ github.ref_name }}" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "Refusing to replace assets on published Release ${{ github.ref_name }}; publish a new version instead." >&2
+              exit 1
+            fi
             gh release edit "${{ github.ref_name }}" --notes-file ./desktop/release-notes.md
           else
             gh release create "${{ github.ref_name }}" --draft --verify-tag --title "${{ github.ref_name }}" --notes-file ./desktop/release-notes.md
@@ -183,7 +199,12 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          assets=(release-assets/windows/* release-assets/macos/*.dmg release-assets/macos/*.delta)
+          skill_assets=(release-assets/skill/*.zip)
+          if ((${#skill_assets[@]} != 1)); then
+            echo "Expected exactly one mentor crawler Skill ZIP, found ${#skill_assets[@]}." >&2
+            exit 1
+          fi
+          assets=(release-assets/windows/* release-assets/macos/*.dmg release-assets/macos/*.delta "${skill_assets[@]}")
           gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber
           gh release upload "${{ github.ref_name }}" release-assets/macos/appcast.xml --clobber
 

@@ -146,8 +146,8 @@ invoke_verification() {
       uv run python -m unittest test.test_desktop_runtime
     invoke_checked_command "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" \
       uv run python -m unittest test.test_database_schema test.test_migrations_runtime
-    invoke_checked_command "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract" \
-      uv run python -m unittest test.test_crawl_mentors_skill_contract
+    invoke_checked_command "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" \
+      uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
   )
 
   echo "=== 验证 desktop ==="

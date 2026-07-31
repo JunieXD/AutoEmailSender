@@ -90,7 +90,7 @@ rm -f "$uv_calls_path"
 output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"
 uv_calls="$(cat "$uv_calls_path")"
 assert_contains "$uv_calls" "run python -m unittest test.test_database_schema test.test_migrations_runtime" "release.sh 没有执行迁移相关后端测试。"
-assert_contains "$uv_calls" "run python -m unittest test.test_crawl_mentors_skill_contract" "release.sh 没有执行导师抓取 Skill 契约测试。"
+assert_contains "$uv_calls" "run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" "release.sh 没有执行导师抓取 Skill 契约和打包测试。"
 assert_contains "$output" "[dry-run] 未创建提交、tag 或推送" "release.sh dry-run 成功时没有输出完成信息。"
 
 rm -f "$uv_calls_path"

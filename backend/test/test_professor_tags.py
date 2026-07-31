@@ -12,9 +12,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
 from test.migrated_database import create_migrated_sqlite_database
-from app.services.professor_management import PROFESSOR_TEMPLATE_COLUMNS
+from app.services.professor_management import (
+    PROFESSOR_LEGACY_TEMPLATE_COLUMNS,
+    PROFESSOR_TEMPLATE_COLUMNS,
+)
 
 
 class ProfessorTagsApiTests(unittest.TestCase):
@@ -443,6 +447,78 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["updated_count"], 1)
         self.assertEqual([item["id"] for item in refreshed["tags"]], [tag["id"]])
+
+    def test_import_safe_xlsx_preserves_existing_tags_and_personal_note(self) -> None:
+        tag = self.client.get("/api/professors/tags").json()[0]
+        created = self.client.post(
+            "/api/professors",
+            json={
+                "name": "安全导入导师",
+                "email": "safe-xlsx@example.edu",
+                "tag_ids": [tag["id"]],
+                "personal_note": "用户已有备注",
+            },
+        ).json()
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Professors"
+        sheet.append(PROFESSOR_LEGACY_TEMPLATE_COLUMNS)
+        sheet.append(
+            [
+                "安全导入导师（更新）",
+                "safe-xlsx@example.edu",
+                "副教授",
+                "示例大学",
+                "计算机学院",
+                "人工智能系",
+                "智能体",
+                "Paper A",
+                "https://example.edu/safe-xlsx",
+                "https://example.edu/faculty",
+            ],
+        )
+        sheet.append(
+            [
+                "安全导入新导师",
+                "safe-xlsx-new@example.edu",
+                "教授",
+                "示例大学",
+                "计算机学院",
+                "计算机系",
+                "机器学习",
+                "Paper B",
+                "https://example.edu/safe-xlsx-new",
+                "https://example.edu/faculty",
+            ],
+        )
+        content = io.BytesIO()
+        workbook.save(content)
+
+        response = self.client.post(
+            "/api/professors/import-file",
+            files={
+                "file": (
+                    "professors_import.xlsx",
+                    content.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            },
+        )
+        refreshed = self.client.get(f"/api/professors/{created['id']}").json()
+        professors = self.client.get("/api/professors/management").json()
+        inserted = next(
+            item for item in professors if item["email"] == "safe-xlsx-new@example.edu"
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["inserted_count"], 1)
+        self.assertEqual(response.json()["updated_count"], 1)
+        self.assertEqual(refreshed["name"], "安全导入导师（更新）")
+        self.assertEqual(refreshed["personal_note"], "用户已有备注")
+        self.assertEqual([item["id"] for item in refreshed["tags"]], [tag["id"]])
+        self.assertIsNone(inserted["personal_note"])
+        self.assertEqual(inserted["tags"], [])
 
 
 if __name__ == "__main__":

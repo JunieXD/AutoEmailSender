@@ -153,6 +153,8 @@ type IntakeActionTone = "primary" | "amber" | "stone" | "emerald";
 
 const PROFESSORS_FILTERS_STORAGE_KEY = "professors_page_filters";
 const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
+const MENTOR_CRAWLER_SKILL_GUIDE_URL =
+  "https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
 
@@ -2853,11 +2855,24 @@ export const ProfessorsPage = () => {
                 下载 CSV 模板
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() =>
+                openExternalHttpUrl(MENTOR_CRAWLER_SKILL_GUIDE_URL)
+              }
+              className="mt-4 inline-flex items-center gap-2 text-left text-sm font-medium text-primary transition hover:text-primary/80"
+            >
+              <ExternalLink className="h-4 w-4" />
+              用 Codex / Claude Code 从导师官网生成导入表
+            </button>
             <ul className="mt-5 space-y-2 text-sm leading-6 text-stone-600">
               <li>模板内已包含字段说明和示例行，下载后可直接照着填写。</li>
-              <li>更推荐自己写爬虫脚本先获取导师信息，再批量导入。</li>
+              <li>
+                Skill 默认生成安全的 10 列 XLSX；省略标签和个人备注列时，
+                更新已有导师会保留这两项。
+              </li>
               <li>说明行和示例行可以保留，导入时会自动忽略。</li>
-              <li>导入时如果邮箱相同，会覆盖整条导师信息。</li>
+              <li>导入时如果邮箱相同，会更新表格中包含的导师信息。</li>
               <li>
                 <span className="font-mono text-xs">research_direction</span>{" "}
                 多个方向用中文分号；分隔。

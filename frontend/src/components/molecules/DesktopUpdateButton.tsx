@@ -12,6 +12,10 @@ import {
   onDesktopUpdateStatus,
   switchDesktopUpdateToFullDownload,
 } from "@/lib/desktopApi";
+import {
+  normalizeExternalHttpUrl,
+  openExternalHttpUrl,
+} from "@/lib/externalUrls";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import type { DesktopUpdateDownloadMode, DesktopUpdateStatus } from "@/types/desktop";
 
@@ -354,7 +358,29 @@ function DesktopUpdateReleaseNotesDialog({
           className="max-h-[50vh] overflow-y-auto px-6 py-5"
         >
           <article className={RELEASE_NOTES_MARKDOWN_CLASS_NAME}>
-            <ReactMarkdown>{releaseNotes}</ReactMarkdown>
+            <ReactMarkdown
+              components={{
+                a: ({ href, children }) => {
+                  const externalUrl = normalizeExternalHttpUrl(href);
+                  if (!externalUrl) {
+                    return <span>{children}</span>;
+                  }
+                  return (
+                    <a
+                      href={externalUrl}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        openExternalHttpUrl(externalUrl);
+                      }}
+                    >
+                      {children}
+                    </a>
+                  );
+                },
+              }}
+            >
+              {releaseNotes}
+            </ReactMarkdown>
           </article>
         </div>
         <div className="flex flex-wrap justify-end gap-3 border-t border-stone-100 px-6 py-4">

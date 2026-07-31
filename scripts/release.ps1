@@ -111,8 +111,8 @@ function Invoke-Verification {
     Invoke-CheckedCommand "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" {
       uv run python -m unittest test.test_database_schema test.test_migrations_runtime
     }
-    Invoke-CheckedCommand "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract" {
-      uv run python -m unittest test.test_crawl_mentors_skill_contract
+    Invoke-CheckedCommand "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" {
+      uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
     }
   } finally {
     Pop-Location

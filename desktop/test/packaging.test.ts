@@ -171,6 +171,20 @@ describe("macOS desktop packaging", () => {
     expect(workflow).toContain("publish:");
     expect(workflow).toContain("needs:");
     expect(workflow).toContain("scripts/prepare-sparkle-release.mjs");
+    expect(workflow).toContain("python scripts/package_crawl_mentors_skill.py");
+    expect(workflow).toContain("release-assets/skill/*.zip");
+    expect(workflow).toContain("if ((${#skill_assets[@]} != 1))");
+    expect(workflow).toContain('--json isDraft --jq .isDraft');
+    expect(workflow).toContain("Refusing to replace assets on published Release");
+    expect(workflow.indexOf('--json isDraft --jq .isDraft')).toBeLessThan(
+      workflow.indexOf('gh release edit "${{ github.ref_name }}" --notes-file'),
+    );
+    expect(workflow.indexOf("Refusing to replace assets on published Release")).toBeLessThan(
+      workflow.indexOf('gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber'),
+    );
+    expect(workflow.indexOf("release-assets/skill/*.zip")).toBeLessThan(
+      workflow.indexOf("release-assets/macos/appcast.xml --clobber"),
+    );
     expect(workflow.indexOf("release-assets/macos/appcast.xml --clobber")).toBeGreaterThan(
       workflow.indexOf('gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber'),
     );
