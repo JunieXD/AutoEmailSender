@@ -81,11 +81,13 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "你是 AutoEmailSender 的 V2 Chunk Worker。只处理当前 chunk，不要请求新页面，不要引用历史对话。\n"
         "只输出一个 JSON 对象，字段为 candidate_count、candidates。不要输出解释文字，也不能输出 chunk_status 或任何 URL 扩展决策。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
-        "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且链接文本像人名、URL 像个人主页时，这就是明确的姓名 + profile_url 候选证据。\n"
+        "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且周围内容明确表示某一人员的详情或资料时，这就是明确的姓名 + profile_url 候选证据；不得仅因 URL 路径、文件名或参数看起来普通而排除。\n"
+        "candidates 中的 name 必须逐字复制当前 chunk 对应人员的可见姓名文字，保留原有括号、空格和后缀，不要自行整理。\n"
         "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
         "candidate_count 必须是非负整数，禁止浮点数、字符串和布尔值。\n"
         "candidate_count 是当前 chunk 内明确候选的总数。candidate_count 为 0 时 candidates 必须为空；1 到 10 时 candidates 数组长度必须与 candidate_count 相等；candidate_count 必须为 11 或更大时 candidates 必须为空。\n"
         "如果当前 chunk 内姓名 + profile_url 候选超过 10 个，candidate_count 必须为 11 或更大，不要输出前 10 个，也不要返回 0。\n"
+        "除明确超过 10 个的情况外，先完整填写 candidates，最后把 candidates 数组的实际长度写入 candidate_count。\n"
         "页面较长、分类复杂、分页导航、详情页链接、不确定或刚好 10 个候选，都不能把 candidate_count 填为 11 或更大。\n"
         "candidate_count 只数当前 chunk 中逐条出现、能够分别指出姓名的人员；页面中表示整份名单或分页规模的汇总数字一律不参与计数。\n"
         "无法在当前 chunk 中指出第 11 个不同人员时，candidate_count 不得大于 10。\n"
@@ -121,9 +123,47 @@ def _validate_chunk_agent_payload(payload: object) -> dict[str, Any]:
     candidates = payload["candidates"]
     if not isinstance(candidates, list):
         raise ValueError("Chunk Worker 返回的 candidates 必须是数组")
-    if candidate_count <= MAX_CANDIDATES_PER_CHUNK_RESULT and len(candidates) != candidate_count:
+    if not candidates and 0 < candidate_count <= MAX_CANDIDATES_PER_CHUNK_RESULT:
         raise ValueError("Chunk Worker 返回的 candidate_count 与 candidates 数量不一致")
     return payload
+
+
+def _resolve_effective_candidate_count(payload: dict[str, Any]) -> tuple[int, str | None]:
+    reported_count = payload["candidate_count"]
+    payload_count = len(payload["candidates"])
+
+    if reported_count > MAX_CANDIDATES_PER_CHUNK_RESULT or payload_count > MAX_CANDIDATES_PER_CHUNK_RESULT:
+        warning = None
+        if payload_count:
+            warning = "candidate_count_candidates_conflict"
+        return max(reported_count, MAX_CANDIDATES_PER_CHUNK_RESULT + 1), warning
+
+    if payload_count:
+        warning = None
+        if payload_count != reported_count:
+            warning = "candidate_count_normalized_to_candidates"
+        return payload_count, warning
+
+    if reported_count:
+        raise ValueError("Chunk Worker 返回的 candidate_count 与 candidates 数量不一致")
+    return 0, None
+
+
+def _parse_candidate_payloads(
+    raw_candidates: Sequence[object],
+    *,
+    tolerate_invalid: bool,
+) -> tuple[list[ProfessorCandidatePayload], int]:
+    candidates: list[ProfessorCandidatePayload] = []
+    invalid_count = 0
+    for item in raw_candidates:
+        try:
+            candidates.append(ProfessorCandidatePayload.model_validate(item))
+        except (TypeError, ValueError):
+            if not tolerate_invalid:
+                raise
+            invalid_count += 1
+    return candidates, invalid_count
 
 
 def _derive_chunk_status(candidate_count: int) -> str:
@@ -209,14 +249,14 @@ async def run_crawler_v2_chunk_worker_once(
             },
         )
         payload = _validate_chunk_agent_payload(payload)
-        candidate_count = payload["candidate_count"]
+        reported_candidate_count = payload["candidate_count"]
         candidate_payload_count = len(payload["candidates"])
+        candidate_count, contract_warning = _resolve_effective_candidate_count(payload)
         derived_chunk_status = _derive_chunk_status(candidate_count)
-        candidates: list[ProfessorCandidatePayload]
-        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
-            candidates = []
-        else:
-            candidates = [ProfessorCandidatePayload.model_validate(item) for item in payload["candidates"]]
+        candidates, invalid_candidate_payload_count = _parse_candidate_payloads(
+            payload["candidates"],
+            tolerate_invalid=derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value,
+        )
         save_result = await complete_current_chunk(
             session_factory,
             chunk_id=chunk_id,
@@ -225,9 +265,13 @@ async def run_crawler_v2_chunk_worker_once(
             candidate_count=candidate_count,
         )
         save_result["candidate_count"] = candidate_count
+        save_result["reported_candidate_count"] = reported_candidate_count
         save_result["candidate_payload_count"] = candidate_payload_count
-        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value and candidate_payload_count:
-            save_result["contract_warning"] = "candidate_count_candidates_conflict"
+        if invalid_candidate_payload_count:
+            invalid_warning = f"invalid_candidate_payloads_ignored:{invalid_candidate_payload_count}"
+            contract_warning = f"{contract_warning};{invalid_warning}" if contract_warning else invalid_warning
+        if contract_warning:
+            save_result["contract_warning"] = contract_warning
         append_crawler_v2_debug_event(
             job.id,
             worker_kind="chunk",
@@ -350,22 +394,6 @@ async def complete_current_chunk(
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
 
         derived_chunk_status = _derive_chunk_status(candidate_count)
-        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
-            split_result = await split_page_chunk_for_retry(
-                session_factory,
-                job_id=chunk.job_id,
-                chunk_pk=chunk.id,
-                reason="candidate_count_exceeded",
-            )
-            return {
-                "status": split_result["status"],
-                "saved_count": 0,
-                "url_count": 0,
-                "enrichment_count": 0,
-                "rejected_count": 0,
-                "child_count": split_result["child_count"],
-                "derived_chunk_status": derived_chunk_status,
-            }
         ctx = CrawlToolContext(
             job_id=chunk.job_id,
             start_url=job.start_url,
@@ -381,6 +409,25 @@ async def complete_current_chunk(
         save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
         enrichment_count = 0
         url_count = 0
+
+        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
+            split_result = await split_page_chunk_for_retry(
+                session_factory,
+                job_id=chunk.job_id,
+                chunk_pk=chunk.id,
+                reason="candidate_count_exceeded",
+            )
+            return {
+                "status": split_result["status"],
+                "saved_count": save_result["saved_count"],
+                "url_count": 0,
+                "enrichment_count": 0,
+                "rejected_count": save_result["rejected_count"],
+                "merged_count": save_result["merged_count"],
+                "skipped_duplicate_count": save_result["skipped_duplicate_count"],
+                "child_count": split_result["child_count"],
+                "derived_chunk_status": derived_chunk_status,
+            }
 
         chunk.status = derived_chunk_status
         chunk.worker_id = None

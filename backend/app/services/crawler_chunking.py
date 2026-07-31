@@ -7,6 +7,11 @@ from html.parser import HTMLParser
 from math import ceil
 from urllib.parse import urljoin
 
+from bs4 import BeautifulSoup, NavigableString, Tag
+
+
+_STRUCTURE_BOUNDARY_SENTINEL = "\u241eAES_BLOCK_BOUNDARY\u241e"
+
 
 @dataclass(frozen=True)
 class ChunkingConfig:
@@ -22,6 +27,9 @@ class ChunkingConfig:
     single_chunk_max_tokens: int = 2200
     min_balanced_target_tokens: int = 1200
     max_balanced_target_tokens: int = 2200
+    preserve_structure_boundaries: bool = True
+    structure_block_max_tokens: int = 600
+    structure_block_max_links: int = 12
 
 
 @dataclass(frozen=True)
@@ -100,7 +108,7 @@ class _LinkTextHTMLParser(HTMLParser):
             self.parts.append(data)
 
     def text(self) -> str:
-        return _normalize_lines("".join(self.parts))
+        return _normalize_enriched_text("".join(self.parts))
 
 
 def _normalize_space(value: str) -> str:
@@ -110,6 +118,16 @@ def _normalize_space(value: str) -> str:
 def _normalize_lines(value: str) -> str:
     lines = [_normalize_space(line) for line in value.splitlines()]
     return "\n".join(line for line in lines if line)
+
+
+def _normalize_enriched_text(value: str) -> str:
+    sections = [_normalize_lines(section) for section in value.split(_STRUCTURE_BOUNDARY_SENTINEL)]
+    return "\n\n".join(section for section in sections if section)
+
+
+def _normalize_chunk_content(value: str) -> str:
+    paragraphs = [_normalize_lines(part) for part in re.split(r"\n\s*\n", value)]
+    return "\n\n".join(part for part in paragraphs if part)
 
 
 def estimate_tokens(value: str) -> int:
@@ -128,11 +146,104 @@ def chunk_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def html_to_link_enriched_text(source_url: str, html: str, fallback_text: str) -> str:
+def html_to_link_enriched_text(
+    source_url: str,
+    html: str,
+    fallback_text: str,
+    *,
+    preserve_structure_boundaries: bool = True,
+    structure_block_max_tokens: int = 600,
+    structure_block_max_links: int = 12,
+) -> str:
+    prepared_html = html or ""
+    if preserve_structure_boundaries and prepared_html:
+        prepared_html = _inject_structure_boundaries(
+            prepared_html,
+            max_tokens=structure_block_max_tokens,
+            max_links=structure_block_max_links,
+        )
     parser = _LinkTextHTMLParser(source_url)
-    parser.feed(html or "")
+    parser.feed(prepared_html)
     enriched = parser.text()
     return enriched or _normalize_lines(fallback_text)
+
+
+def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) -> str:
+    """Add temporary separators around small, reliable DOM blocks.
+
+    The separators become blank lines in the link-enriched text. No tags,
+    attributes, or other HTML metadata are exposed to the model.
+    """
+
+    soup = BeautifulSoup(html, "html.parser")
+    candidates: list[tuple[int, Tag]] = []
+
+    for tag in soup.find_all("tr"):
+        if _is_eligible_structure_block(tag, max_tokens=max_tokens, max_links=max_links):
+            candidates.append((0, tag))
+
+    for tag in soup.find_all(["div", "section", "dl"]):
+        if _is_repeated_card(tag) and _is_eligible_structure_block(
+            tag,
+            max_tokens=max_tokens,
+            max_links=max_links,
+        ):
+            candidates.append((1, tag))
+
+    for tag in soup.find_all("article"):
+        if _is_eligible_structure_block(tag, max_tokens=max_tokens, max_links=max_links):
+            candidates.append((2, tag))
+
+    for tag in soup.find_all("li"):
+        if tag.find("li") is None and _is_eligible_structure_block(
+            tag,
+            max_tokens=max_tokens,
+            max_links=max_links,
+        ):
+            candidates.append((3, tag))
+
+    selected: list[Tag] = []
+    for _priority, tag in sorted(candidates, key=lambda item: item[0]):
+        if any(_tags_overlap(tag, existing) for existing in selected):
+            continue
+        selected.append(tag)
+
+    for tag in selected:
+        boundary = f"\n{_STRUCTURE_BOUNDARY_SENTINEL}\n"
+        tag.insert_before(NavigableString(boundary))
+        tag.insert_after(NavigableString(boundary))
+    return str(soup)
+
+
+def _is_eligible_structure_block(tag: Tag, *, max_tokens: int, max_links: int) -> bool:
+    if any(parent.name in _LinkTextHTMLParser._SKIPPED_TAGS for parent in tag.parents if isinstance(parent, Tag)):
+        return False
+    text = _normalize_space(tag.get_text(" ", strip=True))
+    if not text or estimate_tokens(text) > max_tokens:
+        return False
+    return len(tag.find_all("a", href=True)) <= max_links
+
+
+def _is_repeated_card(tag: Tag) -> bool:
+    classes = tuple(tag.get("class") or ())
+    if not classes or tag.parent is None:
+        return False
+    signature = (tag.name, classes)
+    matching_siblings = 0
+    for sibling in tag.parent.find_all(recursive=False):
+        if not isinstance(sibling, Tag):
+            continue
+        if (sibling.name, tuple(sibling.get("class") or ())) == signature:
+            matching_siblings += 1
+            if matching_siblings >= 3:
+                return True
+    return False
+
+
+def _tags_overlap(left: Tag, right: Tag) -> bool:
+    if left is right:
+        return True
+    return any(parent is right for parent in left.parents) or any(parent is left for parent in right.parents)
 
 
 def build_page_chunks(
@@ -145,29 +256,44 @@ def build_page_chunks(
     split_depth: int = 0,
 ) -> list[PageChunkDraft]:
     selected_config = config or ChunkingConfig()
-    enriched = html_to_link_enriched_text(source_url, html, text)
+    enriched = html_to_link_enriched_text(
+        source_url,
+        html,
+        text,
+        preserve_structure_boundaries=selected_config.preserve_structure_boundaries,
+        structure_block_max_tokens=selected_config.structure_block_max_tokens,
+        structure_block_max_links=selected_config.structure_block_max_links,
+    )
     page_fingerprint = fingerprint_page(enriched)
     target_tokens = balanced_target_tokens(enriched, selected_config)
-    lines = enriched.splitlines()
+    units, separator, strict_overlap = _content_units(enriched, selected_config)
     chunks: list[str] = []
     current: list[str] = []
-    for line in lines:
-        candidate = "\n".join([*current, line]) if current else line
+    for unit in units:
+        candidate = separator.join([*current, unit]) if current else unit
         if current and estimate_tokens(candidate) > target_tokens:
-            chunks.append("\n".join(current))
-            current = _overlap_tail(current, selected_config.overlap_tokens)
-        current.append(line)
-        while estimate_tokens("\n".join(current)) > selected_config.hard_max_tokens and len(current) > 1:
+            chunks.append(separator.join(current))
+            current = _select_overlap_tail(
+                current,
+                selected_config.overlap_tokens,
+                strict=strict_overlap,
+            )
+        current.append(unit)
+        while estimate_tokens(separator.join(current)) > selected_config.hard_max_tokens and len(current) > 1:
             midpoint = max(1, len(current) // 2)
-            chunks.append("\n".join(current[:midpoint]))
-            current = _overlap_tail(current[:midpoint], selected_config.overlap_tokens) + current[midpoint:]
+            chunks.append(separator.join(current[:midpoint]))
+            current = _select_overlap_tail(
+                current[:midpoint],
+                selected_config.overlap_tokens,
+                strict=strict_overlap,
+            ) + current[midpoint:]
     if current:
-        chunks.append("\n".join(current))
+        chunks.append(separator.join(current))
     chunks = _merge_small_tail_chunks(chunks, selected_config)
 
     drafts: list[PageChunkDraft] = []
     for index, content in enumerate(chunks):
-        normalized_content = _normalize_lines(content)
+        normalized_content = _normalize_chunk_content(content)
         drafts.append(
             PageChunkDraft(
                 chunk_id=_build_chunk_id(page_fingerprint, index, parent_chunk_id),
@@ -191,7 +317,7 @@ def _merge_small_tail_chunks(chunks: list[str], config: ChunkingConfig) -> list[
     merged = list(chunks)
     while len(merged) > 1:
         tail_tokens = estimate_tokens(merged[-1])
-        combined = "\n".join([merged[-2], merged[-1]])
+        combined = "\n\n".join([merged[-2], merged[-1]])
         if tail_tokens >= config.min_balanced_target_tokens:
             break
         if estimate_tokens(combined) > config.hard_max_tokens:
@@ -212,6 +338,41 @@ def balanced_target_tokens(content: str, config: ChunkingConfig | None = None) -
     )
 
 
+def _content_units(content: str, config: ChunkingConfig) -> tuple[list[str], str, bool]:
+    paragraphs = [_normalize_lines(part) for part in re.split(r"\n\s*\n", content)]
+    paragraphs = [part for part in paragraphs if part]
+    if len(paragraphs) <= 1:
+        return content.splitlines(), "\n", False
+
+    units: list[str] = []
+    for paragraph in paragraphs:
+        if estimate_tokens(paragraph) <= config.hard_max_tokens:
+            units.append(paragraph)
+            continue
+        units.extend(_pack_oversized_lines(paragraph.splitlines(), config.hard_max_tokens))
+    return units, "\n\n", True
+
+
+def _pack_oversized_lines(lines: list[str], hard_max_tokens: int) -> list[str]:
+    packed: list[str] = []
+    current: list[str] = []
+    for line in lines:
+        candidate = "\n".join([*current, line]) if current else line
+        if current and estimate_tokens(candidate) > hard_max_tokens:
+            packed.append("\n".join(current))
+            current = []
+        current.append(line)
+    if current:
+        packed.append("\n".join(current))
+    return packed
+
+
+def _select_overlap_tail(lines: list[str], overlap_tokens: int, *, strict: bool) -> list[str]:
+    if strict:
+        return _strict_overlap_tail(lines, overlap_tokens)
+    return _overlap_tail(lines, overlap_tokens)
+
+
 def split_chunk_content(
     *,
     source_url: str,
@@ -225,7 +386,12 @@ def split_chunk_content(
     selected_config = config or ChunkingConfig()
     if estimate_tokens(content) <= selected_config.min_split_tokens:
         return []
-    lines = content.splitlines()
+    lines, separator, _strict_overlap = _content_units(content, selected_config)
+    if len(lines) < 2:
+        lines = content.splitlines()
+        separator = "\n"
+    if len(lines) < 2:
+        return []
     child_groups = (
         _split_retry_candidate_dense_lines(lines, content, selected_config)
         if _is_candidate_dense_split(split_reason)
@@ -233,7 +399,7 @@ def split_chunk_content(
     )
     drafts: list[PageChunkDraft] = []
     for index, child_lines in enumerate(child_groups):
-        normalized = _normalize_lines("\n".join(child_lines))
+        normalized = _normalize_chunk_content(separator.join(child_lines))
         if not normalized:
             continue
         drafts.append(

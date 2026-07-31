@@ -4,7 +4,14 @@ import re
 import unittest
 from dataclasses import replace
 
-from app.services.crawler_chunking import ChunkingConfig, build_page_chunks, estimate_tokens, fingerprint_page
+from app.services.crawler_chunking import (
+    ChunkingConfig,
+    build_page_chunks,
+    estimate_tokens,
+    fingerprint_page,
+    html_to_link_enriched_text,
+    split_chunk_content,
+)
 
 
 class CrawlerChunkingTests(unittest.TestCase):
@@ -25,6 +32,69 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertIn("[张三](https://cs.example.edu/zhang.htm)", chunks[0].content)
         self.assertIn("[李四](https://cs.example.edu/li.htm)", chunks[0].content)
         self.assertNotIn("alert", chunks[0].content)
+
+    def test_link_enriched_text_keeps_small_table_rows_as_lightweight_paragraphs(self) -> None:
+        html = """
+        <table>
+          <tr class="person"><td><a href="/zhang.htm">张三</a></td><td>zhang@example.edu</td></tr>
+          <tr class="person"><td><a href="/li.htm">李四</a></td><td>li@example.edu</td></tr>
+        </table>
+        """
+
+        structured = html_to_link_enriched_text("https://cs.example.edu/list", html, "")
+        flat = html_to_link_enriched_text(
+            "https://cs.example.edu/list",
+            html,
+            "",
+            preserve_structure_boundaries=False,
+        )
+
+        self.assertIn("zhang@example.edu\n\n[李四]", structured)
+        self.assertNotIn("zhang@example.edu\n\n[李四]", flat)
+        self.assertNotIn("<tr", structured)
+        self.assertNotIn("person", structured)
+        self.assertNotIn("AES_BLOCK_BOUNDARY", structured)
+        self.assertLessEqual(estimate_tokens(structured), estimate_tokens(flat) + 2)
+
+    def test_recursive_dense_split_prefers_dom_blocks_without_dropping_overlap_fallback(self) -> None:
+        rows = "".join(
+            "<tr><td><a href='/teacher/{index}.htm'>教师{index}</a></td>"
+            "<td>teacher{index}@example.edu</td><td>人工智能与软件工程</td></tr>".format(index=index)
+            for index in range(24)
+        )
+        parent = build_page_chunks(
+            source_url="https://cs.example.edu/faculty/list.htm",
+            html=f"<table>{rows}</table>",
+            text="",
+            config=ChunkingConfig(
+                target_tokens=5000,
+                soft_max_tokens=5500,
+                hard_max_tokens=6000,
+                single_chunk_max_tokens=6000,
+                min_balanced_target_tokens=4000,
+                max_balanced_target_tokens=5000,
+            ),
+        )[0]
+
+        children = split_chunk_content(
+            source_url=parent.source_url,
+            content=parent.content,
+            parent_chunk_id=parent.chunk_id,
+            page_fingerprint=parent.page_fingerprint,
+            split_depth=1,
+            split_reason="candidate_count_exceeded",
+            config=ChunkingConfig(retry_split_target_tokens=100, retry_split_overlap_tokens=15),
+        )
+
+        self.assertGreater(len(children), 1)
+        for index in range(24):
+            link = f"[教师{index}](https://cs.example.edu/teacher/{index}.htm)"
+            email = f"teacher{index}@example.edu"
+            self.assertTrue(
+                any(link in child.content and email in child.content for child in children),
+                f"row {index} was split across child chunks",
+            )
+        self.assertTrue(any(child.overlap_prefix for child in children[1:]))
 
     def test_build_page_chunks_exposes_iframe_source_as_a_link(self) -> None:
         chunks = build_page_chunks(

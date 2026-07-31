@@ -15,6 +15,7 @@ from test.schema_database import create_schema_sqlite_database
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, CrawlWorkerTokenUsage, LLMProfile
 from app.services.crawler_v2_chunk_worker import (
     _derive_chunk_status,
+    _resolve_effective_candidate_count,
     _validate_chunk_agent_payload,
     complete_current_chunk,
     invoke_v2_chunk_agent,
@@ -56,6 +57,9 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("candidate_count 必须是非负整数", prompt)
         self.assertIn("汇总数字一律不参与计数", prompt)
         self.assertIn("指出第 11 个不同人员", prompt)
+        self.assertIn("先完整填写 candidates", prompt)
+        self.assertIn("不得仅因 URL 路径", prompt)
+        self.assertIn("逐字复制", prompt)
         self.assertIn("禁止浮点数、字符串和布尔值", prompt)
         self.assertIn('"candidates": []', prompt)
         self.assertNotIn('"discovered_urls"', prompt)
@@ -96,7 +100,6 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             {"candidate_count": 1.0, "candidates": []},
             {"candidate_count": "1", "candidates": []},
             {"candidate_count": 0, "candidates": {}},
-            {"candidate_count": 0, "candidates": [{}]},
             {"candidate_count": 1, "candidates": []},
         ]
 
@@ -107,6 +110,31 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "candidate_count 与 candidates 数量不一致"):
             _validate_chunk_agent_payload({"candidate_count": 1, "candidates": []})
+
+    def test_effective_count_uses_non_empty_candidate_array_when_model_miscounts(self) -> None:
+        payload = {
+            "candidate_count": 8,
+            "candidates": [{"name": f"教师{index}"} for index in range(7)],
+        }
+
+        validated = _validate_chunk_agent_payload(payload)
+        effective_count, warning = _resolve_effective_candidate_count(validated)
+
+        self.assertEqual(effective_count, 7)
+        self.assertEqual(warning, "candidate_count_normalized_to_candidates")
+
+    def test_effective_count_still_splits_when_model_reports_more_than_ten(self) -> None:
+        payload = {
+            "candidate_count": 11,
+            "candidates": [{"name": f"教师{index}"} for index in range(7)],
+        }
+
+        effective_count, warning = _resolve_effective_candidate_count(
+            _validate_chunk_agent_payload(payload)
+        )
+
+        self.assertEqual(effective_count, 11)
+        self.assertEqual(warning, "candidate_count_candidates_conflict")
 
     def test_payload_validation_allows_non_empty_candidates_when_count_exceeds_limit(self) -> None:
         payload = {"candidate_count": 11, "candidates": [{"invalid": True}]}
@@ -161,7 +189,8 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processed, 1)
         completed_call = next(call for call in debug_mock.call_args_list if call.kwargs["event_name"] == "chunk_completed")
         save_result = completed_call.kwargs["payload"]["save_result"]
-        self.assertEqual(save_result["contract_warning"], "candidate_count_candidates_conflict")
+        self.assertIn("candidate_count_candidates_conflict", save_result["contract_warning"])
+        self.assertIn("invalid_candidate_payloads_ignored:1", save_result["contract_warning"])
         self.assertEqual(save_result["candidate_count"], 11)
         self.assertEqual(save_result["candidate_payload_count"], 1)
         async with self.session_factory() as session:
@@ -273,6 +302,56 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.status, CrawlPageChunkStatus.FAILED_RETRYABLE.value)
         self.assertIn("candidate_count 与 candidates 数量不一致", chunk.last_error or "")
         self.assertEqual(candidates, [])
+
+    async def test_worker_saves_candidate_array_when_model_only_miscounts_it(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
+        payload = {
+            "candidate_count": 8,
+            "candidates": [
+                {
+                    "name": f"教师{index}",
+                    "email": f"teacher{index}@example.edu",
+                    "confidence": 0.9,
+                }
+                for index in range(7)
+            ],
+        }
+
+        with patch(
+            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            new=AsyncMock(return_value=payload),
+        ), patch(
+            "app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event"
+        ) as debug_mock:
+            processed = await run_crawler_v2_chunk_worker_once(
+                self.session_factory,
+                chunk_id=chunk_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            candidates = list(
+                await session.scalars(
+                    select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+                )
+            )
+        assert chunk is not None
+        self.assertEqual(chunk.status, CrawlPageChunkStatus.COMPLETED.value)
+        self.assertEqual(len(candidates), 7)
+        completed_call = next(
+            call
+            for call in debug_mock.call_args_list
+            if call.kwargs["event_name"] == "chunk_completed"
+        )
+        save_result = completed_call.kwargs["payload"]["save_result"]
+        self.assertEqual(save_result["reported_candidate_count"], 8)
+        self.assertEqual(save_result["candidate_count"], 7)
+        self.assertEqual(
+            save_result["contract_warning"],
+            "candidate_count_normalized_to_candidates",
+        )
 
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -543,11 +622,11 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["status"], "split_required")
-        self.assertEqual(result["saved_count"], 0)
+        self.assertEqual(result["saved_count"], 11)
         async with self.session_factory() as session:
             saved = list(await session.scalars(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)))
             chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id).order_by(CrawlPageChunk.id)))
-        self.assertEqual(saved, [])
+        self.assertEqual(len(saved), 11)
         self.assertEqual(chunks[0].status, CrawlPageChunkStatus.SUPERSEDED.value)
         self.assertGreaterEqual(len(chunks), 2)
     async def test_complete_chunk_does_not_enqueue_candidate_profile_url(self) -> None:
