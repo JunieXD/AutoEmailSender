@@ -1760,6 +1760,60 @@ describe("TasksPage batch draft review", () => {
       );
     });
     expect(apiMocks.approveAndSend).not.toHaveBeenCalled();
+    expect(notificationMocks.notifySuccess).toHaveBeenCalledWith("邮件已发送");
+  });
+
+  it("reports a returned batch item send failure without claiming it was sent", async () => {
+    const task = buildBatchTask({
+      name: "发送失败批量任务",
+      schedule_type: "immediate",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 31,
+      professor_id: 21,
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+      },
+    }));
+    apiMocks.approveAndSendBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+        status: "send_failed",
+        last_error: "SMTP 认证失败",
+      },
+    }));
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("发送失败批量任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    fireEvent.click(await screen.findByRole("button", { name: "立即发送" }));
+
+    await waitFor(() => {
+      expect(notificationMocks.notifyError).toHaveBeenCalledWith(
+        "发送邮件失败",
+        "SMTP 认证失败",
+      );
+    });
+    expect(notificationMocks.notifySuccess).not.toHaveBeenCalledWith("邮件已发送");
+    expect(screen.getByRole("button", { name: "立即发送" })).toBeInTheDocument();
   });
 });
 

@@ -6,6 +6,7 @@ import { useSelectionContext } from "@/context/SelectionContext";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
+import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
 import {
   generateTestComposeDraft,
   getTestComposeThread,
@@ -19,6 +20,12 @@ import {
   type OutreachTemplateDTO,
   type TestComposeThreadDTO,
 } from "@/types";
+
+interface TestComposeActionOptions {
+  successTitle?: string;
+  errorTitle?: string;
+  getFailureMessage?: (thread: TestComposeThreadDTO) => string | null;
+}
 
 export const TestComposePage = () => {
   const navigate = useNavigate();
@@ -128,17 +135,23 @@ export const TestComposePage = () => {
   ]);
 
   const runAction = useCallback(
-    async (action: () => Promise<TestComposeThreadDTO>, successTitle?: string) => {
+    async (
+      action: () => Promise<TestComposeThreadDTO>,
+      options: TestComposeActionOptions = {},
+    ) => {
       setActing(true);
       try {
         const nextThread = await action();
         syncDraft(nextThread);
-        if (successTitle) {
-          notifySuccess(successTitle, "测试写信内容已更新。");
+        const failureMessage = options.getFailureMessage?.(nextThread) ?? null;
+        if (failureMessage) {
+          notifyError(options.errorTitle ?? "测试写信操作失败", failureMessage);
+        } else if (options.successTitle) {
+          notifySuccess(options.successTitle, "测试写信内容已更新。");
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "测试写信操作失败";
-        notifyError("测试写信操作失败", message);
+        notifyError(options.errorTitle ?? "测试写信操作失败", message);
       } finally {
         setActing(false);
       }
@@ -197,7 +210,7 @@ export const TestComposePage = () => {
             body_html: bodyHtml,
           },
         ),
-      "已生成测试草稿",
+      { successTitle: "已生成测试草稿" },
     );
 
   const saveDraft = () =>
@@ -210,7 +223,7 @@ export const TestComposePage = () => {
           body_html: bodyHtml,
           selected_material_ids: selectedMaterialIds,
         }),
-      "已保存测试草稿",
+      { successTitle: "已保存测试草稿" },
     );
 
   const sendMessage = () =>
@@ -223,7 +236,17 @@ export const TestComposePage = () => {
           body_html: bodyHtml,
           selected_material_ids: selectedMaterialIds,
         }),
-      "测试邮件已发送",
+      {
+        successTitle: "测试邮件已发送",
+        errorTitle: "测试邮件发送失败",
+        getFailureMessage: (nextThread) => {
+          const latestMessage = nextThread.history[0];
+          return getEmailSendFailureMessage(
+            latestMessage?.status,
+            latestMessage?.failure_summary,
+          );
+        },
+      },
     );
 
   return (

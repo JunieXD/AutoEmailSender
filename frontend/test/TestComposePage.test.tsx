@@ -6,6 +6,7 @@ import { TestComposePage } from "@/pages/TestComposePage";
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedGetTestComposeThread = vi.hoisted(() => vi.fn());
 const mockedSaveTestComposeDraft = vi.hoisted(() => vi.fn());
+const mockedSendTestComposeMessage = vi.hoisted(() => vi.fn());
 const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedNotificationApi = vi.hoisted(() => ({
   notifyError: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock("@/lib/api/testComposeApi", () => ({
   getTestComposeThread: mockedGetTestComposeThread,
   generateTestComposeDraft: vi.fn(),
   saveTestComposeDraft: mockedSaveTestComposeDraft,
-  sendTestComposeMessage: vi.fn(),
+  sendTestComposeMessage: mockedSendTestComposeMessage,
 }));
 
 vi.mock("@/lib/api/outreachTemplates", () => ({
@@ -73,7 +74,11 @@ describe("TestComposePage", () => {
   beforeEach(() => {
     mockedGetTestComposeThread.mockReset();
     mockedSaveTestComposeDraft.mockReset();
+    mockedSendTestComposeMessage.mockReset();
     mockedListOutreachTemplates.mockReset();
+    mockedNotificationApi.notifyError.mockReset();
+    mockedNotificationApi.notifyFormErrors.mockReset();
+    mockedNotificationApi.notifySuccess.mockReset();
     mockedListOutreachTemplates.mockResolvedValue([]);
     mockedUseSelectionContext.mockReturnValue({
       selectedIdentityId: 1,
@@ -81,6 +86,7 @@ describe("TestComposePage", () => {
     });
     mockedGetTestComposeThread.mockResolvedValue(thread);
     mockedSaveTestComposeDraft.mockResolvedValue(thread);
+    mockedSendTestComposeMessage.mockResolvedValue(thread);
   });
 
   it("loads the draft and send history for the current identity and llm", async () => {
@@ -126,6 +132,41 @@ describe("TestComposePage", () => {
         selected_material_ids: [],
       });
     });
+  });
+
+  it("shows an error instead of success when the test email send fails", async () => {
+    mockedSendTestComposeMessage.mockResolvedValue({
+      ...thread,
+      history: [
+        {
+          ...thread.history[0],
+          id: 2,
+          status: "send_failed",
+          rfc_message_id: null,
+          failure_summary: "SMTP 认证失败",
+        },
+        ...thread.history,
+      ],
+    });
+    render(
+      <MemoryRouter>
+        <TestComposePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "发送测试邮件" }));
+
+    await waitFor(() => {
+      expect(mockedNotificationApi.notifyError).toHaveBeenCalledWith(
+        "测试邮件发送失败",
+        "SMTP 认证失败",
+      );
+    });
+    expect(mockedNotificationApi.notifySuccess).not.toHaveBeenCalledWith(
+      "测试邮件已发送",
+      expect.any(String),
+    );
+    expect(screen.getByText("状态：send_failed")).toBeInTheDocument();
   });
 
   it("copies a selected library template into the independent test draft", async () => {

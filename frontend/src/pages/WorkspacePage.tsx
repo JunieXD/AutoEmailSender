@@ -8,6 +8,7 @@ import { WorkspaceSidebar } from '@/components/organisms/WorkspaceSidebar';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { useWorkspaceDraftGuard } from '@/context/useWorkspaceDraftGuard';
+import { getEmailSendFailureMessage } from '@/features/email/client/getEmailSendFailureMessage';
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
 import { bootstrapWorkspaceThread } from '@/features/workspace/client/openWorkspaceThread';
 import {
@@ -1031,13 +1032,26 @@ export const WorkspacePage = () => {
           approveAndSend(currentTaskId, buildDraftPayload()),
         '发送失败',
         '发送失败',
-        () => setComposerExpanded(false),
+        (data) => {
+          const failureMessage = getEmailSendFailureMessage(
+            data.current_task.status,
+            data.current_task.last_error,
+          );
+          if (failureMessage) {
+            notifyError('发送失败', failureMessage);
+            return;
+          }
+          setComposerExpanded(false);
+          notifySuccess('邮件已发送', `已成功发送给 ${data.professor.email}。`);
+        },
       );
     })();
   }, [
     confirm,
     currentTaskId,
     buildDraftPayload,
+    notifyError,
+    notifySuccess,
     runAction,
     selectedMaterialIds,
     thread?.professor.email,

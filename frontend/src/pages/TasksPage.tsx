@@ -60,6 +60,7 @@ import {
   writeSelectedProfessorIdsForBatchTask,
 } from "@/features/batch-tasks/client/batchTaskResendPrefill";
 import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
+import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
 import {
   cancelMatchAnalysisJob,
   deleteMatchAnalysisJob,
@@ -2912,16 +2913,45 @@ export const TasksPage = () => {
         buildBatchReviewPayload(),
       );
       ensureBatchReviewThreadMatchesItem(thread, activeBatchReviewItem, selectedBatchTask);
-      notifySuccess("邮件已提交发送");
+      const failureMessage = getEmailSendFailureMessage(
+        thread.current_task.status,
+        thread.current_task.last_error,
+      );
+      if (failureMessage) {
+        syncBatchDraftReview(thread);
+        notifyError("发送邮件失败", failureMessage);
+      } else {
+        notifySuccess("邮件已发送");
+      }
       setSelectedBatchTaskItems((current) =>
         current.map((item) =>
           item.id === activeBatchReviewItem.id
-            ? { ...item, status: "sent", next_action: null }
+            ? {
+                ...item,
+                status: thread.current_task.status ?? item.status,
+                sent_at: thread.current_task.sent_at,
+                last_send_attempt_at: thread.current_task.last_send_attempt_at,
+                last_error: thread.current_task.last_error,
+                next_action:
+                  thread.current_task.status === "send_failed"
+                    ? "send_failed"
+                    : failureMessage
+                      ? item.next_action
+                      : null,
+              }
             : item,
         ),
       );
-      await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
-      resetBatchDraftReview();
+      try {
+        await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+      } catch (refreshError) {
+        const message =
+          refreshError instanceof Error ? refreshError.message : "刷新任务状态失败";
+        notifyError("刷新任务状态失败", message);
+      }
+      if (!failureMessage) {
+        resetBatchDraftReview();
+      }
     } catch (actionError) {
       const message =
         actionError instanceof Error ? actionError.message : "发送邮件失败";

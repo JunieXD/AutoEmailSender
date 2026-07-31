@@ -663,6 +663,35 @@ describe("WorkspacePage draft saving", () => {
     );
   });
 
+  it("keeps the composer open and reports a returned send failure", async () => {
+    apiMocks.approveAndSend.mockResolvedValue(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          status: "send_failed",
+          last_error: "SMTP 认证失败",
+        },
+      }),
+    );
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: /写信|编辑草稿/ }));
+    fireEvent.click(screen.getByRole("button", { name: "立即发送" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认发送" }));
+
+    await waitFor(() => {
+      expect(notificationMocks.notifyError).toHaveBeenCalledWith(
+        "发送失败",
+        "SMTP 认证失败",
+      );
+    });
+    expect(notificationMocks.notifySuccess).not.toHaveBeenCalledWith(
+      "邮件已发送",
+      expect.any(String),
+    );
+    expect(screen.getByRole("button", { name: "立即发送" })).toBeInTheDocument();
+  });
+
   it("allows saving a dirty draft even when the body is not sendable", async () => {
     renderWorkspace();
 
