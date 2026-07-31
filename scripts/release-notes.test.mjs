@@ -15,21 +15,26 @@ describe("release notes generator", () => {
     expect(notes).toContain("### 问题修复");
     expect(notes).toContain("Windows：下载 `AutoEmailSender-Setup-2.0.2.exe` 后双击安装。");
     expect(notes).toContain("macOS Apple Silicon：下载 `AutoEmailSender-2.0.2-arm64.dmg`，打开后把应用拖到“应用程序”。");
-    expect(notes).toContain("macOS 采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证");
+    expect(notes).toContain("macOS 版本尚未通过 Apple 官方认证，首次打开可能会被系统拦截");
     expect(notes).toContain("系统设置 > 隐私与安全性");
     expect(notes).toContain("Intel Mac 暂未提供安装包。");
-    expect(notes).toContain("请只从本项目 GitHub Releases 页面下载安装包。");
-    expect(notes).toContain("Windows：应用内可下载并安装更新。");
-    expect(notes).toContain("macOS Apple Silicon：应用会自动检查更新，也可点击“检查更新”；确认后由 Sparkle 下载并重启安装。");
-    expect(notes).toContain("如果当前 macOS 旧版本仍打开 GitHub Releases，请手动覆盖安装本版本一次；之后即可使用应用内更新。");
-    expect(notes).toContain("## 从导师官网生成导入表");
+    expect(notes).not.toContain("ad-hoc");
+    expect(notes).not.toContain("Developer ID");
+    expect(notes).not.toContain("Apple 公证");
+    expect(notes).not.toContain("Gatekeeper");
+    expect(notes).not.toContain("请只从本项目 GitHub Releases 页面下载安装包。");
+    expect(notes).toContain("Windows：支持在应用内下载并安装更新。");
+    expect(notes).toContain("macOS Apple Silicon：支持自动检查并在应用内安装更新。");
+    expect(notes).toContain("旧版 macOS 用户需要手动安装本版本一次，之后即可使用应用内更新。");
+    expect(notes).toContain("## 导师抓取Skill");
+    expect(notes).not.toContain("## 从导师官网生成导入表");
     expect(notes).toContain(
-      "[导师官网转导入表 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
+      "[导师抓取Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
     );
     expect(notes).toContain(
       "[`crawl-mentors-to-xlsx-v2.0.2.zip`](https://github.com/JunieXD/AutoEmailSender/releases/download/v2.0.2/crawl-mentors-to-xlsx-v2.0.2.zip)",
     );
-    expect(notes.lastIndexOf("导师官网转导入表 Skill 安装与使用教程")).toBeGreaterThan(
+    expect(notes.lastIndexOf("导师抓取Skill 安装与使用教程")).toBeGreaterThan(
       notes.lastIndexOf("## 自动更新"),
     );
     expect(notes).not.toContain("fix(后端)");

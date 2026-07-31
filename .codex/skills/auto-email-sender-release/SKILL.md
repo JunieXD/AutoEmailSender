@@ -65,31 +65,36 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 ## Release Note Writing Rules
 
 - Do not add a separate summary such as `## 本次更新`; keep grouped bullet sections.
-- Write every bullet for ordinary users first: state the visible result, not the implementation detail.
+- Write every bullet for ordinary users first: state the concrete user-visible capability or fixed symptom, not the implementation detail or an abstract value proposition.
+- Keep each bullet to one or two short clauses. A reader should understand the feature or fixed problem at a glance.
+- Treat the release announcement as an overview, not a user manual. Omit field and option lists, overwrite rules, progress locations, task states, button paths, background stages, and similar usage details unless they are essential for installation, upgrades, or data safety.
+- Preserve the key action, object, and visible result while removing secondary details. Concise wording must remain specific.
+- Do not replace omitted details with generic claims such as `减少手动整理`, `更方便`, `提升效率`, or `体验更好` when the concrete behavior can be stated directly.
+- For example, use `导师管理新增智能补全，可为单个或多个导师补充信息。` Avoid both an exhaustive list of fields, fill rules, and progress views and the abstract wording `新增导师资料智能补全，减少手动整理信息。`
 - Use short, plain sentences. Prefer direct wording like `批量任务支持重新发起未成功项。`
-- Avoid vague praise such as `更完整`, `更方便`, `更智能`, `更流畅`, or `提升体验` unless the sentence names the concrete result.
 - Merge similar changes into a small number of stronger bullets. Do not split one user-visible improvement across many tiny points.
 - Avoid internal table names, parameter names, protocol branches, cache keys, lock files, or fallback paths unless user impact would otherwise be unclear.
 - Prefer concrete results over technical causes: use `模型连接失败时会显示更明确的错误原因。` instead of `新增 SOCKS 初始化错误包装。`
-- Keep bullets to one sentence in most cases and avoid sub-bullets or marketing language.
+- Translate packaging and signing details into their visible effect. Keep terms such as `ad-hoc`, `Developer ID`, `notarization`, and `Gatekeeper` out of public release notes unless the user explicitly requests technical detail.
+- Avoid sub-bullets and marketing language.
 - Omit development-only, packaging-only, documentation-only, README, badge, and website-copy changes unless they affect installation, upgrade, onboarding, data safety, reliability, or ordinary product usage.
 - Describe a new or materially changed repository Skill as a user-facing capability, and direct ordinary users to the global installation guide backed by the repository version. Do not describe it as built into the desktop installer. Omit contract-test-only or internal Skill maintenance when behavior and installation are unchanged.
-- Keep the generated announcement's final `## 从导师官网生成导入表` section and its public installation-guide link. This fixed onboarding entry belongs at the bottom even when the release range contains no Skill changes.
+- Keep the generated announcement's final `## 导师抓取Skill` section and its public installation-guide link. This fixed onboarding entry belongs at the bottom even when the release range contains no Skill changes.
 
 ## Platform Note Rules
 
 - Keep the generated `## 安装说明` and `## 自动更新` sections in the final public release note.
-- Keep `## 从导师官网生成导入表` after `## 自动更新`, with the clickable public guide URL `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`.
+- Keep `## 导师抓取Skill` after `## 自动更新`, with the clickable public guide URL `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`.
 - Name the standalone Skill asset exactly `crawl-mentors-to-xlsx-v<version>.zip`, and keep that exact versioned filename in the generated announcement.
 - Keep the exact package names:
   - Windows: `AutoEmailSender-Setup-x.y.z.exe`
   - macOS Apple Silicon: `AutoEmailSender-x.y.z-arm64.dmg`
-- Explain that the macOS app is ad-hoc signed but not Developer ID signed or notarized. Keep the first-open Gatekeeper instruction and do not imply that Sparkle removes it.
+- Explain the macOS first-open restriction in plain language: the app has not completed Apple's official verification, so macOS may block the first launch. Tell users to choose “仍要打开” under “系统设置 > 隐私与安全性”. Keep technical signing terminology in internal operations documentation and do not imply that Sparkle removes the restriction.
 - State that Intel Mac remains unsupported until an Intel or universal build is added.
-- Keep the warning that installers must come only from this project's GitHub Releases page.
-- In `## 自动更新`, state that Windows uses its existing in-app updater. State that macOS Apple Silicon automatically checks for updates and can also check on demand; after user confirmation, Sparkle downloads, verifies, replaces, and restarts the app.
+- Do not add a generic sentence requiring users to download installers only from the project's GitHub Releases page unless the user explicitly requests that warning.
+- In `## 自动更新`, state briefly that Windows and macOS Apple Silicon support in-app updates. Mention automatic checks where useful, but keep updater implementation and step-by-step behavior out of the public announcement.
 - Keep the transition note that a pre-Sparkle macOS client must manually install a current DMG once before it can use Sparkle updates.
-- Do not claim silent installation or automatic download. Sparkle installation remains user-confirmed, and the app is still not notarized.
+- Do not claim silent installation or automatic download. Sparkle installation remains user-confirmed, and the macOS first-open restriction remains.
 
 ## Post-Tag Verification
 
@@ -119,6 +124,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 | Raw change | User-facing release note |
 | --- | --- |
+| `mentor smart fill supports multiple fields, empty-only writes, and task-center progress` | `导师管理新增智能补全，可为单个或多个导师补充信息。` |
 | `add batch task resend context` | `批量任务支持重新发起未成功项。` |
 | `route profile entry pages through full-page extraction` | `智能爬取支持从导师个人主页提取信息。` |
 | `add schema backup before migration` | `升级前自动备份本地数据库。` |
