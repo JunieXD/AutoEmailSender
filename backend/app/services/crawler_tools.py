@@ -56,6 +56,7 @@ MAX_LINKS = 200
 MAX_HTTP_REDIRECTS = 5
 MAX_RETRIES_FOR_BROWSER_RENDER = 2
 MAX_BROWSER_INTERACTIVE_PAGES = 500
+MAX_BROWSER_PAGINATION_CLICK_RETRIES = 2
 BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 BROWSER_FALLBACK_STATUS = {403, 412, 429}
@@ -1755,6 +1756,31 @@ async def _fetch_browser_pagination_direct(
     intent: CrawlPageIntent,
     max_pages: int,
 ) -> BrowserPaginationExpansion:
+    last_result: BrowserPaginationExpansion | None = None
+    for _attempt in range(MAX_RETRIES_FOR_BROWSER_RENDER + 1):
+        result = await _try_fetch_browser_pagination_once(
+            absolute_url,
+            target,
+            intent=intent,
+            max_pages=max_pages,
+        )
+        if result.status == "succeeded" or result.stopped_reason != "browser_error":
+            return result
+        last_result = result
+    return last_result or BrowserPaginationExpansion(
+        status="failed",
+        stopped_reason="browser_error",
+        error_message="Playwright browser pagination failed",
+    )
+
+
+async def _try_fetch_browser_pagination_once(
+    absolute_url: str,
+    target: dict[str, object],
+    *,
+    intent: CrawlPageIntent,
+    max_pages: int,
+) -> BrowserPaginationExpansion:
     if async_playwright is None:
         return BrowserPaginationExpansion(
             status="failed",
@@ -1794,6 +1820,12 @@ async def _fetch_browser_pagination_direct(
                 final_url=initial_url,
                 absolute_url=absolute_url,
             )
+            if initial_snapshot.suspicious_empty:
+                return BrowserPaginationExpansion(
+                    status="failed",
+                    stopped_reason="browser_error",
+                    error_message="Playwright browser pagination returned empty page content",
+                )
             seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
             initial_link_signature = await _browser_link_signature(page)
             seen_link_signatures = {initial_link_signature}
@@ -1819,16 +1851,22 @@ async def _fetch_browser_pagination_direct(
                     stopped_reason = "control_disabled"
                     break
 
-                body_before = await page.locator("body").inner_text()
-                links_before = await _browser_link_signature(page)
-                await page.locator(str(target["tag"])).nth(int(match["index"])).click(
-                    timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
-                )
-                changed, _, links_after = await _wait_for_browser_content_change(
-                    page,
-                    body_before=body_before,
-                    links_before=links_before,
-                )
+                changed = False
+                links_before: tuple[str, ...] = ()
+                links_after: tuple[str, ...] = ()
+                for _click_attempt in range(MAX_BROWSER_PAGINATION_CLICK_RETRIES + 1):
+                    body_before = await page.locator("body").inner_text()
+                    links_before = await _browser_link_signature(page)
+                    await page.locator(str(target["tag"])).nth(int(match["index"])).click(
+                        timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
+                    )
+                    changed, _, links_after = await _wait_for_browser_content_change(
+                        page,
+                        body_before=body_before,
+                        links_before=links_before,
+                    )
+                    if changed:
+                        break
                 if not changed:
                     stopped_reason = "content_unchanged"
                     break

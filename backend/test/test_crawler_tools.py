@@ -3111,6 +3111,133 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attempts, 2)
         self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
 
+    async def test_playwright_browser_pagination_retries_transient_browser_failure(self) -> None:
+        failed = crawler_tools.BrowserPaginationExpansion(
+            status="failed",
+            stopped_reason="browser_error",
+            error_message="Page.goto: net::ERR_CONNECTION_CLOSED",
+        )
+        succeeded = crawler_tools.BrowserPaginationExpansion(
+            status="succeeded",
+            stopped_reason="control_disabled",
+        )
+
+        with patch(
+            "app.services.crawler_tools._try_fetch_browser_pagination_once",
+            new=AsyncMock(side_effect=[failed, succeeded]),
+        ) as attempt_mock:
+            result = await crawler_tools._fetch_browser_pagination_direct(
+                "https://example.edu/directory",
+                {
+                    "tag": "a",
+                    "text": "下一页",
+                    "title": "",
+                    "ariaLabel": "",
+                    "classTokens": ["Next"],
+                    "matchIndex": 0,
+                },
+                intent="directory",
+                max_pages=20,
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(attempt_mock.await_count, 2)
+
+    async def test_playwright_browser_pagination_retries_unchanged_click(self) -> None:
+        click_count = 0
+
+        class _Locator:
+            def __init__(self, page: "_Page", selector: str) -> None:
+                self.page = page
+                self.selector = selector
+
+            def nth(self, index: int) -> "_Locator":
+                self.index = index
+                return self
+
+            async def inner_text(self) -> str:
+                return f"page-{self.page.state}"
+
+            async def click(self, *, timeout: int) -> None:
+                nonlocal click_count
+                click_count += 1
+                if click_count >= 2:
+                    self.page.state = 1
+
+        class _Page:
+            url = "https://example.edu/directory"
+            state = 0
+
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                self.url = url
+
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                return None
+
+            async def wait_for_timeout(self, timeout: float) -> None:
+                return None
+
+            async def wait_for_load_state(self, state: str, *, timeout: int) -> None:
+                return None
+
+            async def content(self) -> str:
+                return (
+                    f'<html><body>page-{self.state}'
+                    f'<a href="/profile-{self.state}">person-{self.state}</a>'
+                    "</body></html>"
+                )
+
+            async def evaluate(self, script: str, argument: object = None) -> object:
+                if argument is not None:
+                    return {"index": 0, "disabled": False}
+                return [f"https://example.edu/profile-{self.state} person-{self.state}"]
+
+            def locator(self, selector: str) -> _Locator:
+                return _Locator(self, selector)
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+            result = await crawler_tools._try_fetch_browser_pagination_once(
+                "https://example.edu/directory",
+                {
+                    "tag": "a",
+                    "text": "下一页",
+                    "title": "",
+                    "ariaLabel": "",
+                    "classTokens": ["Next"],
+                    "matchIndex": 0,
+                },
+                intent="directory",
+                max_pages=2,
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(result.snapshots), 1)
+        self.assertEqual(click_count, 2)
+
     async def test_playwright_browser_fetch_uses_load_without_networkidle_retry(self) -> None:
         calls: list[str] = []
 

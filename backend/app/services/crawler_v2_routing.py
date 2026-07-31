@@ -224,7 +224,9 @@ def extract_page_route_controls(page_html: str) -> list[PageRouteControl]:
     soup = BeautifulSoup(page_html or "", "html.parser")
     controls: list[PageRouteControl] = []
     signature_counts: dict[tuple[object, ...], int] = {}
-    for tag in soup.select("button, [role='button'], li[tabindex], a:not([href])"):
+    for tag in soup.select("button, [role='button'], li[tabindex], a"):
+        if tag.name == "a" and not _is_non_url_anchor_control(tag.get("href")):
+            continue
         if _has_interactive_control_ancestor(tag):
             continue
         aria_disabled = str(tag.get("aria-disabled") or "").strip().lower()
@@ -300,7 +302,7 @@ def build_page_routing_context(
         f"页面可见文字摘要：\n{_head_tail(page_text or '', MAX_ROUTING_VISIBLE_TEXT_CHARS)}\n"
         "本页可选择链接（只能从这里选择）：\n"
         + ("\n".join(link_lines) if link_lines else "（无可选择链接）")
-        + "\n本页可选择的无 URL 交互控件（只能按 ID 选择）：\n"
+        + "\n本页可选择的无可直接访问 URL 的交互控件（只能按 ID 选择）：\n"
         + ("\n".join(control_lines) if control_lines else "（无可选择控件）")
     )
 
@@ -341,7 +343,7 @@ def build_v2_pagination_routing_prompt(
         "个人主页、另一类人员名单、筛选分类、上级或兄弟栏目、普通导航及用途不同的页面都不是分页。无法明确证明是同一份名单的下一部分时不要选择。\n"
         "若页面同时给出多个真实页码 URL，可一次选全，避免漏页。只能逐字返回下方可选择链接中的 URL，不能改写或猜造 URL。\n"
         "如果没有分页 URL，但页面存在一个可以反复点击、每次只前进到同一名单下一页的真实控件，可把它的 control ID 放入 pagination_control_id；不要选择具体页码、筛选、选项卡或跳页控件。优先使用 URL，不能同时选择 URL 和控件。\n"
-        "没有 href 的页码或翻页控件不是 URL，绝不能根据它们拼接 query、path 或 fragment；这种情况 pagination_urls 必须为空，并应选择下方真实存在的逐页前进控件 ID。\n"
+        "没有可直接访问的 http/https URL 的页码或翻页控件（包括只执行页面脚本或提交表单的链接）不是分页 URL；绝不能根据它们拼接 URL，应选择下方真实存在的逐页前进控件 ID。\n"
         "存在分页 URL 或分页控件时 allow_expansion 必须为 true；两者都没有时必须为 false。\n"
         "只输出一个 JSON 对象，不要解释、Markdown 或代码块，格式为：{\"allow_expansion\":false,\"pagination_urls\":[],\"pagination_control_id\":null}。\n"
         f"学校：{university}\n"
@@ -435,6 +437,14 @@ def _route_link_label(tag: Any, *, kind: Literal["link", "iframe"]) -> str:
     if not label:
         label = "嵌入页面" if kind == "iframe" else "无文字链接"
     return label[:240]
+
+
+def _is_non_url_anchor_control(href: object) -> bool:
+    raw_href = str(href or "").strip()
+    if not raw_href:
+        return True
+    lowered = raw_href.lower()
+    return lowered.startswith("javascript:") or raw_href.startswith("#")
 
 
 def _has_interactive_control_ancestor(tag: Any) -> bool:

@@ -102,6 +102,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("只有当前页没有直接人员名单", entry_prompt)
         self.assertIn("只负责当前页面的分页保险丝", pagination_prompt)
         self.assertIn("同一份人员名单", pagination_prompt)
+        self.assertIn("只执行页面脚本或提交表单", pagination_prompt)
         self.assertIn("绝不能根据它们拼接", pagination_prompt)
         self.assertIn('"discovered_urls":[]', entry_prompt)
         self.assertIn('"allow_expansion":false', pagination_prompt)
@@ -143,6 +144,25 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controls[1].title, "下一页")
         self.assertEqual(controls[1].control_id, "control-2")
         self.assertEqual(controls[1].aria_label, "right icon")
+
+    def test_extract_page_route_controls_exposes_javascript_form_pagination(self) -> None:
+        html = """
+        <a class="filter" href="javascript:;">A</a>
+        <a class="Next" href="javascript:document.forms['pager'].page.value=2;document.forms['pager'].submit();">2</a>
+        <a class="Next" href="javascript:document.forms['pager'].action.value='NextPage';document.forms['pager'].submit();">下页</a>
+        <a href="/directory/profile.htm">张三</a>
+        """
+
+        controls = extract_page_route_controls(html)
+        links = extract_page_route_links("https://example.edu/directory", html)
+
+        self.assertEqual([control.text for control in controls], ["A", "2", "下页"])
+        self.assertEqual(controls[-1].tag, "a")
+        self.assertEqual(controls[-1].class_tokens, ("Next",))
+        self.assertEqual(
+            [link.url for link in links],
+            ["https://example.edu/directory/profile.htm"],
+        )
 
     def test_filter_selected_urls_requires_page_evidence_and_same_main_domain(self) -> None:
         same_school_sibling = "https://faculty.csu.edu.cn/list?page=2"
