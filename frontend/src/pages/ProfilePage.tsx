@@ -2447,10 +2447,14 @@ export const ProfilePage = () => {
 
     setTestingIdentityConnection(kind);
     try {
+      const savedIdentity = await saveIdentity({ silent: true });
+      if (!savedIdentity) {
+        return;
+      }
       const result =
         kind === "smtp"
-          ? await testIdentitySmtp(editingIdentity.id)
-          : await testIdentityImap(editingIdentity.id);
+          ? await testIdentitySmtp(savedIdentity.id)
+          : await testIdentityImap(savedIdentity.id);
       if (!result.ok) {
         setLastIdentityConnectionResult({
           kind,
@@ -2820,7 +2824,9 @@ export const ProfilePage = () => {
     }));
   };
 
-  const saveIdentity = async (): Promise<IdentityDTO | null> => {
+  const saveIdentity = async (
+    { silent = false }: { silent?: boolean } = {},
+  ): Promise<IdentityDTO | null> => {
     if (!desktopBackendReady) {
       notifyError(
         "系统正在准备本地数据",
@@ -2854,10 +2860,12 @@ export const ProfilePage = () => {
       setIdentityEditorId(saved.id);
       setIdentityForm(toIdentityForm(saved));
       setSmtpPasswordVisible(false);
-      notifySuccess(
-        "身份保存成功",
-        isCreatingIdentity ? "身份已创建。" : "身份已保存。",
-      );
+      if (!silent) {
+        notifySuccess(
+          "身份保存成功",
+          isCreatingIdentity ? "身份已创建。" : "身份已保存。",
+        );
+      }
       return saved;
     } catch (saveError) {
       notifyError(

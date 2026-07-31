@@ -570,6 +570,66 @@ describe("ProfilePage onboarding", () => {
     expect(mockedNotifySuccess).not.toHaveBeenCalled();
   });
 
+  it("silently saves the current form before testing smtp", async () => {
+    const savedIdentity = {
+      ...selectedIdentity,
+      id: 42,
+      smtp_password: "updated-secret",
+      imap_password: "updated-secret",
+    };
+    vi.mocked(updateIdentity).mockResolvedValueOnce(savedIdentity);
+    vi.mocked(testIdentitySmtp).mockResolvedValueOnce({
+      ok: true,
+      message: "SMTP 连接测试成功",
+      host: savedIdentity.smtp_host,
+      possible_cause: null,
+    });
+
+    renderPage();
+    openSetupSection("发件身份");
+    fireEvent.change(screen.getByLabelText(/邮箱授权码/), {
+      target: { value: "updated-secret" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "测试 SMTP" }));
+
+    await waitFor(() => {
+      expect(updateIdentity).toHaveBeenCalledWith(
+        selectedIdentity.id,
+        expect.objectContaining({
+          smtp_password: "updated-secret",
+          imap_password: "updated-secret",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(testIdentitySmtp).toHaveBeenCalledWith(savedIdentity.id);
+    });
+    expect(updateIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(testIdentitySmtp).mock.invocationCallOrder[0] ??
+        Number.POSITIVE_INFINITY,
+    );
+    expect(mockedNotifySuccess).toHaveBeenCalledTimes(1);
+    expect(mockedNotifySuccess).toHaveBeenCalledWith(
+      "SMTP 连接测试成功",
+      "SMTP 连接测试成功",
+    );
+  });
+
+  it("does not test smtp when the automatic save fails", async () => {
+    vi.mocked(updateIdentity).mockRejectedValueOnce(new Error("保存失败"));
+
+    renderPage();
+    openSetupSection("发件身份");
+    fireEvent.click(screen.getByRole("button", { name: "测试 SMTP" }));
+
+    await waitFor(() => {
+      expect(mockedNotifyError).toHaveBeenCalledWith("身份保存失败", "保存失败");
+    });
+    expect(testIdentitySmtp).not.toHaveBeenCalled();
+    expect(mockedNotifySuccess).not.toHaveBeenCalled();
+  });
+
   it("opens the material library modal from the reordered materials section", async () => {
     renderPage();
     openSetupSection("材料与模板");
