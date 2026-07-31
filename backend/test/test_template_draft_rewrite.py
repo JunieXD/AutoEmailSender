@@ -214,6 +214,55 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             ["2026年5月21日", "09:30", "2024-2025"],
         )
 
+    def test_build_draft_rewrite_document_allows_editing_rendered_research_direction(self) -> None:
+        research_direction = "人工智能、计算机视觉、图神经网络、自然语言处理"
+        document = build_draft_rewrite_document(
+            f"<p>我关注您在 <strong>{research_direction}</strong> 方向的工作。</p>",
+            {"research_direction": research_direction},
+        )
+
+        self.assertEqual(
+            document.blocks[0].text,
+            f"我关注您在 {research_direction} 方向的工作。",
+        )
+        self.assertIn(research_direction, document.blocks[0].rewrite_text)
+        self.assertNotIn("[[F1]]", document.blocks[0].rewrite_text)
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [
+                {
+                    "segment_id": "seg_1",
+                    "text": "我尤其关注您在 [[S1]]图神经网络、自然语言处理[[/S1]] 方面的工作。",
+                },
+            ],
+        )
+
+        self.assertIn("图神经网络、自然语言处理", result.text)
+        self.assertNotIn("人工智能", result.text)
+        self.assertNotIn("计算机视觉", result.text)
+        self.assertNotIn("[[F1]]", result.html)
+
+    def test_build_draft_rewrite_document_renders_research_placeholder_as_editable_text(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>我关注您的 {{research_direction}} 研究。</p>",
+            {"research_direction": "图神经网络、自然语言处理"},
+        )
+
+        self.assertEqual(
+            document.blocks[0].rewrite_text,
+            "我关注您的 图神经网络、自然语言处理 研究。",
+        )
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [{"segment_id": "seg_1", "text": "我尤其关注您的自然语言处理研究。"}],
+        )
+
+        self.assertIn("自然语言处理", result.text)
+        self.assertNotIn("图神经网络", result.text)
+        self.assertNotIn("[[F1]]", result.html)
+
     def test_build_draft_rewrite_document_excludes_paragraphs_inside_table(self) -> None:
         document = build_draft_rewrite_document(
             "<p>正文。</p><table><tr><td><p>表格内部。</p></td></tr></table><p>结尾。</p>",
@@ -460,10 +509,10 @@ class TemplateDraftRewriteTests(unittest.TestCase):
                 )
                 self.assertNotIn("令牌", str(raised.exception))
 
-    def test_apply_replacements_preserves_existing_literal_research_direction_once(self) -> None:
+    def test_apply_replacements_allows_changing_literal_research_direction_count(self) -> None:
         document = build_draft_rewrite_document(
-            "<p>我关注您在 Agent 方向的工作。</p>",
-            {"research_direction": "Agent"},
+            "<p>我关注您在 Agent、NLP、CV 方向的工作，并再次关注 Agent、NLP、CV。</p>",
+            {"research_direction": "Agent、NLP、CV"},
         )
 
         result = apply_draft_rewrite_replacements(
@@ -471,12 +520,13 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             [
                 {
                     "segment_id": "seg_1",
-                    "text": "我认真了解了您在 Agent 方向的工作。",
+                    "text": "我认真了解了您在 Agent、NLP 方向的工作。",
                 },
             ],
         )
 
-        self.assertEqual(result.text.count("Agent"), 1)
+        self.assertEqual(result.text.count("Agent、NLP"), 1)
+        self.assertNotIn("CV", result.text)
 
 
 if __name__ == "__main__":

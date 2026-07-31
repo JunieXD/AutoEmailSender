@@ -114,10 +114,9 @@ def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRew
         fact_token = DraftRewriteFactToken(
             token="[[F1]]",
             value=research_direction,
-            description="导师研究方向原文；该系统占位不得改写、解释或展开",
+            description="导师研究方向；仅在正文尚未包含该信息时由系统安全插入",
         )
         fact_tokens.append(fact_token)
-        rendered_context["research_direction"] = fact_token.token
 
     _render_template_text_nodes(soup, rendered_context)
     blocks: list[DraftRewriteSourceBlock] = []
@@ -564,43 +563,18 @@ def _validate_replacements(
     if actual_protected != expected_protected:
         raise ValueError("日期、时间或延迟占位符被修改")
 
-    source_literal_fact_counts = {
-        fact.value: sum(
-            (
-                (block.html_fragment or "")
-                if block.type == "table"
-                else block.rewrite_text
-            ).count(fact.value)
-            for block in document.blocks
+    has_literal_facts = any(
+        fact.value.strip()
+        and fact.token
+        not in (
+            (block.html_fragment or "")
+            if block.type == "table"
+            else block.rewrite_text
         )
+        and fact.value.strip() in block.text
         for fact in document.fact_tokens
-        if fact.value.strip()
-        and any(
-            fact.value
-            in (
-                (block.html_fragment or "")
-                if block.type == "table"
-                else block.rewrite_text
-            )
-            for block in document.blocks
-        )
-    }
-    if source_literal_fact_counts:
-        rendered_texts = [
-            str(replacement["text"])
-            for replacement in validated
-        ]
-        rendered_texts.extend(
-            (block.html_fragment or "") if block.type == "table" else block.rewrite_text
-            for block in document.blocks
-            if block.type == "table" or block.locked
-        )
-        rendered_text = "\n".join(rendered_texts)
-        if any(
-            rendered_text.count(value) != expected_count
-            for value, expected_count in source_literal_fact_counts.items()
-        ):
-            raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+        for block in document.blocks
+    )
 
     retained_source_facts = [
         token
@@ -610,7 +584,7 @@ def _validate_replacements(
     ]
     if expected_facts_from_source:
         expected_facts = expected_facts_from_source
-    elif retained_source_facts or source_literal_fact_counts or not editable_blocks:
+    elif retained_source_facts or has_literal_facts or not editable_blocks:
         expected_facts = []
     else:
         expected_facts = [fact.token for fact in document.fact_tokens]
