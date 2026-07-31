@@ -842,6 +842,7 @@ async def generate_task_draft(
                     draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
                     draft_template_preservation=runtime_settings.draft_template_preservation,
                     draft_custom_instruction=runtime_settings.draft_custom_instruction,
+                    intended_research_direction=runtime_settings.intended_research_direction,
                 )
                 generation = await llm_runtime.generate_draft_content(
                     identity=task.identity,
@@ -1191,6 +1192,7 @@ async def rewrite_task_draft(
             draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
             draft_template_preservation=runtime_settings.draft_template_preservation,
             draft_custom_instruction=runtime_settings.draft_custom_instruction,
+            intended_research_direction=runtime_settings.intended_research_direction,
         )
         identity = task.identity
         primary_material = task.primary_material
@@ -1377,6 +1379,7 @@ async def preview_task_draft(
             draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
             draft_template_preservation=runtime_settings.draft_template_preservation,
             draft_custom_instruction=runtime_settings.draft_custom_instruction,
+            intended_research_direction=runtime_settings.intended_research_direction,
         )
         return await llm_runtime.generate_draft_content(
             identity=task.identity,

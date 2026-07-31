@@ -5,7 +5,6 @@ import unittest
 from app.models import IdentityProfile, Professor
 from app.services.outreach_templates import build_template_context
 from app.services.template_draft_rewrite import (
-    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
     apply_draft_rewrite_replacements,
     build_draft_rewrite_document,
     select_dominant_font_and_size,
@@ -90,7 +89,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             '<table style="border-collapse:collapse"><tbody><tr><td>原表格</td></tr></tbody></table>',
         )
 
-    def test_build_draft_rewrite_document_locks_salutation_block(self) -> None:
+    def test_build_draft_rewrite_document_keeps_salutation_editable(self) -> None:
         identity = IdentityProfile(
             id=1,
             name="张三",
@@ -118,7 +117,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
 
         document = build_draft_rewrite_document(html, build_template_context(identity, professor))
 
-        self.assertTrue(document.blocks[0].locked)
+        self.assertFalse(document.blocks[0].locked)
         self.assertFalse(document.blocks[1].locked)
 
     def test_build_draft_rewrite_document_locks_visually_empty_blocks(self) -> None:
@@ -199,7 +198,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(document.blocks[0].text, "{{year}}年{{month}}月{{day}}日")
         self.assertEqual(document.blocks[0].rewrite_text, "[[P1]]年[[P2]]月[[P3]]日")
 
-    def test_build_draft_rewrite_document_protects_literal_dates_and_times(self) -> None:
+    def test_build_draft_rewrite_document_keeps_literal_dates_and_times_editable(self) -> None:
         document = build_draft_rewrite_document(
             "<p>计划于2026年5月21日 09:30联系，参考2024-2025年的经历。</p>",
             {},
@@ -207,12 +206,16 @@ class TemplateDraftRewriteTests(unittest.TestCase):
 
         self.assertEqual(
             document.blocks[0].rewrite_text,
-            "计划于[[P1]] [[P2]]联系，参考[[P3]]年的经历。",
+            "计划于2026年5月21日 09:30联系，参考2024-2025年的经历。",
         )
-        self.assertEqual(
-            [token.value for token in document.protected_tokens],
-            ["2026年5月21日", "09:30", "2024-2025"],
+        self.assertEqual(document.protected_tokens, [])
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [{"segment_id": "seg_1", "text": "计划改为2030年8月1日 18:00联系。"}],
         )
+
+        self.assertIn("2030年8月1日 18:00", result.text)
 
     def test_build_draft_rewrite_document_allows_editing_rendered_research_direction(self) -> None:
         research_direction = "人工智能、计算机视觉、图神经网络、自然语言处理"
@@ -336,7 +339,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             [
                 {
                     "segment_id": "seg_1",
-                    "text": "李老师，您好：[[S1]]欢迎[[/S1]]了解[[F1]]方向。",
+                    "text": "李老师，您好：[[S1]]欢迎[[/S1]]了解Agent方向。",
                 }
             ],
         )
@@ -380,7 +383,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             [
                 {
                     "segment_id": "seg_2",
-                    "text": "改写后的正文，关注[[F1]]方向。",
+                    "text": "改写后的正文，关注Agent方向。",
                 },
             ],
         )
@@ -409,7 +412,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
                     "segment_id": "seg_1",
                     "text": (
                         "我是学生，[[S1]]（学校背景）[[/S1]]"
-                        "并且[[S2]]专业排名第一[[/S2]]，希望研究[[F1]]方向。"
+                        "并且[[S2]]专业排名第一[[/S2]]，希望研究Agent方向。"
                     ),
                 },
             ],
@@ -441,7 +444,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
                     "segment_id": "seg_1",
                     "text": (
                         "普通[[S1]]新下划线[[/S1]][[S2]]新斜体[[/S2]]"
-                        "[[S3]]新链接[[/S3]][[S4]]新彩色[[/S4]]，研究[[F1]]。"
+                        "[[S3]]新链接[[/S3]][[S4]]新彩色[[/S4]]，研究Agent。"
                     ),
                 },
             ],
@@ -455,26 +458,29 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertIn("color:#f00", result.html)
         self.assertIn("Agent", result.text)
 
-    def test_apply_replacements_rejects_missing_style_region(self) -> None:
+    def test_apply_replacements_preserves_original_block_when_style_region_is_invalid(self) -> None:
         document = build_draft_rewrite_document(
             "<p>普通文本<strong>重点</strong>。</p>",
             {"research_direction": "Agent"},
         )
 
-        with self.assertRaisesRegex(ValueError, "样式区域"):
-            apply_draft_rewrite_replacements(
-                document,
-                [{"segment_id": "seg_1", "text": "普通文本重点，关注[[F1]]。"}],
-            )
+        result = apply_draft_rewrite_replacements(
+            document,
+            [{"segment_id": "seg_1", "text": "普通文本重点，改成任意内容。"}],
+        )
 
-    def test_apply_replacements_rejects_invisible_only_text(self) -> None:
+        self.assertEqual("".join(result.text.split()), "普通文本重点。")
+        self.assertIn("<strong>重点</strong>", result.html)
+
+    def test_apply_replacements_preserves_original_block_for_invisible_only_text(self) -> None:
         document = build_draft_rewrite_document("<p>普通正文。</p>", {})
 
-        with self.assertRaisesRegex(ValueError, "第 1 个段落改写内容无效"):
-            apply_draft_rewrite_replacements(
-                document,
-                [{"segment_id": "seg_1", "text": "\u200b\u2060"}],
-            )
+        result = apply_draft_rewrite_replacements(
+            document,
+            [{"segment_id": "seg_1", "text": "\u200b\u2060"}],
+        )
+
+        self.assertEqual(result.text, "普通正文。")
 
     def test_apply_replacements_does_not_duplicate_fact_already_in_table(self) -> None:
         document = build_draft_rewrite_document(
@@ -490,24 +496,37 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(result.text.count("Agent"), 1)
         self.assertNotIn("[[F1]]", result.html)
 
-    def test_apply_replacements_uses_friendly_research_direction_error(self) -> None:
+    def test_apply_replacements_does_not_enforce_research_direction_content(self) -> None:
         document = build_draft_rewrite_document(
             "<p>正文。</p>",
             {"research_direction": "Agent"},
         )
 
-        for text in ("没有结合导师方向。", "重复[[F1]]与[[F1]]。"):
+        for text in ("没有结合导师方向。", "用户要求写入一个全新的方向。"):
             with self.subTest(text=text):
-                with self.assertRaises(ValueError) as raised:
-                    apply_draft_rewrite_replacements(
-                        document,
-                        [{"segment_id": "seg_1", "text": text}],
-                    )
-                self.assertEqual(
-                    str(raised.exception),
-                    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
+                result = apply_draft_rewrite_replacements(
+                    document,
+                    [{"segment_id": "seg_1", "text": text}],
                 )
-                self.assertNotIn("令牌", str(raised.exception))
+                self.assertEqual(result.text, text)
+
+    def test_apply_replacements_allows_subset_and_empty_deletion(self) -> None:
+        document = build_draft_rewrite_document(
+            "<p>第一段。</p><p>第二段。</p><p>第三段。</p>",
+            {},
+        )
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [
+                {"segment_id": "seg_1", "text": "改写第一段。"},
+                {"segment_id": "seg_3", "text": ""},
+            ],
+        )
+
+        self.assertIn("改写第一段。", result.text)
+        self.assertIn("第二段。", result.text)
+        self.assertNotIn("第三段。", result.text)
 
     def test_apply_replacements_allows_changing_literal_research_direction_count(self) -> None:
         document = build_draft_rewrite_document(

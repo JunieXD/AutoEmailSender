@@ -30,8 +30,6 @@ from app.services.rich_text import (
     text_to_email_html,
 )
 from app.services.template_draft_rewrite import (
-    DRAFT_RESEARCH_PERSONALIZATION_ERROR,
-    DraftRewriteFactToken,
     DraftRewriteProtectedToken,
     DraftRewriteSourceBlock,
     apply_draft_rewrite_replacements,
@@ -44,7 +42,6 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LLM_TEMPERATURE = 0.2
 DEFAULT_LLM_MAX_TOKENS = 6000
 STRUCTURED_OUTPUT_CONTROL_KEY = "__structured_output_control__"
-DRAFT_RESEARCH_PLACEHOLDER = "{{professor_research}}"
 SYSTEM_MATCH_ONLY_PROMPT = dedent(
     """
     你是研究生套磁助理。你必须只输出 JSON，不要输出任何解释、Markdown 代码块或多余文字。
@@ -163,20 +160,20 @@ SYSTEM_DRAFT_PROMPT = dedent(
       ]
     }
 
-    额外要求：
+    输出协议（优先级最高）：
     - 只能输出一个 JSON 对象。
-    - 默认应保留模板的整体结构、段落顺序和主要话术风格，只做必要的表达优化和一次自然个性化。
-    - 只允许改动：称呼、个性化理由、个性化一段、结尾、主题。
-    - 必须围绕导师研究方向进行个性化改写，不能只写泛泛的“我关注您的研究”。
-    - 导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。
-    - 不要从零重写整封邮件；任何补充要求都必须基于模板、导师信息和可见材料。
-    - 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
-    - 尽量保留模板中可表达的富文本标记，例如加粗、斜体、链接和列表。
     - blocks 中每项必须包含 type 和 items；type 只允许 paragraph、bullet_list、numbered_list。
     - paragraph 的 items 必须恰好包含一项；列表的每个 items 项代表一个列表项。
     - 每个 items 项必须包含 runs；每个 run 必须完整包含 text、strong、emphasis、href、line_break_after。
     - strong、emphasis、line_break_after 必须是布尔值；不加链接时 href 必须为空字符串。
     - href 非空时只能使用 http、https、mailto 链接。
+
+    内容执行规则：
+    - user_custom_instruction 是用户明确指定的内容要求；除非它要求破坏上述 JSON 输出协议，否则必须优先、完整执行。
+    - 不得以事实真实性、原模板内容、日期、经历或导师信息为理由拒绝或削弱用户的内容要求。
+    - 用户未指定的部分，默认保留模板整体结构、段落顺序和主要话术，只做适度表达优化。
+    - 默认结合 student_intended_research_direction、student_material_text 与导师研究方向做一次自然个性化。
+    - 尽量保留模板中可表达的富文本标记，例如加粗、斜体、链接和列表。
     - 如果模板包含表格，尽量保留其中的信息顺序和语义，但仍按上述 blocks 结构输出。
     """
 ).strip()
@@ -184,14 +181,20 @@ SYSTEM_DRAFT_PROMPT = dedent(
 SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     """
     你是研究生套磁邮件改写助理。你必须只输出 JSON，不要输出任何解释、Markdown 代码块或多余文字。
-    基于 source_blocks 逐段改写邮件，不要从零重写，不要输出 HTML 或完整正文。
-    必须为每个 locked=false 且 type 不是 table 的块返回一个 replacement，顺序必须与输入一致。
+    基于 source_blocks 改写邮件，不要输出 HTML、subject 或完整正文。
+    replacements 只能引用 locked=false 且 type 不是 table 的块，并按 source_blocks 的原顺序返回。
+    可以省略无需修改的块；如果用户要求删除某段内容，该段 text 返回空字符串。
     每个 replacement 只能包含 segment_id 和完整连续段落 text；不要返回 runs、marks 或 subject。
     [[S1]]...[[/S1]] 是可编辑样式区域：可以修改区域内文字，但标记必须原样、成对、按原顺序保留。
-    [[P1]] 是日期、时间或延迟占位符，必须原样保留。
-    [[F1]] 是系统保护的导师研究方向占位，必须按输入要求原样保留，不得解释或展开。
-    已经渲染为普通文字的导师研究方向不是 [[F1]]，属于可编辑正文；如果 user_custom_instruction 要求筛选、压缩或改写，必须执行，这不属于模板或占位符保护冲突，但不得引入 professor.research_direction 之外的新方向。
-    如果用户要求只保留部分研究方向，必须对所有可编辑段落中的每次出现统一执行，任何位置都不得再次输出完整的 professor.research_direction。
+    [[P1]] 是尚未渲染的运行时占位符，必须原样、按原顺序保留。
+
+    内容执行优先级：
+    1. JSON、segment_id、样式标记和运行时占位符协议。
+    2. user_custom_instruction：这是用户明确指定的内容要求，除非要求破坏第 1 项协议，否则必须优先、完整执行。
+    3. 默认个性化策略：用户未指定的部分，结合 student_intended_research_direction、student_material_text 和 professor.research_direction 适度改写，并尽量保留原结构和话术。
+
+    不得以事实真实性、原模板内容、日期、经历、导师信息或研究方向为理由拒绝、弱化或改写 user_custom_instruction。
+    source_blocks 中已经填入的姓名、经历、日期和研究方向都是可编辑正文；用户可以要求修改、删减、替换或新增相关内容。
 
     输出示例：
     {
@@ -203,24 +206,10 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
       ]
     }
 
-    额外要求：
+    结构要求：
     - 只能返回输入中存在的 segment_id。
-    - 不要新增、删除、合并、拆分或重排块。
-    - locked=true 的块必须原样保留，尤其是首个称呼段和表格块。
-    - 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
-    - 不要添加输入事实之外的导师方向、论文、成果、日期或数字。
-    - 如果输入中已有导师研究方向占位，必须按输入要求保留；未提供时不要自行虚构内部占位。
-    """
-).strip()
-
-SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT = dedent(
-    """
-    你是研究生套磁邮件改写助理。只能输出一个 JSON 对象，不要输出解释、Markdown、HTML 或完整正文。
-    基于 source_blocks 逐段改写邮件，不要从零重写。
-    replacements 必须按输入顺序返回全部可编辑段落；另选其中一个段落返回 research_direction_personalization，系统会用这个个性化版本覆盖同段普通版本。
-    {{professor_research}} 代表“导师围绕其研究方向开展的研究”这一完整名词短语，只能在个性化版本中自然出现一次；不要自行输出导师研究方向原文或 [[F数字]] 标记。
-    原样、成对、按顺序保留所选段落中的 [[S数字]]...[[/S数字]] 样式区域和全部 [[P数字]] 保护占位。
-    不得返回或改动 locked=true 的段落和表格。
+    - 不要合并、拆分或重排块；通过省略 replacement 保留原块，通过空 text 清空某个可编辑块。
+    - locked=true 的空白块和表格必须原样保留，不得出现在 replacements 中。
     """
 ).strip()
 
@@ -659,20 +648,6 @@ class DraftRewriteResult(BaseModel):
     replacements: list[DraftRewriteSegmentReplacement]
 
 
-class DraftResearchPersonalization(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    segment_id: str
-    text: str
-
-
-class DraftRewriteWithResearchResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    replacements: list[DraftRewriteSegmentReplacement]
-    research_direction_personalization: DraftResearchPersonalization
-
-
 @dataclass(slots=True)
 class DraftRewritePreferences:
     draft_rewrite_intensity: str = "moderate"
@@ -682,6 +657,7 @@ class DraftRewritePreferences:
     draft_rewrite_specificity: str = "balanced"
     draft_template_preservation: str = "structure_first"
     draft_custom_instruction: str = ""
+    intended_research_direction: str = ""
 
 
 class LLMProbeResult(BaseModel):
@@ -880,10 +856,6 @@ async def generate_draft_content(
                     body_html=rendered.html,
                 ),
             )
-        requires_research_personalization = _draft_requires_research_personalization(
-            rewrite_document.blocks,
-            rewrite_document.fact_tokens,
-        )
         prompt_parts = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
@@ -895,18 +867,13 @@ async def generate_draft_content(
             rewrite_preferences=rewrite_preferences,
             llm_profile=llm_profile,
             protected_tokens=rewrite_document.protected_tokens,
-            fact_tokens=rewrite_document.fact_tokens,
         )
         payload: dict[str, object] = {
             "model": llm_profile.model_name,
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT
-                        if requires_research_personalization
-                        else SYSTEM_DRAFT_REWRITE_PROMPT
-                    ),
+                    "content": SYSTEM_DRAFT_REWRITE_PROMPT,
                 },
                 {
                     "role": "user",
@@ -918,38 +885,16 @@ async def generate_draft_content(
         }
         if prompt_parts.prompt_cache_key is not None:
             payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
-        if requires_research_personalization:
-            completion, rewrite_result, _structured_mode = await request_structured_completion(
-                llm_profile,
-                payload,
-                DraftRewriteWithResearchResult,
-                extra_body=thinking_extra_body,
-                session=session,
-                adaptation=adaptation,
-                validation_error_message=DRAFT_RESEARCH_PERSONALIZATION_ERROR,
-            )
-            replacements = [item.model_dump() for item in rewrite_result.replacements]
-            research_personalization = rewrite_result.research_direction_personalization
-        else:
-            completion, rewrite_result, _structured_mode = await request_structured_completion(
-                llm_profile,
-                payload,
-                DraftRewriteResult,
-                extra_body=thinking_extra_body,
-                session=session,
-                adaptation=adaptation,
-            )
-            replacements = [item.model_dump() for item in rewrite_result.replacements]
-            research_personalization = None
+        completion, rewrite_result, _structured_mode = await request_structured_completion(
+            llm_profile,
+            payload,
+            DraftRewriteResult,
+            extra_body=thinking_extra_body,
+            session=session,
+            adaptation=adaptation,
+        )
+        replacements = [item.model_dump() for item in rewrite_result.replacements]
         try:
-            if research_personalization is not None:
-                replacements = _merge_draft_research_personalization(
-                    rewrite_document.blocks,
-                    rewrite_document.fact_tokens,
-                    replacements,
-                    research_personalization,
-                    language=identity.default_language,
-                )
             rendered = apply_draft_rewrite_replacements(
                 rewrite_document,
                 replacements,
@@ -1054,17 +999,8 @@ def estimate_draft_content_tokens(
             rewrite_preferences=rewrite_preferences,
             llm_profile=llm_profile,
             protected_tokens=rewrite_document.protected_tokens,
-            fact_tokens=rewrite_document.fact_tokens,
         )
-        rewrite_system_prompt = (
-            SYSTEM_DRAFT_RESEARCH_REWRITE_PROMPT
-            if _draft_requires_research_personalization(
-                rewrite_document.blocks,
-                rewrite_document.fact_tokens,
-            )
-            else SYSTEM_DRAFT_REWRITE_PROMPT
-        )
-        prompt_text = f"{rewrite_system_prompt}\n\n{prompt_parts.prompt}"
+        prompt_text = f"{SYSTEM_DRAFT_REWRITE_PROMPT}\n\n{prompt_parts.prompt}"
     else:
         prompt = build_draft_prompt(
             identity=identity,
@@ -1903,6 +1839,7 @@ def build_draft_prompt(
         custom_subject=custom_subject,
         custom_body=custom_body,
         custom_body_html=custom_body_html,
+        intended_research_direction=rewrite_preferences.intended_research_direction,
         extra_requirements=f"""
         {rewrite_preferences_block}
 
@@ -1910,14 +1847,11 @@ def build_draft_prompt(
 
         任务要求：
         1. 必须以提供的套磁信模板为基础润色，不要从零重写。
-        2. 只允许改动：称呼、个性化理由、个性化一段、结尾、主题。
-        3. 遵循上面的模板结构要求，不要突破模板骨架和原始沟通目的。
-        4. 用中文生成专业、克制、具体的套磁邮件。
-        5. blocks 必须遵守系统提示中的受控富文本 wire 结构，并能渲染为邮件正文。
-        6. 不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。
-        7. 围绕导师研究方向做一次自然个性化，不要反复堆砌同一个方向词。
-        8. 按上面的默认改写约束控制改动大小，同时尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
-        9. 如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。
+        2. 用户补充要求在内容层面拥有最高优先级，必须完整执行；只有与 JSON wire 结构冲突的部分可以忽略。
+        3. 用户未指定的部分，结合用户意向研究方向、学生材料与导师研究方向进行适度个性化。
+        4. blocks 必须遵守系统提示中的受控富文本 wire 结构，并能渲染为邮件正文。
+        5. 尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。
+        6. 如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。
         """,
     )
 
@@ -1931,6 +1865,7 @@ def _build_base_generation_prompt(
     custom_subject: str | None,
     custom_body: str | None,
     custom_body_html: str | None,
+    intended_research_direction: str | None,
     extra_requirements: str,
 ) -> str:
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
@@ -1943,11 +1878,10 @@ def _build_base_generation_prompt(
             "只返回 JSON 对象。",
             "不要输出解释、Markdown 代码块或多余文字。",
             "你要基于提供的套磁信模板生成邮件草稿，不要从零重写。",
-            "只允许改动：称呼、个性化理由、个性化一段、结尾、主题。",
+            "用户补充要求在内容层面拥有最高优先级；只有与 JSON 输出协议冲突的部分可以忽略。",
             "尽量保留可表达的富文本标记，例如加粗、斜体、链接和列表。",
             "如果模板包含表格，保留表格中的信息顺序和语义，但不要输出 schema 不支持的表格节点。",
-            "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
-            "导师研究方向只用于一次自然个性化，不要在正文里反复堆砌。",
+            "用户未指定的部分，结合用户意向研究方向、学生材料和导师研究方向做适度个性化。",
         ],
         "response_schema": {
             "subject": "邮件主题",
@@ -1972,6 +1906,7 @@ def _build_base_generation_prompt(
         },
         "input": {
             "草稿改写要求": extra_requirements,
+            "用户意向研究方向": _non_empty_text(intended_research_direction),
             "学生材料文本": primary_material_text,
             "套磁信模板主题": _non_empty_text(custom_subject),
             "套磁信模板正文": template_body_text,
@@ -1999,7 +1934,6 @@ def build_draft_rewrite_prompt(
     current_match: MatchEvaluationResult | None,
     rewrite_preferences: DraftRewritePreferences | None,
     protected_tokens: list[DraftRewriteProtectedToken] | None = None,
-    fact_tokens: list[DraftRewriteFactToken] | None = None,
 ) -> str:
     return build_draft_rewrite_prompt_parts(
         identity=identity,
@@ -2011,7 +1945,6 @@ def build_draft_rewrite_prompt(
         current_match=current_match,
         rewrite_preferences=rewrite_preferences,
         protected_tokens=protected_tokens,
-        fact_tokens=fact_tokens,
     ).prompt
 
 
@@ -2027,7 +1960,6 @@ def build_draft_rewrite_prompt_parts(
     rewrite_preferences: DraftRewritePreferences | None,
     llm_profile: LLMProfile | None = None,
     protected_tokens: list[DraftRewriteProtectedToken] | None = None,
-    fact_tokens: list[DraftRewriteFactToken] | None = None,
 ) -> DraftRewritePromptParts:
     # Deprecated compatibility parameter: draft rewrite prompts must ignore match results.
     _ = current_match
@@ -2037,32 +1969,24 @@ def build_draft_rewrite_prompt_parts(
 
     preferences = rewrite_preferences or DraftRewritePreferences()
     protected_tokens = protected_tokens or []
-    fact_tokens = fact_tokens or []
-    has_literal_research_direction = _draft_has_literal_research_direction(
-        source_blocks,
-        fact_tokens,
-    )
-    requires_research_personalization = _draft_requires_research_personalization(
-        source_blocks,
-        fact_tokens,
-    )
     instructions = [
         "只返回 JSON 对象。",
         "不要返回 subject。",
-        "为 source_blocks 中每个 locked=false 且 type 不是 table 的块返回一个 replacement。",
-        "replacements 的 segment_id 集合和顺序必须与这些可编辑块完全一致。",
+        "replacements 只能包含 source_blocks 中 locked=false 且 type 不是 table 的块。",
+        "只返回需要修改的块，并保持它们在 source_blocks 中的原顺序；无需修改的块可以省略。",
         "table 块必须原样保留，不得出现在 replacements 中。",
-        "locked=true 的块必须原样保留，尤其是首个称呼段。",
+        "locked=true 的空白块必须原样保留，不得出现在 replacements 中。",
         "每个 replacement 只能包含 segment_id 和完整连续段落 text。",
+        "如果用户要求删除某段内容，仍返回该 segment_id，并把 text 设为空字符串。",
         "保留 text 中全部 [[S数字]]...[[/S数字]] 样式区域，区域内文字允许改写。",
-        "保留全部 [[P数字]] 保护占位，不得修改、删除或新增。",
+        "保留全部 [[P数字]] 运行时占位，不得修改、删除或新增。",
         "不要返回 HTML。",
         "不要返回完整正文。",
-        "不要新增、删除、合并、拆分或重排块。",
-        "不要修改或删除用户已写的日期、年份、时间；不要新增日期、年份、时间。",
-        "不要添加输入中没有的导师信息、论文、成果、日期或数字。",
-        "默认在保留模板骨架的基础上优化表达、连接句和个性化内容。",
-        "优先保留段落顺序、信息顺序和主要话术。",
+        "不要合并、拆分或重排块。",
+        "user_custom_instruction 是最高优先级的内容要求；除非它要求破坏上述 JSON 或结构协议，否则必须完整执行。",
+        "不得以真实性、原模板、日期、经历、导师信息或研究方向为理由拒绝或弱化 user_custom_instruction。",
+        "用户未指定的部分，默认结合 student_intended_research_direction、student_material_text 和 professor.research_direction 适度优化表达与个性化内容。",
+        "用户未指定的部分，优先保留段落顺序、信息顺序和主要话术。",
     ]
     response_schema: dict[str, object] = {
         "replacements": [
@@ -2076,6 +2000,9 @@ def build_draft_rewrite_prompt_parts(
         "rewrite_preferences": _serialize_draft_rewrite_preferences(preferences),
         "user_custom_instruction": _serialize_draft_custom_instruction(
             preferences.draft_custom_instruction,
+        ),
+        "student_intended_research_direction": _non_empty_text(
+            preferences.intended_research_direction,
         ),
         "student_material_text": primary_material_text,
         "available_materials": [
@@ -2095,34 +2022,6 @@ def build_draft_rewrite_prompt_parts(
             for token in protected_tokens
         ],
     }
-    if requires_research_personalization:
-        instructions.extend(
-            [
-                "research_direction_personalization.segment_id 必须选自可编辑块，系统会用其 text 覆盖同段普通 replacement。",
-                f"个性化 text 必须是完整段落，并把 {DRAFT_RESEARCH_PLACEHOLDER} 作为完整名词短语自然使用一次且仅一次。",
-                f"替换后必须语法自然；优先写‘我对{DRAFT_RESEARCH_PLACEHOLDER}产生了浓厚兴趣’或‘{DRAFT_RESEARCH_PLACEHOLDER}与我的经历契合’，不要使用‘向往、憧憬’等生硬搭配。",
-                "不要输出导师方向原文或 [[F数字]] 标记；保留所选段落全部样式区域和受保护内容。",
-            ],
-        )
-        response_schema["research_direction_personalization"] = {
-            "segment_id": "seg_3",
-            "text": f"我对{DRAFT_RESEARCH_PLACEHOLDER}很感兴趣，希望有机会进一步学习。",
-        }
-    else:
-        instructions.extend(
-            [
-                "facts 中的 [[F数字]] 占位必须按说明使用，不得释义或展开其值。",
-                _build_draft_fact_usage_instruction(source_blocks, fact_tokens),
-            ],
-        )
-        prompt_input["facts"] = (
-            []
-            if has_literal_research_direction
-            else [
-                {"token": fact.token, "description": fact.description}
-                for fact in fact_tokens
-            ]
-        )
 
     payload: dict[str, object] = {
         "instructions": instructions,
@@ -2133,22 +2032,12 @@ def build_draft_rewrite_prompt_parts(
         del prompt_input["rewrite_preferences"]
     if not prompt_input["user_custom_instruction"]:
         del prompt_input["user_custom_instruction"]
+    if not prompt_input["student_intended_research_direction"]:
+        del prompt_input["student_intended_research_direction"]
 
     stable_prefix = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    research_direction_token = (
-        fact_tokens[0].token
-        if (
-            fact_tokens
-            and not requires_research_personalization
-            and not has_literal_research_direction
-        )
-        else None
-    )
-    prompt_input["professor"] = _build_draft_rewrite_professor_context(
-        professor,
-        research_direction_token=research_direction_token,
-    )
+    prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
 
     prompt = json.dumps(payload, ensure_ascii=False, indent=2)
     return DraftRewritePromptParts(
@@ -2167,170 +2056,6 @@ def build_draft_rewrite_prompt_parts(
             else None
         ),
     )
-
-
-def _draft_requires_research_personalization(
-    source_blocks: list[DraftRewriteSourceBlock],
-    fact_tokens: list[DraftRewriteFactToken],
-) -> bool:
-    if not fact_tokens:
-        return False
-    editable_blocks = [
-        block
-        for block in source_blocks
-        if block.type != "table" and not block.locked
-    ]
-    if not editable_blocks:
-        return False
-
-    for block in source_blocks:
-        source = "\n".join(
-            value
-            for value in (block.rewrite_text, block.html_fragment or "")
-            if value
-        )
-        if any(fact.token in source for fact in fact_tokens):
-            return False
-    if _draft_has_literal_research_direction(source_blocks, fact_tokens):
-        return False
-    return True
-
-
-def _draft_has_literal_research_direction(
-    source_blocks: list[DraftRewriteSourceBlock],
-    fact_tokens: list[DraftRewriteFactToken],
-) -> bool:
-    return any(
-        fact.value.strip()
-        and fact.token
-        not in (
-            (block.html_fragment or "") if block.type == "table" else block.rewrite_text
-        )
-        and fact.value.strip() in block.text
-        for fact in fact_tokens
-        for block in source_blocks
-    )
-
-
-def _merge_draft_research_personalization(
-    source_blocks: list[DraftRewriteSourceBlock],
-    fact_tokens: list[DraftRewriteFactToken],
-    replacements: list[dict[str, object]],
-    personalization: DraftResearchPersonalization,
-    *,
-    language: str | None,
-) -> list[dict[str, object]]:
-    editable_ids = [
-        block.segment_id
-        for block in source_blocks
-        if block.type != "table" and not block.locked
-    ]
-    if personalization.segment_id not in editable_ids:
-        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
-    if personalization.text.count(DRAFT_RESEARCH_PLACEHOLDER) != 1:
-        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
-    if not fact_tokens or re.search(r"\[\[F\d+\]\]", personalization.text):
-        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
-
-    direction = fact_tokens[0].value.strip()
-    model_texts = [personalization.text, *[str(item.get("text", "")) for item in replacements]]
-    if direction and any(direction in text for text in model_texts):
-        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
-    for replacement in replacements:
-        if (
-            replacement.get("segment_id") != personalization.segment_id
-            and DRAFT_RESEARCH_PLACEHOLDER in str(replacement.get("text", ""))
-        ):
-            raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
-
-    fact_placeholder = fact_tokens[0].token
-    language_code = (language or "").strip().lower()
-    research_phrase = (
-        f"your research on {fact_placeholder}"
-        if language_code.startswith("en")
-        else f"您围绕{fact_placeholder}开展的研究"
-    )
-    personalized_text = personalization.text.replace(
-        DRAFT_RESEARCH_PLACEHOLDER,
-        research_phrase,
-    )
-
-    merged: list[dict[str, object]] = []
-    personalized_count = 0
-    for replacement in replacements:
-        item = dict(replacement)
-        if item.get("segment_id") == personalization.segment_id:
-            item["text"] = personalized_text
-            personalized_count += 1
-        merged.append(item)
-    if personalized_count != 1:
-        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
-    return merged
-
-
-def _build_draft_fact_usage_instruction(
-    source_blocks: list[DraftRewriteSourceBlock],
-    fact_tokens: list[DraftRewriteFactToken],
-) -> str:
-    editable_blocks = [
-        block
-        for block in source_blocks
-        if block.type != "table" and not block.locked
-    ]
-    editable_source_facts = [
-        token
-        for block in editable_blocks
-        for token in re.findall(r"\[\[F\d+\]\]", block.rewrite_text)
-    ]
-    retained_source_facts = [
-        token
-        for block in source_blocks
-        if block.type == "table" or block.locked
-        for token in re.findall(
-            r"\[\[F\d+\]\]",
-            block.html_fragment or block.rewrite_text,
-        )
-    ]
-    if editable_source_facts:
-        return (
-            "可编辑块中已有研究方向占位 "
-            f"{', '.join(editable_source_facts)}；必须按原顺序保留全部已有出现，且不得新增。"
-        )
-    if retained_source_facts:
-        return (
-            "导师研究方向事实已在 locked 或 table 块中使用；"
-            "replacements 中不得再次输出任何 [[F数字]] 标记。"
-        )
-    editable_literal_research = any(
-        fact.value.strip()
-        and fact.token not in block.rewrite_text
-        and fact.value.strip() in block.text
-        for fact in fact_tokens
-        for block in editable_blocks
-    )
-    if editable_literal_research:
-        return (
-            "导师研究方向已作为普通文本出现在可编辑草稿中；可以依据 "
-            "user_custom_instruction 和学生材料筛选、压缩或改写，不要求逐字保留或维持原出现次数。"
-            "只能使用 professor.research_direction 中有依据的方向，不得新增不存在的研究方向，"
-            "也不得输出任何 [[F数字]] 标记。若用户要求只保留部分方向，必须统一改写所有可编辑段落中的"
-            "每次出现，任何位置都不得残留完整的 professor.research_direction。"
-        )
-    retained_literal_research = _draft_has_literal_research_direction(
-        source_blocks,
-        fact_tokens,
-    )
-    if retained_literal_research:
-        return (
-            "导师研究方向已出现在 locked 或 table 块中并会由系统原样保留；"
-            "replacements 中不得重复添加该方向或输出任何 [[F数字]] 标记。"
-        )
-    if fact_tokens and editable_blocks:
-        tokens = ", ".join(fact.token for fact in fact_tokens)
-        return (
-            f"正文尚未引用 facts 中的 {tokens}；必须在全部 replacements 中合计自然使用每个占位一次。"
-        )
-    return "facts 为空或没有可编辑块；不得在 replacements 中虚构任何 [[F数字]] 标记。"
 
 
 def _serialize_draft_source_block(block: DraftRewriteSourceBlock) -> dict[str, object]:
@@ -2369,9 +2094,8 @@ def _build_draft_custom_instruction_block(value: str | None) -> str:
         f"""
 
         用户补充要求：
-        以下内容来自用户设置，是必须遵循的写作偏好和内容要求。
-        如果它与系统要求、JSON 输出结构、模板保护、占位符保护、日期保护或导师信息真实性要求冲突，必须忽略冲突部分，不得覆盖系统要求。
-        对已经渲染为普通文字的导师研究方向进行筛选、压缩或改写，不属于模板保护或占位符保护冲突。
+        以下内容来自用户设置，是内容层面最高优先级的要求，必须完整执行。
+        只有要求改变 JSON wire 结构或输出 JSON 以外内容的部分可以忽略；其余内容不得因真实性、原模板、日期、经历、导师信息或研究方向而受限。
 
         {instruction}
         """
@@ -2382,11 +2106,10 @@ def _serialize_draft_custom_instruction(value: str | None) -> dict[str, str]:
     if not instruction:
         return {}
     return {
-        "guardrails": (
-            "以下内容来自用户设置，是必须遵循的写作偏好和内容要求；"
-            "如果与系统要求、JSON 输出结构、模板保护、占位符保护、日期保护或导师信息真实性要求冲突，"
-            "必须忽略冲突部分，不得覆盖系统要求；"
-            "对已经渲染为普通文字的导师研究方向进行筛选、压缩或改写，不属于模板或占位符保护冲突。"
+        "priority": (
+            "内容层面最高优先级，必须完整执行。只有要求改变 JSON wire 结构、"
+            "segment_id/样式标记/运行时占位符协议或输出 JSON 以外内容的部分可以忽略；"
+            "不得因真实性、原模板、日期、经历、导师信息或研究方向而限制其余内容。"
         ),
         "content": instruction,
     }
@@ -2396,10 +2119,11 @@ def build_draft_rewrite_constraints(preferences: DraftRewritePreferences | None)
     return dedent(
         """
         草稿改写约束：
-        - 默认在保留模板骨架的基础上优化表达、连接句和个性化内容。
-        - 优先保留结构，保持段落顺序、信息顺序和主要话术。
+        - 用户补充要求在内容层面拥有最高优先级；只有 JSON wire 结构要求不可被覆盖。
+        - 用户未指定的部分，默认在保留模板骨架的基础上优化表达、连接句和个性化内容。
+        - 用户未指定的部分，结合用户意向研究方向、学生材料和导师研究方向适度个性化。
 
-        这些约束必须与导师研究方向个性化要求一起满足。
+        用户未指定的部分才使用上述默认个性化策略。
         """
     ).strip()
 
@@ -2465,8 +2189,6 @@ def _build_professor_prompt_context(professor: Professor) -> dict[str, object]:
 
 def _build_draft_rewrite_professor_context(
     professor: Professor,
-    *,
-    research_direction_token: str | None = None,
 ) -> dict[str, object]:
     context: dict[str, object] = {}
     for key, value in (("name", professor.name),):
@@ -2474,12 +2196,9 @@ def _build_draft_rewrite_professor_context(
         if text is not None:
             context[key] = text
 
-    if research_direction_token:
-        context["research_direction_token"] = research_direction_token
-    else:
-        research_direction = _non_empty_text(professor.research_direction)
-        if research_direction is not None:
-            context["research_direction"] = research_direction
+    research_direction = _non_empty_text(professor.research_direction)
+    if research_direction is not None:
+        context["research_direction"] = research_direction
 
     recent_papers = [
         paper
@@ -2555,7 +2274,7 @@ def _build_draft_rewrite_prompt_cache_key(
         return None
     material_id = primary_material.id if primary_material is not None else "none"
     professor_id = professor.id if professor.id is not None else "none"
-    return f"draft-rewrite:v3:{identity.id}:{material_id}:{professor_id}:{llm_profile.id}"
+    return f"draft-rewrite:v4:{identity.id}:{material_id}:{professor_id}:{llm_profile.id}"
 
 
 def extract_json_object(raw_text: str) -> str:

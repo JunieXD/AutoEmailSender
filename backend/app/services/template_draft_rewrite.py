@@ -10,24 +10,15 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from app.services.rich_text import RichTextRenderResult, normalize_email_html
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{[a-zA-Z0-9_]+\}\}")
-PROTECTED_VALUE_PATTERN = re.compile(
-    r"\{\{(?:year|month|day)\}\}|"
-    r"(?<!\d)(?:19|20)\d{2}\s*年(?:\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?)?|"
-    r"(?<!\d)(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?!\d)|"
-    r"(?<!\d)\d{1,2}\s*月\s*\d{1,2}\s*日|"
-    r"(?<!\d)(?:19|20)\d{2}(?:\s*[-–—]\s*(?:(?:19|20)?\d{2}))?(?!\d)|"
-    r"(?<!\d)\d{1,2}:\d{2}(?!\d)",
-)
+# Only unresolved runtime placeholders are structural data. Literal dates, years,
+# times, names, and research directions are ordinary draft text that the user may
+# ask the model to edit.
+PROTECTED_VALUE_PATTERN = PLACEHOLDER_PATTERN
 STYLE_MARKER_PATTERN = re.compile(r"\[\[(/?)S(\d+)\]\]")
 STYLE_REGION_PATTERN = re.compile(r"\[\[S(\d+)\]\](.*?)\[\[/S\1\]\]", re.DOTALL)
 PROTECTED_TOKEN_PATTERN = re.compile(r"\[\[P\d+\]\]")
-FACT_TOKEN_PATTERN = re.compile(r"\[\[F\d+\]\]")
 INVISIBLE_SEGMENT_TEXT_PATTERN = re.compile(
     r"[\s\u00ad\u200b\u200c\u200d\u2060\ufeff]+",
-)
-DRAFT_RESEARCH_PERSONALIZATION_ERROR = (
-    "AI 没有正确将导师研究方向融入草稿。请重新生成；"
-    "若仍失败，请检查该导师的研究方向是否填写完整。"
 )
 
 SEGMENT_TAG_NAMES = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "table"}
@@ -78,13 +69,6 @@ class DraftRewriteProtectedToken:
 
 
 @dataclass(slots=True)
-class DraftRewriteFactToken:
-    token: str
-    value: str
-    description: str
-
-
-@dataclass(slots=True)
 class DraftRewriteSourceBlock:
     segment_id: str
     type: str
@@ -102,23 +86,11 @@ class DraftRewriteDocument:
     html: str
     blocks: list[DraftRewriteSourceBlock]
     protected_tokens: list[DraftRewriteProtectedToken] = field(default_factory=list)
-    fact_tokens: list[DraftRewriteFactToken] = field(default_factory=list)
 
 
 def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRewriteDocument:
     soup = BeautifulSoup(html.strip(), "html.parser")
-    rendered_context = dict(context)
-    fact_tokens: list[DraftRewriteFactToken] = []
-    research_direction = rendered_context.get("research_direction", "").strip()
-    if research_direction:
-        fact_token = DraftRewriteFactToken(
-            token="[[F1]]",
-            value=research_direction,
-            description="导师研究方向；仅在正文尚未包含该信息时由系统安全插入",
-        )
-        fact_tokens.append(fact_token)
-
-    _render_template_text_nodes(soup, rendered_context)
+    _render_template_text_nodes(soup, context)
     blocks: list[DraftRewriteSourceBlock] = []
     protected_tokens: list[DraftRewriteProtectedToken] = []
 
@@ -141,7 +113,6 @@ def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRew
         rewrite_text, plain_text, style_regions, style_spans = _build_rewrite_text(
             element,
             protected_tokens,
-            fact_tokens,
         )
 
         blocks.append(
@@ -156,10 +127,7 @@ def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRew
                 # Rich-text editors preserve visual spacing with blocks such as
                 # <p><br></p>. Keep those blocks in place, but never ask the
                 # model to invent content for them.
-                locked=(
-                    not _has_visible_segment_text(plain_text)
-                    or _should_lock_segment(index, element, plain_text)
-                ),
+                locked=not _has_visible_segment_text(plain_text),
                 html_fragment=html_fragment,
             ),
         )
@@ -168,7 +136,6 @@ def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRew
         html=str(soup),
         blocks=blocks,
         protected_tokens=protected_tokens,
-        fact_tokens=fact_tokens,
     )
 
 
@@ -195,7 +162,6 @@ def _iter_segment_elements(soup: BeautifulSoup) -> list[Tag]:
 def _build_rewrite_text(
     element: Tag,
     protected_tokens: list[DraftRewriteProtectedToken],
-    fact_tokens: list[DraftRewriteFactToken],
 ) -> tuple[str, str, list[DraftRewriteStyleRegion], list[DraftRewriteStyleSpan]]:
     runs: list[tuple[str, str, dict[str, object]]] = []
     for text_node in element.find_all(string=True, recursive=True):
@@ -232,14 +198,14 @@ def _build_rewrite_text(
         if isinstance(marks, list) and marks:
             style_spans.append(
                 DraftRewriteStyleSpan(
-                    text=_restore_fact_tokens(raw_text, fact_tokens),
+                    text=raw_text,
                     marks=[str(mark) for mark in marks],
                 ),
             )
 
     return (
         "".join(parts),
-        _restore_fact_tokens("".join(plain_parts), fact_tokens),
+        "".join(plain_parts),
         style_regions,
         style_spans,
     )
@@ -257,13 +223,6 @@ def _protect_values(
         return token
 
     return PROTECTED_VALUE_PATTERN.sub(replace, text)
-
-
-def _restore_fact_tokens(text: str, fact_tokens: list[DraftRewriteFactToken]) -> str:
-    restored = text
-    for fact in fact_tokens:
-        restored = restored.replace(fact.token, fact.value)
-    return restored
 
 
 def _segment_type(element: Tag) -> str:
@@ -415,20 +374,6 @@ def _resolve_effective_color(text_node: NavigableString, container: Tag) -> str 
             break
     return None
 
-def _should_lock_segment(index: int, element: Tag, text: str) -> bool:
-    if index != 1:
-        return False
-    if element.name not in {"p", "h1", "h2", "h3", "h4", "h5", "h6"}:
-        return False
-    normalized = re.sub(r"\s+", "", text)
-    if len(normalized) > 40:
-        return False
-    return (
-        (normalized.startswith("尊敬的") or normalized.startswith("敬爱的") or normalized.startswith("亲爱的"))
-        and (normalized.endswith("：") or normalized.endswith(":") or normalized.endswith("！") or normalized.endswith("!"))
-    )
-
-
 def _has_visible_segment_text(text: str) -> bool:
     return bool(INVISIBLE_SEGMENT_TEXT_PATTERN.sub("", text))
 
@@ -474,13 +419,12 @@ def apply_draft_rewrite_replacements(
         for block in document.blocks
         if block.type != "table" and not block.locked
     ]
-    validated_replacements = _validate_replacements(
-        document,
-        editable_blocks,
-        replacements,
-    )
+    validated_replacements = _validate_replacements(editable_blocks, replacements)
 
-    for block, replacement in zip(editable_blocks, validated_replacements):
+    for block in editable_blocks:
+        replacement = validated_replacements.get(block.segment_id)
+        if replacement is None:
+            continue
         element = element_map.get(block.segment_id)
         if element is None:
             raise ValueError(f"找不到模板段落: {block.segment_id}")
@@ -504,92 +448,45 @@ def apply_draft_rewrite_replacements(
         if original_root is not None:
             element.replace_with(original_root)
 
-    _restore_document_fact_tokens(soup, document.fact_tokens)
     return normalize_email_html(str(soup))
 
 
 def _validate_replacements(
-    document: DraftRewriteDocument,
     editable_blocks: list[DraftRewriteSourceBlock],
     replacements: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    expected_ids = [block.segment_id for block in editable_blocks]
-    actual_ids: list[str] = []
-    validated: list[dict[str, object]] = []
-    for index, replacement in enumerate(replacements):
-        if not isinstance(replacement, dict):
-            raise ValueError(f"第 {index + 1} 个段落改写不是对象")
-        if set(replacement) != {"segment_id", "text"}:
-            raise ValueError(f"第 {index + 1} 个段落改写字段无效")
+) -> dict[str, dict[str, object]]:
+    block_map = {block.segment_id: block for block in editable_blocks}
+    validated: dict[str, dict[str, object]] = {}
+    for replacement in replacements:
+        if not isinstance(replacement, dict) or set(replacement) != {"segment_id", "text"}:
+            continue
         segment_id = replacement.get("segment_id")
         text = replacement.get("text")
-        if (
-            not isinstance(segment_id, str)
-            or not isinstance(text, str)
-            or not _has_visible_segment_text(text)
-        ):
-            raise ValueError(f"第 {index + 1} 个段落改写内容无效")
-        actual_ids.append(segment_id)
-        validated.append(replacement)
-    if actual_ids != expected_ids:
-        raise ValueError(
-            f"模型返回的段落集合或顺序无效: expected={expected_ids}, actual={actual_ids}",
-        )
+        if not isinstance(segment_id, str) or not isinstance(text, str):
+            continue
+        block = block_map.get(segment_id)
+        if block is None or segment_id in validated:
+            continue
+        if text and not _has_visible_segment_text(text):
+            continue
 
-    expected_protected: list[str] = []
-    actual_protected: list[str] = []
-    expected_facts_from_source: list[str] = []
-    actual_facts: list[str] = []
-    for block, replacement in zip(editable_blocks, validated):
-        text = str(replacement["text"])
         expected_markers = [
             marker
             for region in block.style_regions
             for marker in (("", region.style_id[1:]), ("/", region.style_id[1:]))
         ]
         actual_markers = STYLE_MARKER_PATTERN.findall(text)
-        if actual_markers != expected_markers:
-            raise ValueError(f"样式区域缺失、重复或顺序错误: {block.segment_id}")
-        matches = list(STYLE_REGION_PATTERN.finditer(text))
-        if len(matches) != len(block.style_regions) or any(
-            not _has_visible_segment_text(match.group(2)) for match in matches
+        if text and actual_markers != expected_markers:
+            continue
+        if text:
+            matches = list(STYLE_REGION_PATTERN.finditer(text))
+            if len(matches) != len(block.style_regions):
+                continue
+        if PROTECTED_TOKEN_PATTERN.findall(text) != PROTECTED_TOKEN_PATTERN.findall(
+            block.rewrite_text,
         ):
-            raise ValueError(f"样式区域内容无效: {block.segment_id}")
-        expected_protected.extend(PROTECTED_TOKEN_PATTERN.findall(block.rewrite_text))
-        actual_protected.extend(PROTECTED_TOKEN_PATTERN.findall(text))
-        expected_facts_from_source.extend(FACT_TOKEN_PATTERN.findall(block.rewrite_text))
-        actual_facts.extend(FACT_TOKEN_PATTERN.findall(text))
-
-    if actual_protected != expected_protected:
-        raise ValueError("日期、时间或延迟占位符被修改")
-
-    has_literal_facts = any(
-        fact.value.strip()
-        and fact.token
-        not in (
-            (block.html_fragment or "")
-            if block.type == "table"
-            else block.rewrite_text
-        )
-        and fact.value.strip() in block.text
-        for fact in document.fact_tokens
-        for block in document.blocks
-    )
-
-    retained_source_facts = [
-        token
-        for block in document.blocks
-        if block.type == "table" or block.locked
-        for token in FACT_TOKEN_PATTERN.findall(block.html_fragment or block.rewrite_text)
-    ]
-    if expected_facts_from_source:
-        expected_facts = expected_facts_from_source
-    elif retained_source_facts or has_literal_facts or not editable_blocks:
-        expected_facts = []
-    else:
-        expected_facts = [fact.token for fact in document.fact_tokens]
-    if actual_facts != expected_facts:
-        raise ValueError(DRAFT_RESEARCH_PERSONALIZATION_ERROR)
+            continue
+        validated[segment_id] = replacement
     return validated
 
 
@@ -641,8 +538,6 @@ def _render_text_fragment(
     restored = text
     for token in document.protected_tokens:
         restored = restored.replace(token.token, token.value)
-    for fact in document.fact_tokens:
-        restored = restored.replace(fact.token, fact.value)
     rendered = escape(restored)
     if not rendered:
         return ""
@@ -673,22 +568,6 @@ def _render_text_fragment(
     if isinstance(link_href, str) and link_href:
         rendered = f'<a href="{escape(link_href, quote=True)}">{rendered}</a>'
     return rendered
-
-
-def _restore_document_fact_tokens(
-    soup: BeautifulSoup,
-    facts: list[DraftRewriteFactToken],
-) -> None:
-    if not facts:
-        return
-    for text_node in list(soup.find_all(string=True)):
-        if not isinstance(text_node, NavigableString):
-            continue
-        restored = str(text_node)
-        for fact in facts:
-            restored = restored.replace(fact.token, fact.value)
-        if restored != str(text_node):
-            text_node.replace_with(restored)
 
 
 def _render_template_text_nodes(soup: BeautifulSoup, context: dict[str, str]) -> None:
