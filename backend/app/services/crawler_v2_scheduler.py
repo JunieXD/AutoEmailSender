@@ -18,6 +18,7 @@ from app.models import (
     CrawlJobStatus,
     CrawlPageChunk,
     CrawlPageChunkStatus,
+    CrawlPageFetchState,
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
@@ -29,6 +30,7 @@ from app.services.llm_runtime import format_llm_runtime_error_for_user
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
+ZERO_CANDIDATE_BROWSER_RETRY_REASON = "zero_candidates_force_browser"
 
 
 async def ensure_job_active(session: AsyncSession, job_id: int) -> bool:
@@ -106,6 +108,8 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
         has_candidates = await _job_has_candidates(session, job_id=job.id)
         error_message = None
         if not has_candidates:
+            if await _requeue_direct_entry_pages_for_browser_retry(session, job=job):
+                continue
             final_status = CrawlJobStatus.FAILED.value
             error_message = await _job_terminal_failure_message(session, job_id=job.id) or "抓取未发现候选导师"
         else:
@@ -417,6 +421,49 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
 async def _job_has_candidates(session: AsyncSession, *, job_id: int) -> bool:
     candidate = await session.scalar(select(CrawlCandidate.id).where(CrawlCandidate.job_id == job_id).limit(1))
     return candidate is not None
+
+
+async def _requeue_direct_entry_pages_for_browser_retry(
+    session: AsyncSession,
+    *,
+    job: CrawlJob,
+) -> bool:
+    if job.entry_type != "list":
+        return False
+
+    tasks = list(
+        await session.scalars(
+            select(CrawlPageTask).where(
+                CrawlPageTask.job_id == job.id,
+                CrawlPageTask.parent_url.is_(None),
+                CrawlPageTask.depth == 0,
+                CrawlPageTask.status == CrawlPageTaskStatus.SUCCEEDED.value,
+                CrawlPageTask.fetch_mode == "direct",
+                CrawlPageTask.browser_status.is_(None),
+            )
+        )
+    )
+    requeued = False
+    for task in tasks:
+        state = await session.scalar(
+            select(CrawlPageFetchState).where(
+                CrawlPageFetchState.job_id == job.id,
+                CrawlPageFetchState.normalized_url == task.normalized_url,
+            )
+        )
+        if state is not None and (
+            state.fetch_mode == "browser" or state.browser_status is not None
+        ):
+            continue
+        task.status = CrawlPageTaskStatus.PENDING.value
+        task.worker_id = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        task.allow_expansion = None
+        task.last_error = None
+        task.fallback_reason = ZERO_CANDIDATE_BROWSER_RETRY_REASON
+        requeued = True
+    return requeued
 
 
 async def _append_enrichment_completion_event_if_needed(

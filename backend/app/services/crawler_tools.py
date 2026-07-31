@@ -73,6 +73,44 @@ DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
     "_wp3services/generalquery?queryobj=articles",
     "queryobj=articles",
 )
+_DYNAMIC_COLLECTION_TOKENS = {
+    "cards",
+    "grid",
+    "items",
+    "list",
+    "results",
+    "rows",
+}
+_DYNAMIC_MAIN_CONTENT_TOKENS = {
+    "article",
+    "container",
+    "content",
+    "detail",
+    "main",
+    "news",
+    "result",
+    "results",
+}
+_DYNAMIC_NON_CONTENT_TOKENS = {
+    "aside",
+    "banner",
+    "breadcrumb",
+    "carousel",
+    "dots",
+    "footer",
+    "header",
+    "menu",
+    "nav",
+    "navi",
+    "pager",
+    "pagination",
+    "search",
+    "share",
+    "slider",
+    "social",
+    "swiper",
+    "tabs",
+}
 JS_RENDER_TIMEOUT_MS = 30000
 BROWSER_WAIT_TIMEOUT_MS = 15000
 BROWSER_DELAY_SECONDS = 1.5
@@ -1436,6 +1474,8 @@ async def browser_investigate(
     url: str,
     goal: str,
     intent: CrawlPageIntent = "generic",
+    *,
+    force_fetch: bool = False,
 ) -> PageSnapshot:
     await _ensure_crawl_job_can_continue_for_context(ctx)
     absolute_url = urljoin(ctx.start_url, url)
@@ -1445,16 +1485,17 @@ async def browser_investigate(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return denied_snapshot
 
-    cached = ctx.get_cached_page_snapshot(absolute_url)
-    if cached is not None:
-        await _ensure_crawl_job_can_continue_for_context(ctx)
-        return cached
+    if not force_fetch:
+        cached = ctx.get_cached_page_snapshot(absolute_url)
+        if cached is not None:
+            await _ensure_crawl_job_can_continue_for_context(ctx)
+            return cached
 
-    decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
-    decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
-    if decision_snapshot is not None:
-        await _ensure_crawl_job_can_continue_for_context(ctx)
-        return decision_snapshot
+        decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
+        decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
+        if decision_snapshot is not None:
+            await _ensure_crawl_job_can_continue_for_context(ctx)
+            return decision_snapshot
 
     if _has_unsafe_public_crawl_url(ctx.start_url, absolute_url):
         snapshot = _failed_snapshot(
@@ -1588,16 +1629,58 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
     if not html:
         return False
     lowered = html.lower()
-    if "teacher" not in lowered or "type_info" not in lowered:
-        return False
-    if not any(marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS):
-        return False
-
     soup = BeautifulSoup(html, "html.parser")
-    containers = soup.select(".teachers-list .type_info, .teacher_list .type_info, .type_info")
-    if not containers:
-        return False
-    return not any(container.get_text(" ", strip=True) or container.find("a", href=True) for container in containers)
+    if any(marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS):
+        legacy_containers = soup.select(".type_info")
+        if legacy_containers and not any(
+            container.get_text(" ", strip=True) or container.find("a", href=True)
+            for container in legacy_containers
+        ):
+            return True
+
+    for container in soup.select("ul, ol, tbody"):
+        if container.get_text(" ", strip=True):
+            continue
+        if container.find("a", href=True) or container.find("img", src=True):
+            continue
+        if container.has_attr("hidden") or str(container.get("aria-hidden") or "").lower() == "true":
+            continue
+
+        container_tokens = _html_structure_tokens(container)
+        if container.name != "tbody" and not container_tokens.intersection(_DYNAMIC_COLLECTION_TOKENS):
+            continue
+
+        ancestors = list(container.parents)
+        context_tokens = set().union(*(_html_structure_tokens(parent) for parent in ancestors))
+        if container_tokens.intersection(_DYNAMIC_NON_CONTENT_TOKENS):
+            continue
+        if context_tokens.intersection(_DYNAMIC_NON_CONTENT_TOKENS):
+            continue
+        if any(getattr(parent, "name", None) in {"header", "footer", "nav", "aside"} for parent in ancestors):
+            continue
+        if not (
+            any(getattr(parent, "name", None) == "main" for parent in ancestors)
+            or context_tokens.intersection(_DYNAMIC_MAIN_CONTENT_TOKENS)
+        ):
+            continue
+        return True
+    return False
+
+
+def _html_structure_tokens(element: Any) -> set[str]:
+    if not hasattr(element, "get"):
+        return set()
+    values = [str(element.get("id") or "")]
+    classes = element.get("class") or []
+    if isinstance(classes, str):
+        values.append(classes)
+    else:
+        values.extend(str(item) for item in classes)
+    return {
+        token
+        for token in re.split(r"[^a-z0-9]+", " ".join(values).lower())
+        if token
+    }
 
 
 def _is_http_blocked_snapshot(snapshot: PageSnapshot) -> bool:

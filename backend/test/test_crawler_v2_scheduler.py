@@ -21,10 +21,16 @@ from app.models import (
     CrawlPageTaskStatus,
     CrawlPageChunk,
     CrawlPageChunkStatus,
+    CrawlPageFetchState,
 )
 from app.services.crawler_v2_models import CrawlerV2WorkKind, CrawlerV2WorkerConfig
 from test.schema_database import create_schema_sqlite_database
-from app.services.crawler_v2_scheduler import claim_next_v2_work, ensure_job_active, run_crawler_v2_scheduler_once
+from app.services.crawler_v2_scheduler import (
+    ZERO_CANDIDATE_BROWSER_RETRY_REASON,
+    claim_next_v2_work,
+    ensure_job_active,
+    run_crawler_v2_scheduler_once,
+)
 
 
 class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
@@ -194,6 +200,123 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             assert job is not None
             self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
             self.assertEqual(job.error_message, "抓取未发现候选导师")
+
+    async def test_scheduler_requeues_direct_list_entry_once_when_no_candidates(self) -> None:
+        job_id = await self._create_job()
+        url = "https://example.edu"
+        async with self.session_factory() as session:
+            session.add_all(
+                [
+                    CrawlPageTask(
+                        job_id=job_id,
+                        normalized_url=url,
+                        original_url=url,
+                        parent_url=None,
+                        discovery_reason="start",
+                        expansion_mode="entry",
+                        allow_expansion=False,
+                        depth=0,
+                        status=CrawlPageTaskStatus.SUCCEEDED.value,
+                        fetch_mode="direct",
+                        direct_status="succeeded",
+                    ),
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url=url,
+                        original_url=url,
+                        status="processed",
+                        fetch_mode="direct",
+                        direct_status="succeeded",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        processed = await run_crawler_v2_scheduler_once(
+            self.session_factory,
+            worker_id="scheduler",
+        )
+
+        self.assertEqual(processed, 0)
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            task = await session.scalar(
+                select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+            )
+        assert job is not None and task is not None
+        self.assertEqual(job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
+        self.assertEqual(task.fallback_reason, ZERO_CANDIDATE_BROWSER_RETRY_REASON)
+        self.assertIsNone(task.allow_expansion)
+
+    async def test_scheduler_does_not_requeue_entry_after_browser_was_attempted(self) -> None:
+        job_id = await self._create_job()
+        url = "https://example.edu"
+        async with self.session_factory() as session:
+            session.add_all(
+                [
+                    CrawlPageTask(
+                        job_id=job_id,
+                        normalized_url=url,
+                        original_url=url,
+                        parent_url=None,
+                        depth=0,
+                        status=CrawlPageTaskStatus.SUCCEEDED.value,
+                        fetch_mode="direct",
+                        direct_status="succeeded",
+                        browser_status="failed",
+                    ),
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url=url,
+                        original_url=url,
+                        status="processed",
+                        fetch_mode="direct",
+                        direct_status="succeeded",
+                        browser_status="failed",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            task = await session.scalar(
+                select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+            )
+        assert job is not None and task is not None
+        self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+
+    async def test_scheduler_does_not_requeue_profile_entry_for_zero_candidates(self) -> None:
+        job_id = await self._create_job(entry_type="profile")
+        async with self.session_factory() as session:
+            session.add(
+                CrawlPageTask(
+                    job_id=job_id,
+                    normalized_url="https://example.edu",
+                    original_url="https://example.edu",
+                    parent_url=None,
+                    depth=0,
+                    status=CrawlPageTaskStatus.SUCCEEDED.value,
+                    fetch_mode="direct",
+                    direct_status="succeeded",
+                )
+            )
+            await session.commit()
+
+        await run_crawler_v2_scheduler_once(self.session_factory, worker_id="scheduler")
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            task = await session.scalar(
+                select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+            )
+        assert job is not None and task is not None
+        self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
 
     async def test_scheduler_marks_job_needs_review_when_candidates_exist_and_no_work_remains(self) -> None:
         job_id = await self._create_job()

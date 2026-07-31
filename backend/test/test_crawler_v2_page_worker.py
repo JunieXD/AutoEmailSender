@@ -23,6 +23,7 @@ from app.services.crawler_v2_routing import (
     PageRouteControl,
     V2PageRoutingResult,
 )
+from app.services.crawler_v2_scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON
 
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -1015,6 +1016,71 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(pages), 0)
         self.assertEqual(len(chunks), 0)
 
+    async def test_zero_candidate_retry_forces_browser_and_bypasses_page_ledger(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        url = "https://example.edu/faculty"
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            assert task is not None
+            task.fetch_mode = "direct"
+            task.direct_status = "succeeded"
+            task.fallback_reason = ZERO_CANDIDATE_BROWSER_RETRY_REASON
+            task.browser_status = None
+            task.allow_expansion = None
+            session.add(
+                CrawlPageFetchState(
+                    job_id=job_id,
+                    normalized_url=url,
+                    original_url=url,
+                    status=CrawlPageFetchStatus.PROCESSED.value,
+                    fetch_mode="direct",
+                    direct_status="succeeded",
+                )
+            )
+            await session.commit()
+        browser = PageSnapshot(
+            url=url,
+            text="张三",
+            html="<a href='/zhang'>张三</a>",
+            links=["https://example.edu/zhang"],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.services.crawler_v2_page_worker.fetch_page_direct",
+            new=AsyncMock(),
+        ) as direct_mock, patch(
+            "app.services.crawler_v2_page_worker.fetch_page_browser",
+            new=AsyncMock(return_value=browser),
+        ) as browser_mock:
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        direct_mock.assert_not_awaited()
+        browser_mock.assert_awaited_once_with(
+            unittest.mock.ANY,
+            url,
+            intent="generic",
+            force_fetch=True,
+        )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            chunks = list(
+                await session.scalars(
+                    select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)
+                )
+            )
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertEqual(task.fetch_mode, "browser")
+        self.assertEqual(task.browser_status, "succeeded")
+        self.assertTrue(chunks)
+
     async def test_page_worker_does_not_write_after_lease_expires(self) -> None:
         job_id, task_id = await self._seed_page_task()
         expired = datetime.now(UTC) - timedelta(seconds=1)
@@ -1082,6 +1148,36 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(browser_result.fetch_method, "browser")
         http_mock.assert_awaited_once()
         browser_mock.assert_awaited_once()
+
+    async def test_fetch_page_browser_can_force_underlying_fetch(self) -> None:
+        ctx = object()
+        browser_snapshot = PageSnapshot(
+            url="https://example.edu",
+            text="browser",
+            html="",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.services.crawler_v2_page_worker.browser_investigate",
+            new=AsyncMock(return_value=browser_snapshot),
+        ) as browser_mock:
+            result = await fetch_page_browser(
+                ctx,
+                "https://example.edu",
+                force_fetch=True,
+            )
+
+        self.assertEqual(result.fetch_method, "browser")
+        browser_mock.assert_awaited_once_with(
+            ctx,
+            "https://example.edu",
+            goal="",
+            intent="generic",
+            force_fetch=True,
+        )
 
     async def test_page_worker_ignores_snapshot_links_after_chunks_are_created(self) -> None:
         job_id, task_id = await self._seed_page_task()

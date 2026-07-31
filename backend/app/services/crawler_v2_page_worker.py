@@ -36,7 +36,7 @@ from app.services.crawler_v2_routing import (
 )
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
-from app.services.crawler_v2_scheduler import ensure_job_active
+from app.services.crawler_v2_scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON, ensure_job_active
 from app.services.crawler_v2_url_utils import has_spa_route_fragment
 from app.services.llm_runtime import ensure_llm_runtime_adaptation, format_llm_runtime_error_for_user
 
@@ -56,7 +56,11 @@ async def run_crawler_v2_page_worker_once(
         job = await session.get(CrawlJob, task.job_id)
         if job is None or not await ensure_job_active(session, task.job_id):
             return 0
-        if await _skip_page_task_from_ledger(session, task):
+        force_browser = (
+            task.fallback_reason == ZERO_CANDIDATE_BROWSER_RETRY_REASON
+            and task.browser_status is None
+        )
+        if not force_browser and await _skip_page_task_from_ledger(session, task):
             await session.commit()
             return 1
         target_url = task.original_url
@@ -77,7 +81,19 @@ async def run_crawler_v2_page_worker_once(
         )
 
     try:
-        if has_spa_route_fragment(target_url):
+        if force_browser:
+            direct_status = "skipped_for_zero_candidate_retry"
+            fallback_reason = ZERO_CANDIDATE_BROWSER_RETRY_REASON
+            browser_snapshot = await fetch_page_browser(
+                ctx,
+                target_url,
+                intent=fetch_intent,
+                force_fetch=True,
+            )
+            browser_status = browser_snapshot.status
+            snapshot = browser_snapshot
+            fetch_mode = "browser"
+        elif has_spa_route_fragment(target_url):
             direct_status = "skipped_for_spa_route"
             fallback_reason = "spa_route_requires_browser"
             browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
@@ -121,7 +137,14 @@ async def run_crawler_v2_page_worker_once(
                 browser_status=browser_status,
             )
             if snapshot.status != "succeeded":
-                _mark_page_failed(task, snapshot.error_message or "页面抓取失败")
+                if force_browser:
+                    task.status = CrawlPageTaskStatus.FAILED_TERMINAL.value
+                    task.last_error = snapshot.error_message or "浏览器兜底抓取失败"
+                    task.worker_id = None
+                    task.claimed_at = None
+                    task.lease_expires_at = None
+                else:
+                    _mark_page_failed(task, snapshot.error_message or "页面抓取失败")
             await session.commit()
         append_crawler_v2_debug_event(
             job.id,
@@ -324,7 +347,21 @@ async def fetch_page_direct(ctx: CrawlToolContext, url: str) -> PageSnapshot:
     return await crawl_page_with_http(ctx, url)
 
 
-async def fetch_page_browser(ctx: CrawlToolContext, url: str, *, intent: str = "generic") -> PageSnapshot:
+async def fetch_page_browser(
+    ctx: CrawlToolContext,
+    url: str,
+    *,
+    intent: str = "generic",
+    force_fetch: bool = False,
+) -> PageSnapshot:
+    if force_fetch:
+        return await browser_investigate(
+            ctx,
+            url,
+            goal="",
+            intent=intent,
+            force_fetch=True,
+        )
     return await browser_investigate(ctx, url, goal="", intent=intent)
 
 

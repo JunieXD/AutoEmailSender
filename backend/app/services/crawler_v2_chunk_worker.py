@@ -82,7 +82,7 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "只输出一个 JSON 对象，字段为 candidate_count、candidates。不要输出解释文字，也不能输出 chunk_status 或任何 URL 扩展决策。\n"
         "候选必须来自当前 chunk 内的明确证据，不能猜测，不能翻译、音译或拼音化页面原文。\n"
         "候选判定优先级：当前 chunk 中 Markdown 链接形如 [姓名](http/https URL)，且周围内容明确表示某一人员的详情或资料时，这就是明确的姓名 + profile_url 候选证据；不得仅因 URL 路径、文件名或参数看起来普通而排除。\n"
-        "candidates 中的 name 必须逐字复制当前 chunk 对应人员的可见姓名文字，保留原有括号、空格和后缀，不要自行整理。\n"
+        "candidates 中的 name 只填写这个人的姓名本身。链接文字可能把姓名与职称、岗位或介绍连在一起；这些内容不能写进 name。\n"
         "即使没有 email、title、department、research_direction，只要有姓名 + profile_url，也必须视为候选，不是 no_candidates。\n"
         "candidate_count 必须是非负整数，禁止浮点数、字符串和布尔值。\n"
         "candidate_count 是当前 chunk 内明确候选的总数。candidate_count 为 0 时 candidates 必须为空；1 到 10 时 candidates 数组长度必须与 candidate_count 相等；candidate_count 必须为 11 或更大时 candidates 必须为空。\n"

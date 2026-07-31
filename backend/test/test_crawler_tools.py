@@ -1208,6 +1208,54 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
+    def test_dynamic_directory_detection_recognizes_empty_main_content_list(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://ioip.nankai.edu.cn/qtjs/list.htm",
+            title="全体教师",
+            text="页面导航和栏目标题仍然存在",
+            html="""
+            <html><body class="list">
+              <div id="l-container" class="wrapper">
+                <div class="col_news_con" id="zxj">
+                  <div class="col_news_list listcon">
+                    <ul class="news_list list2 clearfix"></ul>
+                  </div>
+                </div>
+              </div>
+            </body></html>
+            """,
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        self.assertTrue(
+            crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
+        )
+
+    def test_dynamic_directory_detection_ignores_decorative_empty_lists(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://example.edu/page",
+            title="普通内容页",
+            text="普通内容",
+            html="""
+            <html><body>
+              <main id="content">
+                <p>普通内容</p>
+                <div class="carousel slider"><ul class="dots-list"></ul></div>
+              </main>
+              <nav><ul class="menu-list"></ul></nav>
+            </body></html>
+            """,
+            links=[],
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        self.assertFalse(
+            crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
+        )
+
     async def test_crawl_page_with_browser_fallback_retries_browser_for_site_error_page(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
@@ -2734,6 +2782,57 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(snapshot, browser_snapshot)
         self.assertEqual(browser_path.call_count, 1)
+
+    async def test_browser_investigate_force_fetch_bypasses_processed_ledger(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            url = "https://cs.example.edu/faculty"
+            async with harness.session_factory() as session:
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url=url,
+                        original_url=url,
+                        status="processed",
+                        fetch_mode="direct",
+                        direct_status="succeeded",
+                    )
+                )
+                await session.commit()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            browser_snapshot = PageSnapshot(
+                url=url,
+                text="张三",
+                html="<html><body>张三</body></html>",
+                fetch_method="browser",
+                status="succeeded",
+            )
+
+            with patch(
+                "app.services.crawler_tools._crawl_page_with_browser",
+                new=AsyncMock(return_value=browser_snapshot),
+            ) as browser_path, patch(
+                "app.services.crawler_tools._has_unsafe_public_crawl_url",
+                return_value=False,
+            ), patch(
+                "app.services.crawler_tools.is_allowed_crawl_url",
+                return_value=True,
+            ):
+                snapshot = await crawler_tools.browser_investigate(
+                    ctx,
+                    url,
+                    goal="",
+                    force_fetch=True,
+                )
+
+        self.assertEqual(snapshot.fetch_method, "browser")
+        browser_path.assert_awaited_once()
 
     async def test_browser_investigate_skips_previously_denied_url(self) -> None:
         ctx = CrawlToolContext(
