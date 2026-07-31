@@ -1,6 +1,6 @@
-# 用 Codex 或 Claude Code 从导师官网生成导入表
+# 导师抓取 Skill：用 Codex 或 Claude Code 从导师官网生成导入表
 
-`crawl-mentors-to-xlsx` Skill 可以读取学校、学院、系所或实验室官网中的公开导师信息，核对个人主页和邮箱证据，并生成可直接导入 Auto Email Sender 的 XLSX。
+导师抓取 Skill（`crawl-mentors-to-xlsx`）可以读取学校、学院、系所或实验室官网中的公开导师信息，核对个人主页和邮箱证据，并生成可直接导入 Auto Email Sender 的 XLSX。
 
 你不需要下载 Auto Email Sender 源码，也不需要自己写爬虫。安装一次后，这个 Skill 可以在这台电脑上的其他本地项目中继续使用。
 
@@ -34,7 +34,7 @@ Claude Code 会请求联网和写入 `~/.claude/skills` 的权限。确认后等
 
 ## 手动安装 Release ZIP
 
-如果不想让代理联网安装，可以直接下载 Release 附带的 Skill ZIP。支持此功能的版本会提供以下附件；如果当前最新版本还没有该文件，说明它发布于这项功能上线之前，请暂时使用上面的代理安装方式。
+如果不想让 Agent 联网安装，可以直接下载 Release 附带的 Skill ZIP。支持此功能的版本会提供以下附件；如果当前最新版本还没有该文件，说明它发布于这项功能上线之前，请暂时使用上面的 Agent 安装方式。
 
 1. 打开 [Auto Email Sender Releases](https://github.com/JunieXD/AutoEmailSender/releases)，进入最新版本。
 2. 在版本附件中下载 `crawl-mentors-to-xlsx-vX.Y.Z.zip`。文件名中的版本号会与该 Release 相同。
@@ -123,6 +123,6 @@ SKILL.md、scripts、references 和 assets 都存在。
 
 Skill 只有在生成器和独立校验器都成功后才会交付文件。校验会检查表头、活动工作表、字段长度、邮箱、职称、分隔符、重复邮箱、公式和错误值，并报告可导入人数、待复核人数、主要来源与未解决问题。
 
-如果网站依赖复杂的客户端渲染、拒绝访问或没有公开邮箱，结果人数可能少于官网显示人数。此时应查看 `Needs Review` 和 `Sources`，不要让代理猜测缺失字段。
+如果网站依赖复杂的客户端渲染、拒绝访问或没有公开邮箱，结果人数可能少于官网显示人数。此时应查看 `Needs Review` 和 `Sources`，不要让 Agent 猜测缺失字段。
 
 参考：[Codex 官方 Skill 文档](https://learn.chatgpt.com/docs/build-skills) · [Claude Code 官方 Skill 文档](https://code.claude.com/docs/en/skills)
