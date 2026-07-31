@@ -22,6 +22,9 @@ STYLE_MARKER_PATTERN = re.compile(r"\[\[(/?)S(\d+)\]\]")
 STYLE_REGION_PATTERN = re.compile(r"\[\[S(\d+)\]\](.*?)\[\[/S\1\]\]", re.DOTALL)
 PROTECTED_TOKEN_PATTERN = re.compile(r"\[\[P\d+\]\]")
 FACT_TOKEN_PATTERN = re.compile(r"\[\[F\d+\]\]")
+INVISIBLE_SEGMENT_TEXT_PATTERN = re.compile(
+    r"[\s\u00ad\u200b\u200c\u200d\u2060\ufeff]+",
+)
 DRAFT_RESEARCH_PERSONALIZATION_ERROR = (
     "AI 没有正确将导师研究方向融入草稿。请重新生成；"
     "若仍失败，请检查该导师的研究方向是否填写完整。"
@@ -151,7 +154,13 @@ def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRew
                 style_spans=style_spans,
                 style_regions=style_regions,
                 base_inline_style=_select_base_inline_style(element),
-                locked=_should_lock_segment(index, element, plain_text),
+                # Rich-text editors preserve visual spacing with blocks such as
+                # <p><br></p>. Keep those blocks in place, but never ask the
+                # model to invent content for them.
+                locked=(
+                    not _has_visible_segment_text(plain_text)
+                    or _should_lock_segment(index, element, plain_text)
+                ),
                 html_fragment=html_fragment,
             ),
         )
@@ -421,6 +430,10 @@ def _should_lock_segment(index: int, element: Tag, text: str) -> bool:
     )
 
 
+def _has_visible_segment_text(text: str) -> bool:
+    return bool(INVISIBLE_SEGMENT_TEXT_PATTERN.sub("", text))
+
+
 def select_dominant_font_and_size(html: str) -> DraftRewriteFontStyle:
     soup = BeautifulSoup(html.strip(), "html.parser")
     counts: dict[tuple[str | None, str | None], int] = {}
@@ -511,7 +524,11 @@ def _validate_replacements(
             raise ValueError(f"第 {index + 1} 个段落改写字段无效")
         segment_id = replacement.get("segment_id")
         text = replacement.get("text")
-        if not isinstance(segment_id, str) or not isinstance(text, str) or not text.strip():
+        if (
+            not isinstance(segment_id, str)
+            or not isinstance(text, str)
+            or not _has_visible_segment_text(text)
+        ):
             raise ValueError(f"第 {index + 1} 个段落改写内容无效")
         actual_ids.append(segment_id)
         validated.append(replacement)
@@ -536,7 +553,7 @@ def _validate_replacements(
             raise ValueError(f"样式区域缺失、重复或顺序错误: {block.segment_id}")
         matches = list(STYLE_REGION_PATTERN.finditer(text))
         if len(matches) != len(block.style_regions) or any(
-            not match.group(2).strip() for match in matches
+            not _has_visible_segment_text(match.group(2)) for match in matches
         ):
             raise ValueError(f"样式区域内容无效: {block.segment_id}")
         expected_protected.extend(PROTECTED_TOKEN_PATTERN.findall(block.rewrite_text))

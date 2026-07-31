@@ -542,6 +542,99 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Information Extraction", result.result.body_html)
         self.assertNotIn("{{research_direction}}", result.result.body_html)
 
+    async def test_generate_draft_content_preserves_empty_blocks_without_replacements(self) -> None:
+        from app.models import IdentityMaterial, IdentityProfile, Professor
+
+        identity = IdentityProfile(
+            id=3,
+            name="张三",
+            email_address="sender@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_username="sender@example.com",
+            smtp_password="secret",
+            default_language="zh-CN",
+            outreach_generation_mode="llm",
+        )
+        primary_material = IdentityMaterial(
+            id=7,
+            identity_id=3,
+            display_name="简历",
+            file_path="data/materials/resume.txt",
+            original_filename="resume.txt",
+            material_type="resume",
+            extracted_text="我做过信息抽取项目。",
+        )
+        profile = LLMProfile(
+            id=5,
+            name="openai",
+            provider="openai",
+            api_base_url=None,
+            api_key="test-key",
+            model_name="gpt-test",
+        )
+        professor = Professor(
+            name="李老师",
+            email="prof@example.edu",
+            research_direction="Information Extraction",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"replacements":['
+                                    '{"segment_id":"seg_2","text":'
+                                    '"我关注您的[[F1]]研究。"},'
+                                    '{"segment_id":"seg_4","text":"感谢您阅读。"}'
+                                    "]}"
+                                ),
+                            },
+                        },
+                    ],
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            result = await generate_draft_content(
+                identity=identity,
+                primary_material=primary_material,
+                llm_profile=profile,
+                professor=professor,
+                available_materials=[primary_material],
+                custom_subject="申请交流",
+                custom_body=(
+                    "尊敬的李老师教授：\n"
+                    "我关注您的 Information Extraction 研究。\n"
+                    "感谢您阅读。"
+                ),
+                custom_body_html=(
+                    "<p>尊敬的{{name}}教授：</p>"
+                    "<p>我关注您的{{research_direction}}研究。</p>"
+                    "<p><br></p>"
+                    "<p>感谢您阅读。</p>"
+                ),
+            )
+
+        prompt_payload = json.loads(calls[0][1]["messages"][1]["content"])
+        empty_block = next(
+            block
+            for block in prompt_payload["input"]["source_blocks"]
+            if block["segment_id"] == "seg_3"
+        )
+        self.assertTrue(empty_block["locked"])
+        self.assertEqual(empty_block["text"], "")
+        self.assertIn("<p><br/></p>", result.result.body_html)
+        self.assertIn("Information Extraction", result.result.body_text)
+
     async def test_generate_draft_content_converts_text_template_to_runs(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 

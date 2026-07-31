@@ -121,6 +121,55 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertTrue(document.blocks[0].locked)
         self.assertFalse(document.blocks[1].locked)
 
+    def test_build_draft_rewrite_document_locks_visually_empty_blocks(self) -> None:
+        document = build_draft_rewrite_document(
+            (
+                "<p>正文。</p>"
+                "<p><br></p>"
+                "<p>&nbsp;</p>"
+                "<h2>\u200b</h2>"
+                '<ul><li><span style="font-size:12pt"><br></span></li><li>有效列表项。</li></ul>'
+            ),
+            {},
+        )
+
+        self.assertEqual(
+            [block.locked for block in document.blocks],
+            [False, True, True, True, True, False],
+        )
+
+    def test_apply_replacements_preserves_seventeenth_visually_empty_block(self) -> None:
+        html = "".join(
+            [
+                "<p>尊敬的李老师：</p>",
+                *(f"<p>第 {index} 个正文段落。</p>" for index in range(1, 17)),
+                "<p><br></p>",
+                "<p>结尾段落。</p>",
+            ]
+        )
+        document = build_draft_rewrite_document(html, {})
+        editable_blocks = [
+            block
+            for block in document.blocks
+            if block.type != "table" and not block.locked
+        ]
+
+        self.assertEqual(document.blocks[17].segment_id, "seg_18")
+        self.assertEqual(document.blocks[17].text, "")
+        self.assertTrue(document.blocks[17].locked)
+        self.assertNotIn("seg_18", [block.segment_id for block in editable_blocks])
+
+        result = apply_draft_rewrite_replacements(
+            document,
+            [
+                {"segment_id": block.segment_id, "text": block.rewrite_text}
+                for block in editable_blocks
+            ],
+        )
+
+        self.assertIn("<p><br/></p>", result.html)
+        self.assertIn("结尾段落。", result.text)
+
     def test_build_draft_rewrite_document_preserves_send_date_tokens(self) -> None:
         identity = IdentityProfile(
             id=1,
@@ -367,6 +416,15 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             apply_draft_rewrite_replacements(
                 document,
                 [{"segment_id": "seg_1", "text": "普通文本重点，关注[[F1]]。"}],
+            )
+
+    def test_apply_replacements_rejects_invisible_only_text(self) -> None:
+        document = build_draft_rewrite_document("<p>普通正文。</p>", {})
+
+        with self.assertRaisesRegex(ValueError, "第 1 个段落改写内容无效"):
+            apply_draft_rewrite_replacements(
+                document,
+                [{"segment_id": "seg_1", "text": "\u200b\u2060"}],
             )
 
     def test_apply_replacements_does_not_duplicate_fact_already_in_table(self) -> None:
