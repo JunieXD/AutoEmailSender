@@ -102,6 +102,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("只有当前页没有直接人员名单", entry_prompt)
         self.assertIn("只负责当前页面的分页保险丝", pagination_prompt)
         self.assertIn("同一份人员名单", pagination_prompt)
+        self.assertIn("当前页面自身或只跳到当前页某个位置", pagination_prompt)
         self.assertIn("只执行页面脚本或提交表单", pagination_prompt)
         self.assertIn("绝不能根据它们拼接", pagination_prompt)
         self.assertIn('"discovered_urls":[]', entry_prompt)
