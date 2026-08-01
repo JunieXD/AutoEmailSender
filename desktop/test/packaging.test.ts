@@ -130,6 +130,7 @@ describe("macOS desktop packaging", () => {
 
     expect(config).toContain("SUFeedURL:");
     expect(config).toContain("afterPack: ../scripts/configure-sparkle-info.mjs");
+    expect(config).toContain("afterSign: ../scripts/sanitize-macos-bundle.mjs");
     expect(config).toContain("SUEnableAutomaticChecks: true");
     expect(config).toContain("SUAllowsAutomaticUpdates: false");
     expect(config).toContain("SURequireSignedFeed: true");
@@ -140,6 +141,10 @@ describe("macOS desktop packaging", () => {
     expect(hook).toContain("process.env.SPARKLE_PUBLIC_ED_KEY");
     expect(hook).toContain('decoded.length !== 32');
     expect(hook).toContain('"-insert", "SUPublicEDKey"');
+    const sanitizer = readFileSync(path.resolve("..", "scripts", "sanitize-macos-bundle.mjs"), "utf8");
+    expect(sanitizer).toContain('"-cr", appPath');
+    expect(sanitizer).toContain('"-r", appPath');
+    expect(sanitizer).toContain('"--verify", "--deep", "--strict", appPath');
     const setupScript = readFileSync(path.resolve("..", "scripts", "setup-sparkle.sh"), "utf8");
     expect(setupScript).toContain('sparkle_version="2.9.4"');
     expect(setupScript).toContain("ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9");

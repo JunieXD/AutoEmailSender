@@ -51,6 +51,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - Confirm `gh` is authenticated to `JunieXD/AutoEmailSender` and that `gh secret list` contains both `SPARKLE_PUBLIC_ED_KEY` and `SPARKLE_ED_PRIVATE_KEY`. Check names only; never attempt to read, print, or reconstruct secret values.
 - Do not regenerate or rotate the Sparkle keys during a normal release. Do not copy the private key into the repository, command arguments, workflow files, or logs.
 - The GitHub Actions workflow owns Sparkle download preparation, signing, appcast generation, delta generation, and publication. Do not create an alternate manual publishing path.
+- Confirm the macOS package retains the post-sign bundle cleanup and signature verification described in `docs/sparkle-release-operations.md`, so the release can form a clean baseline for future deltas.
 
 ## Test Failure Handling
 
@@ -106,8 +107,9 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
   - `AutoEmailSender-x.y.z-arm64.dmg`
   - `crawl-mentors-to-xlsx-v<version>.zip`
   - `appcast.xml`
-  - up to three `.delta` files when prior Sparkle releases exist
-- For the first Sparkle-enabled release, no delta is expected because no earlier appcast exists. Do not treat that as a failure.
+  - zero to three `.delta` files
+- When an earlier Sparkle appcast exists, inspect the `Generate signed appcast and deltas` log and account for every omitted delta. Never treat a zero-delta result as silently normal.
+- For the first Sparkle-enabled release, no delta is expected because no earlier appcast exists. If an older published source cannot produce a delta (for example, because of code-signing extended attributes), verify the signed full-DMG fallback and report the affected source versions. Do not replace published assets; publish the packaging fix as a new clean baseline, then require a later release to generate a delta from that baseline before calling differential updates healthy.
 - If `website/**` changed in the release range, locate the `Deploy Website` run for the exact release commit, wait for it to succeed, and verify the public Skill guide opens and still documents the Codex and Claude Code user-level installation paths, paste-ready installation requests, manual Release ZIP installation, complete-directory requirement, and update instructions.
 - If macOS functional QA is in scope, verify from an installed previous version that Sparkle displays the release notes, validates the update, and restarts into the new version. Follow Update QA Safety.
 - For a transient Actions failure, rerun only after identifying the cause. For a product or packaging defect, fix `master` and publish a new version. Do not move or recreate a pushed tag, manually replace signed assets, or rotate Sparkle keys without explicit user approval.

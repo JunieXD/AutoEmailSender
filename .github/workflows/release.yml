@@ -114,6 +114,7 @@ jobs:
         run: >-
           node --test
           scripts/configure-sparkle-info.test.mjs
+          scripts/sanitize-macos-bundle.test.mjs
           scripts/prepare-sparkle-release.test.mjs
 
       - name: Test desktop

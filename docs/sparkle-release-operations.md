@@ -57,9 +57,10 @@ gh secret set SPARKLE_ED_PRIVATE_KEY < /安全路径/auto-email-sender-sparkle-p
 tag 触发的 workflow 会：
 
 1. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布。
-2. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
-3. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
-4. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`，全部成功后再发布为稳定 Release。
+2. macOS 打包在签名后清理应用包中的扩展属性，并重新校验签名，避免 Sparkle 无法生成差分包。
+3. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
+4. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
+5. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`，全部成功后再发布为稳定 Release。
 
 工作流失败后可以在 Release 仍为 draft 时重跑；一旦 Release 已公开，重跑必须在上传任何资产前失败。已公开版本不得用 `--clobber` 替换安装包、Skill ZIP 或 appcast，修复后应发布新版本。
 

@@ -7,6 +7,7 @@ files:
   - dist/**
   - package.json
 afterPack: ../scripts/configure-sparkle-info.mjs
+afterSign: ../scripts/sanitize-macos-bundle.mjs
 extraResources:
   - from: ../frontend/dist
     to: frontend
