@@ -377,7 +377,7 @@ describe("WorkspacePage draft saving", () => {
     const workspaceLayout = document.querySelector("[data-workspace-layout]");
     const workspaceSidebar = document.querySelector("[data-workspace-sidebar]");
 
-    expect(workspaceContainer).toHaveClass("max-w-[90rem]");
+    expect(workspaceContainer).toHaveClass("max-w-7xl");
     expect(workspaceLayout).toHaveAttribute("data-workspace-layout", "overview");
     expect(workspaceLayout).toHaveClass(
       "lg:grid-cols-[minmax(0,1fr)_17.5rem]",
