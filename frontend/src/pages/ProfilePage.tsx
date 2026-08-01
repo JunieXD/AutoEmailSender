@@ -2755,9 +2755,31 @@ export const ProfilePage = () => {
 
     setTestingLLMConnection(true);
     setLlmProbeResult(null);
+    const testedProfileId = editingLLM.id;
+    const testedPayload = toLLMPayload(llmForm);
     try {
-      const result = await testLLMProfilePreview(toLLMPayload(llmForm));
-      setLlmProbeResult(result);
+      const result = await testLLMProfilePreview(testedPayload);
+      if (!result.ok) {
+        setLlmProbeResult(result);
+        return;
+      }
+
+      try {
+        await updateLLMProfile(testedProfileId, testedPayload);
+        await refreshSelections();
+        setLlmProbeResult(result);
+      } catch (saveError) {
+        const message = getActionErrorMessage(
+          saveError,
+          "模型配置自动保存失败",
+        );
+        setLlmProbeResult({
+          ...result,
+          ok: false,
+          message: `模型测试成功，但配置自动保存失败：${message}`,
+        });
+        notifyError("模型配置自动保存失败", message);
+      }
     } catch (testError) {
       setLlmProbeResult({
         ok: false,

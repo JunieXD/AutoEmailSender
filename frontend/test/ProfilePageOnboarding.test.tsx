@@ -3,6 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { testIdentitySmtp, updateIdentity } from "@/lib/api/identities";
+import {
+  testLLMProfilePreview,
+  updateLLMProfile,
+} from "@/lib/api/llmProfiles";
 import type { IdentityDTO, LLMProfileDTO } from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
@@ -112,9 +116,9 @@ vi.mock("@/lib/api/materials", () => ({
 vi.mock("@/lib/api/llmProfiles", () => ({
   createLLMProfile: vi.fn(),
   deleteLLMProfile: vi.fn(),
-  fetchLLMProfileModels: vi.fn(),
+  fetchLLMProfileModelsPreview: vi.fn(),
   setDefaultLLMProfile: vi.fn(),
-  testLLMProfile: vi.fn(),
+  testLLMProfilePreview: vi.fn(),
   updateLLMProfile: vi.fn(),
 }));
 
@@ -628,6 +632,130 @@ describe("ProfilePage onboarding", () => {
     });
     expect(testIdentitySmtp).not.toHaveBeenCalled();
     expect(mockedNotifySuccess).not.toHaveBeenCalled();
+  });
+
+  it("silently saves the tested llm form after a successful model test", async () => {
+    const refreshSelections = vi.fn();
+    const testedBaseUrl = "https://api.deepseek.com";
+    const successfulResult = {
+      ok: true,
+      message: "模型可用性测试成功",
+      resolved_base_url: testedBaseUrl,
+      request_url: `${testedBaseUrl}/chat/completions`,
+      attempted_urls: [`${testedBaseUrl}/chat/completions`],
+      endpoint_kind: "chat_completions",
+      status_code: 200,
+      duration_ms: 100,
+      consumes_tokens: true,
+      prompt_tokens: 7,
+      completion_tokens: 1,
+      total_tokens: 8,
+      response_preview: "OK",
+    };
+    vi.mocked(testLLMProfilePreview).mockResolvedValueOnce(successfulResult);
+    vi.mocked(updateLLMProfile).mockResolvedValueOnce({
+      ...selectedLlmProfile,
+      api_base_url: testedBaseUrl,
+    });
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: selectedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections,
+      loading: false,
+    });
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.change(screen.getByLabelText(/API Base URL/), {
+      target: { value: testedBaseUrl },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
+
+    await waitFor(() => {
+      expect(updateLLMProfile).toHaveBeenCalledWith(
+        selectedLlmProfile.id,
+        expect.objectContaining({ api_base_url: testedBaseUrl }),
+      );
+    });
+    expect(testLLMProfilePreview).toHaveBeenCalledWith(
+      expect.objectContaining({ api_base_url: testedBaseUrl }),
+    );
+    expect(
+      vi.mocked(testLLMProfilePreview).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(updateLLMProfile).mock.invocationCallOrder[0] ??
+        Number.POSITIVE_INFINITY,
+    );
+    expect(refreshSelections).toHaveBeenCalled();
+    expect(mockedNotifySuccess).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite the saved llm profile when the model test fails", async () => {
+    vi.mocked(testLLMProfilePreview).mockResolvedValueOnce({
+      ok: false,
+      message: "模型接口返回错误 401",
+      resolved_base_url: "https://invalid.example.com",
+      request_url: "https://invalid.example.com/chat/completions",
+      attempted_urls: ["https://invalid.example.com/chat/completions"],
+      endpoint_kind: "chat_completions",
+      status_code: 401,
+      duration_ms: 100,
+      consumes_tokens: true,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      response_preview: null,
+    });
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.change(screen.getByLabelText(/API Base URL/), {
+      target: { value: "https://invalid.example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
+
+    expect(await screen.findByText("模型接口返回错误 401")).toBeInTheDocument();
+    expect(updateLLMProfile).not.toHaveBeenCalled();
+  });
+
+  it("reports when a successful model test cannot be saved", async () => {
+    const testedBaseUrl = "https://api.deepseek.com";
+    vi.mocked(testLLMProfilePreview).mockResolvedValueOnce({
+      ok: true,
+      message: "模型可用性测试成功",
+      resolved_base_url: testedBaseUrl,
+      request_url: `${testedBaseUrl}/chat/completions`,
+      attempted_urls: [`${testedBaseUrl}/chat/completions`],
+      endpoint_kind: "chat_completions",
+      status_code: 200,
+      duration_ms: 100,
+      consumes_tokens: true,
+      prompt_tokens: 7,
+      completion_tokens: 1,
+      total_tokens: 8,
+      response_preview: "OK",
+    });
+    vi.mocked(updateLLMProfile).mockRejectedValueOnce(new Error("数据库写入失败"));
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
+
+    expect(
+      await screen.findByText(
+        "模型测试成功，但配置自动保存失败：数据库写入失败",
+      ),
+    ).toBeInTheDocument();
+    expect(mockedNotifyError).toHaveBeenCalledWith(
+      "模型配置自动保存失败",
+      "数据库写入失败",
+    );
   });
 
   it("opens the material library modal from the reordered materials section", async () => {
