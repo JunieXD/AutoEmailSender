@@ -369,6 +369,40 @@ describe("WorkspacePage draft saving", () => {
     expect(screen.getByRole("button", { name: "AI 改写" })).toBeInTheDocument();
   });
 
+  it("keeps the professor sidebar visible while the composer expands", async () => {
+    renderWorkspace();
+
+    const editButton = await screen.findByRole("button", { name: "编辑草稿" });
+    const workspaceContainer = document.querySelector("[data-workspace-container]");
+    const workspaceLayout = document.querySelector("[data-workspace-layout]");
+    const workspaceSidebar = document.querySelector("[data-workspace-sidebar]");
+
+    expect(workspaceContainer).toHaveClass("max-w-[90rem]");
+    expect(workspaceLayout).toHaveAttribute("data-workspace-layout", "overview");
+    expect(workspaceLayout).toHaveClass(
+      "lg:grid-cols-[minmax(0,1fr)_17.5rem]",
+      "xl:grid-cols-[minmax(0,1fr)_19rem]",
+      "2xl:grid-cols-[minmax(0,1fr)_20rem]",
+    );
+    expect(workspaceSidebar).not.toHaveClass("hidden");
+
+    fireEvent.click(editButton);
+
+    expect(workspaceLayout).toHaveAttribute("data-workspace-layout", "compose");
+    expect(workspaceLayout).toHaveClass(
+      "lg:grid-cols-[minmax(0,1fr)_17.5rem]",
+      "xl:grid-cols-[minmax(0,1fr)_19rem]",
+      "2xl:grid-cols-[minmax(0,1fr)_20rem]",
+    );
+    expect(workspaceSidebar).not.toHaveClass("hidden");
+    expect(document.querySelector("[data-composer-shell]")).toHaveClass("max-w-none");
+
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+
+    expect(workspaceLayout).toHaveAttribute("data-workspace-layout", "overview");
+    expect(workspaceSidebar).not.toHaveClass("hidden");
+  });
+
   it("aligns the collapsed composer entry action with the summary top", async () => {
     renderWorkspace();
 
@@ -426,6 +460,7 @@ describe("WorkspacePage draft saving", () => {
     renderWorkspace();
 
     fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "模板工具" }));
 
     expect(screen.getByText("来源模板")).toBeInTheDocument();
     expect(screen.getByText("研究申请模板")).toBeInTheDocument();
@@ -484,6 +519,7 @@ describe("WorkspacePage draft saving", () => {
     renderWorkspace();
 
     fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "模板工具" }));
     const templateTrigger = screen.getByRole("button", {
       name: "选择模板重新套用",
     });
@@ -518,6 +554,7 @@ describe("WorkspacePage draft saving", () => {
     renderWorkspace();
 
     fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "模板工具" }));
     fireEvent.change(screen.getByLabelText("邮件主题"), {
       target: { value: "尚未保存的主题" },
     });

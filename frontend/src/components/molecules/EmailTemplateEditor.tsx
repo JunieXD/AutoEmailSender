@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import clsx from "clsx";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
@@ -61,6 +62,7 @@ type EmailTemplateEditorProps = {
   html: string;
   placeholder?: string;
   disabled?: boolean;
+  contentClassName?: string;
   onChange: (value: { html: string; text: string }) => void;
   onFileDrop?: (file: File) => void;
 };
@@ -180,6 +182,7 @@ export const EmailTemplateEditor = ({
   html,
   placeholder,
   disabled = false,
+  contentClassName,
   onChange,
   onFileDrop,
 }: EmailTemplateEditorProps) => {
@@ -243,8 +246,10 @@ export const EmailTemplateEditor = ({
     immediatelyRender: false,
     editorProps: {
       attributes: {
-        class:
-          "email-editor-content min-h-[320px] max-h-[520px] overflow-y-auto overscroll-contain rounded-[28px] border border-stone-200 bg-white px-4 py-4 text-sm leading-7 text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15",
+        class: clsx(
+          "email-editor-content overflow-y-auto overscroll-contain rounded-[28px] border border-stone-200 bg-white px-4 py-4 text-sm leading-7 text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15",
+          contentClassName ?? "min-h-[320px] max-h-[520px]",
+        ),
         role: "textbox",
         "aria-label": label,
       },

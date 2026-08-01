@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceComposerDock } from "@/components/organisms/WorkspaceComposerDock";
 import type {
@@ -200,8 +200,8 @@ describe("WorkspaceComposerDock copy", () => {
     expect(screen.queryByRole("button", { name: "HTML 预览" })).not.toBeInTheDocument();
   });
 
-  it("organizes the expanded composer around an editing canvas and a sending rail", () => {
-    render(
+  it("organizes the expanded composer around an editing canvas and expandable tools", () => {
+    const { container } = render(
       <WorkspaceComposerDock
         {...baseProps}
         draftReady={true}
@@ -225,7 +225,10 @@ describe("WorkspaceComposerDock copy", () => {
 
     expect(screen.getByRole("textbox", { name: "邮件正文" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "邮件主题" })).toBeInTheDocument();
-    expect(screen.getByText("AI 辅助")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI 辅助工具" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "分析匹配度" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI 改写" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "立即发送" })).toBeInTheDocument();
@@ -233,6 +236,24 @@ describe("WorkspaceComposerDock copy", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("定时发送")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "编辑草稿" })).not.toBeInTheDocument();
+    expect(container.querySelector("[data-composer-shell]")).toHaveClass("max-w-none");
+    expect(container.querySelector("[data-composer-layout]")).toHaveClass("space-y-4");
+    expect(container.querySelector("[data-composer-tools]")).toBeInTheDocument();
+    expect(container.querySelector("[data-composer-editor]")).toBeInTheDocument();
+    expect(container.querySelector("[data-composer-rail]")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-composer-tool-panel="ai"]')).toBeInTheDocument();
+    expect(container.querySelector("[data-composer-actions]")).toHaveClass("sticky", "bottom-0");
+    expect(screen.getByRole("textbox", { name: "邮件正文" })).toHaveClass(
+      "min-h-[420px]",
+      "max-h-[min(58vh,680px)]",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "附件工具" }));
+    expect(container.querySelector('[data-composer-tool-panel="attachments"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-composer-tool-panel="ai"]')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "附件工具" }));
+    expect(container.querySelector("[data-composer-tool-panel]")).not.toBeInTheDocument();
   });
 
   it("shows datetime-local scheduled summaries without applying a timezone shift", () => {
@@ -258,7 +279,9 @@ describe("WorkspaceComposerDock copy", () => {
       />,
     );
 
-    expect(screen.getByText("04/22 10:00")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发送核对工具" }));
+    const reviewPanel = screen.getByRole("region", { name: "发送核对工具内容" });
+    expect(within(reviewPanel).getByText("04/22 10:00")).toBeInTheDocument();
   });
 
   it("describes task material as the AI writing reference when rewriting is blocked", () => {
@@ -324,7 +347,9 @@ describe("WorkspaceComposerDock copy", () => {
       minute: "2-digit",
     });
 
-    expect(screen.getByText(expected)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "发送核对工具" }));
+    const reviewPanel = screen.getByRole("region", { name: "发送核对工具内容" });
+    expect(within(reviewPanel).getByText(expected)).toBeInTheDocument();
   });
 
   it("does not expose send actions for canceled tasks that should continue manually", () => {
