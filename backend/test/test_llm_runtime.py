@@ -1212,6 +1212,15 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             material_type="resume",
             extracted_text="我做过信息抽取与智能体相关研究。",
         )
+        supplemental_material = IdentityMaterial(
+            id=2,
+            identity_id=1,
+            display_name="论文",
+            file_path="data/materials/paper.txt",
+            original_filename="paper.txt",
+            material_type="publication",
+            extracted_text="补充论文材料。",
+        )
         professor = Professor(
             name="李老师",
             email="prof@example.edu",
@@ -1227,7 +1236,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             identity=identity,
             primary_material=primary_material,
             professor=professor,
-            available_materials=[primary_material],
+            available_materials=[primary_material, supplemental_material],
             custom_subject="申请与{{name}}老师交流",
             custom_body="老师您好，我是{{sender_name}}，关注到您在{{research_direction}}方向的工作。",
             current_match=MatchEvaluationResult(
@@ -1253,6 +1262,11 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("保留可表达的富文本标记", prompt)
         self.assertIn("加粗", prompt)
         self.assertIn("链接", prompt)
+        payload = json.loads(prompt)
+        self.assertEqual(
+            [item["id"] for item in payload["input"]["可选材料"]],
+            [2, 12],
+        )
         self.assert_draft_prompt_omits_match_context(prompt)
 
     def test_build_draft_prompt_places_stable_batch_context_before_professor(self) -> None:
@@ -1466,6 +1480,15 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             material_type="resume",
             extracted_text="我做过信息抽取与智能体相关研究。",
         )
+        supplemental_material = IdentityMaterial(
+            id=3,
+            identity_id=1,
+            display_name="作品集",
+            file_path="data/materials/portfolio.txt",
+            original_filename="portfolio.txt",
+            material_type="portfolio",
+            extracted_text="补充作品集材料。",
+        )
         professor = Professor(
             id=5,
             name="李老师",
@@ -1494,7 +1517,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             identity=identity,
             primary_material=primary_material,
             professor=professor,
-            available_materials=[primary_material],
+            available_materials=[primary_material, supplemental_material],
             subject_template="申请与{{name}}老师交流",
             source_blocks=document.blocks,
             current_match=current_match,
@@ -1508,15 +1531,27 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertIn("source_blocks", parts.stable_prefix)
+        stable_payload = json.loads(parts.stable_prefix)
+        stable_input = stable_payload["input"]
+        self.assertNotIn("source_blocks", stable_input)
+        self.assertNotIn("protected_tokens", stable_input)
+        self.assertNotIn("professor", stable_input)
         self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
         self.assertNotIn("方向匹配", parts.stable_prefix)
         self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("professor"))
+        self.assertEqual(
+            [item["id"] for item in stable_input["available_materials"]],
+            [3, 12],
+        )
         self.assert_draft_prompt_omits_match_context(parts.prompt)
         self.assert_draft_prompt_omits_match_context(parts.stable_prefix)
         self.assertEqual(len(parts.prompt_hash), 64)
         self.assertEqual(len(parts.stable_prefix_hash), 64)
-        self.assertEqual(parts.prompt_cache_key, "draft-rewrite:v4:1:12:5:7")
+        self.assertEqual(
+            parts.prompt_cache_key,
+            f"draft-rewrite:v5:1:12:7:{parts.stable_prefix_hash[:16]}",
+        )
+        self.assertNotIn(":5:", parts.prompt_cache_key or "")
 
 
     def test_draft_rewrite_prompt_parts_keep_same_stable_prefix_for_different_professors(self) -> None:
@@ -1547,13 +1582,17 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "<p>老师您好，我是{{sender_name}}。</p>",
             {},
         )
+        second_document = build_draft_rewrite_document(
+            "<p>这是另一份已经替换占位符的动态邮件正文。</p>",
+            {},
+        )
         first = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
             professor=Professor(name="李老师", email="li@example.edu", research_direction="NLP"),
             available_materials=[primary_material],
             subject_template="申请与{{name}}老师交流",
-            source_blocks=document.blocks,
+            source_blocks=second_document.blocks,
             current_match=MatchEvaluationResult(
                 match_score=88,
                 match_reason="方向匹配",
@@ -1927,7 +1966,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 custom_subject="申请与{{name}}老师交流",
                 custom_body_html=(
                     '<p style="font-family:SimSun;font-size:12pt">'
-                    "李老师，您好："
+                    "{{name}}，您好："
                     "</p>"
                     '<table><tbody><tr><td>原表格</td></tr></tbody></table>'
                 ),
@@ -1938,10 +1977,15 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source_blocks", prompt)
         self.assertNotIn("rewrite_segments", prompt)
         self.assertNotIn("<table", prompt)
-        self.assertEqual(payload["prompt_cache_key"], "draft-rewrite:v4:1:12:1:5")
+        self.assertIn("李老师，您好", prompt)
+        self.assertNotIn("{{name}}", prompt)
+        self.assertEqual(
+            payload["prompt_cache_key"],
+            f"draft-rewrite:v5:1:12:5:{result.stable_prefix_hash[:16]}",
+        )
         self.assertIsNotNone(result.prompt_hash)
         self.assertIsNotNone(result.stable_prefix_hash)
-        self.assertEqual(result.prompt_cache_key, "draft-rewrite:v4:1:12:1:5")
+        self.assertEqual(result.prompt_cache_key, payload["prompt_cache_key"])
         self.assertEqual(result.result.subject, "申请与李老师老师交流")
         self.assertIn("<table", result.result.body_html)
         self.assertNotIn("{{name}}", result.result.body_html)

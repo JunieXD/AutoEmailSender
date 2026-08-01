@@ -120,6 +120,59 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(sum(processed_counts), 1)
         mocked_generate.assert_awaited_once()
 
+    def test_run_queued_batch_drafts_finishes_batch_warmup_before_remaining_items(self) -> None:
+        self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value],
+            ),
+        )
+
+        async def scenario() -> tuple[bool, bool, int]:
+            warmup_started = asyncio.Event()
+            release_warmup = asyncio.Event()
+            remaining_started = asyncio.Event()
+            call_count = 0
+
+            async def fake_generate(**_kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    warmup_started.set()
+                    await release_warmup.wait()
+                else:
+                    remaining_started.set()
+                return self._build_draft_generation_result()
+
+            with patch(
+                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                new=AsyncMock(side_effect=fake_generate),
+            ):
+                worker = asyncio.create_task(
+                    run_queued_batch_drafts_once(
+                        self.session_factory,
+                        concurrency=2,
+                        coordinator=BatchDraftGenerationCoordinator(),
+                    ),
+                )
+                await asyncio.wait_for(warmup_started.wait(), timeout=1)
+                await asyncio.sleep(0.02)
+                remaining_started_before_warmup_finished = remaining_started.is_set()
+                release_warmup.set()
+                processed = await asyncio.wait_for(worker, timeout=2)
+
+            return (
+                remaining_started_before_warmup_finished,
+                remaining_started.is_set(),
+                processed,
+            )
+
+        remaining_started_early, remaining_eventually_started, processed = self._run_async(
+            scenario(),
+        )
+        self.assertFalse(remaining_started_early)
+        self.assertTrue(remaining_eventually_started)
+        self.assertEqual(processed, 2)
+
     def test_batch_draft_passes_workflow_session_and_runtime_adaptation(self) -> None:
         self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
         adaptation = llm_runtime.LLMRuntimeAdaptation("responses", {"enable_thinking": False})

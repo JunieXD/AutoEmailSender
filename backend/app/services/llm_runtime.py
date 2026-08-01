@@ -1875,6 +1875,7 @@ def _build_base_generation_prompt(
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
+    sorted_materials = sorted(available_materials, key=lambda material: material.id or 0)
 
     template_body_text = resolve_template_text(custom_body, custom_body_html)
     payload: dict[str, object] = {
@@ -1920,7 +1921,7 @@ def _build_base_generation_prompt(
                     "name": _format_nullable(material.display_name),
                     "type": _format_nullable(material.material_type),
                 }
-                for material in available_materials
+                for material in sorted_materials
             ],
         },
     }
@@ -1966,10 +1967,11 @@ def build_draft_rewrite_prompt_parts(
     protected_tokens: list[DraftRewriteProtectedToken] | None = None,
 ) -> DraftRewritePromptParts:
     # Deprecated compatibility parameter: draft rewrite prompts must ignore match results.
-    _ = current_match
+    _ = current_match, subject_template
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
+    sorted_materials = sorted(available_materials, key=lambda material: material.id or 0)
 
     preferences = rewrite_preferences or DraftRewritePreferences()
     protected_tokens = protected_tokens or []
@@ -2013,15 +2015,7 @@ def build_draft_rewrite_prompt_parts(
                 "name": _format_nullable(material.display_name),
                 "type": _format_nullable(material.material_type),
             }
-            for material in available_materials
-        ],
-        "source_blocks": [
-            _serialize_draft_source_block(block)
-            for block in source_blocks
-        ],
-        "protected_tokens": [
-            {"token": token.token, "value": token.value}
-            for token in protected_tokens
+            for material in sorted_materials
         ],
     }
 
@@ -2038,7 +2032,16 @@ def build_draft_rewrite_prompt_parts(
         del prompt_input["student_intended_research_direction"]
 
     stable_prefix = json.dumps(payload, ensure_ascii=False, indent=2)
+    stable_prefix_hash = _hash_prompt(stable_prefix)
 
+    prompt_input["source_blocks"] = [
+        _serialize_draft_source_block(block)
+        for block in source_blocks
+    ]
+    prompt_input["protected_tokens"] = [
+        {"token": token.token, "value": token.value}
+        for token in protected_tokens
+    ]
     prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
 
     prompt = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -2046,13 +2049,13 @@ def build_draft_rewrite_prompt_parts(
         prompt=prompt,
         stable_prefix=stable_prefix,
         prompt_hash=_hash_prompt(prompt),
-        stable_prefix_hash=_hash_prompt(stable_prefix),
+        stable_prefix_hash=stable_prefix_hash,
         prompt_cache_key=(
             _build_draft_rewrite_prompt_cache_key(
                 identity=identity,
                 primary_material=primary_material,
-                professor=professor,
                 llm_profile=llm_profile,
+                stable_prefix_hash=stable_prefix_hash,
             )
             if llm_profile is not None
             else None
@@ -2269,14 +2272,17 @@ def _build_draft_rewrite_prompt_cache_key(
     *,
     identity: IdentityProfile,
     primary_material: IdentityMaterial | None,
-    professor: Professor,
     llm_profile: LLMProfile,
+    stable_prefix_hash: str,
 ) -> str | None:
     if not _is_official_openai_profile(llm_profile):
         return None
+    identity_id = identity.id if identity.id is not None else "none"
     material_id = primary_material.id if primary_material is not None else "none"
-    professor_id = professor.id if professor.id is not None else "none"
-    return f"draft-rewrite:v4:{identity.id}:{material_id}:{professor_id}:{llm_profile.id}"
+    return (
+        f"draft-rewrite:v5:{identity_id}:{material_id}:{llm_profile.id}:"
+        f"{stable_prefix_hash[:16]}"
+    )
 
 
 def extract_json_object(raw_text: str) -> str:

@@ -159,7 +159,22 @@ async def run_queued_batch_drafts_once(
             async with coordinator.track(batch_task_id, generation_task):
                 await generation_task
 
-    await asyncio.gather(*(run_claimed(task_id, batch_id) for task_id, batch_id in claimed))
+    claimed_by_batch: dict[int, list[int]] = {}
+    for task_id, batch_task_id in claimed:
+        claimed_by_batch.setdefault(batch_task_id, []).append(task_id)
+
+    async def run_batch(task_ids: list[int], batch_task_id: int) -> None:
+        await run_claimed(task_ids[0], batch_task_id)
+        await asyncio.gather(
+            *(run_claimed(task_id, batch_task_id) for task_id in task_ids[1:]),
+        )
+
+    await asyncio.gather(
+        *(
+            run_batch(task_ids, batch_task_id)
+            for batch_task_id, task_ids in claimed_by_batch.items()
+        ),
+    )
     return len(claimed)
 
 

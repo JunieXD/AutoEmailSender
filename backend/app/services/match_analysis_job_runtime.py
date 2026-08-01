@@ -521,7 +521,9 @@ async def _run_match_analysis_job(
         async with semaphore:
             await _run_match_analysis_job_item(session_factory, job_id, item_id)
 
-    await asyncio.gather(*(run_item(item_id) for item_id in queued_item_ids))
+    if queued_item_ids:
+        await run_item(queued_item_ids[0])
+        await asyncio.gather(*(run_item(item_id) for item_id in queued_item_ids[1:]))
     await _refresh_match_analysis_job_summary(session_factory, job_id)
 
 

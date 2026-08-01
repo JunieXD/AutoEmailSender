@@ -166,6 +166,7 @@ describe('TokenVisualizationPanel', () => {
     expect(await screen.findByText('Token 消耗可视化')).toBeInTheDocument();
     expect(screen.getByText('总 Token')).toBeInTheDocument();
     expect(screen.getByText('3,060')).toBeInTheDocument();
+    expect(screen.getByText('输入命中率 20%')).toBeInTheDocument();
     expect(screen.getByText('输入 / 输出 / 缓存趋势')).toBeInTheDocument();
     expect(screen.getByText('功能消耗分布')).toBeInTheDocument();
     expect(screen.getByText('模型消耗排行')).toBeInTheDocument();

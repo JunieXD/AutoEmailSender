@@ -606,6 +606,11 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn('"email"', prompt)
         self.assertIn('"title": "教授"', prompt)
         self.assertIn('"recent_papers": []', prompt)
+        self.assertLess(
+            prompt.index("只补全缺失字段"),
+            prompt.index("- 姓名：张三"),
+        )
+        self.assertLess(prompt.index("输出示例："), prompt.index("已知基础信息："))
 
     def test_build_profile_candidate_prompt_requires_preserving_source_language_values(self) -> None:
         prompt = build_profile_candidate_prompt(

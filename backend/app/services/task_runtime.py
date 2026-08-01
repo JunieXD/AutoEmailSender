@@ -865,6 +865,9 @@ async def generate_task_draft(
                 provider_payload = {
                     "source": "llm",
                     "primary_material_id": task.primary_material_id,
+                    "prompt_hash": generation.prompt_hash,
+                    "stable_prefix_hash": generation.stable_prefix_hash,
+                    "prompt_cache_key": generation.prompt_cache_key,
                     "usage": (
                         {
                             "prompt_tokens": usage.prompt_tokens,
@@ -985,6 +988,9 @@ async def generate_task_draft(
                 "completion_tokens": usage.completion_tokens if usage is not None else None,
                 "cached_tokens": usage.cached_tokens if usage is not None else None,
                 "total_tokens": usage.total_tokens if usage is not None else None,
+                "prompt_hash": provider_payload.get("prompt_hash"),
+                "stable_prefix_hash": provider_payload.get("stable_prefix_hash"),
+                "prompt_cache_key": provider_payload.get("prompt_cache_key"),
                 "selected_material_ids": task.selected_material_ids,
             },
         )
@@ -1282,6 +1288,9 @@ async def rewrite_task_draft(
         provider_payload = {
             "source": "workspace_rewrite",
             "primary_material_id": task.primary_material_id,
+            "prompt_hash": generation.prompt_hash,
+            "stable_prefix_hash": generation.stable_prefix_hash,
+            "prompt_cache_key": generation.prompt_cache_key,
             "usage": (
                 {
                     "prompt_tokens": usage.prompt_tokens,
@@ -1316,6 +1325,9 @@ async def rewrite_task_draft(
                 "completion_tokens": usage.completion_tokens if usage is not None else None,
                 "cached_tokens": usage.cached_tokens if usage is not None else None,
                 "total_tokens": usage.total_tokens if usage is not None else None,
+                "prompt_hash": generation.prompt_hash,
+                "stable_prefix_hash": generation.stable_prefix_hash,
+                "prompt_cache_key": generation.prompt_cache_key,
                 "selected_material_ids": task.selected_material_ids,
             },
         )

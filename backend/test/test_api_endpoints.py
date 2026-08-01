@@ -2929,6 +2929,9 @@ class ApiEndpointTests(unittest.TestCase):
                 body_html="<p>AI 改写正文</p>",
                 prompt_tokens=12,
                 completion_tokens=8,
+                prompt_hash="c" * 64,
+                stable_prefix_hash="d" * 64,
+                prompt_cache_key="draft-rewrite:v5:rewrite-test",
             )
 
         with (
@@ -2957,6 +2960,22 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["draft"]["source"], "ai_rewrite")
         self.assertEqual(current_task["draft"]["subject"], "AI 改写主题")
         self.assertEqual(current_task["draft"]["body_text"], "AI 改写正文")
+        provider_payload = self._latest_email_log_provider_payload()
+        self.assertEqual(provider_payload["prompt_hash"], "c" * 64)
+        self.assertEqual(provider_payload["stable_prefix_hash"], "d" * 64)
+        self.assertEqual(
+            provider_payload["prompt_cache_key"],
+            "draft-rewrite:v5:rewrite-test",
+        )
+        operation_logs = self.client.get(
+            "/api/diagnostics/operation-logs",
+            params={"event_name": "email_task.draft_rewritten"},
+        )
+        self.assertEqual(operation_logs.status_code, 200, msg=operation_logs.text)
+        metadata = operation_logs.json()["items"][0]["metadata"]
+        self.assertEqual(metadata["prompt_hash"], "c" * 64)
+        self.assertEqual(metadata["stable_prefix_hash"], "d" * 64)
+        self.assertEqual(metadata["prompt_cache_key"], "draft-rewrite:v5:rewrite-test")
 
     def test_rewrite_draft_resolves_thinking_adaptation_once(self) -> None:
         task_id = self._create_rewrite_ready_task()
@@ -4546,6 +4565,9 @@ class ApiEndpointTests(unittest.TestCase):
                     prompt_tokens=80,
                     completion_tokens=20,
                     cached_tokens=32,
+                    prompt_hash="a" * 64,
+                    stable_prefix_hash="b" * 64,
+                    prompt_cache_key="draft-rewrite:v5:generation-test",
                 ),
             ),
         ):
@@ -4565,6 +4587,21 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("information extraction", refreshed_row[0])
         provider_payload = self._latest_email_log_provider_payload()
         self.assertEqual(provider_payload["usage"]["cached_tokens"], 32)
+        self.assertEqual(provider_payload["prompt_hash"], "a" * 64)
+        self.assertEqual(provider_payload["stable_prefix_hash"], "b" * 64)
+        self.assertEqual(
+            provider_payload["prompt_cache_key"],
+            "draft-rewrite:v5:generation-test",
+        )
+        operation_logs = self.client.get(
+            "/api/diagnostics/operation-logs",
+            params={"event_name": "email_task.draft_generated"},
+        )
+        self.assertEqual(operation_logs.status_code, 200, msg=operation_logs.text)
+        metadata = operation_logs.json()["items"][0]["metadata"]
+        self.assertEqual(metadata["prompt_hash"], "a" * 64)
+        self.assertEqual(metadata["stable_prefix_hash"], "b" * 64)
+        self.assertEqual(metadata["prompt_cache_key"], "draft-rewrite:v5:generation-test")
 
     def test_immediate_template_batch_task_queues_without_synchronous_send(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -10317,6 +10354,9 @@ class ApiEndpointTests(unittest.TestCase):
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         cached_tokens: int | None = None,
+        prompt_hash: str | None = None,
+        stable_prefix_hash: str | None = None,
+        prompt_cache_key: str | None = None,
     ):
         from app.services.llm_runtime import (
             ChatCompletionUsage,
@@ -10344,6 +10384,9 @@ class ApiEndpointTests(unittest.TestCase):
                 if prompt_tokens is not None or completion_tokens is not None
                 else None
             ),
+            prompt_hash=prompt_hash,
+            stable_prefix_hash=stable_prefix_hash,
+            prompt_cache_key=prompt_cache_key,
         )
 
     def _create_professor(self, *, email: str = "professor@example.edu") -> int:

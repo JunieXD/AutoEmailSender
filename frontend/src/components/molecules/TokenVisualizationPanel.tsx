@@ -418,8 +418,8 @@ function CustomRangeControls({
 }
 
 function SummaryGrid({ data }: { data: TokenUsageVisualizationDTO }) {
-  const cachedShare = data.summary.total_tokens > 0
-    ? data.summary.cached_tokens / data.summary.total_tokens
+  const cachedShare = data.summary.input_tokens > 0
+    ? data.summary.cached_tokens / data.summary.input_tokens
     : 0;
   const items = [
     {
@@ -446,7 +446,7 @@ function SummaryGrid({ data }: { data: TokenUsageVisualizationDTO }) {
     {
       label: '缓存命中',
       value: formatSummaryTokenValue(data.summary.cached_tokens),
-      helper: `占比 ${formatTokenShare(cachedShare)}`,
+      helper: `输入命中率 ${formatTokenShare(cachedShare)}`,
       icon: <Zap className="h-5 w-5" />,
       tone: 'amber' as const,
     },

@@ -311,6 +311,65 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.failed_count, 1)
         self.assertEqual(stored.succeeded_count, 1)
 
+    def test_run_queued_job_finishes_warmup_item_before_starting_remaining_items(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(extra_analyzable_professor=True),
+        )
+        self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0], professor_ids[2]],
+                name=None,
+            ),
+        )
+
+        async def scenario() -> tuple[bool, bool, int]:
+            warmup_started = asyncio.Event()
+            release_warmup = asyncio.Event()
+            remaining_started = asyncio.Event()
+            call_count = 0
+
+            async def fake_generate_match_evaluation(**_kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    warmup_started.set()
+                    await release_warmup.wait()
+                else:
+                    remaining_started.set()
+                return self._build_match_evaluation_result(match_score=88)
+
+            with patch(
+                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                AsyncMock(side_effect=fake_generate_match_evaluation),
+            ):
+                worker = asyncio.create_task(
+                    run_queued_match_analysis_jobs_once(
+                        self.session_factory,
+                        item_concurrency=2,
+                    ),
+                )
+                await asyncio.wait_for(warmup_started.wait(), timeout=1)
+                await asyncio.sleep(0.02)
+                remaining_started_before_warmup_finished = remaining_started.is_set()
+                release_warmup.set()
+                processed = await asyncio.wait_for(worker, timeout=2)
+
+            return (
+                remaining_started_before_warmup_finished,
+                remaining_started.is_set(),
+                processed,
+            )
+
+        remaining_started_early, remaining_eventually_started, processed = self._run_async(
+            scenario(),
+        )
+        self.assertFalse(remaining_started_early)
+        self.assertTrue(remaining_eventually_started)
+        self.assertEqual(processed, 1)
+
     def test_run_queued_match_analysis_jobs_ignores_deleted_job(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),

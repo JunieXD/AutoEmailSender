@@ -1055,11 +1055,6 @@ def build_candidate_enrichment_prompt(
 ) -> str:
     return f"""
 你正在补全已发现的导师候选详情。
-已知基础信息：
-- 姓名：{candidate.name or "未知"}
-- 邮箱：{candidate.email or "未知"}
-- 职称：{candidate.title or "未知"}
-- 资料页：{candidate.profile_url or "未知"}
 
 要求：
 - 只补全缺失字段：email, title, department, research_direction, recent_papers
@@ -1074,6 +1069,12 @@ def build_candidate_enrichment_prompt(
 
 输出示例：
 {{"email": "zhang@example.edu", "title": "教授", "department": "软件工程系", "research_direction": "大语言模型、软件工程", "recent_papers": []}}
+
+已知基础信息：
+- 姓名：{candidate.name or "未知"}
+- 邮箱：{candidate.email or "未知"}
+- 职称：{candidate.title or "未知"}
+- 资料页：{candidate.profile_url or "未知"}
 
 资料页正文：
 {page_text}
