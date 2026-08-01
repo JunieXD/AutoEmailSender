@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   updateTaskOutreachConfig: vi.fn(),
   continueManually: vi.fn(),
   startFollowUp: vi.fn(),
+  getOutreachTemplate: vi.fn(),
   listOutreachTemplates: vi.fn(),
   approveAndSend: vi.fn(),
   approveAndSchedule: vi.fn(),
@@ -89,6 +90,7 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
 }));
 
 vi.mock("@/lib/api/outreachTemplates", () => ({
+  getOutreachTemplate: apiMocks.getOutreachTemplate,
   listOutreachTemplates: apiMocks.listOutreachTemplates,
 }));
 
@@ -283,6 +285,19 @@ beforeEach(() => {
       updated_at: "2026-07-30T00:00:00Z",
     },
   ]);
+  apiMocks.getOutreachTemplate.mockResolvedValue({
+    id: 9,
+    name: "研究申请模板",
+    recommended_generation_mode: "template",
+    subject: "新模板主题 {{name}}",
+    body_text: "新模板正文 {{sender_name}}",
+    body_html: "<p>新模板正文 {{sender_name}}</p>",
+    is_ready: true,
+    is_default: false,
+    archived_at: null,
+    created_at: "2026-07-30T00:00:00Z",
+    updated_at: "2026-07-30T00:00:00Z",
+  });
   apiMocks.updateTaskOutreachConfig.mockResolvedValue(
     buildWorkspaceThread({
       current_task: {
@@ -398,30 +413,104 @@ describe("WorkspacePage draft saving", () => {
     expect(screen.getByText("AI 辅助")).toBeInTheDocument();
   });
 
-  it("copies a selected library template into the current task snapshot", async () => {
+  it("shows template provenance separately from the current draft state", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          outreach_template_id: 9,
+        },
+      }),
+    );
+
     renderWorkspace();
 
     fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
-    const templateTrigger = (
-      await screen.findByText("当前任务独立快照")
-    ).closest("button");
-    expect(templateTrigger).not.toBeNull();
+
+    expect(screen.getByText("来源模板")).toBeInTheDocument();
+    expect(screen.getByText("研究申请模板")).toBeInTheDocument();
+    expect(screen.getByText("当前草稿：AI 改写结果")).toBeInTheDocument();
+    expect(screen.queryByText("当前任务独立快照")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "选择模板重新套用" }),
+    ).toBeInTheDocument();
+  });
+
+  it("reapplies the current template using the latest library content", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          outreach_template_id: 9,
+        },
+      }),
+    );
+    apiMocks.getOutreachTemplate.mockResolvedValueOnce({
+      id: 9,
+      name: "研究申请模板（最新版）",
+      recommended_generation_mode: "llm",
+      subject: "最新版主题 {{name}}",
+      body_text: "最新版正文 {{sender_name}}",
+      body_html: "<p>最新版正文 {{sender_name}}</p>",
+      is_ready: true,
+      is_default: false,
+      archived_at: null,
+      created_at: "2026-07-30T00:00:00Z",
+      updated_at: "2026-08-01T00:00:00Z",
+    });
+    apiMocks.updateTaskOutreachConfig.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          outreach_template_id: 9,
+          outreach_generation_mode: "llm",
+          outreach_template_subject: "最新版主题 {{name}}",
+          outreach_template_body_text: "最新版正文 {{sender_name}}",
+          outreach_template_body_html: "<p>最新版正文 {{sender_name}}</p>",
+          generated_subject: null,
+          generated_content_text: null,
+          generated_content_html: null,
+          draft: {
+            subject: "最新版主题 保存草稿导师",
+            body_text: "最新版正文 小明",
+            body_html: "<p>最新版正文 小明</p>",
+            source: "template",
+            sendable: true,
+            editable: true,
+          },
+        },
+      }),
+    );
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    const templateTrigger = screen.getByRole("button", {
+      name: "选择模板重新套用",
+    });
     await waitFor(() => expect(templateTrigger).toBeEnabled());
-    fireEvent.click(templateTrigger!);
-    fireEvent.click(screen.getByRole("option", { name: "研究申请模板" }));
+    fireEvent.click(templateTrigger);
+    fireEvent.click(
+      screen.getByRole("option", { name: "研究申请模板 · 当前来源" }),
+    );
+    expect(await screen.findByText("用模板替换当前草稿？")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "套用并替换" }));
 
     await waitFor(() => {
+      expect(apiMocks.getOutreachTemplate).toHaveBeenCalledWith(9);
       expect(apiMocks.updateTaskOutreachConfig).toHaveBeenCalledWith(101, {
-        outreach_generation_mode: "template",
+        outreach_generation_mode: "llm",
         outreach_template_id: 9,
-        outreach_template_subject: "新模板主题 {{name}}",
-        outreach_template_body_text: "新模板正文 {{sender_name}}",
-        outreach_template_body_html: "<p>新模板正文 {{sender_name}}</p>",
+        outreach_template_subject: "最新版主题 {{name}}",
+        outreach_template_body_text: "最新版正文 {{sender_name}}",
+        outreach_template_body_html: "<p>最新版正文 {{sender_name}}</p>",
       });
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
-      "任务模板已更新",
-      "已将“研究申请模板”的内容复制到当前任务，后续编辑不会改动模板库。",
+      "模板已重新套用",
+      "已套用“研究申请模板（最新版）”的模板库当前内容。",
+    );
+    expect(screen.getByLabelText("邮件主题")).toHaveValue(
+      "最新版主题 保存草稿导师",
     );
   });
 
@@ -432,18 +521,18 @@ describe("WorkspacePage draft saving", () => {
     fireEvent.change(screen.getByLabelText("邮件主题"), {
       target: { value: "尚未保存的主题" },
     });
-    const templateTrigger = (
-      await screen.findByText("当前任务独立快照")
-    ).closest("button");
-    expect(templateTrigger).not.toBeNull();
-    fireEvent.click(templateTrigger!);
+    const templateTrigger = screen.getByRole("button", {
+      name: "选择模板重新套用",
+    });
+    fireEvent.click(templateTrigger);
     fireEvent.click(screen.getByRole("option", { name: "研究申请模板" }));
 
     expect(
-      await screen.findByText("用模板替换当前未保存的草稿？"),
+      await screen.findByText("用模板替换当前草稿？"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
+    expect(apiMocks.getOutreachTemplate).not.toHaveBeenCalled();
     expect(apiMocks.updateTaskOutreachConfig).not.toHaveBeenCalled();
     expect(screen.getByLabelText("邮件主题")).toHaveValue("尚未保存的主题");
   });

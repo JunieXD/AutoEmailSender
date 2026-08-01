@@ -56,7 +56,7 @@ type WorkspaceComposerDockProps = {
   onSubjectChange: (value: string) => void;
   onContentChange: (value: RichEmailValue) => void;
   onSelectedMaterialIdsChange: (ids: number[]) => void;
-  onOutreachTemplateChange: (templateId: number | null) => void;
+  onApplyOutreachTemplate: (templateId: number) => void;
   onSaveDraft: () => void;
   onSendNow: () => void;
   onScheduleSend: () => void;
@@ -223,7 +223,7 @@ export const WorkspaceComposerDock = ({
   onSubjectChange,
   onContentChange,
   onSelectedMaterialIdsChange,
-  onOutreachTemplateChange,
+  onApplyOutreachTemplate,
   onSaveDraft,
   onSendNow,
   onScheduleSend,
@@ -255,6 +255,11 @@ export const WorkspaceComposerDock = ({
   const activeOutreachTemplates = outreachTemplates.filter(
     (template) => !template.archived_at,
   );
+  const sourceTemplateLabel = selectedOutreachTemplate
+    ? `${selectedOutreachTemplate.name}${selectedOutreachTemplate.archived_at ? ' · 已删除' : ''}`
+    : selectedOutreachTemplateId !== null
+      ? '历史来源模板'
+      : '未使用模板';
   const rewriteDescription = isRewriting
     ? '正在改写当前草稿，完成前不能保存或发送。'
     : hasDraftBody
@@ -319,40 +324,58 @@ export const WorkspaceComposerDock = ({
 
                 <div className="mt-5 space-y-4">
                   <div className="rounded-2xl border border-stone-200 bg-white p-4">
-                    <NativeSelectField
-                      label="当前任务模板"
-                      value={
-                        selectedOutreachTemplateId === null
-                          ? ''
-                          : String(selectedOutreachTemplateId)
-                      }
-                      disabled={editorDisabled || loadingOutreachTemplates}
-                      onChange={(event) =>
-                        onOutreachTemplateChange(
-                          event.target.value ? Number(event.target.value) : null,
-                        )
-                      }
-                    >
-                      <option value="">当前任务独立快照</option>
-                      {selectedOutreachTemplate?.archived_at ? (
-                        <option value={selectedOutreachTemplate.id} disabled>
-                          {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
-                        </option>
-                      ) : null}
-                      {activeOutreachTemplates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name}
-                          {template.is_default ? ' · 全局默认' : ''}
-                          {template.is_ready ? '' : ' · 内容待完善'}
-                        </option>
-                      ))}
-                    </NativeSelectField>
-                    <div className="mt-2 text-xs leading-5 text-stone-500">
-                      {loadingOutreachTemplates
-                        ? '正在加载模板库…'
-                        : selectedOutreachTemplate
-                          ? `来源：${selectedOutreachTemplate.name}。下方编辑只影响当前任务。`
-                          : '当前内容已独立保存到任务中，不会随模板库修改。'}
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-stone-500">来源模板</div>
+                        <div className="mt-1 truncate text-sm font-semibold text-stone-900">
+                          {sourceTemplateLabel}
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-stone-500">
+                          {selectedOutreachTemplateId !== null
+                            ? '当前草稿基于此模板创建。'
+                            : '当前草稿没有来源模板。'}
+                        </div>
+                      </div>
+                      <span className="w-fit shrink-0 rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs font-medium text-stone-600">
+                        当前草稿：{draftSourceLabel}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 border-t border-stone-100 pt-4">
+                      <NativeSelectField
+                        label="套用模板"
+                        value=""
+                        ariaLabel="选择模板重新套用"
+                        selectedLabel={
+                          loadingOutreachTemplates
+                            ? '正在加载模板库…'
+                            : activeOutreachTemplates.length > 0
+                              ? '选择模板重新套用…'
+                              : '暂无可用模板'
+                        }
+                        disabled={
+                          editorDisabled ||
+                          loadingOutreachTemplates ||
+                          activeOutreachTemplates.length === 0
+                        }
+                        onChange={(event) => {
+                          if (event.target.value) {
+                            onApplyOutreachTemplate(Number(event.target.value));
+                          }
+                        }}
+                      >
+                        {activeOutreachTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.name}
+                            {template.id === selectedOutreachTemplateId ? ' · 当前来源' : ''}
+                            {template.is_default ? ' · 全局默认' : ''}
+                            {template.is_ready ? '' : ' · 内容待完善'}
+                          </option>
+                        ))}
+                      </NativeSelectField>
+                      <div className="mt-2 text-xs leading-5 text-stone-500">
+                        选择后会读取模板库当前内容，替换主题和正文；也可以重新选择同一模板。
+                      </div>
                     </div>
                   </div>
                   <SubjectTemplateInput

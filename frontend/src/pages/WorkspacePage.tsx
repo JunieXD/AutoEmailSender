@@ -22,7 +22,7 @@ import {
   startFollowUp,
   updateTaskOutreachConfig,
 } from '@/lib/api/emailTasksApi';
-import { listOutreachTemplates } from '@/lib/api/outreachTemplates';
+import { getOutreachTemplate, listOutreachTemplates } from '@/lib/api/outreachTemplates';
 import {
   getWorkspaceThread,
   refreshWorkspaceReplies,
@@ -935,19 +935,29 @@ export const WorkspacePage = () => {
     );
   }, [content, contentHtml, subject, updateComposerDirtyFromSnapshot]);
 
-  const handleOutreachTemplateChange = useCallback(
-    (templateId: number | null) => {
+  const handleApplyOutreachTemplate = useCallback(
+    (templateId: number) => {
       if (!currentTaskId || !currentTask) {
         return;
       }
       void (async () => {
-        if (syncComposerDirtyState()) {
+        const selectedTemplateSummary = outreachTemplates.find(
+          (template) => template.id === templateId && !template.archived_at,
+        );
+        if (!selectedTemplateSummary) {
+          notifyError('套用模板失败', '所选模板已不可用，请刷新后重试。');
+          return;
+        }
+
+        const hasUnsavedChanges = syncComposerDirtyState();
+        const replacesExistingDraft =
+          hasDraftBody && currentTask.draft.source !== 'template';
+        if (hasUnsavedChanges || replacesExistingDraft) {
           const confirmed = await confirm({
-            title: '用模板替换当前未保存的草稿？',
-            description:
-              '选择模板会把模板内容复制为当前任务的新快照，当前未保存的主题和正文会被替换。',
-            confirmLabel: '替换内容',
-            cancelLabel: '继续编辑',
+            title: '用模板替换当前草稿？',
+            description: `将读取模板库中“${selectedTemplateSummary.name}”的当前内容，替换当前主题和正文，并清除现有 AI 改写或已保存草稿。`,
+            confirmLabel: '套用并替换',
+            cancelLabel: '取消',
             tone: 'danger',
           });
           if (!confirmed) {
@@ -955,44 +965,37 @@ export const WorkspacePage = () => {
           }
         }
 
-        const selectedTemplate =
-          templateId === null
-            ? null
-            : outreachTemplates.find((template) => template.id === templateId) ??
-              null;
-        if (templateId !== null && !selectedTemplate) {
-          notifyError('切换模板失败', '所选模板已不可用，请刷新后重试。');
-          return;
-        }
+        let appliedTemplate: OutreachTemplateDTO | null = null;
 
         await runAction(
-          () =>
-            updateTaskOutreachConfig(currentTaskId, {
+          async () => {
+            const latestTemplate = await getOutreachTemplate(templateId);
+            if (latestTemplate.archived_at) {
+              throw new Error('所选模板已被删除，不能重新套用。');
+            }
+            appliedTemplate = latestTemplate;
+            setOutreachTemplates((templates) =>
+              templates.some((template) => template.id === latestTemplate.id)
+                ? templates.map((template) =>
+                    template.id === latestTemplate.id ? latestTemplate : template,
+                  )
+                : [...templates, latestTemplate],
+            );
+            return updateTaskOutreachConfig(currentTaskId, {
               outreach_generation_mode:
-                selectedTemplate?.recommended_generation_mode ??
-                currentTask.outreach_generation_mode,
-              outreach_template_id: selectedTemplate?.id ?? null,
-              outreach_template_subject:
-                selectedTemplate !== null
-                  ? selectedTemplate.subject
-                  : currentTask.outreach_template_subject,
-              outreach_template_body_text:
-                selectedTemplate !== null
-                  ? selectedTemplate.body_text
-                  : currentTask.outreach_template_body_text,
-              outreach_template_body_html:
-                selectedTemplate !== null
-                  ? selectedTemplate.body_html
-                  : currentTask.outreach_template_body_html,
-            }),
-          '切换模板失败',
-          '切换任务模板失败',
+                latestTemplate.recommended_generation_mode,
+              outreach_template_id: latestTemplate.id,
+              outreach_template_subject: latestTemplate.subject,
+              outreach_template_body_text: latestTemplate.body_text,
+              outreach_template_body_html: latestTemplate.body_html,
+            });
+          },
+          '套用模板失败',
+          '重新套用模板失败',
           () => {
             notifySuccess(
-              '任务模板已更新',
-              selectedTemplate
-                ? `已将“${selectedTemplate.name}”的内容复制到当前任务，后续编辑不会改动模板库。`
-                : '当前任务已与模板库解除关联，现有内容保持不变。',
+              '模板已重新套用',
+              `已套用“${appliedTemplate?.name ?? selectedTemplateSummary.name}”的模板库当前内容。`,
             );
           },
         );
@@ -1002,6 +1005,7 @@ export const WorkspacePage = () => {
       confirm,
       currentTask,
       currentTaskId,
+      hasDraftBody,
       notifyError,
       notifySuccess,
       outreachTemplates,
@@ -1435,14 +1439,7 @@ export const WorkspacePage = () => {
                   contentHtml={contentHtml || textToEmailHtml(content)}
                   selectedMaterialIds={selectedMaterialIds}
                   outreachTemplates={outreachTemplates}
-                  selectedOutreachTemplateId={
-                    outreachTemplates.some(
-                      (template) =>
-                        template.id === currentTask.outreach_template_id,
-                    )
-                      ? (currentTask.outreach_template_id ?? null)
-                      : null
-                  }
+                  selectedOutreachTemplateId={currentTask.outreach_template_id ?? null}
                   loadingOutreachTemplates={loadingOutreachTemplates}
                   scheduledAt={scheduledAt}
                   acting={acting}
@@ -1461,7 +1458,7 @@ export const WorkspacePage = () => {
                   onSubjectChange={handleSubjectChange}
                   onContentChange={handleContentChange}
                   onSelectedMaterialIdsChange={handleSelectedMaterialIdsChange}
-                  onOutreachTemplateChange={handleOutreachTemplateChange}
+                  onApplyOutreachTemplate={handleApplyOutreachTemplate}
                   onSaveDraft={handleSaveDraft}
                   onSendNow={handleSendNow}
                   onScheduleSend={handleScheduleSend}

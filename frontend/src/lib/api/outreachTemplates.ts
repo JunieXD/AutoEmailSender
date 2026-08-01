@@ -6,6 +6,9 @@ export const listOutreachTemplates = (includeArchived = false) =>
     `/api/outreach-templates${includeArchived ? '?include_archived=true' : ''}`,
   );
 
+export const getOutreachTemplate = (templateId: number) =>
+  apiFetch<OutreachTemplateDTO>(`/api/outreach-templates/${templateId}`);
+
 export const createOutreachTemplate = (payload: OutreachTemplatePayloadDTO) =>
   apiFetch<OutreachTemplateDTO>('/api/outreach-templates', {
     method: 'POST',
