@@ -58,8 +58,8 @@ try {
   if ($notes -notmatch "macOS Apple Silicon：下载 ``AutoEmailSender-1.0.1-arm64.dmg``") {
     throw "公告模板缺少 macOS Apple Silicon 安装说明。`n$notes"
   }
-  if ($notes -notmatch "确认后由 Sparkle 下载并重启安装") {
-    throw "公告模板缺少 macOS Sparkle 更新说明。`n$notes"
+  if ($notes -notmatch "macOS Apple Silicon：支持自动检查并在应用内安装更新") {
+    throw "公告模板缺少 macOS 自动更新说明。`n$notes"
   }
   if ($notes -notmatch "导师抓取 Skill 安装与使用教程") {
     throw "公告模板缺少 Skill 安装教程入口。`n$notes"

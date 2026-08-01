@@ -49,7 +49,7 @@ assert_contains "$notes" "### 问题修复" "公告模板缺少问题修复分�
 assert_contains "$notes" "Windows：下载 \`AutoEmailSender-Setup-1.0.1.exe\`" "公告模板缺少 Windows 安装说明。"
 assert_contains "$notes" "macOS Apple Silicon：下载 \`AutoEmailSender-1.0.1-arm64.dmg\`" "公告模板缺少 macOS Apple Silicon 安装说明。"
 assert_contains "$notes" "系统设置 > 隐私与安全性" "公告模板缺少 macOS 首次打开说明。"
-assert_contains "$notes" "确认后由 Sparkle 下载并重启安装" "公告模板缺少 macOS Sparkle 更新说明。"
+assert_contains "$notes" "macOS Apple Silicon：支持自动检查并在应用内安装更新" "公告模板缺少 macOS 自动更新说明。"
 assert_contains "$notes" "导师抓取 Skill 安装与使用教程" "公告模板缺少 Skill 安装教程入口。"
 assert_contains "$notes" "crawl-mentors-to-xlsx-v1.0.1.zip" "公告模板缺少 Skill ZIP 附件名。"
 if [[ "$notes" == *"fix(更新): 修复公告弹窗高度"* ]]; then
