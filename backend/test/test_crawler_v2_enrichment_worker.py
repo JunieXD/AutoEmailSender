@@ -11,7 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.schema_database import create_schema_sqlite_database
 
-from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlCandidateEnrichmentTaskStatus, CrawlJob, CrawlJobStatus, CrawlWorkerTokenUsage, LLMProfile
+from app.models import (
+    CrawlCandidate,
+    CrawlCandidateEnrichmentTask,
+    CrawlCandidateEnrichmentTaskStatus,
+    CrawlJob,
+    CrawlJobKind,
+    CrawlJobStatus,
+    CrawlPageChunk,
+    CrawlPageChunkStatus,
+    CrawlWorkerTokenUsage,
+    LLMProfile,
+)
 from app.services.crawler_tools import CandidateEnrichmentPayload
 from app.services.crawler_structured_output import CandidateEnrichmentWirePayload
 from app.services.llm_runtime import (
@@ -176,7 +187,146 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.email, "zhang@example.edu")
         fetch_mock.assert_awaited_once()
+        self.assertEqual(fetch_mock.await_args.args[0].start_url, "https://example.edu/faculty")
         enrich_mock.assert_awaited_once()
+
+    async def test_explicit_cross_domain_profile_uses_itself_as_single_page_root(self) -> None:
+        profile_url = "https://people.example.net/zhang"
+        candidate_id, _ = await self._seed_task(profile_url=profile_url)
+        await self._add_source_chunk(
+            candidate_id=candidate_id,
+            content=f"[张三]({profile_url}) 教授",
+        )
+        payload = CandidateEnrichmentPayload(email="zhang@people.example.net")
+
+        with (
+            patch(
+                "app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.get_or_fetch_profile_text",
+                new=AsyncMock(return_value="张三"),
+            ) as fetch_mock,
+            patch(
+                "app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage",
+                new=AsyncMock(return_value=(payload, None, "")),
+            ),
+        ):
+            result = await enrich_candidate_once(
+                self.session_factory,
+                candidate_id=candidate_id,
+            )
+
+        self.assertEqual(result.email, "zhang@people.example.net")
+        fetch_mock.assert_awaited_once()
+        context = fetch_mock.await_args.args[0]
+        self.assertEqual(context.start_url, profile_url)
+
+    async def test_unproven_cross_domain_profile_fails_terminal_without_retry(self) -> None:
+        _, task_id = await self._seed_task(
+            profile_url="https://people.example.net/invented"
+        )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            task.attempt_count = 1
+            await session.commit()
+
+        with (
+            patch(
+                "app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(),
+            ) as adaptation_mock,
+            patch(
+                "app.services.crawler_v2_enrichment_worker.fetch_profile_text",
+                new=AsyncMock(),
+            ) as fetch_mock,
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        self.assertEqual(
+            task.status,
+            CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+        )
+        self.assertIn("未在来源列表原文中出现", task.last_error or "")
+        adaptation_mock.assert_not_awaited()
+        fetch_mock.assert_not_awaited()
+
+    async def test_unsafe_cross_domain_profile_stays_blocked(self) -> None:
+        profile_url = "http://127.0.0.1/private"
+        candidate_id, task_id = await self._seed_task(profile_url=profile_url)
+        await self._add_source_chunk(
+            candidate_id=candidate_id,
+            content=f"[张三]({profile_url}) 教授",
+        )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            task.attempt_count = 1
+            await session.commit()
+
+        with patch(
+            "app.services.crawler_v2_enrichment_worker.fetch_profile_text",
+            new=AsyncMock(),
+        ) as fetch_mock:
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        self.assertEqual(
+            task.status,
+            CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+        )
+        self.assertIn("内网", task.last_error or "")
+        fetch_mock.assert_not_awaited()
+
+    async def test_information_enrichment_can_use_profiles_from_multiple_domains(self) -> None:
+        profile_url = "https://people.example.net/zhang"
+        candidate_id, _ = await self._seed_task(profile_url=profile_url)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            job = await session.get(CrawlJob, candidate.job_id)
+            assert job is not None
+            job.job_kind = CrawlJobKind.PROFESSOR_ENRICHMENT.value
+            await session.commit()
+
+        with (
+            patch(
+                "app.services.crawler_v2_enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+            ),
+            patch(
+                "app.services.crawler_v2_enrichment_worker.get_or_fetch_profile_text",
+                new=AsyncMock(return_value="张三"),
+            ) as fetch_mock,
+            patch(
+                "app.services.crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage",
+                new=AsyncMock(return_value=(CandidateEnrichmentPayload(), None, "")),
+            ),
+        ):
+            await enrich_candidate_once(
+                self.session_factory,
+                candidate_id=candidate_id,
+            )
+
+        fetch_mock.assert_awaited_once()
+        self.assertEqual(fetch_mock.await_args.args[0].start_url, profile_url)
 
     async def test_enrichment_worker_does_not_write_after_job_is_paused(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
@@ -650,6 +800,27 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             session.add(task)
             await session.commit()
             return candidate.id, task.id
+
+    async def _add_source_chunk(self, *, candidate_id: int, content: str) -> None:
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            job = await session.get(CrawlJob, candidate.job_id)
+            assert job is not None
+            session.add(
+                CrawlPageChunk(
+                    job_id=job.id,
+                    page_id=None,
+                    source_url=job.start_url,
+                    page_fingerprint="profile-policy-page",
+                    chunk_id="profile-policy-chunk",
+                    chunk_index=0,
+                    chunk_hash="profile-policy-hash",
+                    content=content,
+                    status=CrawlPageChunkStatus.COMPLETED.value,
+                )
+            )
+            await session.commit()
 
 
 if __name__ == "__main__":

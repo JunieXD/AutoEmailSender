@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-import re
 from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
@@ -24,7 +23,8 @@ from app.services.crawler_debug import append_crawler_v2_debug_event
 from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
-from app.services.crawler_v2_url_utils import normalize_url
+from app.services.crawler_v2_profile_url_policy import extract_normalized_markdown_links
+from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import (
     LLMRuntimeAdaptation,
@@ -39,7 +39,6 @@ from app.services.crawler_structured_output import (
 )
 
 MAX_CANDIDATES_PER_CHUNK_RESULT = 10
-_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 
 async def invoke_v2_chunk_agent(
@@ -336,13 +335,14 @@ def _normalize_person_name_for_link_match(value: str | None) -> str:
 
 def _extract_markdown_profile_links(chunk_content: str, *, base_url: str) -> dict[str, str]:
     links: dict[str, str] = {}
-    for match in _MARKDOWN_LINK_PATTERN.finditer(chunk_content):
-        key = _normalize_person_name_for_link_match(match.group(1))
+    for label, normalized in extract_normalized_markdown_links(
+        chunk_content,
+        base_url=base_url,
+    ):
+        key = _normalize_person_name_for_link_match(label)
         if not key:
             continue
-        normalized = normalize_url(match.group(2), base_url=base_url)
-        if normalized:
-            links.setdefault(key, normalized)
+        links.setdefault(key, normalized)
     return links
 
 
@@ -353,10 +353,27 @@ def _fill_candidate_profile_urls_from_chunk(
     source_url: str,
 ) -> list[ProfessorCandidatePayload]:
     link_map = _extract_markdown_profile_links(chunk_content, base_url=source_url)
+    explicit_link_urls = set(link_map.values())
+    explicit_link_urls.update(
+        link_url
+        for _label, link_url in extract_normalized_markdown_links(
+            chunk_content,
+            base_url=source_url,
+        )
+    )
     filled: list[ProfessorCandidatePayload] = []
     for candidate in candidates:
         if candidate.profile_url:
-            filled.append(candidate)
+            normalized_profile_url = normalize_url(candidate.profile_url, base_url=source_url)
+            if (
+                is_same_domain(normalized_profile_url, source_url)
+                or normalized_profile_url in explicit_link_urls
+            ):
+                filled.append(candidate)
+                continue
+            data = candidate.model_dump()
+            data["profile_url"] = None
+            filled.append(ProfessorCandidatePayload.model_validate(data))
             continue
         profile_url = link_map.get(_normalize_person_name_for_link_match(candidate.name))
         if profile_url is None:

@@ -16,15 +16,27 @@ from app.models import (
     CrawlJobKind,
     CrawlJobStatus,
     CrawlPage,
+    CrawlPageChunk,
     CrawlWorkerKind,
     LLMProfile,
 )
-from app.services.crawler_tools import CandidateEnrichmentPayload, CrawlToolContext, PageSnapshot, crawl_page_with_browser_fallback
+from app.services.crawler_tools import (
+    CandidateEnrichmentPayload,
+    CrawlToolContext,
+    PageSnapshot,
+    crawl_page_with_browser_fallback,
+    validate_safe_public_crawl_url,
+)
 from app.services.crawler_debug import append_crawler_v2_debug_event
-from app.services.crawler_v2_retry import mark_crawler_v2_failed
+from app.services.crawler_v2_profile_url_policy import (
+    CandidateProfileUrlPolicyError,
+    has_explicit_markdown_link,
+)
+from app.services.crawler_v2_retry import MAX_CRAWLER_V2_ATTEMPTS, mark_crawler_v2_failed
 from app.services.crawler_v2_profile_text_cache import profile_text_cache
 from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
+from app.services.crawler_v2_url_utils import is_same_domain
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.llm_runtime import ensure_llm_runtime_adaptation
 from app.services.crawler_structured_output import (
@@ -240,6 +252,11 @@ async def run_crawler_v2_enrichment_worker_once(
                     message=error_message,
                     retryable_status=CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
                     terminal_status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+                    max_attempts=(
+                        1
+                        if isinstance(exc, CandidateProfileUrlPolicyError)
+                        else MAX_CRAWLER_V2_ATTEMPTS
+                    ),
                 )
                 if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value:
                     task.finished_at = utc_now()
@@ -341,6 +358,13 @@ async def enrich_candidate_once_with_usage(
         job = await session.get(CrawlJob, candidate.job_id)
         if job is None:
             raise ValueError("job_missing")
+        profile_url = (candidate.profile_url or "").strip()
+        profile_crawl_root = await _resolve_profile_crawl_root(
+            session,
+            candidate=candidate,
+            job=job,
+            profile_url=profile_url,
+        )
         llm_profile = await _resolve_llm_profile(session, job)
         if llm_profile is None:
             raise ValueError("缺少可用的 LLM Profile")
@@ -351,12 +375,48 @@ async def enrich_candidate_once_with_usage(
             job_id=job.id,
             university=job.university,
             school=job.school,
-            start_url=job.start_url,
+            start_url=profile_crawl_root,
             llm_adaptation=adaptation,
         )
-        profile_url = candidate.profile_url or ""
     page_text = await get_or_fetch_profile_text(ctx, candidate.id, profile_url)
     return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
+
+
+async def _resolve_profile_crawl_root(
+    session: AsyncSession,
+    *,
+    candidate: CrawlCandidate,
+    job: CrawlJob,
+    profile_url: str,
+) -> str:
+    try:
+        validate_safe_public_crawl_url(profile_url)
+    except ValueError as exc:
+        raise CandidateProfileUrlPolicyError(str(exc)) from exc
+
+    if job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+        return profile_url
+    if is_same_domain(profile_url, job.start_url):
+        return job.start_url
+
+    chunks = list(
+        await session.scalars(
+            select(CrawlPageChunk).where(CrawlPageChunk.job_id == candidate.job_id)
+        )
+    )
+    if any(
+        has_explicit_markdown_link(
+            chunk.content,
+            base_url=chunk.source_url,
+            target_url=profile_url,
+        )
+        for chunk in chunks
+    ):
+        return profile_url
+
+    raise CandidateProfileUrlPolicyError(
+        "跨主域导师主页未在来源列表原文中出现，已拒绝补全"
+    )
 
 async def enrich_candidate_profile_with_llm_with_usage(
     ctx: CrawlToolContext,

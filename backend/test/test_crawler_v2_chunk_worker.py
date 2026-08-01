@@ -671,6 +671,68 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             row = await session.scalar(select(CrawlCandidate).where(CrawlCandidate.job_id == job_id))
         assert row is not None
         self.assertEqual(row.profile_url, "https://example.edu/zhang.html")
+
+    async def test_complete_chunk_keeps_explicit_cross_domain_profile_url(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+        profile_url = "https://profiles.example.net/zhang?a=1&b=2"
+        async with self.session_factory() as session:
+            chunk = await session.get(CrawlPageChunk, chunk_id)
+            assert chunk is not None
+            chunk.content = f"[张三]({profile_url}) 教授"
+            await session.commit()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[
+                ProfessorCandidatePayload(
+                    name="张三",
+                    profile_url="https://profiles.example.net/zhang?b=2&a=1",
+                    confidence=0.9,
+                )
+            ],
+            candidate_count=1,
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        async with self.session_factory() as session:
+            row = await session.scalar(
+                select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+            )
+        assert row is not None
+        self.assertEqual(
+            row.profile_url,
+            "https://profiles.example.net/zhang?b=2&a=1",
+        )
+
+    async def test_complete_chunk_clears_unproven_cross_domain_profile_url(self) -> None:
+        job_id, chunk_id = await self._seed_processing_chunk()
+
+        result = await complete_current_chunk(
+            self.session_factory,
+            chunk_id=chunk_id,
+            worker_id="w1",
+            candidates=[
+                ProfessorCandidatePayload(
+                    name="张三",
+                    email="zhang@example.edu",
+                    profile_url="https://profiles.example.net/invented",
+                    confidence=0.9,
+                )
+            ],
+            candidate_count=1,
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        async with self.session_factory() as session:
+            row = await session.scalar(
+                select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+            )
+        assert row is not None
+        self.assertEqual(row.email, "zhang@example.edu")
+        self.assertIsNone(row.profile_url)
+
     async def test_complete_chunk_clears_profile_url_when_it_matches_known_listing_url(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk()
         listing_url = "https://example.edu/faculty"
