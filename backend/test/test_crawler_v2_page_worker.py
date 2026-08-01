@@ -848,6 +848,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(processed, 1)
         browser_mock.assert_awaited_once()
+        self.assertEqual(browser_mock.await_args.kwargs["intent"], "directory")
         async with self.session_factory() as session:
             task = await session.get(CrawlPageTask, task_id)
             chunks = list(await session.scalars(select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)))
@@ -1065,7 +1066,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         browser_mock.assert_awaited_once_with(
             unittest.mock.ANY,
             url,
-            intent="generic",
+            intent="directory",
             force_fetch=True,
         )
         async with self.session_factory() as session:

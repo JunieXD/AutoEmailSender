@@ -115,6 +115,10 @@ JS_RENDER_TIMEOUT_MS = 30000
 BROWSER_WAIT_TIMEOUT_MS = 15000
 BROWSER_DELAY_SECONDS = 1.5
 BROWSER_WAIT_SELECTOR = "css:body"
+DYNAMIC_DIRECTORY_READY_TIMEOUT_MS = 5000
+DYNAMIC_DIRECTORY_READY_POLL_MS = 200
+DYNAMIC_DIRECTORY_STABLE_MS = 300
+DYNAMIC_DIRECTORY_MAX_RETRIES = 1
 BROWSER_EXTRA_ARGS = (
     "--disable-features=HttpsUpgrades",
     "--disable-blink-features=AutomationControlled",
@@ -146,6 +150,10 @@ class BrowserFetchOptions:
     page_timeout_ms: int = JS_RENDER_TIMEOUT_MS
     max_retries: int = MAX_RETRIES_FOR_BROWSER_RENDER
     user_agent: str = BROWSER_USER_AGENT
+    wait_for_dynamic_directory: bool = False
+    dynamic_directory_ready_timeout_ms: int = DYNAMIC_DIRECTORY_READY_TIMEOUT_MS
+    dynamic_directory_ready_poll_ms: int = DYNAMIC_DIRECTORY_READY_POLL_MS
+    dynamic_directory_stable_ms: int = DYNAMIC_DIRECTORY_STABLE_MS
 
 
 class PageSnapshot(BaseModel):
@@ -1707,6 +1715,14 @@ def _browser_fetch_options_for_intent(
         if wait_for is _DEFAULT_BROWSER_WAIT_FOR
         else wait_for
     )
+    if intent == "directory":
+        return BrowserFetchOptions(
+            wait_until=wait_until,
+            wait_for=selected_wait_for,
+            delay_before_return_html_seconds=0,
+            max_retries=DYNAMIC_DIRECTORY_MAX_RETRIES,
+            wait_for_dynamic_directory=True,
+        )
     return BrowserFetchOptions(wait_until=wait_until, wait_for=selected_wait_for)
 
 
@@ -2105,6 +2121,7 @@ async def _try_playwright_browser_fetch_once(
         )
 
     browser = None
+    dynamic_directory_ready = True
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
@@ -2123,9 +2140,17 @@ async def _try_playwright_browser_fetch_once(
                     selector,
                     timeout=options.wait_for_timeout_ms,
                 )
-            if options.delay_before_return_html_seconds > 0:
+            if options.wait_for_dynamic_directory:
+                html, dynamic_directory_ready = await _wait_for_dynamic_directory_html(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                )
+            elif options.delay_before_return_html_seconds > 0:
                 await page.wait_for_timeout(options.delay_before_return_html_seconds * 1000)
-            html = await page.content()
+                html = await page.content()
+            else:
+                html = await page.content()
             final_url = str(getattr(page, "url", "") or absolute_url)
     except Exception as exc:
         return _failed_snapshot(
@@ -2143,7 +2168,68 @@ async def _try_playwright_browser_fetch_once(
             except Exception:
                 pass
 
-    return _snapshot_from_browser_html(html=html, final_url=final_url, absolute_url=absolute_url)
+    snapshot = _snapshot_from_browser_html(
+        html=html,
+        final_url=final_url,
+        absolute_url=absolute_url,
+    )
+    if not dynamic_directory_ready:
+        snapshot.status = "failed"
+        snapshot.error_message = "动态名单内容在 5 秒内仍未加载完成"
+        snapshot.suspicious_empty = True
+    return snapshot
+
+
+async def _wait_for_dynamic_directory_html(
+    page: Any,
+    *,
+    absolute_url: str,
+    options: BrowserFetchOptions,
+) -> tuple[str, bool]:
+    timeout_ms = max(0, int(options.dynamic_directory_ready_timeout_ms))
+    poll_ms = max(1, int(options.dynamic_directory_ready_poll_ms))
+    stable_ms = max(0, int(options.dynamic_directory_stable_ms))
+    elapsed_ms = 0
+    stable_elapsed_ms = 0
+    ready_signature: str | None = None
+    latest_html = ""
+
+    while True:
+        latest_html = await page.content()
+        final_url = str(getattr(page, "url", "") or absolute_url)
+        snapshot = _snapshot_from_browser_html(
+            html=latest_html,
+            final_url=final_url,
+            absolute_url=absolute_url,
+        )
+        if (
+            snapshot.status == "succeeded"
+            and not looks_like_unrendered_dynamic_teacher_directory(snapshot)
+        ):
+            signature = _dynamic_directory_render_signature(snapshot)
+            if signature == ready_signature:
+                stable_elapsed_ms += poll_ms
+            else:
+                ready_signature = signature
+                stable_elapsed_ms = 0
+            if stable_elapsed_ms >= stable_ms:
+                return latest_html, True
+        else:
+            ready_signature = None
+            stable_elapsed_ms = 0
+
+        if elapsed_ms >= timeout_ms:
+            return latest_html, False
+        wait_ms = min(poll_ms, timeout_ms - elapsed_ms)
+        if wait_ms <= 0:
+            return latest_html, False
+        await page.wait_for_timeout(wait_ms)
+        elapsed_ms += wait_ms
+
+
+def _dynamic_directory_render_signature(snapshot: PageSnapshot) -> str:
+    content = snapshot.text + "\0" + "\n".join(snapshot.links)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 def _is_wait_condition_failure(message: str | None) -> bool:
     normalized_message = (message or "").lower()

@@ -64,7 +64,7 @@ async def run_crawler_v2_page_worker_once(
             await session.commit()
             return 1
         target_url = task.original_url
-        fetch_intent = "profile" if job.entry_type == "profile" else "generic"
+        fetch_intent = "profile" if job.entry_type == "profile" else "directory"
         routing_profile = None
         if job.entry_type != "profile":
             routing_profile = await _resolve_llm_profile(session, job)

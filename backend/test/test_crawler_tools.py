@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -310,6 +311,11 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(directory_options.wait_for, "css:body")
         self.assertEqual(generic_options.wait_until, "load")
         self.assertEqual(directory_options.wait_until, "load")
+        self.assertFalse(generic_options.wait_for_dynamic_directory)
+        self.assertTrue(directory_options.wait_for_dynamic_directory)
+        self.assertEqual(directory_options.delay_before_return_html_seconds, 0)
+        self.assertEqual(directory_options.dynamic_directory_ready_timeout_ms, 5000)
+        self.assertEqual(directory_options.max_retries, 1)
 
     def test_playwright_launch_options_disable_chromium_https_upgrades_and_automation_controlled(self) -> None:
         options = crawler_tools._playwright_launch_options()
@@ -1260,6 +1266,69 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
         )
+
+    async def test_dynamic_directory_browser_waits_until_content_is_stable(self) -> None:
+        empty_html = """
+        <html><body><main class="content">
+          <ul class="teacher-list"></ul>
+        </main></body></html>
+        """
+        ready_html = """
+        <html><body><main class="content">
+          <ul class="teacher-list"><li><a href="/zhang">张三</a></li></ul>
+        </main></body></html>
+        """
+        page = SimpleNamespace(
+            url="https://example.edu/faculty",
+            content=AsyncMock(
+                side_effect=[empty_html, ready_html, ready_html, ready_html]
+            ),
+            wait_for_timeout=AsyncMock(),
+        )
+        options = crawler_tools.BrowserFetchOptions(
+            wait_for_dynamic_directory=True,
+            dynamic_directory_ready_timeout_ms=1000,
+            dynamic_directory_ready_poll_ms=100,
+            dynamic_directory_stable_ms=200,
+        )
+
+        html, ready = await crawler_tools._wait_for_dynamic_directory_html(
+            page,
+            absolute_url=page.url,
+            options=options,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(html, ready_html)
+        self.assertEqual(page.wait_for_timeout.await_count, 3)
+
+    async def test_dynamic_directory_browser_wait_times_out_while_list_is_empty(self) -> None:
+        empty_html = """
+        <html><body><main class="content">
+          <ul class="teacher-list"></ul>
+        </main></body></html>
+        """
+        page = SimpleNamespace(
+            url="https://example.edu/faculty",
+            content=AsyncMock(return_value=empty_html),
+            wait_for_timeout=AsyncMock(),
+        )
+        options = crawler_tools.BrowserFetchOptions(
+            wait_for_dynamic_directory=True,
+            dynamic_directory_ready_timeout_ms=200,
+            dynamic_directory_ready_poll_ms=100,
+            dynamic_directory_stable_ms=100,
+        )
+
+        html, ready = await crawler_tools._wait_for_dynamic_directory_html(
+            page,
+            absolute_url=page.url,
+            options=options,
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(html, empty_html)
+        self.assertEqual(page.wait_for_timeout.await_count, 2)
 
     async def test_crawl_page_with_browser_fallback_retries_browser_for_site_error_page(self) -> None:
         ctx = CrawlToolContext(
