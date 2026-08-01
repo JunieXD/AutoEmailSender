@@ -1743,31 +1743,82 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2024 年", prompt_text)
         self.assertIn("2026年5月21日", prompt_text)
         self.assertIn("日期、年份、时间及其格式不应修改", SYSTEM_DRAFT_REWRITE_PROMPT)
-        self.assertIn(
-            "保留姓名、日期、年份、时间及格式等事实锚点",
-            instructions_text,
-        )
-        self.assertIn("集中表达有依据的匹配点", instructions_text)
-        self.assertIn("具体程度与资料相称", instructions_text)
-        self.assertIn("用户未明确说明时", prompt_text)
+        self.assertIn("必须执行 default_personalization_task", instructions_text)
+        default_task = payload["input"]["default_personalization_task"]
+        self.assertNotIn("professor_direction_options", default_task)
+        self.assertIn("可见、实质的导师方向个性化", default_task["objective"])
+        self.assertIn("不能原样返回", default_task["objective"])
+        self.assertIn("导师称呼沿用 professor.name", default_task["professor_name"])
+        self.assertIn("仅可省略末尾职称括号", default_task["professor_name"])
+        self.assertIn("位置和范围由原信决定", default_task["scope"])
+        self.assertIn("整体少而准", default_task["scope"])
+        self.assertIn("多个独立契合点可在对应位置表达", default_task["scope"])
+        self.assertIn("长列表用上位概念自然概括", default_task["scope"])
+        self.assertIn("归纳少量有学生依据的契合点", default_task["planning"])
+        self.assertIn("多个点各有独立依据时可分别表达", default_task["planning"])
+        self.assertIn("每个点选定唯一、最合适的 segment_id", default_task["planning"])
+        self.assertIn("不要输出规划", default_task["planning"])
+        self.assertIn("有直接经历时在该段就地结合", default_task["placement"])
+        self.assertIn("一处克制的兴趣或学习意愿已足够", default_task["placement"])
+        self.assertIn("不再分散到其他段落", default_task["placement"])
+        self.assertIn("只有短标签或宽泛词时", default_task["sparse_professor_context"])
+        self.assertIn("仅一个 replacement 可新增该标签", default_task["sparse_professor_context"])
+        self.assertIn("其余不提", default_task["sparse_professor_context"])
+        self.assertIn("不扩展子方向、技术问题或应用", default_task["sparse_professor_context"])
+        self.assertIn("宽泛词重合不代表研究任务相关", default_task["fact_boundary"])
+        self.assertIn("不补工具、方法、结果或技术联系", default_task["fact_boundary"])
+        self.assertIn("相通之处", default_task["fact_boundary"])
+        self.assertIn("潜在联系", default_task["fact_boundary"])
+        self.assertIn("比较 replacements 新增句", default_task["final_check"])
+        self.assertIn("同一方向或近义意思只保留最自然的一句", default_task["final_check"])
+        self.assertIn("删去无依据、无关内容", default_task["final_check"])
+        self.assertIn("确认有实质修改", default_task["final_check"])
 
     def test_draft_rewrite_prompts_use_soft_fact_anchors_by_default(self) -> None:
         system_prompt = SYSTEM_DRAFT_REWRITE_PROMPT
 
         self.assertIn("user_custom_instruction", system_prompt)
-        self.assertIn("默认写作原则：仅适用于用户未明确说明的部分", system_prompt)
-        self.assertIn("选择最有支撑的匹配点", system_prompt)
-        self.assertIn("同一匹配点不在多段重复", system_prompt)
-        self.assertIn("有独立依据可适度展开", system_prompt)
-        self.assertIn("具体程度与资料相称", system_prompt)
-        self.assertIn("资料宽泛时只作宽泛呼应", system_prompt)
-        self.assertIn("不补全子方向或将可能性写成导师既定研究", system_prompt)
-        self.assertIn("不只改空格、称呼或近义词", system_prompt)
-        self.assertIn("事实锚点", system_prompt)
-        self.assertIn("不要改变事实含义、夸大经历、混淆双方身份或虚构信息", system_prompt)
-        self.assertIn("导师和学生姓名一般不应修改", system_prompt)
+        self.assertIn("最高优先级的内容要求", system_prompt)
+        self.assertIn("未被它覆盖", system_prompt)
+        self.assertIn("必须执行该任务并产生实质修改", system_prompt)
+        self.assertIn("范围由内容决定", system_prompt)
+        self.assertIn("可概括或结合多个相关方向", system_prompt)
+        self.assertIn("有直接学生经历时优先在该段就地结合", system_prompt)
+        self.assertIn("没有直接依据时仍须在最自然处克制表达兴趣", system_prompt)
+        self.assertIn("每个契合点只表达一次", system_prompt)
+        self.assertIn("学生事实只依据 student_material_text 和 source_blocks", system_prompt)
+        self.assertIn("导师事实只依据 professor", system_prompt)
+        self.assertIn("不补充材料未明说的工具、方法、任务、结果或认知", system_prompt)
+        self.assertIn("不因共享“大模型”“人工智能”等宽泛词就建立技术关联", system_prompt)
+        self.assertIn("不要写成长久关注", system_prompt)
+        self.assertIn("具体研究计划或应用设想", system_prompt)
+        self.assertIn("人物身份、数字结果", system_prompt)
         self.assertIn("程炜（研究员）", system_prompt)
+        self.assertIn("数字或字母也视为姓名的一部分", system_prompt)
+        self.assertIn("不要用学生姓名替换导师姓名", system_prompt)
         self.assertIn("不要猜测或纠正姓名", system_prompt)
+        self.assertNotIn("默认只改写一个", system_prompt)
+        self.assertNotIn("选中方向原文", system_prompt)
+
+    def test_default_personalization_keeps_direction_and_scope_flexible(self) -> None:
+        from app.models import Professor
+        from app.services.llm_runtime import (
+            _build_draft_rewrite_default_personalization_task,
+        )
+
+        task = _build_draft_rewrite_default_personalization_task(
+            Professor(
+                name="李老师",
+                research_direction="机器学习系统，大模型训练与推理；联邦学习、数据中心网络",
+            ),
+        )
+
+        self.assertNotIn("professor_direction_options", task)
+        task_text = json.dumps(task, ensure_ascii=False)
+        self.assertIn("位置和范围由原信决定", task_text)
+        self.assertIn("多个点各有独立依据时可分别表达", task_text)
+        self.assertNotIn("只改写一个", task_text)
+        self.assertNotIn("选中方向原文", task_text)
 
 
     def test_draft_rewrite_system_prompt_includes_replacements_output_example(self) -> None:
