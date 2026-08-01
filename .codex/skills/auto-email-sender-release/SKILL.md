@@ -79,12 +79,12 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - Avoid sub-bullets and marketing language.
 - Omit development-only, packaging-only, documentation-only, README, badge, and website-copy changes unless they affect installation, upgrade, onboarding, data safety, reliability, or ordinary product usage.
 - Describe a new or materially changed repository Skill as a user-facing capability, and direct ordinary users to the global installation guide backed by the repository version. Do not describe it as built into the desktop installer. Omit contract-test-only or internal Skill maintenance when behavior and installation are unchanged.
-- Keep the generated announcement's final `## 导师抓取Skill` section and its public installation-guide link. This fixed onboarding entry belongs at the bottom even when the release range contains no Skill changes.
+- Keep the generated announcement's final `## 导师抓取 Skill` section and its public installation-guide link. This fixed onboarding entry belongs at the bottom even when the release range contains no Skill changes.
 
 ## Platform Note Rules
 
 - Keep the generated `## 安装说明` and `## 自动更新` sections in the final public release note.
-- Keep `## 导师抓取Skill` after `## 自动更新`, with the clickable public guide URL `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`.
+- Keep `## 导师抓取 Skill` after `## 自动更新`, with the clickable public guide URL `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`.
 - Name the standalone Skill asset exactly `crawl-mentors-to-xlsx-v<version>.zip`, and keep that exact versioned filename in the generated announcement.
 - Keep the exact package names:
   - Windows: `AutoEmailSender-Setup-x.y.z.exe`

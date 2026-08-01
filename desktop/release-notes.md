@@ -10,7 +10,7 @@
 - 智能抓取支持批量添加网页，并可直接从导师个人主页提取信息。
 - 统计面板新增导师联系效果分析，可查看触达覆盖和回复情况。
 - macOS Apple Silicon 版新增应用内更新功能。
-- 新增导师抓取Skill，可从学校官网抓取导师信息并生成可导入表格。
+- 新增导师抓取 Skill，可从学校官网抓取导师信息并生成可导入表格。
 - 顶部导航新增 QQ 群反馈入口。
 
 ### 体验优化
@@ -46,7 +46,7 @@
 - macOS Apple Silicon：支持自动检查并在应用内安装更新。
 - 旧版 macOS 用户需要手动安装本版本一次，之后即可使用应用内更新。
 
-## 导师抓取Skill
+## 导师抓取 Skill
 
-- 想用 Codex 或 Claude Code 从学校官网整理导师信息并生成导入表？查看[导师抓取Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)。
+- 想用 Codex 或 Claude Code 从学校官网整理导师信息并生成导入表？查看[导师抓取 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)。
 - 也可以直接下载 [`crawl-mentors-to-xlsx-v2.4.0.zip`](https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.0/crawl-mentors-to-xlsx-v2.4.0.zip) 手动安装。

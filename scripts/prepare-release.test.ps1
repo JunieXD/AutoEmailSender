@@ -61,7 +61,7 @@ try {
   if ($notes -notmatch "确认后由 Sparkle 下载并重启安装") {
     throw "公告模板缺少 macOS Sparkle 更新说明。`n$notes"
   }
-  if ($notes -notmatch "导师官网转导入表 Skill 安装与使用教程") {
+  if ($notes -notmatch "导师抓取 Skill 安装与使用教程") {
     throw "公告模板缺少 Skill 安装教程入口。`n$notes"
   }
   if ($notes -notmatch "crawl-mentors-to-xlsx-v1.0.1.zip") {

@@ -26,15 +26,15 @@ describe("release notes generator", () => {
     expect(notes).toContain("Windows：支持在应用内下载并安装更新。");
     expect(notes).toContain("macOS Apple Silicon：支持自动检查并在应用内安装更新。");
     expect(notes).toContain("旧版 macOS 用户需要手动安装本版本一次，之后即可使用应用内更新。");
-    expect(notes).toContain("## 导师抓取Skill");
+    expect(notes).toContain("## 导师抓取 Skill");
     expect(notes).not.toContain("## 从导师官网生成导入表");
     expect(notes).toContain(
-      "[导师抓取Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
+      "[导师抓取 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
     );
     expect(notes).toContain(
       "[`crawl-mentors-to-xlsx-v2.0.2.zip`](https://github.com/JunieXD/AutoEmailSender/releases/download/v2.0.2/crawl-mentors-to-xlsx-v2.0.2.zip)",
     );
-    expect(notes.lastIndexOf("导师抓取Skill 安装与使用教程")).toBeGreaterThan(
+    expect(notes.lastIndexOf("导师抓取 Skill 安装与使用教程")).toBeGreaterThan(
       notes.lastIndexOf("## 自动更新"),
     );
     expect(notes).not.toContain("fix(后端)");
