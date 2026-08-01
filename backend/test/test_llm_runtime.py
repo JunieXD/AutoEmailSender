@@ -1651,7 +1651,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("不应进入草稿 prompt", rewrite_prompt)
 
 
-    def test_draft_rewrite_prompts_treat_literal_dates_as_editable_content(self) -> None:
+    def test_draft_rewrite_prompts_preserve_literal_dates_by_default(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.outreach_templates import build_template_context
         from app.services.template_draft_rewrite import build_draft_rewrite_document
@@ -1700,11 +1700,35 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(prompt)
 
         prompt_text = json.dumps(payload, ensure_ascii=False)
+        instructions_text = "\n".join(payload["instructions"])
         self.assertIn("2024 年", prompt_text)
         self.assertIn("2026年5月21日", prompt_text)
-        self.assertNotIn("不要新增日期", SYSTEM_DRAFT_REWRITE_PROMPT)
-        self.assertNotIn("不要修改或删除用户已写的日期", prompt_text)
-        self.assertIn("日期", "\n".join(payload["instructions"]))
+        self.assertIn("日期、年份、时间及其格式不应修改", SYSTEM_DRAFT_REWRITE_PROMPT)
+        self.assertIn(
+            "保留姓名、日期、年份、时间及格式等事实锚点",
+            instructions_text,
+        )
+        self.assertIn("集中表达有依据的匹配点", instructions_text)
+        self.assertIn("具体程度与资料相称", instructions_text)
+        self.assertIn("用户未明确说明时", prompt_text)
+
+    def test_draft_rewrite_prompts_use_soft_fact_anchors_by_default(self) -> None:
+        system_prompt = SYSTEM_DRAFT_REWRITE_PROMPT
+
+        self.assertIn("user_custom_instruction", system_prompt)
+        self.assertIn("默认写作原则：仅适用于用户未明确说明的部分", system_prompt)
+        self.assertIn("选择最有支撑的匹配点", system_prompt)
+        self.assertIn("同一匹配点不在多段重复", system_prompt)
+        self.assertIn("有独立依据可适度展开", system_prompt)
+        self.assertIn("具体程度与资料相称", system_prompt)
+        self.assertIn("资料宽泛时只作宽泛呼应", system_prompt)
+        self.assertIn("不补全子方向或将可能性写成导师既定研究", system_prompt)
+        self.assertIn("不只改空格、称呼或近义词", system_prompt)
+        self.assertIn("事实锚点", system_prompt)
+        self.assertIn("不要改变事实含义、夸大经历、混淆双方身份或虚构信息", system_prompt)
+        self.assertIn("导师和学生姓名一般不应修改", system_prompt)
+        self.assertIn("程炜（研究员）", system_prompt)
+        self.assertIn("不要猜测或纠正姓名", system_prompt)
 
 
     def test_draft_rewrite_system_prompt_includes_replacements_output_example(self) -> None:
