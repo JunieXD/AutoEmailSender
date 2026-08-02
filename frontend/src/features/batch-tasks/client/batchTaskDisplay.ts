@@ -1,4 +1,8 @@
-import type { BatchTaskCardDTO, BatchTaskItemDTO } from "@/types";
+import type {
+  BatchTaskCardDTO,
+  BatchTaskItemDTO,
+  OutreachGenerationMode,
+} from "@/types";
 
 export type BatchPendingItemAction =
   | { kind: "review"; text: string }
@@ -9,6 +13,32 @@ export type BatchPendingItemAction =
 
 export const getBatchTaskWaitingSendCount = (task: BatchTaskCardDTO) =>
   task.approved_count + task.scheduled_count;
+
+export const getOutreachGenerationModeLabel = (
+  mode: OutreachGenerationMode | null | undefined,
+) => {
+  if (mode === "template") {
+    return "直接套用模板";
+  }
+  if (mode === "llm") {
+    return "AI 辅助写信";
+  }
+  return "未记录";
+};
+
+export const getOutreachTemplateSourceLabel = (source: {
+  outreach_template_id?: number | null;
+  outreach_template_name_snapshot?: string | null;
+}) => {
+  const snapshotName = source.outreach_template_name_snapshot?.trim();
+  if (snapshotName) {
+    return snapshotName;
+  }
+  if (source.outreach_template_id != null) {
+    return "历史来源模板";
+  }
+  return "自定义本次内容";
+};
 
 export const getBatchTaskItemCancellationText = (item: BatchTaskItemDTO) => {
   if (item.cancellation_reason === "schedule_expired") {

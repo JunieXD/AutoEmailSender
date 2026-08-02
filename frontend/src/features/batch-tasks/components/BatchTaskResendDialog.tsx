@@ -1,5 +1,9 @@
 import { Loader2, RotateCcw, X } from 'lucide-react';
 import { formatApiDateTime } from '@/lib/dateTime';
+import {
+  getOutreachGenerationModeLabel,
+  getOutreachTemplateSourceLabel,
+} from '@/features/batch-tasks/client/batchTaskDisplay';
 import { PROFESSOR_STATUS_LABELS, type BatchTaskResendContextDTO } from '@/types';
 
 type BatchTaskResendDialogProps = {
@@ -25,6 +29,12 @@ export const BatchTaskResendDialog = ({
 }: BatchTaskResendDialogProps) => {
   const selectableItems = context?.items.filter((item) => item.selectable && item.professor_id !== null) ?? [];
   const selectedCount = selectedProfessorIds.length;
+  const templateLabel = context
+    ? getOutreachTemplateSourceLabel(context.defaults)
+    : '正在加载';
+  const generationModeLabel = getOutreachGenerationModeLabel(
+    context?.defaults.outreach_generation_mode,
+  );
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/35 p-4">
@@ -53,6 +63,24 @@ export const BatchTaskResendDialog = ({
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
+          {context ? (
+            <section className="mb-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
+              <div className="text-sm font-semibold text-stone-900">原任务发信设置</div>
+              <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                <div className="rounded-xl border border-white/80 bg-white/80 px-3 py-2">
+                  <dt className="text-xs text-stone-500">发信模板</dt>
+                  <dd className="mt-1 font-medium text-stone-900">{templateLabel}</dd>
+                </div>
+                <div className="rounded-xl border border-white/80 bg-white/80 px-3 py-2">
+                  <dt className="text-xs text-stone-500">写信方式</dt>
+                  <dd className="mt-1 font-medium text-stone-900">{generationModeLabel}</dd>
+                </div>
+              </dl>
+              <p className="mt-3 text-xs leading-5 text-stone-600">
+                进入创建页后仍可选择其他模板或直接修改编辑器；新任务以创建页中看到的内容为准。
+              </p>
+            </section>
+          ) : null}
           {loading ? (
             <div className="flex items-center justify-center gap-2 rounded-2xl border border-stone-200 px-6 py-12 text-sm text-stone-500">
               <Loader2 className="h-4 w-4 animate-spin" />

@@ -819,6 +819,739 @@ class MigrationScriptTests(unittest.TestCase):
 
         self._run_alembic(env, "upgrade", "head")
 
+    def test_batch_template_snapshot_migration_upgrades_pre_library_batch_data(self) -> None:
+        database_path = Path(self.temp_dir.name) / "batch_template_snapshot_pre_library.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        pre_library_revision = "2f6a9d8c1e20"
+
+        self._run_alembic(env, "upgrade", pre_library_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="batch-template-pre-library@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="模板库前批次模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "batch-template-pre-library@example.edu",
+            )
+            batch_task_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO batch_tasks (
+                        identity_id,
+                        llm_profile_id,
+                        name,
+                        email_subject,
+                        email_body,
+                        target_count
+                    )
+                    VALUES (?, ?, '模板库前历史批次', '旧批次主题', '旧批次正文', 1)
+                    """,
+                    (identity_id, llm_profile_id),
+                ).lastrowid,
+            )
+            connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    batch_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    status,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                )
+                VALUES (?, ?, ?, ?, 'review_required', 'llm', ?, ?, ?)
+                """,
+                (
+                    batch_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    "模板库前最终主题 {{name}}",
+                    "模板库前最终正文 {{sender_name}}",
+                    "<p>模板库前最终正文 {{sender_name}}</p>",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            snapshot = upgraded.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_name_snapshot,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html,
+                    email_subject,
+                    email_body
+                FROM batch_tasks
+                WHERE id = ?
+                """,
+                (batch_task_id,),
+            ).fetchone()
+        finally:
+            upgraded.close()
+
+        self.assertEqual(
+            snapshot,
+            (
+                None,
+                None,
+                1,
+                "llm",
+                "模板库前最终主题 {{name}}",
+                "模板库前最终正文 {{sender_name}}",
+                "<p>模板库前最终正文 {{sender_name}}</p>",
+                "旧批次主题",
+                "旧批次正文",
+            ),
+        )
+
+    def test_batch_template_snapshot_migration_backfills_existing_batches(self) -> None:
+        database_path = Path(self.temp_dir.name) / "batch_template_snapshot.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260730_db_performance"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="batch-template-migration@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="批次模板迁移模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "batch-template-migration@example.edu",
+            )
+            template_id = connection.execute(
+                """
+                INSERT INTO outreach_templates (
+                    name,
+                    recommended_generation_mode,
+                    subject,
+                    body_text,
+                    body_html
+                )
+                VALUES (?, 'llm', ?, ?, ?)
+                """,
+                (
+                    "迁移前批次模板",
+                    "迁移主题 {{name}}",
+                    "迁移正文 {{sender_name}}",
+                    "<p>迁移正文 {{sender_name}}</p>",
+                ),
+            ).lastrowid
+            batch_task_id = connection.execute(
+                """
+                INSERT INTO batch_tasks (
+                    identity_id,
+                    llm_profile_id,
+                    name,
+                    email_subject,
+                    email_body,
+                    target_count
+                )
+                VALUES (?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    identity_id,
+                    llm_profile_id,
+                    "迁移前批量任务",
+                    "批次旧主题",
+                    "批次旧正文",
+                ),
+            ).lastrowid
+            connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    source,
+                    batch_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    status,
+                    outreach_template_id,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                )
+                VALUES ('batch', ?, ?, ?, ?, 'review_required', ?, 1, 'llm', ?, ?, ?)
+                """,
+                (
+                    batch_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    template_id,
+                    "最终主题 {{name}}",
+                    "最终正文 {{sender_name}}",
+                    "<p>最终正文 {{sender_name}}</p>",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            snapshot = upgraded.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_name_snapshot,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM batch_tasks
+                WHERE id = ?
+                """,
+                (batch_task_id,),
+            ).fetchone()
+        finally:
+            upgraded.close()
+
+        self.assertEqual(
+            snapshot,
+            (
+                template_id,
+                "迁移前批次模板",
+                1,
+                "llm",
+                "最终主题 {{name}}",
+                "最终正文 {{sender_name}}",
+                "<p>最终正文 {{sender_name}}</p>",
+            ),
+        )
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            downgraded_columns = {
+                row[1]
+                for row in downgraded.execute("PRAGMA table_info(batch_tasks)").fetchall()
+            }
+        finally:
+            downgraded.close()
+        self.assertNotIn("outreach_template_id", downgraded_columns)
+        self.assertNotIn("outreach_template_name_snapshot", downgraded_columns)
+
+        self._run_alembic(env, "upgrade", "head")
+
+    def test_batch_template_snapshot_migration_preserves_legacy_rows_and_skips_unversioned_sources(
+        self,
+    ) -> None:
+        database_path = Path(self.temp_dir.name) / "batch_template_snapshot_safety.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260730_db_performance"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="batch-template-safety@example.com",
+            )
+            connection.execute(
+                "UPDATE identity_profiles SET outreach_generation_mode = 'template' WHERE id = ?",
+                (identity_id,),
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="批次迁移安全模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "batch-template-safety@example.edu",
+            )
+            template_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO outreach_templates (
+                        name,
+                        recommended_generation_mode,
+                        subject,
+                        body_text,
+                        body_html
+                    )
+                    VALUES ('历史模板', 'template', '库主题', '库正文', '<p>库正文</p>')
+                    """,
+                ).lastrowid,
+            )
+            stale_template_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO outreach_templates (
+                        name,
+                        recommended_generation_mode,
+                        subject,
+                        body_text,
+                        body_html
+                    )
+                    VALUES ('稍后删除的模板', 'template', '旧主题', '旧正文', '<p>旧正文</p>')
+                    """,
+                ).lastrowid,
+            )
+
+            def insert_batch(name: str, subject: str, body: str, target_count: int) -> int:
+                return int(
+                    connection.execute(
+                        """
+                        INSERT INTO batch_tasks (
+                            identity_id,
+                            llm_profile_id,
+                            name,
+                            schedule_type,
+                            window_start_time,
+                            window_end_time,
+                            emails_per_window,
+                            scheduled_dates,
+                            status,
+                            email_subject,
+                            email_body,
+                            selected_material_ids,
+                            target_count,
+                            created_at,
+                            updated_at,
+                            deleted_at
+                        )
+                        VALUES (
+                            ?, ?, ?, 'scheduled', '08:05', '18:55', 7, ?, 'stopped',
+                            ?, ?, ?, ?, '2026-07-31 01:02:03', '2026-08-01 04:05:06',
+                            '2026-08-01 07:08:09'
+                        )
+                        """,
+                        (
+                            identity_id,
+                            llm_profile_id,
+                            name,
+                            json.dumps(["2026-08-02", "2026-08-03"]),
+                            subject,
+                            body,
+                            json.dumps([9, 3, 9]),
+                            target_count,
+                        ),
+                    ).lastrowid,
+                )
+
+            def insert_email_task(
+                batch_task_id: int,
+                *,
+                template_source_id: int | None,
+                snapshot_version: int | None,
+                generation_mode: str | None,
+                subject: str | None,
+                body_text: str | None,
+                body_html: str | None,
+                created_at: str,
+            ) -> None:
+                connection.execute(
+                    """
+                    INSERT INTO email_tasks (
+                        source,
+                        batch_task_id,
+                        identity_id,
+                        llm_profile_id,
+                        professor_id,
+                        status,
+                        outreach_template_id,
+                        outreach_template_snapshot_version,
+                        outreach_generation_mode,
+                        outreach_template_subject,
+                        outreach_template_body_text,
+                        outreach_template_body_html,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        'batch', ?, ?, ?, ?, 'review_required', ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        batch_task_id,
+                        identity_id,
+                        llm_profile_id,
+                        professor_id,
+                        template_source_id,
+                        snapshot_version,
+                        generation_mode,
+                        subject,
+                        body_text,
+                        body_html,
+                        created_at,
+                        created_at,
+                    ),
+                )
+
+            versioned_batch_id = insert_batch(
+                "有版本快照的历史批次",
+                "批次回退主题",
+                "批次回退正文",
+                2,
+            )
+            insert_email_task(
+                versioned_batch_id,
+                template_source_id=template_id,
+                snapshot_version=1,
+                generation_mode=None,
+                subject="第一封最终主题 {{name}}",
+                body_text="第一封最终正文 {{sender_name}}",
+                body_html="<p>第一封最终正文 {{sender_name}}</p>",
+                created_at="2026-07-31 02:00:00",
+            )
+            insert_email_task(
+                versioned_batch_id,
+                template_source_id=None,
+                snapshot_version=1,
+                generation_mode="llm",
+                subject="不能覆盖第一封的主题",
+                body_text="不能覆盖第一封的正文",
+                body_html=None,
+                created_at="2026-07-31 03:00:00",
+            )
+
+            unversioned_batch_id = insert_batch(
+                "没有版本标记的残缺批次",
+                "保留旧批次主题",
+                "保留旧批次正文",
+                1,
+            )
+            insert_email_task(
+                unversioned_batch_id,
+                template_source_id=template_id,
+                snapshot_version=None,
+                generation_mode="llm",
+                subject="未标记版本的主题",
+                body_text="未标记版本的正文",
+                body_html="<p>未标记版本的正文</p>",
+                created_at="2026-07-31 04:00:00",
+            )
+
+            no_child_batch_id = insert_batch(
+                "没有子任务的历史批次",
+                "孤立批次主题",
+                "孤立批次正文",
+                0,
+            )
+
+            deleted_template_batch_id = insert_batch(
+                "来源模板已删除的历史批次",
+                "删除模板批次主题",
+                "删除模板批次正文",
+                1,
+            )
+            insert_email_task(
+                deleted_template_batch_id,
+                template_source_id=stale_template_id,
+                snapshot_version=1,
+                generation_mode="template",
+                subject="删除前最终主题",
+                body_text="删除前最终正文",
+                body_html="<p>删除前最终正文</p>",
+                created_at="2026-07-31 05:00:00",
+            )
+            # Historical SQLite installations did not always enforce foreign keys.
+            # A stale provenance ID must not be copied into the new batch FK.
+            connection.execute(
+                "DELETE FROM outreach_templates WHERE id = ?",
+                (stale_template_id,),
+            )
+            connection.commit()
+
+            legacy_columns = [
+                row[1]
+                for row in connection.execute("PRAGMA table_info(batch_tasks)").fetchall()
+            ]
+            legacy_projection = ", ".join(f'"{column}"' for column in legacy_columns)
+            legacy_rows_before = connection.execute(
+                f"SELECT {legacy_projection} FROM batch_tasks ORDER BY id",
+            ).fetchall()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            legacy_rows_after = upgraded.execute(
+                f"SELECT {legacy_projection} FROM batch_tasks ORDER BY id",
+            ).fetchall()
+            snapshots = {
+                row[0]: row[1:]
+                for row in upgraded.execute(
+                    """
+                    SELECT
+                        id,
+                        outreach_template_id,
+                        outreach_template_name_snapshot,
+                        outreach_template_snapshot_version,
+                        outreach_generation_mode,
+                        outreach_template_subject,
+                        outreach_template_body_text,
+                        outreach_template_body_html
+                    FROM batch_tasks
+                    ORDER BY id
+                    """,
+                ).fetchall()
+            }
+            batch_foreign_keys = upgraded.execute(
+                "PRAGMA foreign_key_list(batch_tasks)",
+            ).fetchall()
+            batch_foreign_key_violations = upgraded.execute(
+                "PRAGMA foreign_key_check(batch_tasks)",
+            ).fetchall()
+            batch_indexes = {
+                row[1]
+                for row in upgraded.execute("PRAGMA index_list(batch_tasks)").fetchall()
+            }
+            upgraded.execute("PRAGMA foreign_keys = ON")
+            upgraded.execute(
+                "DELETE FROM outreach_templates WHERE id = ?",
+                (template_id,),
+            )
+            upgraded.commit()
+            snapshot_after_template_delete = upgraded.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_name_snapshot,
+                    outreach_template_snapshot_version,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM batch_tasks
+                WHERE id = ?
+                """,
+                (versioned_batch_id,),
+            ).fetchone()
+        finally:
+            upgraded.close()
+
+        self.assertEqual(legacy_rows_after, legacy_rows_before)
+        self.assertEqual(
+            snapshots[versioned_batch_id],
+            (
+                template_id,
+                "历史模板",
+                1,
+                "template",
+                "第一封最终主题 {{name}}",
+                "第一封最终正文 {{sender_name}}",
+                "<p>第一封最终正文 {{sender_name}}</p>",
+            ),
+        )
+        self.assertEqual(snapshots[unversioned_batch_id], (None,) * 7)
+        self.assertEqual(snapshots[no_child_batch_id], (None,) * 7)
+        self.assertEqual(
+            snapshots[deleted_template_batch_id],
+            (
+                None,
+                None,
+                1,
+                "template",
+                "删除前最终主题",
+                "删除前最终正文",
+                "<p>删除前最终正文</p>",
+            ),
+        )
+        self.assertTrue(
+            any(
+                row[2] == "outreach_templates"
+                and row[3] == "outreach_template_id"
+                and row[6].upper() == "SET NULL"
+                for row in batch_foreign_keys
+            ),
+        )
+        self.assertEqual(batch_foreign_key_violations, [])
+        self.assertIn("ix_batch_tasks_outreach_template_id", batch_indexes)
+        self.assertEqual(
+            snapshot_after_template_delete,
+            (
+                None,
+                "历史模板",
+                1,
+                "第一封最终主题 {{name}}",
+                "第一封最终正文 {{sender_name}}",
+                "<p>第一封最终正文 {{sender_name}}</p>",
+            ),
+        )
+
+    def test_batch_template_snapshot_migration_resumes_from_partial_schema(self) -> None:
+        database_path = Path(self.temp_dir.name) / "batch_template_snapshot_partial.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260730_db_performance"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="batch-template-partial@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="批次迁移恢复模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "batch-template-partial@example.edu",
+            )
+            template_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO outreach_templates (
+                        name,
+                        recommended_generation_mode,
+                        subject,
+                        body_text
+                    )
+                    VALUES ('恢复模板', 'llm', '恢复库主题', '恢复库正文')
+                    """,
+                ).lastrowid,
+            )
+            batch_task_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO batch_tasks (
+                        identity_id,
+                        llm_profile_id,
+                        name,
+                        email_subject,
+                        email_body,
+                        target_count
+                    )
+                    VALUES (?, ?, '迁移中断批次', '回退主题', '回退正文', 1)
+                    """,
+                    (identity_id, llm_profile_id),
+                ).lastrowid,
+            )
+            connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    source,
+                    batch_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    status,
+                    outreach_template_id,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text
+                )
+                VALUES ('batch', ?, ?, ?, ?, 'review_required', ?, 1, 'llm', ?, ?)
+                """,
+                (
+                    batch_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    template_id,
+                    "恢复最终主题",
+                    "恢复最终正文",
+                ),
+            )
+            connection.executescript(
+                """
+                ALTER TABLE batch_tasks ADD COLUMN outreach_template_id INTEGER;
+                ALTER TABLE batch_tasks ADD COLUMN outreach_template_name_snapshot VARCHAR(120);
+                ALTER TABLE batch_tasks ADD COLUMN outreach_template_snapshot_version INTEGER;
+                CREATE INDEX ix_batch_tasks_outreach_template_id
+                    ON batch_tasks (outreach_template_id);
+                """,
+            )
+            connection.execute(
+                """
+                UPDATE batch_tasks
+                SET outreach_template_name_snapshot = '迁移中断残值',
+                    outreach_template_snapshot_version = 99
+                WHERE id = ?
+                """,
+                (batch_task_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            snapshot = upgraded.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_name_snapshot,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM batch_tasks
+                WHERE id = ?
+                """,
+                (batch_task_id,),
+            ).fetchone()
+            columns = {
+                row[1] for row in upgraded.execute("PRAGMA table_info(batch_tasks)").fetchall()
+            }
+            index_names = [
+                row[1] for row in upgraded.execute("PRAGMA index_list(batch_tasks)").fetchall()
+            ]
+        finally:
+            upgraded.close()
+
+        self.assertEqual(
+            snapshot,
+            (
+                template_id,
+                "恢复模板",
+                1,
+                "llm",
+                "恢复最终主题",
+                "恢复最终正文",
+                None,
+            ),
+        )
+        self.assertTrue(
+            {
+                "outreach_template_id",
+                "outreach_template_name_snapshot",
+                "outreach_template_snapshot_version",
+                "outreach_generation_mode",
+                "outreach_template_subject",
+                "outreach_template_body_text",
+                "outreach_template_body_html",
+            }.issubset(columns),
+        )
+        self.assertEqual(index_names.count("ix_batch_tasks_outreach_template_id"), 1)
+
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
         try:
             run_alembic_in_process(env, *args)
@@ -991,6 +1724,24 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("primary_material_id", batch_columns)
         self.assertIn("selected_material_ids", batch_columns)
         self.assertIn("scheduled_dates", batch_columns)
+        self.assertTrue(
+            {
+                "outreach_template_id",
+                "outreach_template_name_snapshot",
+                "outreach_template_snapshot_version",
+                "outreach_generation_mode",
+                "outreach_template_subject",
+                "outreach_template_body_text",
+                "outreach_template_body_html",
+            }.issubset(batch_columns),
+        )
+        self.assertEqual(
+            self._get_index_columns(
+                "batch_tasks",
+                "ix_batch_tasks_outreach_template_id",
+            ),
+            ["outreach_template_id"],
+        )
         self.assertNotIn("selected_attachment_ids", batch_columns)
         self.assertIn("primary_material_id", task_columns)
         self.assertIn("selected_material_ids", task_columns)

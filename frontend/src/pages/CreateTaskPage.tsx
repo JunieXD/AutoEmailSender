@@ -437,7 +437,14 @@ export const CreateTaskPage = () => {
       return;
     }
 
-    const confirmDescription = buildBatchCreateConfirmDescription(taskMode, scheduleType);
+    const confirmTemplateName =
+      selectedOutreachTemplate?.name ??
+      (selectedOutreachTemplateId !== null ? '当前已选模板' : null);
+    const confirmDescription = buildBatchCreateConfirmDescription(
+      taskMode,
+      scheduleType,
+      confirmTemplateName,
+    );
 
     const confirmed = await confirm({
       title: scheduleType === 'scheduled' ? '确认创建定时批量发送任务？' : '确认创建真实发送任务？',

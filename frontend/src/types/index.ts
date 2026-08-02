@@ -761,6 +761,10 @@ export interface BatchTaskCardDTO {
   window_end_time: string | null;
   emails_per_window: number | null;
   email_subject: string | null;
+  outreach_template_id: number | null;
+  outreach_template_name_snapshot: string | null;
+  outreach_template_snapshot_version: number | null;
+  outreach_generation_mode: OutreachGenerationMode | null;
   target_count: number;
   completed_count: number;
   identity_id: number;
@@ -809,6 +813,7 @@ export interface BatchTaskResendContextTaskDTO {
 export interface BatchTaskResendDefaultsDTO {
   identity_id: number;
   outreach_template_id?: number | null;
+  outreach_template_name_snapshot?: string | null;
   outreach_generation_mode: OutreachGenerationMode | null;
   outreach_template_subject: string | null;
   outreach_template_body_text: string | null;

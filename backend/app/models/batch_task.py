@@ -62,6 +62,23 @@ class BatchTask(Base):
         index=True,
         nullable=True,
     )
+    outreach_template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("outreach_templates.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    outreach_template_name_snapshot: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+    outreach_template_snapshot_version: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    outreach_generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_material_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)

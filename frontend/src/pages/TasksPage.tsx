@@ -106,6 +106,8 @@ import {
 } from "@/features/crawl-review/client/crawlJobEvents";
 import {
   buildBatchPendingItemAction,
+  getOutreachGenerationModeLabel,
+  getOutreachTemplateSourceLabel,
   getBatchTaskItemCancellationText,
   getBatchTaskWaitingSendCount,
 } from "@/features/batch-tasks/client/batchTaskDisplay";
@@ -3144,9 +3146,20 @@ export const TasksPage = () => {
     if (!resendContext || selectedResendProfessorIds.length === 0) {
       return;
     }
+    const resendTemplateLabel = getOutreachTemplateSourceLabel(
+      resendContext.defaults,
+    );
+    const resendGenerationModeLabel = getOutreachGenerationModeLabel(
+      resendContext.defaults.outreach_generation_mode,
+    );
     const confirmed = await confirm({
       title: "确认重新发起这批老师？",
-      description: "将自动切换到原任务身份，并带入原任务使用的发信模式、模板和材料。模型使用当前已选择的模型，发送日期和时间窗口需要重新设置。进入创建页后仍可修改这些内容。",
+      description: [
+        "将自动切换到原任务身份，并带入原任务的模板内容和材料。",
+        `发信模板：${resendTemplateLabel}`,
+        `写信方式：${resendGenerationModeLabel}`,
+        "模型使用当前已选择的模型，发送日期和时间窗口需要重新设置。进入创建页后仍可修改，最终以创建页编辑器中看到的内容为准。",
+      ].join("\n"),
       confirmLabel: "去创建新任务",
       cancelLabel: "继续选择",
       tone: "danger",
@@ -4679,6 +4692,27 @@ export const TasksPage = () => {
                   基础信息
                 </h3>
                 <dl className="mt-3 divide-y divide-stone-100 rounded-2xl border border-stone-100 text-sm">
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">发信模板</dt>
+                    <dd className="text-stone-800">
+                      <div className="font-medium text-stone-900">
+                        {getOutreachTemplateSourceLabel(selectedBatchTask)}
+                      </div>
+                      {selectedBatchTask.outreach_template_snapshot_version !== null ? (
+                        <div className="mt-1 text-xs leading-5 text-stone-500">
+                          内容以创建任务时编辑器中的版本为准，不随模板库后续修改。
+                        </div>
+                      ) : null}
+                    </dd>
+                  </div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">写信方式</dt>
+                    <dd className="text-stone-800">
+                      {getOutreachGenerationModeLabel(
+                        selectedBatchTask.outreach_generation_mode,
+                      )}
+                    </dd>
+                  </div>
                   <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
                     <dt className="text-stone-500">邮件主题</dt>
                     <dd className="text-stone-800">

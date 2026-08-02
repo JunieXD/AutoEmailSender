@@ -245,6 +245,16 @@ describe("CreateTaskPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("发信模板：全局模板"),
+      }),
+    );
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("写信方式：直接套用模板"),
+      }),
+    );
     expect(createBatchTaskMock).toHaveBeenCalledWith(
       expect.objectContaining({
         outreach_template_id: 55,

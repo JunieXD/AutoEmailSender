@@ -1484,6 +1484,14 @@ class ApiEndpointTests(unittest.TestCase):
             },
         )
         self.assertEqual(batch_response.status_code, 201, msg=batch_response.text)
+        batch_payload = batch_response.json()
+        self.assertEqual(batch_payload["outreach_template_id"], template_id)
+        self.assertEqual(
+            batch_payload["outreach_template_name_snapshot"],
+            "独立批量模板",
+        )
+        self.assertEqual(batch_payload["outreach_template_snapshot_version"], 1)
+        self.assertEqual(batch_payload["outreach_generation_mode"], "template")
 
         connection = sqlite3.connect(self.db_path)
         try:
@@ -1499,12 +1507,39 @@ class ApiEndpointTests(unittest.TestCase):
                 """,
                 (batch_response.json()["id"],),
             ).fetchone()
+            batch_before_update = connection.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_name_snapshot,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM batch_tasks
+                WHERE id = ?
+                """,
+                (batch_response.json()["id"],),
+            ).fetchone()
         finally:
             connection.close()
         self.assertEqual(
             before_update,
             (
                 template_id,
+                "原始主题 {{name}}",
+                "原始正文 {{sender_name}}",
+                "<p>原始正文 {{sender_name}}</p>",
+            ),
+        )
+        self.assertEqual(
+            batch_before_update,
+            (
+                template_id,
+                "独立批量模板",
+                1,
+                "template",
                 "原始主题 {{name}}",
                 "原始正文 {{sender_name}}",
                 "<p>原始正文 {{sender_name}}</p>",
@@ -1535,9 +1570,126 @@ class ApiEndpointTests(unittest.TestCase):
                 """,
                 (batch_response.json()["id"],),
             ).fetchone()
+            batch_after_update = connection.execute(
+                """
+                SELECT
+                    outreach_template_id,
+                    outreach_template_name_snapshot,
+                    outreach_template_snapshot_version,
+                    outreach_generation_mode,
+                    outreach_template_subject,
+                    outreach_template_body_text,
+                    outreach_template_body_html
+                FROM batch_tasks
+                WHERE id = ?
+                """,
+                (batch_response.json()["id"],),
+            ).fetchone()
         finally:
             connection.close()
         self.assertEqual(after_update, before_update)
+        self.assertEqual(batch_after_update, batch_before_update)
+
+    def test_batch_resend_uses_batch_snapshot_after_item_template_change(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="batch-snapshot-resend@example.edu")
+
+        original_template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "原批次模板",
+                "recommended_generation_mode": "template",
+                "subject": "模板库原主题 {{name}}",
+                "body_text": "模板库原正文 {{sender_name}}",
+                "body_html": "<p>模板库原正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(
+            original_template_response.status_code,
+            201,
+            msg=original_template_response.text,
+        )
+        original_template_id = original_template_response.json()["id"]
+
+        replacement_template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "单封后来改用的模板",
+                "recommended_generation_mode": "template",
+                "subject": "单封新主题 {{name}}",
+                "body_text": "单封新正文 {{sender_name}}",
+                "body_html": "<p>单封新正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(
+            replacement_template_response.status_code,
+            201,
+            msg=replacement_template_response.text,
+        )
+        replacement_template_id = replacement_template_response.json()["id"]
+
+        batch_response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "需要保持原快照的批次",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "selected_material_ids": [],
+                "outreach_template_id": original_template_id,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "创建页最终主题 {{name}}",
+                "outreach_template_body_text": "创建页最终正文 {{sender_name}}",
+                "outreach_template_body_html": "<p>创建页最终正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(batch_response.status_code, 201, msg=batch_response.text)
+        batch_task_id = batch_response.json()["id"]
+        batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(batch_items.status_code, 200, msg=batch_items.text)
+        email_task_id = batch_items.json()[0]["id"]
+
+        switched_response = self.client.post(
+            f"/api/email-tasks/{email_task_id}/outreach-config",
+            json={
+                "outreach_generation_mode": "template",
+                "outreach_template_id": replacement_template_id,
+                "outreach_template_subject": "单封新主题 {{name}}",
+                "outreach_template_body_text": "单封新正文 {{sender_name}}",
+                "outreach_template_body_html": "<p>单封新正文 {{sender_name}}</p>",
+            },
+        )
+        self.assertEqual(switched_response.status_code, 200, msg=switched_response.text)
+
+        resend_context_response = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/resend-context",
+        )
+        self.assertEqual(
+            resend_context_response.status_code,
+            200,
+            msg=resend_context_response.text,
+        )
+        defaults = resend_context_response.json()["defaults"]
+        self.assertEqual(defaults["outreach_template_id"], original_template_id)
+        self.assertEqual(
+            defaults["outreach_template_name_snapshot"],
+            "原批次模板",
+        )
+        self.assertEqual(defaults["outreach_generation_mode"], "template")
+        self.assertEqual(
+            defaults["outreach_template_subject"],
+            "创建页最终主题 {{name}}",
+        )
+        self.assertEqual(
+            defaults["outreach_template_body_text"],
+            "创建页最终正文 {{sender_name}}",
+        )
+        self.assertEqual(
+            defaults["outreach_template_body_html"],
+            "<p>创建页最终正文 {{sender_name}}</p>",
+        )
 
     def test_batch_resend_keeps_archived_template_provenance_with_explicit_snapshot(self) -> None:
         identity_id = self._create_identity(with_imap=False)

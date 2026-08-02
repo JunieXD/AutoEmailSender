@@ -220,6 +220,9 @@ async def create_batch_task(
             session,
             identity,
         )
+    outreach_template_name_snapshot = (
+        selected_template.name if selected_template is not None else None
+    )
 
     requested_subject = _normalize_nullable_text(payload.outreach_template_subject) or _normalize_nullable_text(
         payload.email_subject,
@@ -265,6 +268,21 @@ async def create_batch_task(
         scheduled_dates=scheduled_dates or None,
         status=BatchTaskStatus.RUNNING.value,
         primary_material_id=primary_material_id,
+        outreach_template_id=(
+            selected_template.id if selected_template is not None else None
+        ),
+        outreach_template_name_snapshot=outreach_template_name_snapshot,
+        outreach_template_snapshot_version=1,
+        outreach_generation_mode=outreach_config.generation_mode,
+        outreach_template_subject=_normalize_nullable_text(
+            outreach_config.subject_template,
+        ),
+        outreach_template_body_text=_normalize_nullable_text(
+            outreach_config.body_text_template,
+        ),
+        outreach_template_body_html=_normalize_nullable_text(
+            outreach_config.body_html_template,
+        ),
         email_subject=_normalize_nullable_text(outreach_config.subject_template),
         email_body=_normalize_nullable_text(outreach_config.body_text_template),
         selected_material_ids=selected_material_ids,
@@ -336,6 +354,9 @@ async def create_batch_task(
             "identity_id": batch_task.identity_id,
             "llm_profile_id": batch_task.llm_profile_id,
             "schedule_type": batch_task.schedule_type,
+            "outreach_template_id": batch_task.outreach_template_id,
+            "outreach_template_name_snapshot": batch_task.outreach_template_name_snapshot,
+            "outreach_generation_mode": batch_task.outreach_generation_mode,
         },
     )
     await session.commit()
@@ -354,6 +375,9 @@ async def get_batch_task_resend_context(
         select(BatchTask)
         .options(
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
+            selectinload(BatchTask.email_tasks).selectinload(
+                EmailTask.outreach_template,
+            ),
             selectinload(BatchTask.identity).selectinload(IdentityProfile.materials),
         )
         .where(BatchTask.id == task_id)
@@ -371,6 +395,57 @@ async def get_batch_task_resend_context(
     )
     sorted_email_tasks = sorted(task.email_tasks, key=lambda item: (item.created_at, item.id))
     snapshot_task = sorted_email_tasks[0] if sorted_email_tasks else None
+    has_batch_outreach_snapshot = task.outreach_template_snapshot_version is not None
+    outreach_template_id = (
+        task.outreach_template_id
+        if has_batch_outreach_snapshot
+        else snapshot_task.outreach_template_id if snapshot_task else None
+    )
+    outreach_template_name_snapshot = (
+        task.outreach_template_name_snapshot
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template.name
+            if snapshot_task and snapshot_task.outreach_template
+            else None
+        )
+    )
+    outreach_generation_mode = (
+        task.outreach_generation_mode
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_generation_mode
+            if snapshot_task and snapshot_task.outreach_generation_mode
+            else task.identity.outreach_generation_mode
+        )
+    )
+    outreach_template_subject = (
+        task.outreach_template_subject
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template_subject
+            if snapshot_task and snapshot_task.outreach_template_subject is not None
+            else task.email_subject
+        )
+    )
+    outreach_template_body_text = (
+        task.outreach_template_body_text
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template_body_text
+            if snapshot_task and snapshot_task.outreach_template_body_text is not None
+            else task.email_body
+        )
+    )
+    outreach_template_body_html = (
+        task.outreach_template_body_html
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template_body_html
+            if snapshot_task and snapshot_task.outreach_template_body_html is not None
+            else None
+        )
+    )
     items: list[BatchTaskResendItemRead] = []
     for email_task in sorted_email_tasks:
         decision = decide_resend_item(email_task)
@@ -400,29 +475,12 @@ async def get_batch_task_resend_context(
         ),
         defaults=BatchTaskResendDefaultsRead(
             identity_id=task.identity_id,
-            outreach_template_id=(
-                snapshot_task.outreach_template_id if snapshot_task else None
-            ),
-            outreach_generation_mode=(
-                snapshot_task.outreach_generation_mode
-                if snapshot_task and snapshot_task.outreach_generation_mode
-                else task.identity.outreach_generation_mode
-            ),
-            outreach_template_subject=(
-                snapshot_task.outreach_template_subject
-                if snapshot_task and snapshot_task.outreach_template_subject is not None
-                else task.email_subject
-            ),
-            outreach_template_body_text=(
-                snapshot_task.outreach_template_body_text
-                if snapshot_task and snapshot_task.outreach_template_body_text is not None
-                else task.email_body
-            ),
-            outreach_template_body_html=(
-                snapshot_task.outreach_template_body_html
-                if snapshot_task and snapshot_task.outreach_template_body_html is not None
-                else None
-            ),
+            outreach_template_id=outreach_template_id,
+            outreach_template_name_snapshot=outreach_template_name_snapshot,
+            outreach_generation_mode=outreach_generation_mode,
+            outreach_template_subject=outreach_template_subject,
+            outreach_template_body_text=outreach_template_body_text,
+            outreach_template_body_html=outreach_template_body_html,
             primary_material_id=primary_material_id,
             selected_material_ids=selected_material_ids,
         ),
@@ -998,6 +1056,10 @@ def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
         emails_per_window=task.emails_per_window,
         scheduled_dates=task.scheduled_dates,
         email_subject=task.email_subject,
+        outreach_template_id=task.outreach_template_id,
+        outreach_template_name_snapshot=task.outreach_template_name_snapshot,
+        outreach_template_snapshot_version=task.outreach_template_snapshot_version,
+        outreach_generation_mode=task.outreach_generation_mode,
         target_count=task.target_count,
         completed_count=completed_count,
         identity_id=task.identity_id,

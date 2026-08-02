@@ -529,6 +529,10 @@ const buildBatchTask = (
   window_end_time: "11:00",
   emails_per_window: 10,
   email_subject: "申请交流",
+  outreach_template_id: 8,
+  outreach_template_name_snapshot: "博士申请模板",
+  outreach_template_snapshot_version: 1,
+  outreach_generation_mode: "template",
   target_count: 1,
   completed_count: 0,
   identity_id: 1,
@@ -1325,6 +1329,125 @@ describe("TasksPage crawl job monitor", () => {
 });
 
 describe("TasksPage batch draft review", () => {
+  it("shows the batch template snapshot in task details", async () => {
+    const task = buildBatchTask({
+      name: "模板信息任务",
+      outreach_template_name_snapshot: "强化学习博士申请",
+      outreach_generation_mode: "llm",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "批量任务详情" });
+    expect(within(dialog).getByText("强化学习博士申请")).toBeInTheDocument();
+    expect(within(dialog).getByText("AI 辅助写信")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("内容以创建任务时编辑器中的版本为准，不随模板库后续修改。"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows and confirms the original template when relaunching failed items", async () => {
+    const task = buildBatchTask({
+      name: "需要重新发起的任务",
+      status: "completed",
+      approved_count: 0,
+      failed_count: 1,
+      outreach_template_name_snapshot: "机器人方向申请模板",
+      outreach_generation_mode: "llm",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([
+      buildBatchItem({
+        status: "send_failed",
+        next_action: "send_failed",
+        last_error: "连接超时",
+      }),
+    ]);
+    apiMocks.getBatchTaskResendContext.mockResolvedValue({
+      task: {
+        id: task.id,
+        name: task.name,
+        identity_id: task.identity_id,
+        schedule_type: task.schedule_type,
+      },
+      defaults: {
+        identity_id: task.identity_id,
+        outreach_template_id: task.outreach_template_id,
+        outreach_template_name_snapshot: "机器人方向申请模板",
+        outreach_generation_mode: "llm",
+        outreach_template_subject: "申请交流",
+        outreach_template_body_text: "老师您好",
+        outreach_template_body_html: "<p>老师您好</p>",
+        primary_material_id: null,
+        selected_material_ids: [],
+      },
+      items: [
+        {
+          email_task_id: 11,
+          professor_id: 21,
+          professor_name: "模板直通导师",
+          professor_email: "mentor@example.edu",
+          status: "send_failed",
+          cancellation_reason: null,
+          reason_label: "发送失败",
+          default_selected: true,
+          selectable: true,
+          unavailable_reason: null,
+          updated_at: "2026-05-08T00:00:00",
+        },
+      ],
+      summary: {
+        candidate_count: 1,
+        default_selected_count: 1,
+        unavailable_count: 0,
+      },
+      warnings: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "重新发起未成功项" }),
+    );
+
+    const resendDialog = await screen.findByRole("dialog", {
+      name: "重新发起未成功项",
+    });
+    expect(within(resendDialog).getByText("机器人方向申请模板")).toBeInTheDocument();
+    expect(within(resendDialog).getByText("AI 辅助写信")).toBeInTheDocument();
+
+    fireEvent.click(
+      within(resendDialog).getByRole("button", { name: "去创建新任务" }),
+    );
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: expect.stringContaining("发信模板：机器人方向申请模板"),
+        }),
+      );
+    });
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("写信方式：AI 辅助写信"),
+      }),
+    );
+  });
+
   it("paginates large sent item lists in batch task details", async () => {
     const task = buildBatchTask({
       name: "超大批量任务",

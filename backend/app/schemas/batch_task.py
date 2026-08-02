@@ -37,6 +37,10 @@ class BatchTaskCardRead(ApiSchema):
     emails_per_window: int | None
     scheduled_dates: list[str] | None
     email_subject: str | None
+    outreach_template_id: int | None
+    outreach_template_name_snapshot: str | None
+    outreach_template_snapshot_version: int | None
+    outreach_generation_mode: str | None
     target_count: int
     completed_count: int
     identity_id: int
@@ -88,6 +92,7 @@ class BatchTaskResendContextTaskRead(ApiSchema):
 class BatchTaskResendDefaultsRead(ApiSchema):
     identity_id: int
     outreach_template_id: int | None
+    outreach_template_name_snapshot: str | None
     outreach_generation_mode: str | None
     outreach_template_subject: str | None
     outreach_template_body_text: str | None
