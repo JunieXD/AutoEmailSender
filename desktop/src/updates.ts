@@ -15,6 +15,21 @@ const BYTES_PER_KIB = 1024;
 const SLOW_CHECK_START_SECONDS = 10;
 const SLOW_REMAINING_SECONDS = 180;
 const FULL_DOWNLOAD_FALLBACK_TOLERANCE_BYTES = 1024 * 1024;
+const UPDATE_CHECK_RETRY_DELAY_MS = 1_000;
+const RETRYABLE_UPDATE_CHECK_ERROR_PATTERNS = [
+  "connection error",
+  "eai_again",
+  "econnrefused",
+  "econnreset",
+  "enotfound",
+  "etimedout",
+  "err_connection_closed",
+  "err_connection_reset",
+  "err_http2_protocol_error",
+  "err_http2_server_refused_stream",
+  "err_network_changed",
+  "network offline",
+];
 let activeDownloadMode: UpdateDownloadMode = "differential";
 let currentDownloadToken: import("builder-util-runtime").CancellationToken | null = null;
 let currentDownloadStartedAtMs = 0;
@@ -22,6 +37,8 @@ let slowDownloadAlreadyOffered = false;
 let activeNextVersion: string | null = null;
 let activeFullDownloadBytes: number | undefined;
 let pendingInstallVersion: string | null = null;
+let activeUpdateCheck: Promise<UpdateStatus> | null = null;
+let updateCheckOwnsErrorReporting = false;
 
 type DownloadStatusPayload = {
   version: string;
@@ -127,6 +144,29 @@ export function buildUpdateErrorStatus(input: { version: string; error: unknown 
     version: input.version,
     message: input.error instanceof Error ? input.error.message : String(input.error),
   };
+}
+
+export function isRetryableUpdateCheckError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = message.toLowerCase();
+  return RETRYABLE_UPDATE_CHECK_ERROR_PATTERNS.some((pattern) =>
+    normalizedMessage.includes(pattern),
+  );
+}
+
+export async function retryUpdateCheckOnce<T>(
+  checkForUpdates: () => Promise<T>,
+  waitForRetry: (milliseconds: number) => Promise<void> = wait,
+): Promise<T> {
+  try {
+    return await checkForUpdates();
+  } catch (error) {
+    if (!isRetryableUpdateCheckError(error)) {
+      throw error;
+    }
+    await waitForRetry(UPDATE_CHECK_RETRY_DELAY_MS);
+    return checkForUpdates();
+  }
 }
 
 export function buildProgressStatus(progress: {
@@ -242,8 +282,7 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
       };
       return currentStatus;
     }
-    await getAutoUpdater().checkForUpdates();
-    return currentStatus;
+    return checkForElectronUpdates(getWindow);
   });
 
   ipcMain.handle("update:download", async (_event, options?: { mode?: UpdateDownloadMode }) => {
@@ -274,7 +313,7 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
   });
 }
 
-export function checkForUpdatesOnStartup(): void {
+export function checkForUpdatesOnStartup(getWindow: () => BrowserWindow | null): void {
   if (!app.isPackaged) {
     return;
   }
@@ -287,7 +326,7 @@ export function checkForUpdatesOnStartup(): void {
     return;
   }
   setTimeout(() => {
-    getAutoUpdater().checkForUpdates().catch(() => undefined);
+    void checkForElectronUpdates(getWindow);
   }, 3_000);
 }
 
@@ -329,13 +368,47 @@ function registerElectronUpdaterEvents(getWindow: () => BrowserWindow | null): v
       fullDownloadBytes: activeFullDownloadBytes,
     });
   });
-  autoUpdater.on("error", (error) =>
+  autoUpdater.on("error", (error) => {
+    if (updateCheckOwnsErrorReporting) {
+      return;
+    }
     publish(getWindow, {
       state: "error",
       version: app.getVersion(),
       message: error.message,
-    }),
-  );
+    });
+  });
+}
+
+async function checkForElectronUpdates(getWindow: () => BrowserWindow | null): Promise<UpdateStatus> {
+  if (activeUpdateCheck !== null) {
+    return activeUpdateCheck;
+  }
+
+  const check = performElectronUpdateCheck(getWindow);
+  activeUpdateCheck = check;
+  try {
+    return await check;
+  } finally {
+    if (activeUpdateCheck === check) {
+      activeUpdateCheck = null;
+    }
+  }
+}
+
+async function performElectronUpdateCheck(getWindow: () => BrowserWindow | null): Promise<UpdateStatus> {
+  updateCheckOwnsErrorReporting = true;
+  try {
+    await retryUpdateCheckOnce(() => getAutoUpdater().checkForUpdates());
+    return currentStatus;
+  } catch (error) {
+    console.warn("Update check failed.", error);
+    const status = buildUpdateErrorStatus({ version: app.getVersion(), error });
+    publish(getWindow, status);
+    return status;
+  } finally {
+    updateCheckOwnsErrorReporting = false;
+  }
 }
 
 function getAutoUpdater(): typeof electronUpdater.autoUpdater {
@@ -345,6 +418,10 @@ function getAutoUpdater(): typeof electronUpdater.autoUpdater {
 function publish(getWindow: () => BrowserWindow | null, status: UpdateStatus): void {
   currentStatus = status;
   getWindow()?.webContents.send("update:status", status);
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function publishDownloadProgress(

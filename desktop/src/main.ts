@@ -289,7 +289,7 @@ function publishBackendReady(controller: BackendController): void {
   controller.ready
     .then(() => {
       unsubscribe();
-      checkForUpdatesOnStartup();
+      checkForUpdatesOnStartup(() => mainWindow);
     })
     .catch((error: unknown) => {
       unsubscribe();

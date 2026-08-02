@@ -41,19 +41,29 @@ const writePendingVersion = (version: string | null) => {
 
 const CONNECTION_ERROR_PATTERNS = [
   "connection error",
+  "eai_again",
   "econnreset",
   "econnrefused",
   "etimedout",
   "enotfound",
+  "err_connection_closed",
+  "err_connection_reset",
+  "err_http2_protocol_error",
+  "err_http2_server_refused_stream",
+  "err_network_changed",
   "network offline",
 ];
 
 function formatUpdateCheckErrorMessage(message: string): string {
-  const normalizedMessage = message.toLowerCase();
+  const cleanedMessage = message.replace(
+    /^Error invoking remote method 'update:check':\s*(?:Error:\s*)?/i,
+    "",
+  );
+  const normalizedMessage = cleanedMessage.toLowerCase();
   if (!CONNECTION_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern))) {
-    return message;
+    return cleanedMessage;
   }
-  return `${message}。请检查系统代理是否已开启，或确认当前网络可以访问 GitHub。`;
+  return "暂时无法连接更新服务器，请检查网络或系统代理后重试。";
 }
 
 function getUpdateStatusKey(status: DesktopUpdateStatus): string {
@@ -78,13 +88,27 @@ function DesktopUpdateButtonInner() {
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const emittedStatusDuringCheckRef = useRef<string | null>(null);
+  const notifiedCheckErrorRef = useRef<string | null>(null);
   const { notifyError, notifySuccess } = useNotification();
+
+  const notifyUpdateCheckError = useCallback(
+    (message: string) => {
+      const formattedMessage = formatUpdateCheckErrorMessage(message);
+      if (notifiedCheckErrorRef.current === formattedMessage) {
+        return;
+      }
+      notifiedCheckErrorRef.current = formattedMessage;
+      notifyError("检查更新失败", formattedMessage);
+    },
+    [notifyError],
+  );
 
   const handleStatus = useCallback(
     (status: DesktopUpdateStatus) => {
       setStatus(status);
 
       if (status.state === "checking") {
+        notifiedCheckErrorRef.current = null;
         setChecking(true);
         return;
       }
@@ -133,10 +157,10 @@ function DesktopUpdateButtonInner() {
       if (status.state === "error") {
         setChecking(false);
         setDownloading(false);
-        notifyError("检查更新失败", formatUpdateCheckErrorMessage(status.message));
+        notifyUpdateCheckError(status.message);
       }
     },
-    [notifyError, notifySuccess, pendingVersion, version],
+    [notifySuccess, notifyUpdateCheckError, pendingVersion, version],
   );
 
   useEffect(() => {
@@ -228,6 +252,7 @@ function DesktopUpdateButtonInner() {
 
     setChecking(true);
     emittedStatusDuringCheckRef.current = null;
+    notifiedCheckErrorRef.current = null;
 
     try {
       const status = await checkForDesktopUpdate();
@@ -239,11 +264,11 @@ function DesktopUpdateButtonInner() {
       }
     } catch (checkError) {
       const message = checkError instanceof Error ? checkError.message : "检查更新失败";
-      notifyError("检查更新失败", formatUpdateCheckErrorMessage(message));
+      notifyUpdateCheckError(message);
     } finally {
       setChecking(false);
     }
-  }, [checking, downloading, handleStatus, installUpdate, notifyError]);
+  }, [checking, downloading, handleStatus, installUpdate, notifyUpdateCheckError]);
 
   const isBusy = checking || downloading;
 

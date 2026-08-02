@@ -421,10 +421,12 @@ describe("DesktopUpdateButton", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("suggests checking the system proxy when update check hits a connection error", async () => {
+  it("shows a friendly message when update check hits a connection error", async () => {
     window.autoEmailSender = buildDesktopApi({
       checkForUpdate: async () => {
-        throw new Error("connection error");
+        throw new Error(
+          "Error invoking remote method 'update:check': Error: net::ERR_HTTP2_SERVER_REFUSED_STREAM",
+        );
       },
     });
 
@@ -434,9 +436,33 @@ describe("DesktopUpdateButton", () => {
     await waitFor(() => {
       expect(notifyError).toHaveBeenCalledWith(
         "检查更新失败",
-        "connection error。请检查系统代理是否已开启，或确认当前网络可以访问 GitHub。",
+        "暂时无法连接更新服务器，请检查网络或系统代理后重试。",
       );
     });
+  });
+
+  it("shows one error when update check emits and rejects with the same failure", async () => {
+    const listeners: Array<(status: DesktopUpdateStatus) => void> = [];
+    const rawMessage = "net::ERR_HTTP2_SERVER_REFUSED_STREAM";
+    window.autoEmailSender = buildDesktopApi({
+      checkForUpdate: async () => {
+        listeners[0]?.({ state: "error", version: "0.1.0", message: rawMessage });
+        throw new Error(`Error invoking remote method 'update:check': Error: ${rawMessage}`);
+      },
+      onUpdateStatus: (callback) => {
+        listeners.push(callback);
+        return () => undefined;
+      },
+    });
+
+    render(<DesktopUpdateButton />);
+    fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
+
+    await waitFor(() => expect(notifyError).toHaveBeenCalledTimes(1));
+    expect(notifyError).toHaveBeenCalledWith(
+      "检查更新失败",
+      "暂时无法连接更新服务器，请检查网络或系统代理后重试。",
+    );
   });
 });
 

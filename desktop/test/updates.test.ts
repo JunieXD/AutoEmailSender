@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildUpdateErrorStatus,
   estimateRemainingSeconds,
   formatByteSize,
   formatDownloadProgress,
   isLikelyFullDownloadFallback,
+  isRetryableUpdateCheckError,
   normalizeReleaseNotes,
+  retryUpdateCheckOnce,
   shouldOfferFullDownload,
   supportsElectronUpdaterActions,
 } from "../src/updates.js";
@@ -37,6 +39,37 @@ describe("update helpers", () => {
       version: "2.3.8",
       message: "bad json",
     });
+  });
+
+  it("recognizes transient update check errors", () => {
+    expect(isRetryableUpdateCheckError(new Error("net::ERR_HTTP2_SERVER_REFUSED_STREAM"))).toBe(true);
+    expect(isRetryableUpdateCheckError(new Error("invalid update metadata"))).toBe(false);
+  });
+
+  it("retries a transient update check once", async () => {
+    const checkForUpdates = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error("net::ERR_HTTP2_SERVER_REFUSED_STREAM"))
+      .mockResolvedValueOnce("available");
+    const waitForRetry = vi.fn(async (_milliseconds: number) => undefined);
+
+    await expect(retryUpdateCheckOnce(checkForUpdates, waitForRetry)).resolves.toBe("available");
+    expect(checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(waitForRetry).toHaveBeenCalledOnce();
+    expect(waitForRetry).toHaveBeenCalledWith(1_000);
+  });
+
+  it("does not retry non-network update errors", async () => {
+    const checkForUpdates = vi.fn(async () => {
+      throw new Error("invalid update metadata");
+    });
+    const waitForRetry = vi.fn(async (_milliseconds: number) => undefined);
+
+    await expect(retryUpdateCheckOnce(checkForUpdates, waitForRetry)).rejects.toThrow(
+      "invalid update metadata",
+    );
+    expect(checkForUpdates).toHaveBeenCalledOnce();
+    expect(waitForRetry).not.toHaveBeenCalled();
   });
 
   it("keeps electron-updater actions on Windows and delegates macOS actions to Sparkle", () => {
