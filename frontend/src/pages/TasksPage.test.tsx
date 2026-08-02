@@ -94,6 +94,7 @@ const selectionMock = vi.hoisted(() => ({
   setSelectedIdentityId: vi.fn(),
   setSelectedLlmProfileId: vi.fn(),
 }));
+const scrollIntoView = vi.fn();
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
@@ -789,6 +790,12 @@ const buildWorkspaceThread = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+  scrollIntoView.mockReset();
+  Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scrollIntoView,
+  });
+  window.localStorage.clear();
   confirmMock.mockResolvedValue(true);
   selectionMock.selectedIdentityId = 1;
   selectionMock.selectedLlmProfileId = 2;
@@ -1351,6 +1358,22 @@ describe("TasksPage batch draft review", () => {
     expect(screen.getByText("已发送导师 20")).toBeInTheDocument();
     expect(screen.queryByText("已发送导师 21")).not.toBeInTheDocument();
     expect(screen.getByText("显示 1-20 / 2000 个任务")).toBeInTheDocument();
+
+    const pagination = screen.getByRole("navigation", {
+      name: "已发送导师分页",
+    });
+    fireEvent.click(
+      within(pagination).getByRole("button", { name: "下一页" }),
+    );
+
+    expect(await screen.findByText("已发送导师 21")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "已发送导师列表" }),
+    ).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "start",
+    });
   });
 
   it("preserves batch list and detail pagination when Activity hides and shows the page again", async () => {

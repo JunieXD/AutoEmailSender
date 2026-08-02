@@ -6,6 +6,7 @@ import type { TokenUsageRecordDTO, TokenUsageVisualizationDTO } from '@/types';
 const getTokenUsageVisualization = vi.fn();
 const listTokenUsageRecords = vi.fn();
 const lineChartRender = vi.fn();
+const scrollIntoView = vi.fn();
 
 vi.mock('@/lib/api/tokenUsage', () => ({
   getTokenUsageVisualization: (...args: unknown[]) => getTokenUsageVisualization(...args),
@@ -156,6 +157,12 @@ describe('TokenVisualizationPanel', () => {
   beforeEach(() => {
     getTokenUsageVisualization.mockReset();
     listTokenUsageRecords.mockReset();
+    scrollIntoView.mockReset();
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    window.localStorage.clear();
     getTokenUsageVisualization.mockResolvedValue(visualization);
     listTokenUsageRecords.mockResolvedValue(recordList);
   });
@@ -229,6 +236,36 @@ describe('TokenVisualizationPanel', () => {
     expect(screen.getByText('李老师 11 - 匹配分析')).toBeInTheDocument();
     expect(screen.queryByText('李老师 1 - 匹配分析')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled();
+    expect(
+      screen.getByRole('region', { name: 'Token 消耗记录列表' }),
+    ).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'auto',
+      block: 'start',
+    });
+  });
+
+  it('does not reposition the record list when a page request fails', async () => {
+    listTokenUsageRecords
+      .mockResolvedValueOnce(recordList)
+      .mockRejectedValueOnce(new Error('分页请求失败'))
+      .mockResolvedValueOnce(secondRecordList);
+    render(<TokenVisualizationPanel />);
+
+    await screen.findByText('共 12 条记录，当前第 1 / 2 页');
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+
+    expect(await screen.findByText('分页请求失败')).toBeInTheDocument();
+    expect(screen.getByText('李老师 1 - 匹配分析')).toBeInTheDocument();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByText('共 12 条记录，当前第 2 / 2 页')).toBeInTheDocument();
+    expect(listTokenUsageRecords).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2, pageSize: 10 }),
+    );
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('filters token records by feature model and time range', async () => {

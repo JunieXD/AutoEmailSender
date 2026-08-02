@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { NativeSelectField } from '@/components/atoms/NativeSelectField';
 import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor';
+import { Pagination } from '@/components/molecules/Pagination';
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
 import { TaskDateSelector } from '@/components/molecules/TaskDateSelector';
 import { useNotification } from '@/context/NotificationContext';
@@ -17,6 +18,7 @@ import {
 import { listProfessors } from '@/lib/api/professorsApi';
 import { getPageItems, getTotalPages, PAGE_SIZE } from '@/lib/pagination';
 import { textToEmailHtml } from '@/lib/richEmail';
+import { usePaginationState } from '@/lib/usePaginationState';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import { buildBatchCreateConfirmDescription } from '@/features/create-task/client/batchCreateConfirmDescription';
@@ -35,7 +37,7 @@ import {
 
 const SESSION_KEY = 'selected_professor_ids';
 const PRIMARY_MATERIAL_EXTENSIONS = ['.pdf', '.doc', '.docx', '.txt', '.md'];
-const TARGET_MENTORS_PAGE_SIZE = PAGE_SIZE;
+const TARGET_MENTORS_PAGE_SIZE_STORAGE_KEY = 'create-task:target-mentors:page-size';
 
 const readSelectedProfessorIds = () => {
   try {
@@ -68,7 +70,15 @@ export const CreateTaskPage = () => {
   const [selectedProfessorIds] = useState<number[]>(readSelectedProfessorIds());
   const [resendPrefillContext] = useState(() => readBatchResendPrefillContext());
   const [professors, setProfessors] = useState<ProfessorDashboardItemDTO[]>([]);
-  const [targetMentorsPage, setTargetMentorsPage] = useState(1);
+  const {
+    page: targetMentorsPage,
+    pageSize: targetMentorsPageSize,
+    setPage: setTargetMentorsPage,
+    onChange: handleTargetMentorsPaginationChange,
+  } = usePaginationState({
+    storageKey: TARGET_MENTORS_PAGE_SIZE_STORAGE_KEY,
+    initialPageSize: PAGE_SIZE,
+  });
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [taskName, setTaskName] = useState(`批量任务 ${new Date().toLocaleDateString('zh-CN')}`);
@@ -98,6 +108,7 @@ export const CreateTaskPage = () => {
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
   const templateInitializationKeyRef = useRef<string | null>(null);
+  const targetMentorsStartRef = useRef<HTMLElement | null>(null);
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
   const professorsRequestKey =
@@ -340,19 +351,31 @@ export const CreateTaskPage = () => {
     () => (selectedIdentity ? selectedIdentity.materials.filter(isPrimaryMaterialCandidate) : []),
     [selectedIdentity],
   );
-  const targetMentorsTotalPages = getTotalPages(professors.length, TARGET_MENTORS_PAGE_SIZE);
+  const targetMentorsTotalPages = getTotalPages(
+    professors.length,
+    targetMentorsPageSize,
+  );
+  const safeTargetMentorsPage = Math.min(
+    targetMentorsPage,
+    targetMentorsTotalPages,
+  );
   const visibleTargetMentors = useMemo(
-    () => getPageItems(professors, targetMentorsPage, TARGET_MENTORS_PAGE_SIZE),
-    [professors, targetMentorsPage],
+    () =>
+      getPageItems(
+        professors,
+        safeTargetMentorsPage,
+        targetMentorsPageSize,
+      ),
+    [professors, safeTargetMentorsPage, targetMentorsPageSize],
   );
 
   useEffect(() => {
     setTargetMentorsPage(1);
-  }, [professorsRequestKey]);
+  }, [professorsRequestKey, setTargetMentorsPage]);
 
   useEffect(() => {
     setTargetMentorsPage((currentPage) => Math.min(currentPage, targetMentorsTotalPages));
-  }, [targetMentorsTotalPages]);
+  }, [setTargetMentorsPage, targetMentorsTotalPages]);
 
   const selectedOutreachTemplate =
     outreachTemplates.find(
@@ -843,17 +866,17 @@ export const CreateTaskPage = () => {
             </div>
           </section>
 
-          <aside className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+          <aside
+            ref={targetMentorsStartRef}
+            tabIndex={-1}
+            aria-label="目标导师列表"
+            className="scroll-mt-24 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm focus:outline-none"
+          >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-stone-900">目标导师</h2>
                 <div className="mt-1 text-xs text-stone-500">共 {professors.length} 位</div>
               </div>
-              {targetMentorsTotalPages > 1 ? (
-                <div className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs font-medium text-stone-600">
-                  {targetMentorsPage} / {targetMentorsTotalPages} 页
-                </div>
-              ) : null}
             </div>
             <div className="mt-4 space-y-3">
               {visibleTargetMentors.map((professor) => (
@@ -868,27 +891,20 @@ export const CreateTaskPage = () => {
                 </div>
               ))}
             </div>
-            {targetMentorsTotalPages > 1 ? (
-              <div className="mt-4 flex items-center justify-between gap-3 border-t border-stone-100 pt-4">
-                <button
-                  type="button"
-                  disabled={targetMentorsPage <= 1}
-                  onClick={() => setTargetMentorsPage((currentPage) => Math.max(1, currentPage - 1))}
-                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  上一页
-                </button>
-                <button
-                  type="button"
-                  disabled={targetMentorsPage >= targetMentorsTotalPages}
-                  onClick={() =>
-                    setTargetMentorsPage((currentPage) => Math.min(targetMentorsTotalPages, currentPage + 1))
-                  }
-                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  下一页
-                </button>
-              </div>
+            {professors.length > 0 ? (
+              <Pagination
+                page={safeTargetMentorsPage}
+                pageSize={targetMentorsPageSize}
+                totalCount={professors.length}
+                onChange={handleTargetMentorsPaginationChange}
+                ariaLabel="目标导师分页"
+                variant="compact"
+                unitLabel="位"
+                itemLabel="位导师"
+                focusTargetRef={targetMentorsStartRef}
+                menuPlacement="inline"
+                className="mt-4 border-t border-stone-100 pt-4"
+              />
             ) : null}
           </aside>
           </div>

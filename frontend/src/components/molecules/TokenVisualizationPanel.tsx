@@ -26,9 +26,14 @@ import {
 } from 'lucide-react';
 import { NativeSelectField } from '@/components/atoms/NativeSelectField';
 import { DistributionPieChart } from '@/components/molecules/DistributionPieChart';
-import { PageSizeSelector } from '@/components/molecules/PageSizeSelector';
+import { Pagination } from '@/components/molecules/Pagination';
 import { getTokenUsageVisualization, listTokenUsageRecords } from '@/lib/api/tokenUsage';
-import { PAGE_SIZE as DEFAULT_PAGE_SIZE } from '@/lib/pagination';
+import {
+  getStoredPageSize,
+  PAGE_SIZE as DEFAULT_PAGE_SIZE,
+  setStoredPageSize,
+  type PaginationChange,
+} from '@/lib/pagination';
 import type {
   TokenUsageChartDTO,
   TokenUsageChartPresetDTO,
@@ -84,6 +89,12 @@ type TokenRecordFiltersState = {
   endAt: string | null;
 };
 
+type TokenRecordRequest = {
+  page: number;
+  pageSize: number;
+  filters: TokenRecordFiltersState;
+};
+
 const trendDatasets: TrendDatasetConfig[] = [
   {
     key: 'input_tokens',
@@ -120,6 +131,7 @@ const summaryCompactUnits = [
 ] as const;
 
 const defaultRecordFeatureType: TokenUsageRecordFeatureFilterDTO = 'all';
+const TOKEN_RECORDS_PAGE_SIZE_STORAGE_KEY = 'token-usage:records:page-size';
 
 const emptyRecordList: TokenUsageRecordListDTO = {
   records: [],
@@ -169,9 +181,12 @@ export const TokenVisualizationPanel = () => {
   const [recordStartAt, setRecordStartAt] = useState<string | null>(null);
   const [recordEndAt, setRecordEndAt] = useState<string | null>(null);
   const [recordPage, setRecordPage] = useState(1);
-  const [recordPageSize, setRecordPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [recordPageSize, setRecordPageSize] = useState(() =>
+    getStoredPageSize(TOKEN_RECORDS_PAGE_SIZE_STORAGE_KEY, DEFAULT_PAGE_SIZE),
+  );
   const requestIdRef = useRef(0);
   const recordsRequestIdRef = useRef(0);
+  const lastRecordsRequestRef = useRef<TokenRecordRequest | null>(null);
 
   const loadData = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
@@ -206,6 +221,12 @@ export const TokenVisualizationPanel = () => {
       endAt: recordEndAt,
     },
   ) => {
+    const requestFilters = { ...filters };
+    lastRecordsRequestRef.current = {
+      page: nextPage,
+      pageSize: nextPageSize,
+      filters: requestFilters,
+    };
     const requestId = recordsRequestIdRef.current + 1;
     recordsRequestIdRef.current = requestId;
     setRecordsLoading(true);
@@ -214,10 +235,10 @@ export const TokenVisualizationPanel = () => {
       const result = await listTokenUsageRecords({
         page: nextPage,
         pageSize: nextPageSize,
-        featureType: filters.featureType,
-        modelName: filters.modelName,
-        startAt: filters.startAt,
-        endAt: filters.endAt,
+        featureType: requestFilters.featureType,
+        modelName: requestFilters.modelName,
+        startAt: requestFilters.startAt,
+        endAt: requestFilters.endAt,
       });
       if (recordsRequestIdRef.current !== requestId) {
         return;
@@ -225,6 +246,10 @@ export const TokenVisualizationPanel = () => {
       setRecordList(result);
       setRecordPage(result.pagination.page);
       setRecordPageSize(result.pagination.page_size);
+      setStoredPageSize(
+        TOKEN_RECORDS_PAGE_SIZE_STORAGE_KEY,
+        result.pagination.page_size,
+      );
       setRecordsLoaded(true);
     } catch (loadError) {
       if (recordsRequestIdRef.current !== requestId) {
@@ -270,14 +295,16 @@ export const TokenVisualizationPanel = () => {
     setRecordModelName(resetFilters.modelName);
     setRecordStartAt(resetFilters.startAt);
     setRecordEndAt(resetFilters.endAt);
-    setRecordPage(1);
     void loadRecords(1, recordPageSize, resetFilters);
   };
 
-  const handleRecordPageSizeChange = (nextPageSize: number) => {
-    setRecordPageSize(nextPageSize);
-    setRecordPage(1);
-    void loadRecords(1, nextPageSize);
+  const handleRecordRetry = () => {
+    const request = lastRecordsRequestRef.current;
+    if (!request) {
+      void loadRecords(recordPage, recordPageSize);
+      return;
+    }
+    void loadRecords(request.page, request.pageSize, request.filters);
   };
 
   const showInitialLoading = loading && !loaded;
@@ -372,9 +399,10 @@ export const TokenVisualizationPanel = () => {
             onEndAtChange={setRecordEndAt}
             onSearch={handleRecordSearch}
             onReset={handleRecordReset}
-            onPageChange={(nextPage) => void loadRecords(nextPage, recordPageSize)}
-            onPageSizeChange={handleRecordPageSizeChange}
-            onRetry={() => void loadRecords(recordPage, recordPageSize)}
+            onPaginationChange={(change) =>
+              void loadRecords(change.page, change.pageSize)
+            }
+            onRetry={handleRecordRetry}
           />
         </div>
       ) : null}
@@ -681,8 +709,7 @@ function RecentRecordsTable({
   onEndAtChange,
   onSearch,
   onReset,
-  onPageChange,
-  onPageSizeChange,
+  onPaginationChange,
   onRetry,
 }: {
   result: TokenUsageRecordListDTO;
@@ -700,13 +727,26 @@ function RecentRecordsTable({
   onEndAtChange: (value: string | null) => void;
   onSearch: () => void;
   onReset: () => void;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
+  onPaginationChange: (change: PaginationChange) => void;
   onRetry: () => void;
 }) {
   const { records, pagination, model_options: modelOptions } = result;
   const safeCurrentPage = pagination.total_pages > 0 ? pagination.page : 1;
   const totalPages = Math.max(pagination.total_pages, 1);
+  const recordsStartRef = useRef<HTMLDivElement | null>(null);
+  const errorNotice = error ? (
+    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
+      <div>{error}</div>
+      {loaded && records.length > 0 ? (
+        <div className="mt-1 text-xs text-rose-600">
+          以下保留上次成功加载的记录。
+        </div>
+      ) : null}
+      <button type="button" onClick={onRetry} className="ui-btn-secondary mt-3 px-3 py-2 text-xs">
+        重试
+      </button>
+    </div>
+  ) : null;
 
   return (
     <PanelCard title="Token 消耗记录">
@@ -728,19 +768,21 @@ function RecentRecordsTable({
           <Loader2 className="h-4 w-4 animate-spin" />
           正在加载 Token 消耗记录...
         </div>
-      ) : error ? (
-        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
-          <div>{error}</div>
-          <button type="button" onClick={onRetry} className="ui-btn-secondary mt-3 px-3 py-2 text-xs">
-            重试
-          </button>
-        </div>
+      ) : error && !loaded ? (
+        errorNotice
       ) : records.length === 0 ? (
         <div className="mt-4">
-          <EmptyState>暂无 Token 消耗记录</EmptyState>
+          {errorNotice ?? <EmptyState>暂无 Token 消耗记录</EmptyState>}
         </div>
       ) : (
-        <div className="mt-4">
+        <div
+          ref={recordsStartRef}
+          role="region"
+          tabIndex={-1}
+          aria-label="Token 消耗记录列表"
+          className="mt-4 scroll-mt-24 focus:outline-none"
+        >
+          {errorNotice}
           <div className="overflow-x-auto">
             <table className="min-w-[760px] w-full text-sm">
               <thead>
@@ -781,30 +823,18 @@ function RecentRecordsTable({
               </tbody>
             </table>
           </div>
-          <div className="mt-4 flex flex-col gap-3 border-t border-stone-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-stone-500">
-              共 {pagination.total_records} 条记录，当前第 {safeCurrentPage} / {totalPages} 页
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <PageSizeSelector value={pageSize} onChange={onPageSizeChange} unitLabel="条" />
-              <button
-                type="button"
-                onClick={() => onPageChange(safeCurrentPage - 1)}
-                disabled={loading || safeCurrentPage <= 1}
-                className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                上一页
-              </button>
-              <button
-                type="button"
-                onClick={() => onPageChange(safeCurrentPage + 1)}
-                disabled={loading || safeCurrentPage >= totalPages}
-                className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
+          <Pagination
+            page={safeCurrentPage}
+            pageSize={pageSize}
+            totalCount={pagination.total_records}
+            onChange={onPaginationChange}
+            ariaLabel="Token 消耗记录分页"
+            unitLabel="条"
+            summary={`共 ${pagination.total_records} 条记录，当前第 ${safeCurrentPage} / ${totalPages} 页`}
+            focusTargetRef={recordsStartRef}
+            disabled={loading}
+            className="mt-4 border-t border-stone-100 pt-4"
+          />
         </div>
       )}
     </PanelCard>

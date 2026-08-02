@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   clampPageSize,
+  getPageForPageSizeChange,
   getPageItems,
+  getStoredPageSize,
   getTotalPages,
   PAGE_SIZE,
+  setStoredPageSize,
+  type PaginationChange,
 } from "@/lib/pagination";
 
 type TaskDetailItem = {
@@ -13,12 +17,21 @@ type TaskDetailItem = {
 export const useTaskDetailItems = <T extends TaskDetailItem>(
   items: T[],
   resetKey: number | string | null,
+  options?: {
+    initialPageSize?: number;
+    pageSizeStorageKey?: string;
+  },
 ) => {
   const [statusFilter, setStatusFilterState] = useState<"all" | T["status"]>(
     "all",
   );
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSizeState] = useState(PAGE_SIZE);
+  const [pageSize, setPageSizeState] = useState(() => {
+    const initialPageSize = clampPageSize(options?.initialPageSize ?? PAGE_SIZE);
+    return options?.pageSizeStorageKey
+      ? getStoredPageSize(options.pageSizeStorageKey, initialPageSize)
+      : initialPageSize;
+  });
 
   const filteredItems = useMemo(
     () =>
@@ -27,9 +40,13 @@ export const useTaskDetailItems = <T extends TaskDetailItem>(
         : items.filter((item) => item.status === statusFilter),
     [items, statusFilter],
   );
+  const safePage = Math.min(
+    page,
+    getTotalPages(filteredItems.length, pageSize),
+  );
   const visibleItems = useMemo(
-    () => getPageItems(filteredItems, page, pageSize),
-    [filteredItems, page, pageSize],
+    () => getPageItems(filteredItems, safePage, pageSize),
+    [filteredItems, pageSize, safePage],
   );
 
   useEffect(() => {
@@ -49,16 +66,43 @@ export const useTaskDetailItems = <T extends TaskDetailItem>(
   };
 
   const setPageSize = (nextPageSize: number) => {
-    setPageSizeState(clampPageSize(nextPageSize));
-    setPage(1);
+    const safePageSize = clampPageSize(nextPageSize);
+    setPage((currentPage) =>
+      getPageForPageSizeChange({
+        page: currentPage,
+        pageSize,
+        nextPageSize: safePageSize,
+        totalCount: filteredItems.length,
+      }),
+    );
+    setPageSizeState(safePageSize);
+    if (options?.pageSizeStorageKey) {
+      setStoredPageSize(options.pageSizeStorageKey, safePageSize);
+    }
+  };
+
+  const setPagination = (change: PaginationChange) => {
+    const safePageSize = clampPageSize(change.pageSize);
+    const nextPage = Math.min(
+      Number.isFinite(change.page)
+        ? Math.max(1, Math.trunc(change.page))
+        : 1,
+      getTotalPages(filteredItems.length, safePageSize),
+    );
+    setPage(nextPage);
+    setPageSizeState(safePageSize);
+    if (options?.pageSizeStorageKey) {
+      setStoredPageSize(options.pageSizeStorageKey, safePageSize);
+    }
   };
 
   return {
     filteredItems,
-    page,
+    page: safePage,
     pageSize,
     setPage,
     setPageSize,
+    setPagination,
     setStatusFilter,
     statusFilter,
     visibleItems,

@@ -167,8 +167,16 @@ vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
 }));
 
 describe("CreateTaskPage", () => {
+  const scrollIntoView = vi.fn();
+
   beforeEach(() => {
     vi.clearAllMocks();
+    scrollIntoView.mockReset();
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    window.localStorage.clear();
     window.sessionStorage.setItem("selected_professor_ids", JSON.stringify([selectedProfessor.id]));
     listProfessorsMock.mockResolvedValue([selectedProfessor]);
     createBatchTaskMock.mockResolvedValue({
@@ -503,5 +511,12 @@ describe("CreateTaskPage", () => {
     expect(screen.queryByText("导师1")).not.toBeInTheDocument();
     expect(screen.getByText("导师11")).toBeInTheDocument();
     expect(screen.getByText("导师13")).toBeInTheDocument();
+    expect(
+      screen.getByRole("complementary", { name: "目标导师列表" }),
+    ).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "start",
+    });
   });
 });

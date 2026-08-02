@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
-import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { Pagination } from "@/components/molecules/Pagination";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
@@ -111,6 +111,7 @@ import {
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
+import { usePaginationState } from "@/lib/usePaginationState";
 import { useTaskDetailItems } from "@/lib/useTaskDetailItems";
 import {
   normalizeExternalHttpUrl,
@@ -357,6 +358,23 @@ const SCHEDULE_DATE_PATTERN = /^\d{4}-(\d{2})-(\d{2})$/;
 const TASKS_PAGE_SIZE = 8;
 const MONITOR_SECTION_PAGE_SIZE = 5;
 const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;
+const TASKS_PAGE_SIZE_OPTIONS = [8, 16, 32] as const;
+const DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+const MONITOR_PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
+const PAGE_SIZE_STORAGE_KEYS = {
+  batchTasks: "tasks:batch:page-size",
+  crawlJobs: "tasks:crawl:page-size",
+  matchJobs: "tasks:match:page-size",
+  informationEnrichmentJobs: "tasks:information-enrichment:page-size",
+  batchSentItems: "tasks:batch-details:sent:page-size",
+  batchPendingItems: "tasks:batch-details:pending:page-size",
+  matchJobItems: "tasks:match-details:items:page-size",
+  informationEnrichmentItems:
+    "tasks:information-enrichment-details:items:page-size",
+  crawlEvents: "tasks:crawl-details:events:page-size",
+  crawlPages: "tasks:crawl-details:pages:page-size",
+  crawlCandidates: "tasks:crawl-details:candidates:page-size",
+} as const;
 
 const formatScheduleDate = (value: string) => {
   const match = SCHEDULE_DATE_PATTERN.exec(value);
@@ -385,22 +403,6 @@ const buildScheduleLabel = (task: BatchTaskCardDTO) => {
     }
   }
   return `${task.window_start_time ?? "--:--"} - ${task.window_end_time ?? "--:--"}，窗口内 ${task.emails_per_window ?? 0} 封`;
-};
-
-type TaskListPaginationProps = {
-  page: number;
-  totalCount: number;
-  onPageChange: (page: number) => void;
-  pageSize?: number;
-};
-
-type DetailItemPaginationProps = {
-  page: number;
-  totalCount: number;
-  pageSize: number;
-  ariaLabel: string;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
 };
 
 type TokenUsageBreakdownProps = {
@@ -739,149 +741,6 @@ export const CrawlJobCard = ({
   </article>
 );
 
-const TaskListPagination = ({
-  page,
-  totalCount,
-  onPageChange,
-  pageSize = TASKS_PAGE_SIZE,
-}: TaskListPaginationProps) => {
-  const [jumpValue, setJumpValue] = useState(String(page));
-
-  useEffect(() => {
-    setJumpValue(String(page));
-  }, [page]);
-
-  if (totalCount <= pageSize) {
-    return null;
-  }
-
-  const totalPages = getTotalPages(totalCount, pageSize);
-  const startItem = (page - 1) * pageSize + 1;
-  const endItem = Math.min(totalCount, page * pageSize);
-
-  const commitJump = () => {
-    const nextPage = Number.parseInt(jumpValue, 10);
-    if (Number.isNaN(nextPage)) {
-      setJumpValue(String(page));
-      return;
-    }
-    onPageChange(Math.min(totalPages, Math.max(1, nextPage)));
-  };
-
-  return (
-    <nav
-      aria-label="任务分页"
-      className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm shadow-sm"
-    >
-      <div className="text-stone-500">
-        显示 {startItem}-{endItem} / {totalCount} 个任务
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onPageChange(Math.max(1, page - 1))}
-          disabled={page === 1}
-          className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          上一页
-        </button>
-        <span className="min-w-20 text-center text-sm font-medium text-stone-700">
-          第 {page} / {totalPages} 页
-        </span>
-        <button
-          type="button"
-          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-          disabled={page === totalPages}
-          className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          下一页
-          <ChevronRight className="h-4 w-4" />
-        </button>
-        <input
-          type="number"
-          min={1}
-          max={totalPages}
-          value={jumpValue}
-          onChange={(event) => setJumpValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              commitJump();
-            }
-          }}
-          className="h-10 w-20 rounded-xl border border-stone-200 px-3 text-sm text-stone-700 focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
-          aria-label="输入页码"
-        />
-        <button
-          type="button"
-          onClick={commitJump}
-          className="ui-btn-secondary px-3 py-2 text-sm"
-        >
-          跳转
-        </button>
-      </div>
-    </nav>
-  );
-};
-
-const DetailItemPagination = ({
-  page,
-  totalCount,
-  pageSize,
-  ariaLabel,
-  onPageChange,
-  onPageSizeChange,
-}: DetailItemPaginationProps) => {
-  if (totalCount === 0) {
-    return null;
-  }
-
-  const totalPages = getTotalPages(totalCount, pageSize);
-  const startItem = (page - 1) * pageSize + 1;
-  const endItem = Math.min(totalCount, page * pageSize);
-
-  return (
-    <nav
-      aria-label={ariaLabel}
-      className="mt-3 flex flex-col gap-3 border-t border-stone-100 pt-3 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div className="text-xs tabular-nums text-stone-500">
-        显示 {startItem}-{endItem} / {totalCount} 位导师
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <PageSizeSelector
-          value={pageSize}
-          onChange={onPageSizeChange}
-          menuPlacement="popover"
-        />
-        <button
-          type="button"
-          onClick={() => onPageChange(Math.max(1, page - 1))}
-          disabled={page === 1}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 transition hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="上一页导师明细"
-          title="上一页"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <span className="min-w-20 text-center text-xs font-medium tabular-nums text-stone-600">
-          第 {page} / {totalPages} 页
-        </span>
-        <button
-          type="button"
-          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-          disabled={page === totalPages}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 transition hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="下一页导师明细"
-          title="下一页"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-      </div>
-    </nav>
-  );
-};
-
 const formatDisplayTime = (
   value: string | null | undefined,
   options?: { withSeconds?: boolean },
@@ -1036,40 +895,119 @@ export const TasksPage = () => {
     filteredItems: filteredMatchJobItems,
     page: matchJobItemPage,
     pageSize: matchJobItemPageSize,
-    setPage: setMatchJobItemPage,
-    setPageSize: setMatchJobItemPageSize,
+    setPagination: setMatchJobItemPagination,
     setStatusFilter: setMatchJobItemStatusFilter,
     statusFilter: matchJobItemStatusFilter,
     visibleItems: visibleMatchJobItems,
   } = useTaskDetailItems(
     selectedMatchJobItems,
     selectedMatchJob?.id ?? null,
+    {
+      initialPageSize: 10,
+      pageSizeStorageKey: PAGE_SIZE_STORAGE_KEYS.matchJobItems,
+    },
   );
   const {
     filteredItems: filteredInformationEnrichmentItems,
     page: informationEnrichmentItemPage,
     pageSize: informationEnrichmentItemPageSize,
-    setPage: setInformationEnrichmentItemPage,
-    setPageSize: setInformationEnrichmentItemPageSize,
+    setPagination: setInformationEnrichmentItemPagination,
     setStatusFilter: setInformationEnrichmentItemStatusFilter,
     statusFilter: informationEnrichmentItemStatusFilter,
     visibleItems: visibleInformationEnrichmentItems,
   } = useTaskDetailItems(
     selectedInformationEnrichmentItems,
     selectedInformationEnrichmentJob?.id ?? null,
+    {
+      initialPageSize: 10,
+      pageSizeStorageKey:
+        PAGE_SIZE_STORAGE_KEYS.informationEnrichmentItems,
+    },
   );
   const [crawlJobs, setCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [currentCrawlJobs, setCurrentCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [crawlJobsLoading, setCrawlJobsLoading] = useState(false);
-  const [batchPage, setBatchPage] = useState(1);
-  const [matchPage, setMatchPage] = useState(1);
-  const [informationEnrichmentPage, setInformationEnrichmentPage] = useState(1);
-  const [crawlPage, setCrawlPage] = useState(1);
-  const [batchSentItemPage, setBatchSentItemPage] = useState(1);
-  const [batchPendingItemPage, setBatchPendingItemPage] = useState(1);
-  const [crawlEventPage, setCrawlEventPage] = useState(1);
-  const [crawlDetailPagePage, setCrawlDetailPagePage] = useState(1);
-  const [crawlCandidatePage, setCrawlCandidatePage] = useState(1);
+  const {
+    page: batchPage,
+    pageSize: batchPageSize,
+    setPage: setBatchPage,
+    onChange: handleBatchPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchTasks,
+    initialPageSize: TASKS_PAGE_SIZE,
+  });
+  const {
+    page: matchPage,
+    pageSize: matchPageSize,
+    setPage: setMatchPage,
+    onChange: handleMatchPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.matchJobs,
+    initialPageSize: TASKS_PAGE_SIZE,
+  });
+  const {
+    page: informationEnrichmentPage,
+    pageSize: informationEnrichmentPageSize,
+    setPage: setInformationEnrichmentPage,
+    onChange: handleInformationEnrichmentPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.informationEnrichmentJobs,
+    initialPageSize: TASKS_PAGE_SIZE,
+  });
+  const {
+    page: crawlPage,
+    pageSize: crawlPageSize,
+    setPage: setCrawlPage,
+    onChange: handleCrawlPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.crawlJobs,
+    initialPageSize: TASKS_PAGE_SIZE,
+  });
+  const {
+    page: batchSentItemPage,
+    pageSize: batchSentItemPageSize,
+    setPage: setBatchSentItemPage,
+    onChange: handleBatchSentItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchSentItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchPendingItemPage,
+    pageSize: batchPendingItemPageSize,
+    setPage: setBatchPendingItemPage,
+    onChange: handleBatchPendingItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchPendingItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: crawlEventPage,
+    pageSize: crawlEventPageSize,
+    setPage: setCrawlEventPage,
+    onChange: handleCrawlEventPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.crawlEvents,
+    initialPageSize: MONITOR_SECTION_PAGE_SIZE,
+  });
+  const {
+    page: crawlDetailPagePage,
+    pageSize: crawlDetailPagePageSize,
+    setPage: setCrawlDetailPagePage,
+    onChange: handleCrawlDetailPagePaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.crawlPages,
+    initialPageSize: MONITOR_SECTION_PAGE_SIZE,
+  });
+  const {
+    page: crawlCandidatePage,
+    pageSize: crawlCandidatePageSize,
+    setPage: setCrawlCandidatePage,
+    onChange: handleCrawlCandidatePaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.crawlCandidates,
+    initialPageSize: MONITOR_SECTION_PAGE_SIZE,
+  });
   const [selectedCrawlJob, setSelectedCrawlJob] =
     useState<CrawlJobSummaryDTO | null>(null);
   const [crawlJobPages, setCrawlJobPages] = useState<CrawlPageDTO[]>([]);
@@ -1136,6 +1074,14 @@ export const TasksPage = () => {
   const latestInformationEnrichmentDetailsRequestIdRef = useRef(0);
   const latestCrawlJobsRequestIdRef = useRef(0);
   const latestCrawlJobDetailsRequestIdRef = useRef(0);
+  const taskListStartRef = useRef<HTMLElement | null>(null);
+  const batchSentItemsStartRef = useRef<HTMLElement | null>(null);
+  const batchPendingItemsStartRef = useRef<HTMLElement | null>(null);
+  const matchJobItemsStartRef = useRef<HTMLElement | null>(null);
+  const informationEnrichmentItemsStartRef = useRef<HTMLElement | null>(null);
+  const crawlEventsStartRef = useRef<HTMLElement | null>(null);
+  const crawlPagesStartRef = useRef<HTMLElement | null>(null);
+  const crawlCandidatesStartRef = useRef<HTMLElement | null>(null);
   const activeTaskListView = taskListViews[activeTab];
   const tasksRequestKey =
     selectedIdentityId
@@ -1306,67 +1252,110 @@ export const TasksPage = () => {
       ),
     [selectedBatchTaskItems],
   );
+  const safeBatchPage = Math.min(
+    batchPage,
+    getTotalPages(tasks.length, batchPageSize),
+  );
+  const safeCrawlPage = Math.min(
+    crawlPage,
+    getTotalPages(crawlJobs.length, crawlPageSize),
+  );
+  const safeMatchPage = Math.min(
+    matchPage,
+    getTotalPages(matchAnalysisJobs.length, matchPageSize),
+  );
+  const safeInformationEnrichmentPage = Math.min(
+    informationEnrichmentPage,
+    getTotalPages(
+      informationEnrichmentJobs.length,
+      informationEnrichmentPageSize,
+    ),
+  );
+  const safeBatchSentItemPage = Math.min(
+    batchSentItemPage,
+    getTotalPages(sentBatchTaskItems.length, batchSentItemPageSize),
+  );
+  const safeBatchPendingItemPage = Math.min(
+    batchPendingItemPage,
+    getTotalPages(pendingBatchTaskItems.length, batchPendingItemPageSize),
+  );
+  const safeCrawlEventPage = Math.min(
+    crawlEventPage,
+    getTotalPages(crawlJobEvents.length, crawlEventPageSize),
+  );
+  const safeCrawlDetailPagePage = Math.min(
+    crawlDetailPagePage,
+    getTotalPages(crawlJobPages.length, crawlDetailPagePageSize),
+  );
+  const safeCrawlCandidatePage = Math.min(
+    crawlCandidatePage,
+    getTotalPages(crawlJobCandidates.length, crawlCandidatePageSize),
+  );
   const visibleSentBatchTaskItems = useMemo(
     () =>
       getPageItems(
         sentBatchTaskItems,
-        batchSentItemPage,
-        BATCH_DETAIL_ITEM_PAGE_SIZE,
+        safeBatchSentItemPage,
+        batchSentItemPageSize,
       ),
-    [batchSentItemPage, sentBatchTaskItems],
+    [batchSentItemPageSize, safeBatchSentItemPage, sentBatchTaskItems],
   );
   const visiblePendingBatchTaskItems = useMemo(
     () =>
       getPageItems(
         pendingBatchTaskItems,
-        batchPendingItemPage,
-        BATCH_DETAIL_ITEM_PAGE_SIZE,
+        safeBatchPendingItemPage,
+        batchPendingItemPageSize,
       ),
-    [batchPendingItemPage, pendingBatchTaskItems],
+    [batchPendingItemPageSize, pendingBatchTaskItems, safeBatchPendingItemPage],
   );
   const visibleBatchTasks = useMemo(
-    () => getPageItems(tasks, batchPage, TASKS_PAGE_SIZE),
-    [batchPage, tasks],
+    () => getPageItems(tasks, safeBatchPage, batchPageSize),
+    [batchPageSize, safeBatchPage, tasks],
   );
   const visibleCrawlJobs = useMemo(
-    () => getPageItems(crawlJobs, crawlPage, TASKS_PAGE_SIZE),
-    [crawlJobs, crawlPage],
+    () => getPageItems(crawlJobs, safeCrawlPage, crawlPageSize),
+    [crawlJobs, crawlPageSize, safeCrawlPage],
   );
   const visibleMatchJobs = useMemo(
-    () => getPageItems(matchAnalysisJobs, matchPage, TASKS_PAGE_SIZE),
-    [matchAnalysisJobs, matchPage],
+    () => getPageItems(matchAnalysisJobs, safeMatchPage, matchPageSize),
+    [matchAnalysisJobs, matchPageSize, safeMatchPage],
   );
   const visibleInformationEnrichmentJobs = useMemo(
     () =>
       getPageItems(
         informationEnrichmentJobs,
-        informationEnrichmentPage,
-        TASKS_PAGE_SIZE,
+        safeInformationEnrichmentPage,
+        informationEnrichmentPageSize,
       ),
-    [informationEnrichmentJobs, informationEnrichmentPage],
+    [
+      informationEnrichmentJobs,
+      informationEnrichmentPageSize,
+      safeInformationEnrichmentPage,
+    ],
   );
   const visibleCrawlJobEvents = useMemo(
     () =>
-      getPageItems(crawlJobEvents, crawlEventPage, MONITOR_SECTION_PAGE_SIZE),
-    [crawlEventPage, crawlJobEvents],
+      getPageItems(crawlJobEvents, safeCrawlEventPage, crawlEventPageSize),
+    [crawlEventPageSize, crawlJobEvents, safeCrawlEventPage],
   );
   const visibleCrawlJobPages = useMemo(
     () =>
       getPageItems(
         crawlJobPages,
-        crawlDetailPagePage,
-        MONITOR_SECTION_PAGE_SIZE,
+        safeCrawlDetailPagePage,
+        crawlDetailPagePageSize,
       ),
-    [crawlDetailPagePage, crawlJobPages],
+    [crawlDetailPagePageSize, crawlJobPages, safeCrawlDetailPagePage],
   );
   const visibleCrawlJobCandidates = useMemo(
     () =>
       getPageItems(
         crawlJobCandidates,
-        crawlCandidatePage,
-        MONITOR_SECTION_PAGE_SIZE,
+        safeCrawlCandidatePage,
+        crawlCandidatePageSize,
       ),
-    [crawlCandidatePage, crawlJobCandidates],
+    [crawlCandidatePageSize, crawlJobCandidates, safeCrawlCandidatePage],
   );
   const selectedCrawlJobId = selectedCrawlJob?.id ?? null;
   const taskDetailDialogOpen =
@@ -1441,7 +1430,13 @@ export const TasksPage = () => {
     if (previousTaskListViews.enrichment !== taskListViews.enrichment) {
       setInformationEnrichmentPage(1);
     }
-  }, [taskListViews]);
+  }, [
+    setBatchPage,
+    setCrawlPage,
+    setInformationEnrichmentPage,
+    setMatchPage,
+    taskListViews,
+  ]);
 
   const loadTasks = useCallback(async () => {
     if (!tasksRequestKey || !selectedIdentityId) {
@@ -1829,69 +1824,89 @@ export const TasksPage = () => {
 
   useEffect(() => {
     setBatchPage((currentPage) =>
-      Math.min(currentPage, getTotalPages(tasks.length, TASKS_PAGE_SIZE)),
+      Math.min(currentPage, getTotalPages(tasks.length, batchPageSize)),
     );
-  }, [tasks.length]);
+  }, [batchPageSize, setBatchPage, tasks.length]);
 
   useEffect(() => {
     setCrawlPage((currentPage) =>
-      Math.min(currentPage, getTotalPages(crawlJobs.length, TASKS_PAGE_SIZE)),
+      Math.min(currentPage, getTotalPages(crawlJobs.length, crawlPageSize)),
     );
-  }, [crawlJobs.length]);
+  }, [crawlJobs.length, crawlPageSize, setCrawlPage]);
+
+  useEffect(() => {
+    setMatchPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(matchAnalysisJobs.length, matchPageSize),
+      ),
+    );
+  }, [matchAnalysisJobs.length, matchPageSize, setMatchPage]);
 
   useEffect(() => {
     setInformationEnrichmentPage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(informationEnrichmentJobs.length, TASKS_PAGE_SIZE),
+        getTotalPages(
+          informationEnrichmentJobs.length,
+          informationEnrichmentPageSize,
+        ),
       ),
     );
-  }, [informationEnrichmentJobs.length]);
+  }, [
+    informationEnrichmentJobs.length,
+    informationEnrichmentPageSize,
+    setInformationEnrichmentPage,
+  ]);
 
   useEffect(() => {
     setCrawlEventPage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(crawlJobEvents.length, MONITOR_SECTION_PAGE_SIZE),
+        getTotalPages(crawlJobEvents.length, crawlEventPageSize),
       ),
     );
-  }, [crawlJobEvents.length]);
+  }, [crawlEventPageSize, crawlJobEvents.length, setCrawlEventPage]);
 
   useEffect(() => {
     setCrawlDetailPagePage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(crawlJobPages.length, MONITOR_SECTION_PAGE_SIZE),
+        getTotalPages(crawlJobPages.length, crawlDetailPagePageSize),
       ),
     );
-  }, [crawlJobPages.length]);
+  }, [crawlDetailPagePageSize, crawlJobPages.length, setCrawlDetailPagePage]);
 
   useEffect(() => {
     setCrawlCandidatePage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(crawlJobCandidates.length, MONITOR_SECTION_PAGE_SIZE),
+        getTotalPages(crawlJobCandidates.length, crawlCandidatePageSize),
       ),
     );
-  }, [crawlJobCandidates.length]);
+  }, [crawlCandidatePageSize, crawlJobCandidates.length, setCrawlCandidatePage]);
 
   useEffect(() => {
     setBatchSentItemPage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(sentBatchTaskItems.length, BATCH_DETAIL_ITEM_PAGE_SIZE),
+        getTotalPages(sentBatchTaskItems.length, batchSentItemPageSize),
       ),
     );
-  }, [sentBatchTaskItems.length]);
+  }, [batchSentItemPageSize, sentBatchTaskItems.length, setBatchSentItemPage]);
 
   useEffect(() => {
     setBatchPendingItemPage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(pendingBatchTaskItems.length, BATCH_DETAIL_ITEM_PAGE_SIZE),
+        getTotalPages(pendingBatchTaskItems.length, batchPendingItemPageSize),
       ),
     );
-  }, [pendingBatchTaskItems.length]);
+  }, [
+    batchPendingItemPageSize,
+    pendingBatchTaskItems.length,
+    setBatchPendingItemPage,
+  ]);
 
   useEffect(() => {
     if (crawlJobsPreloadedRef.current) {
@@ -1999,7 +2014,11 @@ export const TasksPage = () => {
     previousSelectedBatchTaskIdRef.current = selectedBatchTask?.id;
     setBatchSentItemPage(1);
     setBatchPendingItemPage(1);
-  }, [selectedBatchTask?.id]);
+  }, [
+    selectedBatchTask?.id,
+    setBatchPendingItemPage,
+    setBatchSentItemPage,
+  ]);
 
   useEffect(() => {
     if (!selectedMatchJob) {
@@ -2067,7 +2086,12 @@ export const TasksPage = () => {
     setCrawlEventPage(1);
     setCrawlDetailPagePage(1);
     setCrawlCandidatePage(1);
-  }, [selectedCrawlJobId]);
+  }, [
+    selectedCrawlJobId,
+    setCrawlCandidatePage,
+    setCrawlDetailPagePage,
+    setCrawlEventPage,
+  ]);
 
   const handleAction = async (
     taskId: number,
@@ -3460,6 +3484,12 @@ export const TasksPage = () => {
         />
       </div>
 
+      <section
+        ref={taskListStartRef}
+        tabIndex={-1}
+        aria-label="任务列表"
+        className="scroll-mt-24 focus:outline-none"
+      >
       {activeTab === "batch" && loading ? (
         <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -3622,10 +3652,18 @@ export const TasksPage = () => {
               );
             })}
           </div>
-          <TaskListPagination
-            page={batchPage}
+          <Pagination
+            page={safeBatchPage}
+            pageSize={batchPageSize}
             totalCount={tasks.length}
-            onPageChange={setBatchPage}
+            onChange={handleBatchPaginationChange}
+            ariaLabel="批量邮件任务分页"
+            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+            unitLabel="个"
+            itemLabel="个任务"
+            pageStatusPrefix="第 "
+            focusTargetRef={taskListStartRef}
+            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
           />
         </>
       ) : activeTab === "match" && matchJobsLoading && matchAnalysisJobs.length === 0 ? (
@@ -3742,10 +3780,18 @@ export const TasksPage = () => {
               </article>
             ))}
           </div>
-          <TaskListPagination
-            page={matchPage}
+          <Pagination
+            page={safeMatchPage}
+            pageSize={matchPageSize}
             totalCount={matchAnalysisJobs.length}
-            onPageChange={setMatchPage}
+            onChange={handleMatchPaginationChange}
+            ariaLabel="匹配分析任务分页"
+            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+            unitLabel="个"
+            itemLabel="个任务"
+            pageStatusPrefix="第 "
+            focusTargetRef={taskListStartRef}
+            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
           />
         </>
       ) : activeTab === "enrichment" &&
@@ -3922,10 +3968,18 @@ export const TasksPage = () => {
               );
             })}
           </div>
-          <TaskListPagination
-            page={informationEnrichmentPage}
+          <Pagination
+            page={safeInformationEnrichmentPage}
+            pageSize={informationEnrichmentPageSize}
             totalCount={informationEnrichmentJobs.length}
-            onPageChange={setInformationEnrichmentPage}
+            onChange={handleInformationEnrichmentPaginationChange}
+            ariaLabel="信息补全任务分页"
+            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+            unitLabel="个"
+            itemLabel="个任务"
+            pageStatusPrefix="第 "
+            focusTargetRef={taskListStartRef}
+            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
           />
         </>
       ) : crawlJobsLoading && crawlJobs.length === 0 ? (
@@ -3971,13 +4025,22 @@ export const TasksPage = () => {
               />
             ))}
           </div>
-          <TaskListPagination
-            page={crawlPage}
+          <Pagination
+            page={safeCrawlPage}
+            pageSize={crawlPageSize}
             totalCount={crawlJobs.length}
-            onPageChange={setCrawlPage}
+            onChange={handleCrawlPaginationChange}
+            ariaLabel="教师抓取任务分页"
+            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+            unitLabel="个"
+            itemLabel="个任务"
+            pageStatusPrefix="第 "
+            focusTargetRef={taskListStartRef}
+            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
           />
         </>
       )}
+      </section>
       {selectedBatchTask ? (
         <div
           className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
@@ -4354,7 +4417,12 @@ export const TasksPage = () => {
                 </div>
               </section>
 
-              <section className="mt-6">
+              <section
+                ref={batchSentItemsStartRef}
+                tabIndex={-1}
+                aria-label="已发送导师列表"
+                className="mt-6 scroll-mt-24 focus:outline-none"
+              >
                 <h3 className="text-sm font-semibold text-stone-900">
                   已发送给
                 </h3>
@@ -4405,15 +4473,30 @@ export const TasksPage = () => {
                     </p>
                   )}
                 </div>
-                <TaskListPagination
-                  page={batchSentItemPage}
+                <Pagination
+                  page={safeBatchSentItemPage}
+                  pageSize={batchSentItemPageSize}
                   totalCount={sentBatchTaskItems.length}
-                  onPageChange={setBatchSentItemPage}
-                  pageSize={BATCH_DETAIL_ITEM_PAGE_SIZE}
+                  onChange={handleBatchSentItemPaginationChange}
+                  ariaLabel="已发送导师分页"
+                  pageSizeAriaLabel="已发送导师每页数量"
+                  variant="compact"
+                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                  unitLabel="位"
+                  itemLabel="位导师"
+                  summary={`显示 ${(safeBatchSentItemPage - 1) * batchSentItemPageSize + 1}-${Math.min(sentBatchTaskItems.length, safeBatchSentItemPage * batchSentItemPageSize)} / ${sentBatchTaskItems.length} 个任务`}
+                  focusTargetRef={batchSentItemsStartRef}
+                  menuPlacement="popover"
+                  className="mt-3 border-t border-stone-100 pt-3"
                 />
               </section>
 
-              <section className="mt-6">
+              <section
+                ref={batchPendingItemsStartRef}
+                tabIndex={-1}
+                aria-label="未发送导师列表"
+                className="mt-6 scroll-mt-24 focus:outline-none"
+              >
                 <h3 className="text-sm font-semibold text-stone-900">
                   还未发送给
                 </h3>
@@ -4481,11 +4564,21 @@ export const TasksPage = () => {
                     </p>
                   )}
                 </div>
-                <TaskListPagination
-                  page={batchPendingItemPage}
+                <Pagination
+                  page={safeBatchPendingItemPage}
+                  pageSize={batchPendingItemPageSize}
                   totalCount={pendingBatchTaskItems.length}
-                  onPageChange={setBatchPendingItemPage}
-                  pageSize={BATCH_DETAIL_ITEM_PAGE_SIZE}
+                  onChange={handleBatchPendingItemPaginationChange}
+                  ariaLabel="未发送导师分页"
+                  pageSizeAriaLabel="未发送导师每页数量"
+                  variant="compact"
+                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                  unitLabel="位"
+                  itemLabel="位导师"
+                  summary={`显示 ${(safeBatchPendingItemPage - 1) * batchPendingItemPageSize + 1}-${Math.min(pendingBatchTaskItems.length, safeBatchPendingItemPage * batchPendingItemPageSize)} / ${pendingBatchTaskItems.length} 个任务`}
+                  focusTargetRef={batchPendingItemsStartRef}
+                  menuPlacement="popover"
+                  className="mt-3 border-t border-stone-100 pt-3"
                 />
               </section>
 
@@ -4684,7 +4777,12 @@ export const TasksPage = () => {
                 className="mt-3"
               />
 
-              <section className="mt-6">
+              <section
+                ref={matchJobItemsStartRef}
+                tabIndex={-1}
+                aria-label="匹配分析导师明细"
+                className="mt-6 scroll-mt-24 focus:outline-none"
+              >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <h3 className="text-sm font-semibold text-stone-900">
                     导师明细
@@ -4797,13 +4895,20 @@ export const TasksPage = () => {
                     </tbody>
                   </table>
                 </div>
-                <DetailItemPagination
+                <Pagination
                   page={matchJobItemPage}
-                  totalCount={filteredMatchJobItems.length}
                   pageSize={matchJobItemPageSize}
+                  totalCount={filteredMatchJobItems.length}
+                  onChange={setMatchJobItemPagination}
                   ariaLabel="匹配分析导师明细分页"
-                  onPageChange={setMatchJobItemPage}
-                  onPageSizeChange={setMatchJobItemPageSize}
+                  pageSizeAriaLabel="匹配分析导师明细每页数量"
+                  variant="compact"
+                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                  unitLabel="位"
+                  itemLabel="位导师"
+                  focusTargetRef={matchJobItemsStartRef}
+                  menuPlacement="popover"
+                  className="mt-3 border-t border-stone-100 pt-3"
                 />
               </section>
             </div>
@@ -4914,7 +5019,12 @@ export const TasksPage = () => {
                 </div>
               ) : null}
 
-              <section className="mt-6">
+              <section
+                ref={informationEnrichmentItemsStartRef}
+                tabIndex={-1}
+                aria-label="信息补全导师明细"
+                className="mt-6 scroll-mt-24 focus:outline-none"
+              >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <h3 className="text-sm font-semibold text-stone-900">导师明细</h3>
                   <div className="flex flex-wrap items-center gap-2">
@@ -5073,13 +5183,20 @@ export const TasksPage = () => {
                     </tbody>
                   </table>
                 </div>
-                <DetailItemPagination
+                <Pagination
                   page={informationEnrichmentItemPage}
-                  totalCount={filteredInformationEnrichmentItems.length}
                   pageSize={informationEnrichmentItemPageSize}
+                  totalCount={filteredInformationEnrichmentItems.length}
+                  onChange={setInformationEnrichmentItemPagination}
                   ariaLabel="信息补全导师明细分页"
-                  onPageChange={setInformationEnrichmentItemPage}
-                  onPageSizeChange={setInformationEnrichmentItemPageSize}
+                  pageSizeAriaLabel="信息补全导师明细每页数量"
+                  variant="compact"
+                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                  unitLabel="位"
+                  itemLabel="位导师"
+                  focusTargetRef={informationEnrichmentItemsStartRef}
+                  menuPlacement="popover"
+                  className="mt-3 border-t border-stone-100 pt-3"
                 />
               </section>
             </div>
@@ -5207,7 +5324,12 @@ export const TasksPage = () => {
               ) : null}
 
               <div className="grid items-stretch gap-6 xl:grid-cols-2">
-                <section className="flex h-full flex-col">
+                <section
+                  ref={crawlEventsStartRef}
+                  tabIndex={-1}
+                  aria-label="抓取执行日志"
+                  className="flex h-full scroll-mt-24 flex-col focus:outline-none"
+                >
                   <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
                     <Activity className="h-4 w-4 text-primary" />
                     执行日志
@@ -5246,15 +5368,29 @@ export const TasksPage = () => {
                       </p>
                     )}
                   </div>
-                  <TaskListPagination
-                    page={crawlEventPage}
+                  <Pagination
+                    page={safeCrawlEventPage}
+                    pageSize={crawlEventPageSize}
                     totalCount={crawlJobEvents.length}
-                    onPageChange={setCrawlEventPage}
-                    pageSize={MONITOR_SECTION_PAGE_SIZE}
+                    onChange={handleCrawlEventPaginationChange}
+                    ariaLabel="抓取执行日志分页"
+                    pageSizeAriaLabel="抓取执行日志每页数量"
+                    variant="compact"
+                    pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
+                    unitLabel="条"
+                    itemLabel="条日志"
+                    focusTargetRef={crawlEventsStartRef}
+                    menuPlacement="popover"
+                    className="mt-3 border-t border-stone-100 pt-3"
                   />
                 </section>
 
-                <section className="flex h-full flex-col">
+                <section
+                  ref={crawlPagesStartRef}
+                  tabIndex={-1}
+                  aria-label="已抓页面列表"
+                  className="flex h-full scroll-mt-24 flex-col focus:outline-none"
+                >
                   <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
                     <FileSearch className="h-4 w-4 text-sky-600" />
                     已抓页面
@@ -5283,16 +5419,30 @@ export const TasksPage = () => {
                       </p>
                     )}
                   </div>
-                  <TaskListPagination
-                    page={crawlDetailPagePage}
+                  <Pagination
+                    page={safeCrawlDetailPagePage}
+                    pageSize={crawlDetailPagePageSize}
                     totalCount={crawlJobPages.length}
-                    onPageChange={setCrawlDetailPagePage}
-                    pageSize={MONITOR_SECTION_PAGE_SIZE}
+                    onChange={handleCrawlDetailPagePaginationChange}
+                    ariaLabel="已抓页面分页"
+                    pageSizeAriaLabel="已抓页面每页数量"
+                    variant="compact"
+                    pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
+                    unitLabel="个"
+                    itemLabel="个页面"
+                    focusTargetRef={crawlPagesStartRef}
+                    menuPlacement="popover"
+                    className="mt-3 border-t border-stone-100 pt-3"
                   />
                 </section>
               </div>
 
-              <section>
+              <section
+                ref={crawlCandidatesStartRef}
+                tabIndex={-1}
+                aria-label="候选导师列表"
+                className="scroll-mt-24 focus:outline-none"
+              >
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                   候选导师
@@ -5480,11 +5630,20 @@ export const TasksPage = () => {
                     </p>
                   )}
                 </div>
-                <TaskListPagination
-                  page={crawlCandidatePage}
+                <Pagination
+                  page={safeCrawlCandidatePage}
+                  pageSize={crawlCandidatePageSize}
                   totalCount={crawlJobCandidates.length}
-                  onPageChange={setCrawlCandidatePage}
-                  pageSize={MONITOR_SECTION_PAGE_SIZE}
+                  onChange={handleCrawlCandidatePaginationChange}
+                  ariaLabel="候选导师分页"
+                  pageSizeAriaLabel="候选导师每页数量"
+                  variant="compact"
+                  pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
+                  unitLabel="位"
+                  itemLabel="位导师"
+                  focusTargetRef={crawlCandidatesStartRef}
+                  menuPlacement="popover"
+                  className="mt-3 border-t border-stone-100 pt-3"
                 />
               </section>
             </div>

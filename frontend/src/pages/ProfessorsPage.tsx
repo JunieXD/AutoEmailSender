@@ -39,7 +39,7 @@ import { BulkProfessorTagDialog } from "@/components/molecules/BulkProfessorTagD
 import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
-import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { Pagination } from "@/components/molecules/Pagination";
 import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
 import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
@@ -52,6 +52,7 @@ import {
   getStoredPageSize,
   getTotalPages,
   setStoredPageSize,
+  type PaginationChange,
 } from "@/lib/pagination";
 import {
   normalizeExternalHttpUrl,
@@ -751,6 +752,7 @@ export const ProfessorsPage = () => {
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const latestProfessorsRequestIdRef = useRef(0);
+  const professorListStartRef = useRef<HTMLElement | null>(null);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
   const [editingProfessor, setEditingProfessor] =
     useState<ProfessorManagementItemDTO | null>(null);
@@ -1124,6 +1126,9 @@ export const ProfessorsPage = () => {
     [pageSize, visibleProfessors.length],
   );
   const safeCurrentPage = Math.min(currentPage, totalPages);
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
   const paginatedProfessors = useMemo(
     () => getPageItems(visibleProfessors, safeCurrentPage, pageSize),
     [pageSize, safeCurrentPage, visibleProfessors],
@@ -1156,10 +1161,10 @@ export const ProfessorsPage = () => {
     setUpsertModalOpen(true);
   };
 
-  const handlePageSizeChange = (nextPageSize: number) => {
-    setPageSize(nextPageSize);
-    setStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY, nextPageSize);
-    setCurrentPage(1);
+  const handlePaginationChange = (change: PaginationChange) => {
+    setCurrentPage(change.page);
+    setPageSize(change.pageSize);
+    setStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY, change.pageSize);
   };
 
   const handleToggleFilteredSelection = () => {
@@ -2269,7 +2274,12 @@ export const ProfessorsPage = () => {
         </div>
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm">
+      <section
+        ref={professorListStartRef}
+        tabIndex={-1}
+        aria-label="导师管理列表"
+        className="mt-6 scroll-mt-24 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
+      >
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           <div className="text-sm text-stone-600">
             共 {visibleProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，每页最多 {pageSize} 位
@@ -2488,36 +2498,18 @@ export const ProfessorsPage = () => {
         )}
 
         {!loading && visibleProfessors.length > 0 ? (
-          <div className="flex flex-col gap-3 border-t border-stone-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-stone-500">
-              共 {visibleProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，已选中 {selectedIds.size} 位
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <PageSizeSelector
-                value={pageSize}
-                onChange={handlePageSizeChange}
-              />
-              <button
-                type="button"
-                onClick={() => setCurrentPage(safeCurrentPage - 1)}
-                disabled={safeCurrentPage <= 1}
-                className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                上一页
-              </button>
-              <div className="min-w-28 text-center text-sm text-stone-600">
-                第 {safeCurrentPage} / {totalPages} 页
-              </div>
-              <button
-                type="button"
-                onClick={() => setCurrentPage(safeCurrentPage + 1)}
-                disabled={safeCurrentPage >= totalPages}
-                className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
+          <Pagination
+            page={safeCurrentPage}
+            pageSize={pageSize}
+            totalCount={visibleProfessors.length}
+            onChange={handlePaginationChange}
+            ariaLabel="导师管理分页"
+            unitLabel="位"
+            itemLabel="位导师"
+            summary={`共 ${visibleProfessors.length} 位符合筛选条件，当前第 ${safeCurrentPage} / ${totalPages} 页，已选中 ${selectedIds.size} 位`}
+            focusTargetRef={professorListStartRef}
+            className="border-t border-stone-100 px-6 py-4"
+          />
         ) : null}
       </section>
 

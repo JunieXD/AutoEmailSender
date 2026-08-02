@@ -30,6 +30,7 @@ const notifyMock = {
   notifySuccess: vi.fn(),
   notifyWarning: vi.fn(),
 };
+const scrollIntoView = vi.fn();
 
 const ProfessorsPageWithLinkedNavigation = () => {
   const navigate = useNavigate();
@@ -248,6 +249,12 @@ vi.mock("@/lib/api/workspacesApi", () => ({
 describe("selection controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    scrollIntoView.mockReset();
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    window.localStorage.clear();
     window.sessionStorage.clear();
     vi.mocked(createProfessorTag).mockResolvedValue({
       id: 2,
@@ -421,6 +428,13 @@ describe("selection controls", () => {
 
     expect(await screen.findByText("导师 21")).toBeInTheDocument();
     expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "导师看板列表" }),
+    ).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "start",
+    });
   });
 
   it("switches time sort direction inside the sort menu and highlights replied rows", async () => {
@@ -624,6 +638,31 @@ describe("selection controls", () => {
     expect(
       screen.getByRole("button", { name: "清空选择" }),
     ).toBeInTheDocument();
+  });
+
+  it("returns focus to the management list after changing pages", async () => {
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("导师 20")).toBeInTheDocument();
+    const pagination = screen.getByRole("navigation", {
+      name: "导师管理分页",
+    });
+    fireEvent.click(
+      within(pagination).getByRole("button", { name: "下一页" }),
+    );
+
+    expect(await screen.findByText("导师 21")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "导师管理列表" }),
+    ).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "start",
+    });
   });
 
   it("opens management advanced filters and resets them", async () => {
