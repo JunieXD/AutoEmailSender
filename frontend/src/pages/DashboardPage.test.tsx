@@ -400,14 +400,18 @@ describe("DashboardPage", () => {
     expect(screen.getByTestId("mentor-match-distribution-card")).toHaveClass("h-[22rem]");
     expect(screen.getByTestId("mentor-school-distribution-card")).toHaveClass("h-[22rem]");
     expect(screen.getByTestId("mentor-match-distribution-card")).toContainElement(
-      screen.getByTestId("match-distribution-plot"),
+      screen.getByTestId("match-analysis-coverage"),
     );
-    expect(screen.getByTestId("match-distribution-plot")).toHaveClass("h-40");
-    expect(screen.getByTestId("match-distribution-plot")).not.toHaveClass("border-b");
-    expect(within(screen.getByTestId("match-distribution-plot")).getByText("0 位").parentElement).toHaveClass("z-30");
-    expect(screen.getByTestId("match-distribution-chart-window")).not.toHaveClass("overflow-x-auto");
-    expect(screen.getByTestId("match-distribution-chart-body")).toHaveClass("w-full");
-    expect(screen.getByTestId("match-distribution-chart-body")).not.toHaveClass("min-w-[520px]");
+    const matchCoverage = screen.getByTestId("match-analysis-coverage");
+    expect(matchCoverage).toHaveTextContent(/2 \/ 3 位 · 67%/);
+    expect(matchCoverage).toHaveTextContent("未分析 1 位");
+    expect(within(matchCoverage).getByRole("progressbar", { name: /匹配分析覆盖率 67%/ }))
+      .toHaveAttribute("aria-valuenow", "67");
+    const matchScoreDistribution = screen.getByTestId("match-score-distribution");
+    expect(matchScoreDistribution).toHaveTextContent("已分析导师的分数分布");
+    expect(matchScoreDistribution).toHaveTextContent("共 2 位");
+    expect(screen.getByTestId("match-score-row-80_89")).toHaveTextContent(/80-89\s*1 位 · 50%/);
+    expect(screen.getByTestId("match-score-bar-80_89")).toHaveStyle({ width: "50%" });
     expect(screen.getByTestId("mentor-profile-completeness-card")).toContainElement(
       screen.getByTestId("pie-legend-horizontal-scroll"),
     );
@@ -462,6 +466,10 @@ describe("DashboardPage", () => {
     expect(within(replyWaitCard).getByText("5 天")).toBeInTheDocument();
     expect(within(replyWaitCard).getByRole("img", { name: "24 小时内，3 位导师，占比 38%" }))
       .toBeInTheDocument();
+    expect(within(replyWaitCard).getByTestId("reply-wait-row-within_24h"))
+      .toHaveTextContent(/24 小时内\s*3 位 · 38%/);
+    expect(within(replyWaitCard).getByTestId("reply-wait-bar-within_24h"))
+      .toHaveStyle({ width: "37.5%" });
     expect(screen.queryByText("全部导师")).not.toBeInTheDocument();
     expect(screen.queryByText("发送 / 回复")).not.toBeInTheDocument();
     expect(screen.queryByText("近 30 天发送 / 回复 / 失败趋势")).not.toBeInTheDocument();
@@ -732,37 +740,76 @@ describe("DashboardPage", () => {
     expect(props.options.plugins.tooltip.callbacks.footer([{ dataIndex: 29 }])).toContain("合计 1 封");
   });
 
-  it("shows token-style hover details for match score distribution", async () => {
+  it("separates a dominant unmatched count from the analyzed score distribution", async () => {
+    getDashboardOverview.mockResolvedValue({
+      ...overview,
+      mentor: {
+        ...overview.mentor,
+        match_score_distribution: [
+          { bucket: "unmatched", label: "未分析", count: 900 },
+          { bucket: "0_59", label: "0-59", count: 1 },
+          { bucket: "60_69", label: "60-69", count: 2 },
+          { bucket: "70_79", label: "70-79", count: 3 },
+          { bucket: "80_89", label: "80-89", count: 4 },
+          { bucket: "90_100", label: "90-100", count: 5 },
+        ],
+      },
+    });
+
     render(
       <MemoryRouter>
         <DashboardPage />
       </MemoryRouter>,
     );
 
-    const interactionLayer = await screen.findByTestId("match-distribution-interaction-layer");
-    vi.spyOn(interactionLayer, "getBoundingClientRect").mockReturnValue({
-      x: 100,
-      y: 100,
-      width: 600,
-      height: 160,
-      top: 100,
-      right: 700,
-      bottom: 260,
-      left: 100,
-      toJSON: () => ({}),
+    const coverage = await screen.findByTestId("match-analysis-coverage");
+    expect(coverage).toHaveTextContent(/15 \/ 915 位 · 2%/);
+    expect(coverage).toHaveTextContent("未分析 900 位");
+    expect(within(coverage).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "2");
+
+    const scoreDistribution = screen.getByTestId("match-score-distribution");
+    expect(within(scoreDistribution).queryByText("未分析")).not.toBeInTheDocument();
+    expect(screen.getByTestId("match-score-row-0_59")).toHaveTextContent(/0-59\s*1 位 · 7%/);
+    expect(screen.getByTestId("match-score-row-90_100")).toHaveTextContent(/90-100\s*5 位 · 33%/);
+    expect(screen.getByTestId("match-score-bar-0_59")).toHaveStyle({
+      width: `${(1 / 15) * 100}%`,
     });
-    fireEvent.mouseMove(interactionLayer, { clientX: 660, clientY: 180 });
+    expect(screen.queryByText(/当前主要问题/)).not.toBeInTheDocument();
+  });
 
-    const hoverHighlight = screen.getByTestId("match-distribution-hover-highlight");
-    expect(hoverHighlight).toHaveClass("z-0");
-    expect(hoverHighlight).toHaveClass("inset-x-0");
-    expect(within(screen.getByTestId("match-distribution-plot")).getAllByText("1 位")[0].parentElement).toHaveClass("z-10");
-    expect(within(screen.getByTestId("match-distribution-plot")).getByText("0 位").parentElement).toHaveClass("z-30");
+  it("keeps exact reply-wait values readable when one time bucket dominates", async () => {
+    getDashboardOverview.mockResolvedValue({
+      ...overview,
+      email: {
+        ...overview.email,
+        reply_wait: {
+          sample_count: 100,
+          median_hours: 12,
+          p75_hours: 20,
+          distribution: [
+            { key: "within_24h", label: "24 小时内", count: 96, rate: 0.96 },
+            { key: "1_3_days", label: "1–3 天", count: 1, rate: 0.01 },
+            { key: "3_7_days", label: "3–7 天", count: 1, rate: 0.01 },
+            { key: "7_14_days", label: "7–14 天", count: 1, rate: 0.01 },
+            { key: "over_14_days", label: "14 天以上", count: 1, rate: 0.01 },
+          ],
+        },
+      },
+    });
 
-    expect(screen.getByRole("tooltip")).toHaveTextContent("90-100");
-    expect(screen.getByRole("tooltip")).toHaveTextContent("导师数");
-    expect(screen.getByRole("tooltip")).toHaveTextContent("1 位");
-    expect(screen.getByRole("tooltip")).toHaveTextContent("33%");
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    const distribution = await screen.findByTestId("reply-wait-distribution-list");
+    expect(within(distribution).getByTestId("reply-wait-row-within_24h"))
+      .toHaveTextContent(/24 小时内\s*96 位 · 96%/);
+    expect(within(distribution).getByTestId("reply-wait-row-1_3_days"))
+      .toHaveTextContent(/1–3 天\s*1 位 · 1%/);
+    expect(within(distribution).getByTestId("reply-wait-bar-1_3_days"))
+      .toHaveStyle({ width: "1%" });
   });
 
   it("reloads mentor analysis when school and college filters change", async () => {

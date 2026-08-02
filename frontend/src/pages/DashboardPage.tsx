@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CategoryScale,
@@ -38,11 +38,6 @@ import { useSelectionContext } from '@/context/SelectionContext';
 import { DistributionPieChart } from '@/components/molecules/DistributionPieChart';
 import { TokenVisualizationPanel } from '@/components/molecules/TokenVisualizationPanel';
 import { getDashboardOverview } from '@/lib/api/dashboardApi';
-import {
-  buildAxisTicks,
-  resolveFloatingTooltipPosition,
-  resolveNiceAxisMax,
-} from '@/lib/charting';
 import { resolveStatisticsSectionNavTop } from '@/lib/statisticsSectionNav';
 import type {
   DashboardEmailTrendBucketDTO,
@@ -140,15 +135,6 @@ const formatDurationHours = (value: number | null) => {
 };
 
 type MetricTone = 'teal' | 'amber' | 'rose' | 'sky' | 'violet' | 'stone';
-
-type MatchTooltipState = {
-  bucket: string;
-  x: number;
-  y: number;
-};
-
-const matchTooltipWidth = 284;
-const matchTooltipHeight = 132;
 
 const mentorDetailGridStyle = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 28rem), 1fr))',
@@ -266,196 +252,95 @@ const MatchDistributionChart = ({
 }: {
   data: DashboardOverviewDTO['mentor']['match_score_distribution'];
 }) => {
-  const [activeBucket, setActiveBucket] = useState<string | null>(null);
-  const [tooltip, setTooltip] = useState<MatchTooltipState | null>(null);
-  const max = Math.max(...data.map((item) => item.count), 0);
-  const axisMax = resolveNiceAxisMax(max);
-  const ticks = buildAxisTicks(axisMax);
-  const total = data.reduce((sum, item) => sum + item.count, 0);
-  const activeTooltipItem = tooltip ? data.find((item) => item.bucket === tooltip.bucket) ?? null : null;
-  const activeTooltipShare = activeTooltipItem && total > 0 ? activeTooltipItem.count / total : 0;
-  const activeBucketIndex = activeBucket === null ? -1 : data.findIndex((item) => item.bucket === activeBucket);
+  const unmatchedCount = data.find((item) => item.bucket === 'unmatched')?.count ?? 0;
+  const scoreDistribution = data.filter((item) => item.bucket !== 'unmatched');
+  const analyzedCount = scoreDistribution.reduce((sum, item) => sum + item.count, 0);
+  const total = analyzedCount + unmatchedCount;
+  const analyzedRate = total > 0 ? analyzedCount / total : 0;
+  const analyzedPercentage = Math.min(100, Math.max(0, analyzedRate * 100));
 
-  const handlePlotMouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {
-    const itemIndex = resolveMatchDistributionBucketIndex(event.clientX, event.currentTarget.getBoundingClientRect(), data.length);
-    if (itemIndex === null) {
-      return;
-    }
-
-    const item = data[itemIndex];
-    setActiveBucket(item.bucket);
-    setTooltip(createMatchTooltipState(item.bucket, event));
-  };
-
-  if (data.every((item) => item.count === 0)) {
+  if (total === 0) {
     return <EmptyState>暂无匹配分数数据</EmptyState>;
   }
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap gap-3 text-xs text-stone-500">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-teal-500" />已分析</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-stone-300" />未分析</span>
-      </div>
-      <div
-        data-testid="match-distribution-chart-window"
-        className="min-w-0 max-w-full overflow-hidden rounded-xl border border-stone-200 bg-white px-3 py-5 sm:px-4"
+    <div className="space-y-3">
+      <section
+        data-testid="match-analysis-coverage"
+        className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3"
       >
-        <div data-testid="match-distribution-chart-body" className="w-full pl-14 pr-1 sm:pl-16 sm:pr-3">
-          <div data-testid="match-distribution-plot" className="relative h-40">
-            {activeBucketIndex >= 0 ? (
-              <div
-                data-testid="match-distribution-hover-highlight"
-                className="pointer-events-none absolute inset-x-0 inset-y-0 z-0 flex justify-between gap-2 sm:gap-3"
-              >
-                {data.map((item, index) => (
-                  <div
-                    key={item.bucket}
-                    className={clsx(
-                      "min-w-0 flex-1",
-                      index === activeBucketIndex && "bg-teal-50/70",
-                    )}
-                  />
-                ))}
-              </div>
-            ) : null}
-            {ticks.map((tick) => (
-              <div
-                key={tick}
-                className={clsx(
-                  'absolute left-0 right-0',
-                  tick === 0 ? 'z-30 border-t border-stone-500' : 'z-10 border-t border-dashed border-stone-200',
-                )}
-                style={{ bottom: `${(tick / axisMax) * 100}%` }}
-              >
-                <span className="absolute right-[calc(100%+0.625rem)] top-0 -translate-y-1/2 whitespace-nowrap text-xs text-stone-500">
-                  {formatNumber(tick)} 位
-                </span>
-              </div>
-            ))}
-            <div
-              data-testid="match-distribution-interaction-layer"
-              className="relative z-20 flex h-full items-end justify-between gap-2 sm:gap-3"
-              onMouseMove={handlePlotMouseMove}
-              onMouseLeave={() => {
-                setActiveBucket(null);
-                setTooltip(null);
-              }}
-            >
-              {data.map((item) => {
-                const share = total > 0 ? item.count / total : 0;
-                const height = item.count > 0 ? Math.max((item.count / axisMax) * 100, 1.5) : 0;
-
-                return (
-                  <div key={item.bucket} className="relative flex h-full min-w-0 flex-1 flex-col items-center justify-end">
-                    <button
-                      type="button"
-                      aria-label={`${item.label} ${formatNumber(item.count)} 位，占比 ${formatPercent(share)}`}
-                      className="relative z-10 flex h-full w-full items-end justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
-                      onFocus={() => setActiveBucket(item.bucket)}
-                      onBlur={() => {
-                        setActiveBucket(null);
-                        setTooltip(null);
-                      }}
-                    >
-                      <span
-                        className={clsx(
-                          'max-w-[80%] rounded-t shadow-[0_0_0_1px_rgba(20,184,166,0.08)] transition-all',
-                          'w-8 min-w-5 sm:w-10 sm:min-w-6',
-                          item.bucket === 'unmatched' ? 'bg-stone-300' : 'bg-teal-500',
-                        )}
-                        style={{ height: `${height}%` }}
-                      />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            {tooltip && activeTooltipItem ? (
-              <MatchBucketTooltip
-                item={activeTooltipItem}
-                share={activeTooltipShare}
-                x={tooltip.x}
-                y={tooltip.y}
-              />
-            ) : null}
-          </div>
-          <div className="flex justify-between gap-2 pt-3 sm:gap-3">
-            {data.map((item) => (
-              <span key={item.bucket} className="min-w-0 flex-1 text-center text-xs text-stone-500">
-                {item.label}
-              </span>
-            ))}
-          </div>
+        <div className="flex items-center justify-between gap-3 text-xs">
+          <span className="font-medium text-stone-600">分析覆盖率</span>
+          <span className="whitespace-nowrap text-stone-500">
+            <strong className="font-semibold text-stone-900">
+              {formatNumber(analyzedCount)} / {formatNumber(total)} 位
+            </strong>
+            {' · '}{formatPercent(analyzedRate)}
+          </span>
         </div>
-      </div>
+        <div
+          role="progressbar"
+          aria-label={`匹配分析覆盖率 ${formatPercent(analyzedRate)}，已分析 ${formatNumber(analyzedCount)} / ${formatNumber(total)} 位导师`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(analyzedPercentage)}
+          className="mt-2 h-2.5 overflow-hidden rounded-full bg-stone-200"
+        >
+          <span
+            data-testid="match-analysis-coverage-bar"
+            className="block h-full rounded-full bg-teal-500 transition-[width] duration-300"
+            style={{ width: `${analyzedPercentage}%` }}
+          />
+        </div>
+        <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-stone-500">
+          <span>已分析 {formatNumber(analyzedCount)} 位</span>
+          <span>未分析 {formatNumber(unmatchedCount)} 位</span>
+        </div>
+      </section>
+
+      <section data-testid="match-score-distribution">
+        <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+          <span className="font-medium text-stone-600">已分析导师的分数分布</span>
+          <span className="whitespace-nowrap text-stone-500">共 {formatNumber(analyzedCount)} 位</span>
+        </div>
+        {analyzedCount === 0 ? (
+          <div className="flex min-h-28 items-center justify-center rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 text-center text-xs text-stone-500">
+            暂无已分析导师
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {scoreDistribution.map((item) => {
+              const share = item.count / analyzedCount;
+              const percentage = Math.min(100, Math.max(0, share * 100));
+              return (
+                <div
+                  key={item.bucket}
+                  role="img"
+                  aria-label={`${item.label}，${formatNumber(item.count)} 位导师，占已分析导师 ${formatPercent(share)}`}
+                  data-testid={`match-score-row-${item.bucket}`}
+                  className="grid grid-cols-[4rem_minmax(3rem,1fr)_auto] items-center gap-2 text-[11px]"
+                >
+                  <span className="font-medium text-stone-600">{item.label}</span>
+                  <span className="h-2.5 overflow-hidden rounded-full bg-stone-100" aria-hidden="true">
+                    <span
+                      data-testid={`match-score-bar-${item.bucket}`}
+                      className="block h-full rounded-full bg-teal-500 transition-[width] duration-300"
+                      style={{ width: `${percentage}%` }}
+                    />
+                  </span>
+                  <span className="whitespace-nowrap text-stone-500">
+                    <strong className="font-semibold text-stone-900">{formatNumber(item.count)} 位</strong>
+                    {' · '}{formatPercent(share)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 };
-
-function MatchBucketTooltip({
-  item,
-  share,
-  x,
-  y,
-}: {
-  item: DashboardOverviewDTO['mentor']['match_score_distribution'][number];
-  share: number;
-  x: number;
-  y: number;
-}) {
-  return (
-    <div
-      role="tooltip"
-      className="pointer-events-none fixed z-[80] rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 shadow-[0_16px_38px_-16px_rgba(41,37,36,0.38)]"
-      style={{ left: x, top: y, width: matchTooltipWidth }}
-    >
-      <div className="flex items-center justify-between border-b border-stone-100 pb-2">
-        <span className="font-medium text-stone-500">{item.label}</span>
-        <span className="font-semibold text-stone-900">{formatPercent(share)}</span>
-      </div>
-      <div className="space-y-2 pt-3">
-        <div className="flex items-center justify-between gap-4">
-          <span className="inline-flex items-center gap-2 text-stone-500">
-            <span
-              className={clsx('h-2.5 w-2.5 rounded-sm', item.bucket === 'unmatched' ? 'bg-stone-300' : 'bg-teal-500')}
-            />
-            导师数
-          </span>
-          <span className="font-semibold text-stone-900">{formatNumber(item.count)} 位</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function createMatchTooltipState(
-  bucket: string,
-  event: ReactMouseEvent<HTMLElement>,
-): MatchTooltipState {
-  const position = resolveFloatingTooltipPosition(event.clientX, event.clientY, {
-    width: matchTooltipWidth,
-    height: matchTooltipHeight,
-  });
-  return {
-    bucket,
-    x: position.x,
-    y: position.y,
-  };
-}
-
-function resolveMatchDistributionBucketIndex(
-  clientX: number,
-  chartRect: Pick<DOMRect, 'left' | 'width'>,
-  bucketCount: number,
-) {
-  if (bucketCount <= 0 || chartRect.width <= 0) {
-    return null;
-  }
-
-  const ratio = Math.min(0.999999, Math.max(0, (clientX - chartRect.left) / chartRect.width));
-  return Math.floor(ratio * bucketCount);
-}
 
 const TrendChart = ({ data }: { data: DashboardEmailTrendBucketDTO[] }) => {
   const visibleData = data;
@@ -772,8 +657,6 @@ const ReplyWaitDistribution = ({
     );
   }
 
-  const maxCount = Math.max(...data.distribution.map((item) => item.count), 1);
-
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="reply-wait-distribution">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
@@ -797,31 +680,35 @@ const ReplyWaitDistribution = ({
       <p className="mt-3 text-xs text-stone-500">
         75% 的首次回复发生在 <span className="font-medium text-stone-700">{formatDurationHours(data.p75_hours)}</span> 内
       </p>
-      <div className="relative mt-3 min-h-0 flex-1 rounded-xl border border-stone-200 bg-white px-3 pb-3 pt-4">
-        <div className="flex h-28 items-end gap-2 sm:gap-3">
-          {data.distribution.map((item) => {
-            const height = item.count > 0 ? Math.max((item.count / maxCount) * 100, 5) : 0;
-            return (
-              <div key={item.key} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end">
-                <span className="mb-1 text-xs font-medium text-stone-600">{formatNumber(item.count)}</span>
-                <div
-                  role="img"
-                  aria-label={`${item.label}，${item.count} 位导师，占比 ${formatPercent(item.rate)}`}
-                  title={`${item.label}：${item.count} 位导师 · ${formatPercent(item.rate)}`}
-                  className="w-full max-w-12 rounded-t-md bg-sky-500 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]"
-                  style={{ height: `${height}%` }}
+      <div
+        data-testid="reply-wait-distribution-list"
+        className="mt-3 min-h-0 flex-1 space-y-2 rounded-xl border border-stone-200 bg-white p-3"
+      >
+        {data.distribution.map((item) => {
+          const percentage = Math.min(100, Math.max(0, item.rate * 100));
+          return (
+            <div
+              key={item.key}
+              role="img"
+              aria-label={`${item.label}，${formatNumber(item.count)} 位导师，占比 ${formatPercent(item.rate)}`}
+              data-testid={`reply-wait-row-${item.key}`}
+              className="grid grid-cols-[5rem_minmax(3rem,1fr)_auto] items-center gap-2 text-[11px]"
+            >
+              <span className="font-medium text-stone-600">{item.label}</span>
+              <span className="h-2.5 overflow-hidden rounded-full bg-stone-100" aria-hidden="true">
+                <span
+                  data-testid={`reply-wait-bar-${item.key}`}
+                  className="block h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                  style={{ width: `${percentage}%` }}
                 />
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-2 grid grid-cols-5 gap-2 sm:gap-3">
-          {data.distribution.map((item) => (
-            <span key={item.key} className="min-w-0 text-center text-[11px] leading-4 text-stone-500">
-              {item.label}
-            </span>
-          ))}
-        </div>
+              </span>
+              <span className="whitespace-nowrap text-stone-500">
+                <strong className="font-semibold text-stone-900">{formatNumber(item.count)} 位</strong>
+                {' · '}{formatPercent(item.rate)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
