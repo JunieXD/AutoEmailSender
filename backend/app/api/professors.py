@@ -109,6 +109,7 @@ async def list_professors(
             .where(
                 EmailTask.identity_id == identity_id,
                 EmailTask.professor_id.in_(professor_ids),
+                EmailTask.batch_send_canceled_at.is_(None),
                 ~(
                     (EmailTask.status == EmailTaskStatus.CANCELED.value)
                     & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)

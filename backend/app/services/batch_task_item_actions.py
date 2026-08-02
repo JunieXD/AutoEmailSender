@@ -33,6 +33,8 @@ def batch_item_is_ready_for_llm_generation(email_task: EmailTask) -> bool:
 
 
 def resolve_batch_task_item_next_action(email_task: EmailTask) -> str | None:
+    if email_task.batch_send_canceled_at is not None:
+        return None
     if email_task.status == EmailTaskStatus.REVIEW_REQUIRED.value:
         return "review_draft"
     if email_task.status == EmailTaskStatus.SCHEDULED.value:

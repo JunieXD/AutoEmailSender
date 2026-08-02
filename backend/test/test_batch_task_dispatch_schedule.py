@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -447,6 +448,52 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
         mocked_send.assert_not_awaited()
 
+    def test_dispatch_email_task_claim_skips_task_canceled_during_claim(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        cancel_once = True
+
+        def cancel_before_claim(conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal cancel_once
+            if not cancel_once:
+                return
+            normalized_statement = statement.lstrip().upper()
+            if not normalized_statement.startswith("UPDATE IDENTITY_PROFILES"):
+                return
+            cancel_once = False
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    "UPDATE email_tasks SET batch_send_canceled_at = ? WHERE id = ?",
+                    (datetime.now(UTC).isoformat(), task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        event.listen(self.engine.sync_engine, "before_cursor_execute", cancel_before_claim)
+        try:
+            with patch(
+                "app.services.task_runtime.mail_runtime.send_email",
+                AsyncMock(return_value=self._build_send_result()),
+            ) as mocked_send:
+                sent = self._run_async(
+                    dispatch_email_task(self.session_factory, task_id),
+                )
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", cancel_before_claim)
+
+        self.assertFalse(sent)
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+        self.assertIsNotNone(
+            self._run_async(self._get_task_batch_send_canceled_at(task_id)),
+        )
+        mocked_send.assert_not_awaited()
+
     def test_approve_and_send_explicitly_bypasses_future_scheduled_plan(self) -> None:
         scheduled_date = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
         task_id = self._run_async(
@@ -862,6 +909,58 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             BatchTaskStatus.RUNNING.value,
         )
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+
+    def test_canceled_item_stays_recoverable_until_original_time_then_completes(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        scheduled_at = datetime(2026, 5, 4, 10, 30, tzinfo=UTC)
+        self._run_async(self._set_task_scheduled_at(task_id, scheduled_at))
+        self._run_async(
+            self._set_task_batch_send_canceled_at(
+                task_id,
+                datetime(2026, 5, 4, 9, 0, tzinfo=UTC),
+            ),
+        )
+
+        with patch(
+            "app.services.task_runtime.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            before_due = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+            self.assertEqual(before_due, 0)
+            self.assertEqual(
+                self._run_async(self._get_batch_task_status_by_email_task_id(task_id)),
+                BatchTaskStatus.RUNNING.value,
+            )
+
+            after_due = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime(2026, 5, 4, 10, 31, tzinfo=UTC),
+                    local_timezone=UTC,
+                ),
+            )
+
+        self.assertEqual(after_due, 0)
+        self.assertEqual(
+            self._run_async(self._get_batch_task_status_by_email_task_id(task_id)),
+            BatchTaskStatus.COMPLETED.value,
+        )
+        self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.APPROVED.value)
+        self.assertIsNotNone(
+            self._run_async(self._get_task_batch_send_canceled_at(task_id)),
+        )
+        mocked_send.assert_not_awaited()
 
     def test_expiring_batch_preserves_final_item_statuses(self) -> None:
         sent_task_id, failed_task_id, pending_task_id = self._run_async(
@@ -1487,6 +1586,18 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task.updated_at = datetime.now(UTC)
             await session.commit()
 
+    async def _set_task_batch_send_canceled_at(
+        self,
+        task_id: int,
+        canceled_at: datetime,
+    ) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            task.batch_send_canceled_at = canceled_at
+            task.updated_at = canceled_at
+            await session.commit()
+
     def _build_email_task(
         self,
         *,
@@ -1528,6 +1639,12 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task = await session.get(EmailTask, task_id)
             assert task is not None
             return task.scheduled_at
+
+    async def _get_task_batch_send_canceled_at(self, task_id: int) -> datetime | None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            return task.batch_send_canceled_at
 
     async def _get_identity_next_send_after_by_task_id(self, task_id: int) -> datetime | None:
         async with self.session_factory() as session:

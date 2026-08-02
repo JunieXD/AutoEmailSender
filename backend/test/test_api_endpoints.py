@@ -4887,6 +4887,181 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("发送日期", response.json()["detail"])
 
+    def test_cancel_and_restore_scheduled_batch_item_preserves_original_plan(self) -> None:
+        batch_task_id = self._create_scheduled_template_batch(professor_count=2)
+        before_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(before_items.status_code, 200, msg=before_items.text)
+        original_items = before_items.json()
+        item_id = original_items[0]["id"]
+        original_status = original_items[0]["status"]
+        original_scheduled_at = original_items[0]["scheduled_at"]
+
+        canceled = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item_id}/cancel-send",
+        )
+
+        self.assertEqual(canceled.status_code, 200, msg=canceled.text)
+        canceled_task = canceled.json()["task"]
+        self.assertEqual(canceled_task["status"], "running")
+        self.assertEqual(canceled_task["completed_count"], 0)
+        self.assertEqual(canceled_task["approved_count"], 1)
+        self.assertEqual(canceled_task["canceled_send_count"], 1)
+
+        canceled_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(canceled_items.status_code, 200, msg=canceled_items.text)
+        self.assertEqual(
+            [item["id"] for item in canceled_items.json()],
+            [item["id"] for item in original_items],
+        )
+        canceled_item = canceled_items.json()[0]
+        self.assertEqual(canceled_item["status"], original_status)
+        self.assertEqual(canceled_item["scheduled_at"], original_scheduled_at)
+        self.assertIsNotNone(canceled_item["batch_send_canceled_at"])
+        self.assertFalse(canceled_item["can_cancel_send"])
+        self.assertTrue(canceled_item["can_restore_send"])
+        self.assertIsNone(canceled_item["next_action"])
+
+        repeated_cancel = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item_id}/cancel-send",
+        )
+        self.assertEqual(repeated_cancel.status_code, 200, msg=repeated_cancel.text)
+        self.assertEqual(repeated_cancel.json()["task"]["canceled_send_count"], 1)
+
+        restored = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item_id}/restore-send",
+        )
+
+        self.assertEqual(restored.status_code, 200, msg=restored.text)
+        restored_task = restored.json()["task"]
+        self.assertEqual(restored_task["status"], "running")
+        self.assertEqual(restored_task["approved_count"], 2)
+        self.assertEqual(restored_task["canceled_send_count"], 0)
+        restored_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(restored_items.status_code, 200, msg=restored_items.text)
+        restored_item = restored_items.json()[0]
+        self.assertEqual(restored_item["status"], original_status)
+        self.assertEqual(restored_item["scheduled_at"], original_scheduled_at)
+        self.assertIsNone(restored_item["batch_send_canceled_at"])
+        self.assertTrue(restored_item["can_cancel_send"])
+        self.assertFalse(restored_item["can_restore_send"])
+
+    def test_canceled_scheduled_item_cannot_be_restored_after_original_time(self) -> None:
+        batch_task_id = self._create_scheduled_template_batch()
+        item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
+        canceled = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/cancel-send",
+        )
+        self.assertEqual(canceled.status_code, 200, msg=canceled.text)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE email_tasks SET scheduled_at = ? WHERE id = ?",
+                ((datetime.now(UTC) - timedelta(minutes=1)).isoformat(), item["id"]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        restored = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/restore-send",
+        )
+
+        self.assertEqual(restored.status_code, 400, msg=restored.text)
+        self.assertEqual(restored.json()["detail"], "原定发送时间已过，无法恢复发送")
+        expired_item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
+        self.assertIsNotNone(expired_item["batch_send_canceled_at"])
+        self.assertFalse(expired_item["can_restore_send"])
+        task = next(
+            item
+            for item in self.client.get("/api/batch-tasks").json()
+            if item["id"] == batch_task_id
+        )
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["completed_count"], 1)
+        self.assertEqual(task["canceled_send_count"], 1)
+
+    def test_cancel_scheduled_batch_item_rejects_sent_and_sending_states(self) -> None:
+        batch_task_id = self._create_scheduled_template_batch()
+        item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+
+        for task_status in ("sending", "sent"):
+            with self.subTest(task_status=task_status):
+                connection = sqlite3.connect(self.db_path)
+                try:
+                    connection.execute(
+                        "UPDATE email_tasks SET status = ?, batch_send_canceled_at = NULL WHERE id = ?",
+                        (task_status, item_id),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
+                self.assertFalse(item["can_cancel_send"])
+                canceled = self.client.post(
+                    f"/api/batch-tasks/{batch_task_id}/items/{item_id}/cancel-send",
+                )
+                self.assertEqual(canceled.status_code, 400, msg=canceled.text)
+                self.assertIn("不能取消发送", canceled.json()["detail"])
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT status, batch_send_canceled_at FROM email_tasks WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("sent", None))
+
+    def test_cancel_scheduled_batch_item_loses_cleanly_to_concurrent_send_claim(self) -> None:
+        batch_task_id = self._create_scheduled_template_batch()
+        item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+
+        from app.core.database import get_engine
+
+        claim_once = True
+
+        def claim_before_cancel(conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal claim_once
+            normalized_statement = statement.lstrip().upper()
+            if not claim_once or not normalized_statement.startswith("UPDATE EMAIL_TASKS"):
+                return
+            if "BATCH_SEND_CANCELED_AT" not in normalized_statement:
+                return
+            claim_once = False
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    "UPDATE email_tasks SET status = 'sending' WHERE id = ?",
+                    (item_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        engine = get_engine()
+        event.listen(engine.sync_engine, "before_cursor_execute", claim_before_cancel)
+        try:
+            canceled = self.client.post(
+                f"/api/batch-tasks/{batch_task_id}/items/{item_id}/cancel-send",
+            )
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", claim_before_cancel)
+
+        self.assertEqual(canceled.status_code, 400, msg=canceled.text)
+        self.assertIn("已进入发送流程", canceled.json()["detail"])
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                "SELECT status, batch_send_canceled_at FROM email_tasks WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, ("sending", None))
+
     def test_batch_task_delete_restore_and_trash_view(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
@@ -10277,6 +10452,39 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
         return task_id
+
+    def _create_scheduled_template_batch(self, *, professor_count: int = 1) -> int:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_ids = [
+            self._create_professor(email=f"send-cancellation-{index}@example.edu")
+            for index in range(professor_count)
+        ]
+        scheduled_date = (datetime.now(UTC) + timedelta(days=2)).date().isoformat()
+        response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "逐项取消定时发送",
+                "professor_ids": professor_ids,
+                "schedule_type": "scheduled",
+                "scheduled_dates": [scheduled_date],
+                "window_start_time": "09:00",
+                "window_end_time": "18:00",
+                "emails_per_window": max(professor_count, 1),
+                "primary_material_id": None,
+                "email_subject": "申请与{{name}}老师交流",
+                "email_body": "老师您好，我是{{sender_name}}。",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "申请与{{name}}老师交流",
+                "outreach_template_body_text": "老师您好，我是{{sender_name}}。",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        return response.json()["id"]
 
     def _create_canceled_batch_stopped_parent_task(self, *, email: str) -> int:
         identity_id = self._create_identity(with_imap=False)

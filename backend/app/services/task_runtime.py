@@ -61,6 +61,7 @@ from app.services.batch_schedule import (
     is_datetime_in_batch_window,
     normalize_scheduled_dates,
 )
+from app.services.batch_task_status import sync_batch_task_completion
 from app.services.mail_runtime import MailAttachment, ReceivedEmail
 from app.services.materials import (
     build_material_download_name,
@@ -274,6 +275,7 @@ async def dispatch_due_tasks_once(
                                 EmailTask.status == EmailTaskStatus.APPROVED.value,
                                 EmailTask.status == EmailTaskStatus.SCHEDULED.value,
                             ),
+                            EmailTask.batch_send_canceled_at.is_(None),
                             or_(
                                 EmailTask.scheduled_at.is_(None),
                                 EmailTask.scheduled_at <= now_utc,
@@ -356,10 +358,14 @@ async def _expire_overdue_scheduled_batch_tasks(
         ).scalars().unique()
     )
     expired_count = 0
+    completed_count = 0
     for batch_task in batch_tasks:
+        if sync_batch_task_completion(batch_task, now=local_now.astimezone(UTC)):
+            completed_count += 1
+            continue
         if await expire_batch_task_if_needed(session, batch_task, local_now):
             expired_count += 1
-    if expired_count > 0:
+    if expired_count > 0 or completed_count > 0:
         await session.commit()
     return expired_count
 
@@ -421,6 +427,8 @@ async def _reserve_identity_send_window(
 
 
 def _batch_task_allows_dispatch(task: EmailTask, now: datetime) -> bool:
+    if task.batch_send_canceled_at is not None:
+        return False
     batch_task = task.batch_task
     if batch_task is None:
         return True
@@ -447,6 +455,7 @@ async def expire_batch_task_if_needed(
         return False
     if batch_task.status != BatchTaskStatus.RUNNING.value:
         return False
+    now_utc = local_now.astimezone(UTC)
     if not is_batch_window_expired(
         local_now,
         scheduled_dates=batch_task.scheduled_dates,
@@ -457,11 +466,11 @@ async def expire_batch_task_if_needed(
         _is_task_due_in_scheduled_batch_grace_period(email_task, local_now)
         for email_task in batch_task.email_tasks
         if not _is_user_removed_batch_item(email_task)
+        and email_task.batch_send_canceled_at is None
     ):
         return False
 
     canceled_count = 0
-    now_utc = local_now.astimezone(UTC)
     if any(
         _has_future_scheduled_at(
             email_task.scheduled_at,
@@ -471,6 +480,7 @@ async def expire_batch_task_if_needed(
         )
         for email_task in batch_task.email_tasks
         if not _is_user_removed_batch_item(email_task)
+        if email_task.batch_send_canceled_at is None
         if email_task.status
         in {
             EmailTaskStatus.DISCOVERED.value,
@@ -485,7 +495,7 @@ async def expire_batch_task_if_needed(
         return False
 
     for email_task in batch_task.email_tasks:
-        if _is_user_removed_batch_item(email_task):
+        if _is_user_removed_batch_item(email_task) or email_task.batch_send_canceled_at is not None:
             continue
         if email_task.status in {
             EmailTaskStatus.DISCOVERED.value,
@@ -1934,6 +1944,8 @@ async def dispatch_email_task(
             raise ValueError(f"EmailTask {task_id} 不存在")
         if task.status not in DISPATCHABLE_EMAIL_TASK_STATUSES:
             return False
+        if task.batch_send_canceled_at is not None:
+            return False
         if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
             return False
 
@@ -1953,6 +1965,7 @@ async def dispatch_email_task(
             .where(
                 EmailTask.id == task_id,
                 EmailTask.status.in_(DISPATCHABLE_EMAIL_TASK_STATUSES),
+                EmailTask.batch_send_canceled_at.is_(None),
                 or_(
                     EmailTask.scheduled_at.is_(None),
                     EmailTask.scheduled_at <= claimed_at,
@@ -4643,6 +4656,8 @@ def _task_has_match_result(task: EmailTask) -> bool:
 
 
 def _ensure_task_allows_legacy_manual_actions(task: EmailTask) -> None:
+    if task.batch_send_canceled_at is not None:
+        raise ValueError("该导师已取消发送，请先恢复发送")
     if (
         task.status == EmailTaskStatus.CANCELED.value
         and task.cancellation_reason == EmailTaskCancellationReason.BATCH_STOPPED.value
@@ -4656,6 +4671,8 @@ def _ensure_task_not_generating_for_workspace_change(task: EmailTask) -> None:
 
 
 def _ensure_task_allows_approval(task: EmailTask) -> None:
+    if task.batch_send_canceled_at is not None:
+        raise ValueError("该导师已取消发送，请先恢复发送")
     if (
         task.status == EmailTaskStatus.CANCELED.value
         and task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value

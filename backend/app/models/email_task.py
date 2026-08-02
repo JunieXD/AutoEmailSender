@@ -155,6 +155,10 @@ class EmailTask(Base):
         server_default=text("'discovered'"),
     )
     cancellation_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    batch_send_canceled_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
     draft_generation_previous_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     draft_generation_started_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),

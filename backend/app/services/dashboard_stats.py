@@ -122,6 +122,7 @@ async def build_dashboard_overview(
             .where(
                 EmailTask.identity_id == identity_id,
                 EmailTask.parent_task_id.is_(None),
+                EmailTask.batch_send_canceled_at.is_(None),
             )
             .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
         ),

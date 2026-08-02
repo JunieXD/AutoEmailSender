@@ -9,6 +9,7 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import {
   Activity,
+  Ban,
   Bot,
   ChevronLeft,
   ChevronRight,
@@ -42,6 +43,7 @@ import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
   approveAndSendBatchTaskItemDraft,
   approveBatchTaskItemDraft,
+  cancelBatchTaskItemSend,
   deleteBatchTask,
   deleteBatchTaskItem,
   getBatchTaskItemThread,
@@ -51,6 +53,7 @@ import {
   pauseBatchTask,
   regenerateBatchTaskItemDraft,
   retryBatchTaskItemDraft,
+  restoreBatchTaskItemSend,
   restoreBatchTask,
   resumeBatchTask,
   stopBatchTask,
@@ -111,7 +114,7 @@ import {
   getBatchTaskItemCancellationText,
   getBatchTaskWaitingSendCount,
 } from "@/features/batch-tasks/client/batchTaskDisplay";
-import { formatApiDateTime } from "@/lib/dateTime";
+import { formatApiDateTime, parseApiDateTime } from "@/lib/dateTime";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
 import { usePaginationState } from "@/lib/usePaginationState";
 import { useTaskDetailItems } from "@/lib/useTaskDetailItems";
@@ -153,6 +156,10 @@ type TasksTab = "batch" | "crawl" | "match" | "enrichment";
 type TaskListViews = Record<TasksTab, TaskListView>;
 type BatchReviewItemActionType = "regenerate" | "delete" | "submit";
 type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
+type BatchSendItemAction = {
+  itemId: number;
+  kind: "cancel" | "restore";
+};
 
 type CrawlCandidateEditForm = {
   name: string;
@@ -756,6 +763,17 @@ const formatDisplayTime = (
   );
 };
 
+const isBatchItemScheduledInFuture = (
+  item: BatchTaskItemDTO,
+  nowMs: number,
+) => {
+  if (!item.scheduled_at) {
+    return false;
+  }
+  const scheduledAt = parseApiDateTime(item.scheduled_at).getTime();
+  return Number.isFinite(scheduledAt) && scheduledAt > nowMs;
+};
+
 const formatDuration = (seconds: number) => {
   const safeSeconds = Math.max(0, seconds);
   const hours = Math.floor(safeSeconds / 3600);
@@ -861,6 +879,11 @@ export const TasksPage = () => {
   const [batchReviewLoading, setBatchReviewLoading] = useState(false);
   const [batchReviewItemActions, setBatchReviewItemActions] =
     useState<BatchReviewItemActions>({});
+  const [batchSendItemAction, setBatchSendItemAction] =
+    useState<BatchSendItemAction | null>(null);
+  const [batchSendActionNowMs, setBatchSendActionNowMs] = useState(() =>
+    Date.now(),
+  );
   const [batchReviewSubject, setBatchReviewSubject] = useState("");
   const [batchReviewContentText, setBatchReviewContentText] = useState("");
   const [batchReviewContentHtml, setBatchReviewContentHtml] = useState("");
@@ -1194,25 +1217,34 @@ export const TasksPage = () => {
     () =>
       selectedBatchTaskItems.filter(
         (item) =>
+          item.batch_send_canceled_at !== null ||
           (item.status === "canceled" &&
             (item.cancellation_reason === "batch_stopped" ||
               item.cancellation_reason === "schedule_expired")) ||
           (item.status !== "sent" &&
-          item.status !== "reply_detected" &&
-          item.status !== "generating_draft" &&
-          item.status !== "draft_failed" &&
-          item.status !== "send_failed" &&
+            item.status !== "reply_detected" &&
+            item.status !== "generating_draft" &&
+            item.status !== "draft_failed" &&
+            item.status !== "send_failed" &&
             item.status !== "canceled"),
       ),
     [selectedBatchTaskItems],
   );
   const generatingDraftBatchTaskItems = useMemo(
     () =>
-      selectedBatchTaskItems.filter((item) => item.status === "generating_draft"),
+      selectedBatchTaskItems.filter(
+        (item) =>
+          item.batch_send_canceled_at === null &&
+          item.status === "generating_draft",
+      ),
     [selectedBatchTaskItems],
   );
   const draftFailedBatchTaskItems = useMemo(
-    () => selectedBatchTaskItems.filter((item) => item.status === "draft_failed"),
+    () =>
+      selectedBatchTaskItems.filter(
+        (item) =>
+          item.batch_send_canceled_at === null && item.status === "draft_failed",
+      ),
     [selectedBatchTaskItems],
   );
   const failedBatchTaskItems = useMemo(
@@ -1221,15 +1253,21 @@ export const TasksPage = () => {
     [selectedBatchTaskItems],
   );
   const reviewRequiredBatchTaskItems = useMemo(
-    () => selectedBatchTaskItems.filter((item) => item.status === "review_required"),
+    () =>
+      selectedBatchTaskItems.filter(
+        (item) =>
+          item.batch_send_canceled_at === null &&
+          item.status === "review_required",
+      ),
     [selectedBatchTaskItems],
   );
   const batchReviewQueueItems = useMemo(
     () =>
       selectedBatchTaskItems.filter(
         (item) =>
-          item.status === "review_required" ||
-          item.status === "generating_draft",
+          item.batch_send_canceled_at === null &&
+          (item.status === "review_required" ||
+            item.status === "generating_draft"),
       ),
     [selectedBatchTaskItems],
   );
@@ -1246,11 +1284,12 @@ export const TasksPage = () => {
     () =>
       selectedBatchTaskItems.filter(
         (item) =>
-          item.next_action === "complete_professor_profile" ||
-          item.next_action === "select_primary_material" ||
-          item.next_action === "review_draft" ||
-          item.next_action === "missing_schedule" ||
-          item.next_action === "retry_draft_generation",
+          item.batch_send_canceled_at === null &&
+          (item.next_action === "complete_professor_profile" ||
+            item.next_action === "select_primary_material" ||
+            item.next_action === "review_draft" ||
+            item.next_action === "missing_schedule" ||
+            item.next_action === "retry_draft_generation"),
       ),
     [selectedBatchTaskItems],
   );
@@ -1292,6 +1331,16 @@ export const TasksPage = () => {
   const safeCrawlCandidatePage = Math.min(
     crawlCandidatePage,
     getTotalPages(crawlJobCandidates.length, crawlCandidatePageSize),
+  );
+  const hasActiveBatchRestoreDeadline = useMemo(
+    () =>
+      selectedBatchTaskItems.some(
+        (item) =>
+          item.batch_send_canceled_at !== null &&
+          item.can_restore_send &&
+          isBatchItemScheduledInFuture(item, batchSendActionNowMs),
+      ),
+    [batchSendActionNowMs, selectedBatchTaskItems],
   );
   const visibleSentBatchTaskItems = useMemo(
     () =>
@@ -2008,6 +2057,17 @@ export const TasksPage = () => {
       window.clearInterval(timer);
     };
   }, [loadBatchTaskDetails, selectedBatchTask]);
+
+  useEffect(() => {
+    if (selectedBatchTask?.id === undefined || !hasActiveBatchRestoreDeadline) {
+      return undefined;
+    }
+    setBatchSendActionNowMs(Date.now());
+    const timer = window.setInterval(() => {
+      setBatchSendActionNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveBatchRestoreDeadline, selectedBatchTask?.id]);
 
   useEffect(() => {
     if (previousSelectedBatchTaskIdRef.current === selectedBatchTask?.id) {
@@ -2987,6 +3047,126 @@ export const TasksPage = () => {
     }
   };
 
+  const handleCancelBatchItemSend = async (item: BatchTaskItemDTO) => {
+    if (!selectedBatchTask) {
+      return;
+    }
+    const plannedTime = formatDisplayTime(item.scheduled_at);
+    const confirmed = await confirm({
+      title: `取消给${item.professor_name}的本次发送？`,
+      description: `取消后，这封邮件不会在 ${plannedTime} 发送，不影响批次中的其他导师。之后可在原卡片上恢复。`,
+      confirmLabel: "确认取消发送",
+      cancelLabel: "保留发送",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    const taskId = selectedBatchTask.id;
+    setBatchSendItemAction({ itemId: item.id, kind: "cancel" });
+    try {
+      const result = await cancelBatchTaskItemSend(taskId, item.id);
+      setSelectedBatchTask((current) =>
+        current?.id === taskId ? result.task : current,
+      );
+      notifySuccess(
+        "已取消发送",
+        `不会按原计划给${item.professor_name}发送邮件。`,
+      );
+      await Promise.all([loadBatchTaskDetails(taskId), loadTasks()]);
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "取消发送失败";
+      notifyError("取消发送失败", message);
+      await loadBatchTaskDetails(taskId);
+    } finally {
+      setBatchSendItemAction((current) =>
+        current?.itemId === item.id && current.kind === "cancel"
+          ? null
+          : current,
+      );
+    }
+  };
+
+  const handleRestoreBatchItemSend = async (item: BatchTaskItemDTO) => {
+    if (!selectedBatchTask) {
+      return;
+    }
+    if (!isBatchItemScheduledInFuture(item, batchSendActionNowMs)) {
+      notifyError("无法恢复发送", "原定发送时间已过，无法恢复发送");
+      await loadBatchTaskDetails(selectedBatchTask.id);
+      return;
+    }
+
+    const taskId = selectedBatchTask.id;
+    const taskWasPaused = selectedBatchTask.status === "paused";
+    setBatchSendItemAction({ itemId: item.id, kind: "restore" });
+    try {
+      const result = await restoreBatchTaskItemSend(taskId, item.id);
+      setSelectedBatchTask((current) =>
+        current?.id === taskId ? result.task : current,
+      );
+      notifySuccess(
+        "已恢复发送",
+        taskWasPaused
+          ? `仍将按原计划于 ${formatDisplayTime(item.scheduled_at)} 发送；当前批量任务仍处于暂停状态。`
+          : `仍将按原计划于 ${formatDisplayTime(item.scheduled_at)} 发送。`,
+      );
+      await Promise.all([loadBatchTaskDetails(taskId), loadTasks()]);
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "恢复发送失败";
+      notifyError("恢复发送失败", message);
+      await loadBatchTaskDetails(taskId);
+    } finally {
+      setBatchSendItemAction((current) =>
+        current?.itemId === item.id && current.kind === "restore"
+          ? null
+          : current,
+      );
+    }
+  };
+
+  const renderBatchItemSendButton = (item: BatchTaskItemDTO) => {
+    const activeAction =
+      batchSendItemAction?.itemId === item.id ? batchSendItemAction.kind : null;
+    const actionBusy = batchSendItemAction !== null;
+    if (item.batch_send_canceled_at) {
+      if (
+        !item.can_restore_send ||
+        !isBatchItemScheduledInFuture(item, batchSendActionNowMs)
+      ) {
+        return null;
+      }
+      return (
+        <button
+          type="button"
+          onClick={() => void handleRestoreBatchItemSend(item)}
+          disabled={actionBusy}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          {activeAction === "restore" ? "恢复中..." : "恢复发送"}
+        </button>
+      );
+    }
+    if (!item.can_cancel_send) {
+      return null;
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => void handleCancelBatchItemSend(item)}
+        disabled={actionBusy}
+        className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <Ban className="h-3.5 w-3.5" />
+        {activeAction === "cancel" ? "取消中..." : "取消发送"}
+      </button>
+    );
+  };
+
   const renderBatchTaskItemAction = (item: BatchTaskItemDTO) => {
     if (!selectedBatchTask) {
       return null;
@@ -3043,6 +3223,7 @@ export const TasksPage = () => {
     setSelectedBatchTask(null);
     setSelectedBatchTaskItems([]);
     setBatchTaskDetailsLoading(false);
+    setBatchSendItemAction(null);
     lastBatchTaskDetailsLoadErrorRef.current = null;
   };
 
@@ -3583,6 +3764,11 @@ export const TasksPage = () => {
                       <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary">
                         待发送 {waitingSendCount}
                       </span>
+                      {task.canceled_send_count > 0 ? (
+                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                          已取消发送 {task.canceled_send_count}
+                        </span>
+                      ) : null}
                       <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">
                         已发送 {task.sent_count + task.replied_count}
                       </span>
@@ -4394,7 +4580,7 @@ export const TasksPage = () => {
                   ) : null}
                 </div>
 
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
                     <div className="text-xs font-medium text-emerald-700">
                       已发送/已回复
@@ -4425,6 +4611,14 @@ export const TasksPage = () => {
                     </div>
                     <div className="mt-2 text-xl font-semibold text-red-900">
                       {failedBatchTaskItems.length}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
+                    <div className="text-xs font-medium text-stone-600">
+                      已取消发送
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-stone-900">
+                      {selectedBatchTask.canceled_send_count}
                     </div>
                   </div>
                 </div>
@@ -4527,10 +4721,22 @@ export const TasksPage = () => {
                   {pendingBatchTaskItems.length > 0 ? (
                     visiblePendingBatchTaskItems.map((item) => {
                       const cancellationText = getBatchTaskItemCancellationText(item);
+                      const sendCanceled = item.batch_send_canceled_at !== null;
+                      const restoreWindowExpired =
+                        sendCanceled &&
+                        !isBatchItemScheduledInFuture(
+                          item,
+                          batchSendActionNowMs,
+                        );
                       return (
                         <div
                           key={item.id}
-                          className="rounded-2xl border border-stone-100 px-4 py-3"
+                          data-testid={`batch-task-item-${item.id}`}
+                          className={
+                            sendCanceled
+                              ? "rounded-2xl border border-red-200 bg-red-50/60 px-4 py-3"
+                              : "rounded-2xl border border-stone-100 px-4 py-3"
+                          }
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
@@ -4547,19 +4753,36 @@ export const TasksPage = () => {
                                   .join(" / ") || "暂无补充信息"}
                               </p>
                             </div>
-                            <span
-                              className={`rounded-full px-2.5 py-1 text-xs ${BATCH_ITEM_STATUS_TONES[item.status]}`}
-                            >
-                              {PROFESSOR_STATUS_LABELS[item.status]}
-                            </span>
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {sendCanceled ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800">
+                                  <Ban className="h-3.5 w-3.5" />
+                                  已取消发送
+                                </span>
+                              ) : (
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-xs ${BATCH_ITEM_STATUS_TONES[item.status]}`}
+                                >
+                                  {PROFESSOR_STATUS_LABELS[item.status]}
+                                </span>
+                              )}
+                              {renderBatchItemSendButton(item)}
+                            </div>
                           </div>
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-stone-500">
                             {item.scheduled_at ? (
                               <span>
-                                计划发送 {formatDisplayTime(item.scheduled_at)}
+                                {sendCanceled ? "原计划发送" : "计划发送"}{" "}
+                                {formatDisplayTime(item.scheduled_at)}
                               </span>
                             ) : null}
-                            {cancellationText ? (
+                            {sendCanceled ? (
+                              <span className="font-medium text-red-700">
+                                {restoreWindowExpired
+                                  ? "原定发送时间已过，无法恢复"
+                                  : "该导师不会收到本次邮件"}
+                              </span>
+                            ) : cancellationText ? (
                               <span className="font-medium text-red-700">
                                 {cancellationText}
                               </span>
@@ -4621,9 +4844,12 @@ export const TasksPage = () => {
                                 .join(" / ") || "暂无补充信息"}
                             </p>
                           </div>
-                          <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs text-sky-700">
-                            {PROFESSOR_STATUS_LABELS[item.status]}
-                          </span>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs text-sky-700">
+                              {PROFESSOR_STATUS_LABELS[item.status]}
+                            </span>
+                            {renderBatchItemSendButton(item)}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -4651,8 +4877,9 @@ export const TasksPage = () => {
                               {item.last_error || "暂无失败原因"}
                             </p>
                           </div>
-                          <div className="text-xs">
+                          <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
                             {renderBatchTaskItemAction(item)}
+                            {renderBatchItemSendButton(item)}
                           </div>
                         </div>
                       </div>

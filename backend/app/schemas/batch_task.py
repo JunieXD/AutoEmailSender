@@ -54,6 +54,7 @@ class BatchTaskCardRead(ApiSchema):
     sent_count: int
     failed_count: int
     replied_count: int
+    canceled_send_count: int
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
@@ -68,6 +69,9 @@ class BatchTaskItemRead(ApiSchema):
     professor_school: str | None
     status: str
     cancellation_reason: str | None
+    batch_send_canceled_at: datetime | None
+    can_cancel_send: bool
+    can_restore_send: bool
     match_score: int | None
     scheduled_at: datetime | None
     sent_at: datetime | None

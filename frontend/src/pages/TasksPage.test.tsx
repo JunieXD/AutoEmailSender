@@ -39,7 +39,9 @@ const apiMocks = vi.hoisted(() => ({
   regenerateBatchTaskItemDraft: vi.fn(),
   approveBatchTaskItemDraft: vi.fn(),
   approveAndSendBatchTaskItemDraft: vi.fn(),
+  cancelBatchTaskItemSend: vi.fn(),
   deleteBatchTaskItem: vi.fn(),
+  restoreBatchTaskItemSend: vi.fn(),
   listCrawlJobs: vi.fn(),
   getCrawlJob: vi.fn(),
   getCrawlJobEvents: vi.fn(),
@@ -135,7 +137,9 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   regenerateBatchTaskItemDraft: apiMocks.regenerateBatchTaskItemDraft,
   approveBatchTaskItemDraft: apiMocks.approveBatchTaskItemDraft,
   approveAndSendBatchTaskItemDraft: apiMocks.approveAndSendBatchTaskItemDraft,
+  cancelBatchTaskItemSend: apiMocks.cancelBatchTaskItemSend,
   deleteBatchTaskItem: apiMocks.deleteBatchTaskItem,
+  restoreBatchTaskItemSend: apiMocks.restoreBatchTaskItemSend,
   retryBatchTaskItemDraft: apiMocks.retryBatchTaskItemDraft,
 }));
 
@@ -546,6 +550,7 @@ const buildBatchTask = (
   sent_count: 0,
   failed_count: 0,
   replied_count: 0,
+  canceled_send_count: 0,
   created_at: "2026-05-08T00:00:00",
   updated_at: "2026-05-08T00:00:00",
   deleted_at: null,
@@ -675,6 +680,9 @@ const buildBatchItem = (
   professor_school: "School of Computing",
   status: "approved",
   cancellation_reason: null,
+  batch_send_canceled_at: null,
+  can_cancel_send: false,
+  can_restore_send: false,
   match_score: null,
   scheduled_at: null,
   sent_at: null,
@@ -1446,6 +1454,130 @@ describe("TasksPage batch draft review", () => {
         description: expect.stringContaining("写信方式：AI 辅助写信"),
       }),
     );
+  });
+
+  it("cancels and restores a scheduled professor on the original card", async () => {
+    const scheduledAt = "2099-05-08T02:30:00Z";
+    const task = buildBatchTask({
+      target_count: 2,
+      approved_count: 2,
+    });
+    const firstItem = buildBatchItem({
+      id: 11,
+      professor_name: "王老师",
+      scheduled_at: scheduledAt,
+      can_cancel_send: true,
+    });
+    const secondItem = buildBatchItem({
+      id: 12,
+      professor_name: "李老师",
+      professor_email: "li@example.edu",
+      scheduled_at: "2099-05-08T03:30:00Z",
+      can_cancel_send: true,
+    });
+    const canceledItem: BatchTaskItemDTO = {
+      ...firstItem,
+      batch_send_canceled_at: "2099-05-07T02:30:00Z",
+      can_cancel_send: false,
+      can_restore_send: true,
+      next_action: null,
+    };
+    let currentItems = [firstItem, secondItem];
+
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockImplementation(async () => currentItems);
+    apiMocks.cancelBatchTaskItemSend.mockImplementation(async () => {
+      currentItems = [canceledItem, secondItem];
+      return {
+        ok: true,
+        task: buildBatchTask({
+          target_count: 2,
+          approved_count: 1,
+          canceled_send_count: 1,
+        }),
+      };
+    });
+    apiMocks.restoreBatchTaskItemSend.mockImplementation(async () => {
+      currentItems = [firstItem, secondItem];
+      return { ok: true, task };
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+    const dialog = await screen.findByRole("dialog", { name: "批量任务详情" });
+    const firstCard = await within(dialog).findByTestId("batch-task-item-11");
+    const secondCard = within(dialog).getByTestId("batch-task-item-12");
+    expect(firstCard.compareDocumentPosition(secondCard)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    fireEvent.click(within(firstCard).getByRole("button", { name: "取消发送" }));
+
+    await waitFor(() => {
+      expect(apiMocks.cancelBatchTaskItemSend).toHaveBeenCalledWith(task.id, firstItem.id);
+    });
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "取消给王老师的本次发送？",
+      description: expect.stringContaining("不影响批次中的其他导师。之后可在原卡片上恢复。"),
+      confirmLabel: "确认取消发送",
+      cancelLabel: "保留发送",
+      tone: "danger",
+    });
+
+    const canceledCard = await within(dialog).findByTestId("batch-task-item-11");
+    expect(within(canceledCard).getByText("已取消发送")).toBeInTheDocument();
+    expect(within(canceledCard).getByText("该导师不会收到本次邮件")).toBeInTheDocument();
+    expect(canceledCard.compareDocumentPosition(secondCard)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    fireEvent.click(
+      within(canceledCard).getByRole("button", { name: "恢复发送" }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.restoreBatchTaskItemSend).toHaveBeenCalledWith(task.id, firstItem.id);
+    });
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(
+      within(await within(dialog).findByTestId("batch-task-item-11")).getByRole(
+        "button",
+        { name: "取消发送" },
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an expired cancellation marked without a restore button", async () => {
+    const task = buildBatchTask({ canceled_send_count: 1, approved_count: 0 });
+    const item = buildBatchItem({
+      professor_name: "已过期导师",
+      scheduled_at: "2000-05-08T02:30:00Z",
+      batch_send_canceled_at: "2000-05-07T02:30:00Z",
+      can_cancel_send: false,
+      can_restore_send: true,
+      next_action: null,
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+    const dialog = await screen.findByRole("dialog", { name: "批量任务详情" });
+    const card = await within(dialog).findByTestId(`batch-task-item-${item.id}`);
+
+    expect(within(card).getByText("已取消发送")).toBeInTheDocument();
+    expect(within(card).getByText("原定发送时间已过，无法恢复")).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "恢复发送" })).not.toBeInTheDocument();
   });
 
   it("paginates large sent item lists in batch task details", async () => {

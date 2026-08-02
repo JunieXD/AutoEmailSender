@@ -778,6 +778,7 @@ export interface BatchTaskCardDTO {
   sent_count: number;
   failed_count: number;
   replied_count: number;
+  canceled_send_count: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -792,6 +793,9 @@ export interface BatchTaskItemDTO {
   professor_school: string | null;
   status: WorkspaceTaskStatus;
   cancellation_reason?: WorkspaceTaskCancellationReason | null;
+  batch_send_canceled_at: string | null;
+  can_cancel_send: boolean;
+  can_restore_send: boolean;
   match_score: number | null;
   scheduled_at: string | null;
   sent_at: string | null;

@@ -86,6 +86,22 @@ export const retryBatchTaskItemDraft = (taskId: number, itemId: number) =>
     },
   );
 
+export const cancelBatchTaskItemSend = (taskId: number, itemId: number) =>
+  apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(
+    `/api/batch-tasks/${taskId}/items/${itemId}/cancel-send`,
+    {
+      method: 'POST',
+    },
+  );
+
+export const restoreBatchTaskItemSend = (taskId: number, itemId: number) =>
+  apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(
+    `/api/batch-tasks/${taskId}/items/${itemId}/restore-send`,
+    {
+      method: 'POST',
+    },
+  );
+
 export const pauseBatchTask = (taskId: number) =>
   apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(`/api/batch-tasks/${taskId}/pause`, {
     method: 'POST',

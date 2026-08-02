@@ -195,6 +195,7 @@ async def _claim_queued_llm_drafts(
                 .where(
                     EmailTask.source == EmailTaskSource.BATCH.value,
                     EmailTask.status.in_([EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value]),
+                    EmailTask.batch_send_canceled_at.is_(None),
                     batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode),
                     EmailTask.primary_material_id.is_not(None),
                     func.trim(Professor.research_direction) != "",
@@ -214,6 +215,7 @@ async def _claim_queued_llm_drafts(
                 .where(
                     EmailTask.id == task.id,
                     EmailTask.status == task.status,
+                    EmailTask.batch_send_canceled_at.is_(None),
                 )
                 .values(
                     outreach_generation_mode=normalize_batch_item_generation_mode(task),

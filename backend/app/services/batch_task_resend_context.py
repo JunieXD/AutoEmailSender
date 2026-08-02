@@ -36,6 +36,13 @@ def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
         return ResendItemDecision(False, False, "导师不存在", "导师已不存在，未带入新任务")
     if professor.archived_at is not None:
         return ResendItemDecision(False, False, "导师已归档", "导师已归档，未带入新任务")
+    if email_task.batch_send_canceled_at is not None:
+        return ResendItemDecision(
+            False,
+            False,
+            "用户已取消发送",
+            "已在原任务中主动取消发送，未带入新任务",
+        )
     if email_task.status in SUCCESS_STATUSES:
         return ResendItemDecision(False, False, "已成功触达", "已成功触达，未带入新任务")
     if (

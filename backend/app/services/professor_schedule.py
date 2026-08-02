@@ -30,6 +30,7 @@ async def load_active_scheduled_professor_ids(
             EmailTask.professor_id.in_(list(dict.fromkeys(professor_ids))),
             EmailTask.status.in_(ACTIVE_SCHEDULE_TASK_STATUSES),
             EmailTask.scheduled_at.is_not(None),
+            EmailTask.batch_send_canceled_at.is_(None),
             or_(
                 EmailTask.batch_task_id.is_(None),
                 and_(

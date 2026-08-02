@@ -54,6 +54,9 @@ export const buildBatchPendingItemAction = (
   item: BatchTaskItemDTO,
   task: BatchTaskCardDTO,
 ): BatchPendingItemAction | null => {
+  if (item.batch_send_canceled_at) {
+    return null;
+  }
   if (item.status === "canceled") {
     return null;
   }
