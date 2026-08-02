@@ -168,7 +168,7 @@ const overview: DashboardOverviewDTO = {
         match_score: 92,
         status: "matched",
         status_label: "待处理",
-        reason: "高分但尚未触达",
+        reason: "高分但尚未联系",
         updated_at: "2026-05-22T00:00:00Z",
         missing_fields: [],
       },
@@ -217,6 +217,9 @@ const overview: DashboardOverviewDTO = {
           total_professor_count: 2,
           unsent_professor_count: 1,
           sent_professor_rate: 0.5,
+          contacted_professor_count: 1,
+          replied_professor_count: 1,
+          reply_rate: 1,
         },
         {
           university: "第二大学",
@@ -226,6 +229,9 @@ const overview: DashboardOverviewDTO = {
           total_professor_count: 1,
           unsent_professor_count: 0,
           sent_professor_rate: 1,
+          contacted_professor_count: 1,
+          replied_professor_count: 0,
+          reply_rate: 0,
         },
       ],
       schools: [
@@ -237,6 +243,9 @@ const overview: DashboardOverviewDTO = {
           total_professor_count: 2,
           unsent_professor_count: 1,
           sent_professor_rate: 0.5,
+          contacted_professor_count: 1,
+          replied_professor_count: 1,
+          reply_rate: 1,
         },
         {
           university: "第二大学",
@@ -246,6 +255,9 @@ const overview: DashboardOverviewDTO = {
           total_professor_count: 1,
           unsent_professor_count: 0,
           sent_professor_rate: 1,
+          contacted_professor_count: 1,
+          replied_professor_count: 0,
+          reply_rate: 0,
         },
       ],
     },
@@ -376,7 +388,7 @@ describe("DashboardPage", () => {
     expect(screen.queryByText("身份：博士申请邮箱")).not.toBeInTheDocument();
     expect(screen.queryByText("模型：OpenAI")).not.toBeInTheDocument();
     expect(await screen.findByText("导师概览")).toBeInTheDocument();
-    expect(await screen.findByText("邮件触达")).toBeInTheDocument();
+    expect(await screen.findByText("联系进展")).toBeInTheDocument();
     expect(await screen.findByText("匹配分数分布")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "资料完整度概览" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "学校分布" })).toBeInTheDocument();
@@ -434,17 +446,17 @@ describe("DashboardPage", () => {
     ).toBeTruthy();
     expect(await screen.findByText("发送趋势")).toBeInTheDocument();
     expect(screen.getByTestId("email-outreach-filters")).toBeInTheDocument();
-    expect(screen.getByLabelText("邮件触达时间筛选")).toBeInTheDocument();
-    expect(screen.getByLabelText("邮件触达学校筛选")).toBeInTheDocument();
-    expect(screen.getByLabelText("邮件触达学院筛选")).toBeInTheDocument();
+    expect(screen.getByLabelText("联系进展时间筛选")).toBeInTheDocument();
+    expect(screen.getByLabelText("联系进展学校筛选")).toBeInTheDocument();
+    expect(screen.getByLabelText("联系进展学院筛选")).toBeInTheDocument();
     expect(screen.getByTestId("email-outreach-filters").querySelector("select")).toBeNull();
     expect(screen.getByTestId("email-outreach-filters")).not.toHaveTextContent("刷新统计");
     expect(screen.getByTestId("email-metrics-grid")).toHaveClass("sm:grid-cols-2");
     expect(screen.getByTestId("email-metrics-grid")).toHaveClass("lg:grid-cols-4");
-    const outreachMetric = screen.getByText("导师触达率").closest("article");
+    const outreachMetric = screen.getByText("导师联系覆盖率").closest("article");
     expect(outreachMetric).not.toBeNull();
     expect(within(outreachMetric as HTMLElement).getByText("67%")).toBeInTheDocument();
-    expect(within(outreachMetric as HTMLElement).getByText("已发送 2 / 3 位导师")).toBeInTheDocument();
+    expect(within(outreachMetric as HTMLElement).getByText("已联系 2 / 3 位导师")).toBeInTheDocument();
     expect(screen.getByTestId("email-trend-grid")).toHaveClass("grid-cols-1");
     expect(screen.getByTestId("email-trend-grid")).not.toHaveClass("xl:grid-cols-2");
     expect(screen.getByTestId("email-trend-card")).toBeInTheDocument();
@@ -456,11 +468,11 @@ describe("DashboardPage", () => {
     const replyWaitCard = screen.getByTestId("reply-wait-card");
     expect(coverageCard).toHaveClass("h-[24rem]");
     expect(replyWaitCard).toHaveClass("h-[24rem]");
-    expect(within(coverageCard).getByRole("heading", { name: "院校触达覆盖率" })).toBeInTheDocument();
+    expect(within(coverageCard).getByRole("heading", { name: "院校联系效果" })).toBeInTheDocument();
     expect(within(replyWaitCard).getByRole("heading", { name: "首次回复用时分布" })).toBeInTheDocument();
     expect(within(coverageCard).getByText("全部时间内")).toBeInTheDocument();
     expect(within(coverageCard).getByTestId("coverage-ranking-row-university-示例大学-all"))
-      .toHaveTextContent(/示例大学\s*1 \/ 2 · 50%/);
+      .toHaveTextContent(/示例大学\s*已联系 1 \/ 2 · 50%\s*回复 1 \/ 1 · 100%/);
     expect(within(replyWaitCard).getByText("2.3 天")).toBeInTheDocument();
     expect(within(replyWaitCard).getByText("8 位")).toBeInTheDocument();
     expect(within(replyWaitCard).getByText("5 天")).toBeInTheDocument();
@@ -522,7 +534,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("共享通信 · 3 个身份")).toBeInTheDocument();
   });
 
-  it("switches the outreach coverage ranking level and sort direction", async () => {
+  it("switches the institution contact metric, ranking level, and sort direction", async () => {
     render(
       <MemoryRouter>
         <DashboardPage />
@@ -530,8 +542,11 @@ describe("DashboardPage", () => {
     );
 
     const coverageCard = await screen.findByTestId("outreach-coverage-card");
-    const levelGroup = within(coverageCard).getByRole("group", { name: "院校覆盖率排行层级" });
-    const sortGroup = within(coverageCard).getByRole("group", { name: "院校覆盖率排序方向" });
+    const metricGroup = within(coverageCard).getByRole("group", { name: "院校联系效果指标" });
+    const levelGroup = within(coverageCard).getByRole("group", { name: "院校联系效果排行层级" });
+    const sortGroup = within(coverageCard).getByRole("group", { name: "院校联系效果排序方向" });
+    const coverageButton = within(metricGroup).getByRole("button", { name: "联系覆盖率" });
+    const replyButton = within(metricGroup).getByRole("button", { name: "回复率" });
     const universityButton = within(levelGroup).getByRole("button", { name: "学校" });
     const schoolButton = within(levelGroup).getByRole("button", { name: "学院" });
     const ascendingButton = within(sortGroup).getByRole("button", { name: "升序" });
@@ -541,6 +556,7 @@ describe("DashboardPage", () => {
         coverageCard.querySelectorAll<HTMLElement>('[data-testid^="coverage-ranking-row-university-"]'),
       ).map((row) => row.dataset.testid);
 
+    expect(coverageButton).toHaveAttribute("aria-pressed", "true");
     expect(universityButton).toHaveAttribute("aria-pressed", "true");
     expect(ascendingButton).toHaveAttribute("aria-pressed", "true");
     expect(universityRowIds()).toEqual([
@@ -548,14 +564,26 @@ describe("DashboardPage", () => {
       "coverage-ranking-row-university-第二大学-all",
     ]);
     expect(within(coverageCard).getByTestId("coverage-ranking-row-university-示例大学-all"))
-      .toHaveTextContent(/示例大学\s*1 \/ 2 · 50%/);
+      .toHaveTextContent(/示例大学\s*已联系 1 \/ 2 · 50%\s*回复 1 \/ 1 · 100%/);
+
+    fireEvent.click(replyButton);
+
+    expect(replyButton).toHaveAttribute("aria-pressed", "true");
+    expect(universityRowIds()).toEqual([
+      "coverage-ranking-row-university-第二大学-all",
+      "coverage-ranking-row-university-示例大学-all",
+    ]);
+    const lowReplyRow = within(coverageCard).getByTestId("coverage-ranking-row-university-第二大学-all");
+    expect(lowReplyRow).toHaveTextContent(/已回复 0 \/ 1 · 0%\s*联系 1 \/ 1 · 100%/);
+    expect(within(lowReplyRow).getByText("样本较少")).toBeInTheDocument();
+    expect(getDashboardOverview).toHaveBeenCalledTimes(1);
 
     fireEvent.click(descendingButton);
 
     expect(descendingButton).toHaveAttribute("aria-pressed", "true");
     expect(universityRowIds()).toEqual([
-      "coverage-ranking-row-university-第二大学-all",
       "coverage-ranking-row-university-示例大学-all",
+      "coverage-ranking-row-university-第二大学-all",
     ]);
     expect(getDashboardOverview).toHaveBeenCalledTimes(1);
 
@@ -563,9 +591,60 @@ describe("DashboardPage", () => {
 
     expect(schoolButton).toHaveAttribute("aria-pressed", "true");
     expect(within(coverageCard).getByTestId("coverage-ranking-row-school-示例大学-计算机学院"))
-      .toHaveTextContent(/示例大学 · 计算机学院\s*1 \/ 2 · 50%/);
+      .toHaveTextContent(/示例大学 · 计算机学院\s*已回复 1 \/ 1 · 100%\s*联系 1 \/ 2 · 50%/);
     expect(within(coverageCard).getByTestId("coverage-ranking-row-school-第二大学-工程学院"))
-      .toHaveTextContent(/第二大学 · 工程学院\s*1 \/ 1 · 100%/);
+      .toHaveTextContent(/第二大学 · 工程学院\s*已回复 0 \/ 1 · 0%\s*联系 1 \/ 1 · 100%/);
+  });
+
+  it("keeps institutions without contact samples out of the reply-rate comparison order", async () => {
+    getDashboardOverview.mockResolvedValueOnce({
+      ...overview,
+      email: {
+        ...overview.email,
+        outreach_coverage: {
+          ...overview.email.outreach_coverage,
+          universities: [
+            ...overview.email.outreach_coverage.universities,
+            {
+              university: "无样本大学",
+              school: null,
+              label: "无样本大学",
+              sent_professor_count: 0,
+              total_professor_count: 2,
+              unsent_professor_count: 2,
+              sent_professor_rate: 0,
+              contacted_professor_count: 0,
+              replied_professor_count: 0,
+              reply_rate: 0,
+            },
+          ],
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    const coverageCard = await screen.findByTestId("outreach-coverage-card");
+    const metricGroup = within(coverageCard).getByRole("group", { name: "院校联系效果指标" });
+    const sortGroup = within(coverageCard).getByRole("group", { name: "院校联系效果排序方向" });
+    const universityRowIds = () =>
+      Array.from(
+        coverageCard.querySelectorAll<HTMLElement>('[data-testid^="coverage-ranking-row-university-"]'),
+      ).map((row) => row.dataset.testid);
+
+    fireEvent.click(within(metricGroup).getByRole("button", { name: "回复率" }));
+
+    expect(universityRowIds().at(-1)).toBe("coverage-ranking-row-university-无样本大学-all");
+    expect(within(coverageCard).getByTestId("coverage-ranking-row-university-无样本大学-all"))
+      .toHaveTextContent(/暂无联系样本 · —\s*联系 0 \/ 2 · 0%/);
+
+    fireEvent.click(within(sortGroup).getByRole("button", { name: "降序" }));
+
+    expect(universityRowIds().at(-1)).toBe("coverage-ranking-row-university-无样本大学-all");
   });
 
   it("updates email filters when a coverage ranking row is selected", async () => {
@@ -587,7 +666,7 @@ describe("DashboardPage", () => {
     });
 
     const schoolRow = await screen.findByTestId("coverage-ranking-row-school-示例大学-计算机学院");
-    expect(schoolRow).toHaveTextContent(/计算机学院\s*1 \/ 2 · 50%/);
+    expect(schoolRow).toHaveTextContent(/计算机学院\s*已联系 1 \/ 2 · 50%/);
     fireEvent.click(schoolRow);
 
     await waitFor(() => {
@@ -858,18 +937,18 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("邮件触达");
+    await screen.findByText("联系进展");
     chooseNativeSelectOption("学校筛选", "示例大学（2）");
     chooseNativeSelectOption("学院筛选", "计算机学院（2）");
-    chooseNativeSelectOption("邮件触达学校筛选", "示例大学（2）");
-    chooseNativeSelectOption("邮件触达学院筛选", "计算机学院（2）");
-    chooseNativeSelectOption("邮件触达时间筛选", "最近 30 天");
+    chooseNativeSelectOption("联系进展学校筛选", "示例大学（2）");
+    chooseNativeSelectOption("联系进展学院筛选", "计算机学院（2）");
+    chooseNativeSelectOption("联系进展时间筛选", "最近 30 天");
 
     expect(screen.getByLabelText("学校筛选")).toHaveTextContent("示例大学（2）");
     expect(screen.getByLabelText("学院筛选")).toHaveTextContent("计算机学院（2）");
-    expect(screen.getByLabelText("邮件触达学校筛选")).toHaveTextContent("示例大学（2）");
-    expect(screen.getByLabelText("邮件触达学院筛选")).toHaveTextContent("计算机学院（2）");
-    expect(screen.getByLabelText("邮件触达时间筛选")).toHaveTextContent("最近 30 天");
+    expect(screen.getByLabelText("联系进展学校筛选")).toHaveTextContent("示例大学（2）");
+    expect(screen.getByLabelText("联系进展学院筛选")).toHaveTextContent("计算机学院（2）");
+    expect(screen.getByLabelText("联系进展时间筛选")).toHaveTextContent("最近 30 天");
 
     rerender(
       <MemoryRouter>
@@ -888,9 +967,9 @@ describe("DashboardPage", () => {
 
     expect(await screen.findByLabelText("学校筛选")).toHaveTextContent("示例大学（2）");
     expect(screen.getByLabelText("学院筛选")).toHaveTextContent("计算机学院（2）");
-    expect(screen.getByLabelText("邮件触达学校筛选")).toHaveTextContent("示例大学（2）");
-    expect(screen.getByLabelText("邮件触达学院筛选")).toHaveTextContent("计算机学院（2）");
-    expect(screen.getByLabelText("邮件触达时间筛选")).toHaveTextContent("最近 30 天");
+    expect(screen.getByLabelText("联系进展学校筛选")).toHaveTextContent("示例大学（2）");
+    expect(screen.getByLabelText("联系进展学院筛选")).toHaveTextContent("计算机学院（2）");
+    expect(screen.getByLabelText("联系进展时间筛选")).toHaveTextContent("最近 30 天");
   });
 
   it("smoothly scrolls to each statistics section from the section nav", async () => {
@@ -971,15 +1050,15 @@ describe("DashboardPage", () => {
     expect(source).not.toContain("useEffect(() => {\n    if (!overview)");
   });
 
-  it("reloads email outreach metrics when email filters change", async () => {
+  it("reloads contact progress metrics when email filters change", async () => {
     render(
       <MemoryRouter>
         <DashboardPage />
       </MemoryRouter>,
     );
 
-    await screen.findByText("邮件触达");
-    chooseNativeSelectOption("邮件触达学校筛选", "示例大学（2）");
+    await screen.findByText("联系进展");
+    chooseNativeSelectOption("联系进展学校筛选", "示例大学（2）");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith({
@@ -993,7 +1072,7 @@ describe("DashboardPage", () => {
       });
     });
 
-    chooseNativeSelectOption("邮件触达学院筛选", "计算机学院（2）");
+    chooseNativeSelectOption("联系进展学院筛选", "计算机学院（2）");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith(
@@ -1004,7 +1083,7 @@ describe("DashboardPage", () => {
       );
     });
 
-    chooseNativeSelectOption("邮件触达时间筛选", "最近 30 天");
+    chooseNativeSelectOption("联系进展时间筛选", "最近 30 天");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenLastCalledWith(
@@ -1016,14 +1095,14 @@ describe("DashboardPage", () => {
     });
   });
 
-  it("uses all email outreach data by default", async () => {
+  it("uses all contact progress data by default", async () => {
     render(
       <MemoryRouter>
         <DashboardPage />
       </MemoryRouter>,
     );
 
-    await screen.findByText("邮件触达");
+    await screen.findByText("联系进展");
 
     await waitFor(() => {
       expect(getDashboardOverview).toHaveBeenCalledWith({
@@ -1047,7 +1126,7 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("邮件触达");
+    await screen.findByText("联系进展");
 
     expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
     expect(screen.getByText("1 / 2 位导师")).toBeInTheDocument();

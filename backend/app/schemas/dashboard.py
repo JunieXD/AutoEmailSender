@@ -149,6 +149,9 @@ class DashboardOutreachCoverageItemRead(ApiSchema):
     total_professor_count: int = 0
     unsent_professor_count: int = 0
     sent_professor_rate: float = 0.0
+    contacted_professor_count: int = 0
+    replied_professor_count: int = 0
+    reply_rate: float = 0.0
 
 
 class DashboardOutreachCoverageRead(ApiSchema):

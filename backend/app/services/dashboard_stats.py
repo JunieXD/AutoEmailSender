@@ -473,17 +473,22 @@ async def _build_email_section(
         )
     }
     sent_professor_ids = {professor_id for _, professor_id, _ in sent_events}
+    all_sent_professor_ids = {professor_id for _, professor_id, _ in all_sent_events}
     contacted_professor_ids = {professor_id for _, professor_id, _ in sent_events}
+    all_contacted_professor_ids = set(all_sent_professor_ids)
     replied_professor_ids: set[int] = set()
+    all_replied_professor_ids: set[int] = set()
     received_trend_events: list[tuple[int, datetime]] = []
     for event in received_events:
         log = event.log
-        if log.professor_id is None:
+        if log.professor_id is None or log.professor_id not in professor_by_id:
             continue
         if not _datetime_in_range(event.created_at, start_at=start_at, end_at=end_at):
             continue
+        all_contacted_professor_ids.add(log.professor_id)
+        all_replied_professor_ids.add(log.professor_id)
         if not _professor_matches_school_filters(
-            professor_by_id.get(log.professor_id),
+            professor_by_id[log.professor_id],
             university=email_university,
             school=email_school,
         ):
@@ -494,11 +499,13 @@ async def _build_email_section(
 
     replied_fallback_tasks: list[EmailTask] = []
     for task in all_replied_tasks:
-        if task.professor_id not in contacted_professor_ids:
-            continue
         if task.id in received_log_task_ids:
             continue
         if not _datetime_in_range(task.updated_at, start_at=start_at, end_at=end_at):
+            continue
+        if task.professor_id in all_contacted_professor_ids:
+            all_replied_professor_ids.add(task.professor_id)
+        if task.professor_id not in contacted_professor_ids:
             continue
         replied_professor_ids.add(task.professor_id)
         replied_fallback_tasks.append(task)
@@ -530,7 +537,9 @@ async def _build_email_section(
     )
     outreach_coverage = _build_outreach_coverage(
         professors=professors,
-        sent_professor_ids={professor_id for _, professor_id, _ in all_sent_events},
+        sent_professor_ids=all_sent_professor_ids,
+        contacted_professor_ids=all_contacted_professor_ids,
+        replied_professor_ids=all_replied_professor_ids,
     )
     reply_wait = _build_reply_wait(
         professors=professors,
@@ -782,7 +791,7 @@ def _build_missing_fields(professor: Professor) -> list[str]:
 
 def _build_mentor_follow_up_reason(*, status: str) -> str:
     return {
-        "not_contacted": "高分但尚未触达",
+        "not_contacted": "高分但尚未联系",
         "preparing": "草稿或匹配处理中",
         "ready_to_send": "已准备发送",
         "contacted": "已发送未回复",
@@ -795,11 +804,17 @@ def _build_outreach_coverage(
     *,
     professors: list[Professor],
     sent_professor_ids: set[int],
+    contacted_professor_ids: set[int],
+    replied_professor_ids: set[int],
 ) -> DashboardOutreachCoverageRead:
     university_totals: Counter[str] = Counter()
     university_sent: Counter[str] = Counter()
+    university_contacted: Counter[str] = Counter()
+    university_replied: Counter[str] = Counter()
     school_totals: Counter[tuple[str, str]] = Counter()
     school_sent: Counter[tuple[str, str]] = Counter()
+    school_contacted: Counter[tuple[str, str]] = Counter()
+    school_replied: Counter[tuple[str, str]] = Counter()
 
     for professor in professors:
         university = _normalize_school_label(professor.university)
@@ -810,6 +825,12 @@ def _build_outreach_coverage(
         if professor.id in sent_professor_ids:
             university_sent[university] += 1
             school_sent[school_key] += 1
+        if professor.id in contacted_professor_ids:
+            university_contacted[university] += 1
+            school_contacted[school_key] += 1
+        if professor.id in replied_professor_ids:
+            university_replied[university] += 1
+            school_replied[school_key] += 1
 
     universities = [
         _build_outreach_coverage_item(
@@ -818,6 +839,8 @@ def _build_outreach_coverage(
             label=university,
             sent_count=university_sent[university],
             total_count=total_count,
+            contacted_count=university_contacted[university],
+            replied_count=university_replied[university],
         )
         for university, total_count in university_totals.items()
     ]
@@ -828,6 +851,8 @@ def _build_outreach_coverage(
             label=school,
             sent_count=school_sent[(university, school)],
             total_count=total_count,
+            contacted_count=school_contacted[(university, school)],
+            replied_count=school_replied[(university, school)],
         )
         for (university, school), total_count in school_totals.items()
     ]
@@ -843,6 +868,8 @@ def _build_outreach_coverage_item(
     label: str,
     sent_count: int,
     total_count: int,
+    contacted_count: int,
+    replied_count: int,
 ) -> DashboardOutreachCoverageItemRead:
     return DashboardOutreachCoverageItemRead(
         university=university,
@@ -852,6 +879,9 @@ def _build_outreach_coverage_item(
         total_professor_count=total_count,
         unsent_professor_count=total_count - sent_count,
         sent_professor_rate=(sent_count / total_count) if total_count else 0.0,
+        contacted_professor_count=contacted_count,
+        replied_professor_count=replied_count,
+        reply_rate=(replied_count / contacted_count) if contacted_count else 0.0,
     )
 
 
@@ -1203,7 +1233,7 @@ def _build_email_follow_up_reason(*, status: str) -> str:
         "contacted": "已发送未回复",
         "ready_to_send": "已准备发送",
         "preparing": "草稿处理中",
-        "not_contacted": "尚未触达",
+        "not_contacted": "尚未联系",
     }.get(status, "待跟进")
 
 

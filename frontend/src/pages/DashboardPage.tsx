@@ -118,6 +118,7 @@ const emailDatePresetLabels: Record<string, string> = {
 
 type CoverageRankingLevel = 'university' | 'school';
 type CoverageSortDirection = 'asc' | 'desc';
+type ContactEffectMetric = 'coverage' | 'reply';
 
 const formatDurationHours = (value: number | null) => {
   if (value === null || !Number.isFinite(value)) {
@@ -472,11 +473,13 @@ const TrendChart = ({ data }: { data: DashboardEmailTrendBucketDTO[] }) => {
 const OutreachCoverageRanking = ({
   data,
   level,
+  metric,
   sortDirection,
   selectedUniversity,
   selectedSchool,
   dateLabel,
   onLevelChange,
+  onMetricChange,
   onSortDirectionChange,
   onSelectUniversity,
   onSelectSchool,
@@ -484,11 +487,13 @@ const OutreachCoverageRanking = ({
 }: {
   data: DashboardOverviewDTO['email']['outreach_coverage'];
   level: CoverageRankingLevel;
+  metric: ContactEffectMetric;
   sortDirection: CoverageSortDirection;
   selectedUniversity: string | null;
   selectedSchool: string | null;
   dateLabel: string;
   onLevelChange: (level: CoverageRankingLevel) => void;
+  onMetricChange: (metric: ContactEffectMetric) => void;
   onSortDirectionChange: (direction: CoverageSortDirection) => void;
   onSelectUniversity: (university: string) => void;
   onSelectSchool: (university: string, school: string) => void;
@@ -500,16 +505,29 @@ const OutreachCoverageRanking = ({
       level === 'school' && selectedUniversity
         ? items.filter((item) => item.university === selectedUniversity)
         : items;
-    return [...scopedItems].sort(
-      (first, second) =>
-        (sortDirection === 'asc' ? 1 : -1)
-          * (first.sent_professor_rate - second.sent_professor_rate)
-        || second.unsent_professor_count - first.unsent_professor_count
+    return [...scopedItems].sort((first, second) => {
+      if (metric === 'reply') {
+        const firstHasSample = first.contacted_professor_count > 0;
+        const secondHasSample = second.contacted_professor_count > 0;
+        if (firstHasSample !== secondHasSample) {
+          return firstHasSample ? -1 : 1;
+        }
+      }
+
+      const firstRate = metric === 'reply' ? first.reply_rate : first.sent_professor_rate;
+      const secondRate = metric === 'reply' ? second.reply_rate : second.sent_professor_rate;
+      const primaryDifference = (sortDirection === 'asc' ? 1 : -1) * (firstRate - secondRate);
+      const sampleDifference = metric === 'reply'
+        ? second.contacted_professor_count - first.contacted_professor_count
+        : second.unsent_professor_count - first.unsent_professor_count;
+
+      return primaryDifference
+        || sampleDifference
         || second.total_professor_count - first.total_professor_count
         || first.university.localeCompare(second.university, 'zh-CN')
-        || (first.school ?? '').localeCompare(second.school ?? '', 'zh-CN'),
-    );
-  }, [data.schools, data.universities, level, selectedUniversity, sortDirection]);
+        || (first.school ?? '').localeCompare(second.school ?? '', 'zh-CN');
+    });
+  }, [data.schools, data.universities, level, metric, selectedUniversity, sortDirection]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="outreach-coverage-ranking">
@@ -518,7 +536,34 @@ const OutreachCoverageRanking = ({
         <div className="flex flex-wrap items-center justify-end gap-2">
           <div
             role="group"
-            aria-label="院校覆盖率排行层级"
+            aria-label="院校联系效果指标"
+            className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
+          >
+            {([
+              ['coverage', '联系覆盖率'],
+              ['reply', '回复率'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={metric === value}
+                onClick={() => onMetricChange(value)}
+                className={clsx(
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  metric === value
+                    ? value === 'reply'
+                      ? 'bg-violet-600 text-white shadow-sm'
+                      : 'bg-teal-600 text-white shadow-sm'
+                    : 'text-stone-500 hover:text-stone-800',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div
+            role="group"
+            aria-label="院校联系效果排行层级"
             className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
           >
             {([
@@ -543,7 +588,7 @@ const OutreachCoverageRanking = ({
           </div>
           <div
             role="group"
-            aria-label="院校覆盖率排序方向"
+            aria-label="院校联系效果排序方向"
             className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-1"
           >
             {([
@@ -578,7 +623,7 @@ const OutreachCoverageRanking = ({
         </div>
       ) : null}
       {visibleData.length === 0 ? (
-        <EmptyState>当前范围暂无院校覆盖率数据</EmptyState>
+        <EmptyState>当前范围暂无院校联系数据</EmptyState>
       ) : (
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
           {visibleData.map((item) => {
@@ -590,7 +635,17 @@ const OutreachCoverageRanking = ({
               level === 'university'
                 ? selectedUniversity === item.university
                 : selectedUniversity === item.university && selectedSchool === item.school;
-            const percentage = Math.min(100, Math.max(0, item.sent_professor_rate * 100));
+            const hasReplySample = item.contacted_professor_count > 0;
+            const hasSmallReplySample = hasReplySample && item.contacted_professor_count < 5;
+            const activeRate = metric === 'reply'
+              ? hasReplySample
+                ? item.reply_rate
+                : 0
+              : item.sent_professor_rate;
+            const percentage = Math.min(100, Math.max(0, activeRate * 100));
+            const replyDescription = hasReplySample
+              ? `已回复 ${item.replied_professor_count} / ${item.contacted_professor_count} 位导师，回复率 ${formatPercent(item.reply_rate)}`
+              : '暂无联系样本，回复率无法计算';
             const handleSelect = () => {
               if (level === 'university') {
                 onSelectUniversity(item.university);
@@ -606,7 +661,7 @@ const OutreachCoverageRanking = ({
                 key={`${level}-${item.university}-${item.school ?? ''}`}
                 type="button"
                 data-testid={`coverage-ranking-row-${level}-${item.university}-${item.school ?? 'all'}`}
-                aria-label={`${label}，已发送 ${item.sent_professor_count} / ${item.total_professor_count} 位导师，覆盖率 ${formatPercent(item.sent_professor_rate)}`}
+                aria-label={`${label}，已联系 ${item.sent_professor_count} / ${item.total_professor_count} 位导师，联系覆盖率 ${formatPercent(item.sent_professor_rate)}；${replyDescription}`}
                 onClick={handleSelect}
                 className={clsx(
                   'grid w-full gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors sm:grid-cols-[minmax(7rem,0.9fr)_minmax(8rem,1.2fr)_auto] sm:items-center',
@@ -620,15 +675,45 @@ const OutreachCoverageRanking = ({
                 </span>
                 <span className="h-2.5 overflow-hidden rounded-full bg-stone-200" aria-hidden="true">
                   <span
-                    className="block h-full rounded-full bg-teal-500 transition-[width] duration-300"
+                    className={clsx(
+                      'block h-full rounded-full transition-[width] duration-300',
+                      metric === 'reply' ? 'bg-violet-500' : 'bg-teal-500',
+                    )}
                     style={{ width: `${percentage}%` }}
                   />
                 </span>
-                <span className="whitespace-nowrap text-xs text-stone-500">
-                  <strong className="font-semibold text-stone-900">
-                    {formatNumber(item.sent_professor_count)} / {formatNumber(item.total_professor_count)}
-                  </strong>
-                  {' · '}{formatPercent(item.sent_professor_rate)}
+                <span className="min-w-0 text-xs text-stone-500 sm:text-right">
+                  <span className="block whitespace-nowrap">
+                    {metric === 'coverage' ? (
+                      <>
+                        <strong className="font-semibold text-stone-900">
+                          已联系 {formatNumber(item.sent_professor_count)} / {formatNumber(item.total_professor_count)}
+                        </strong>
+                        {' · '}{formatPercent(item.sent_professor_rate)}
+                      </>
+                    ) : hasReplySample ? (
+                      <>
+                        <strong className="font-semibold text-stone-900">
+                          已回复 {formatNumber(item.replied_professor_count)} / {formatNumber(item.contacted_professor_count)}
+                        </strong>
+                        {' · '}{formatPercent(item.reply_rate)}
+                      </>
+                    ) : (
+                      <strong className="font-semibold text-stone-700">暂无联系样本 · —</strong>
+                    )}
+                  </span>
+                  <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 sm:justify-end">
+                    <span>
+                      {metric === 'coverage'
+                        ? hasReplySample
+                          ? `回复 ${formatNumber(item.replied_professor_count)} / ${formatNumber(item.contacted_professor_count)} · ${formatPercent(item.reply_rate)}`
+                          : '回复：暂无联系样本'
+                        : `联系 ${formatNumber(item.sent_professor_count)} / ${formatNumber(item.total_professor_count)} · ${formatPercent(item.sent_professor_rate)}`}
+                    </span>
+                    {metric === 'reply' && hasSmallReplySample ? (
+                      <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">样本较少</span>
+                    ) : null}
+                  </span>
                 </span>
               </button>
             );
@@ -835,7 +920,7 @@ const EmailOutreachFilterBar = ({
     <div className="flex flex-col gap-3 md:flex-row md:items-end">
       <DashboardFilterSelect
         label="时间范围"
-        ariaLabel="邮件触达时间筛选"
+        ariaLabel="联系进展时间筛选"
         value={datePreset}
         onChange={onDatePresetChange}
         options={[
@@ -847,7 +932,7 @@ const EmailOutreachFilterBar = ({
       />
       <DashboardFilterSelect
         label="学校"
-        ariaLabel="邮件触达学校筛选"
+        ariaLabel="联系进展学校筛选"
         value={selectedUniversity ?? ''}
         onChange={(value) => onUniversityChange(value || null)}
         options={[
@@ -860,7 +945,7 @@ const EmailOutreachFilterBar = ({
       />
       <DashboardFilterSelect
         label="学院"
-        ariaLabel="邮件触达学院筛选"
+        ariaLabel="联系进展学院筛选"
         value={selectedSchool ?? ''}
         disabled={!selectedUniversity || schoolOptions.length === 0}
         onChange={(value) => onSchoolChange(value || null)}
@@ -898,6 +983,7 @@ export const DashboardPage = () => {
   const [emailSchool, setEmailSchool] = useState<string | null>(null);
   const [emailDatePreset, setEmailDatePreset] = useState('all');
   const [coverageRankingLevel, setCoverageRankingLevel] = useState<CoverageRankingLevel>('university');
+  const [coverageRankingMetric, setCoverageRankingMetric] = useState<ContactEffectMetric>('coverage');
   const [coverageSortDirection, setCoverageSortDirection] = useState<CoverageSortDirection>('asc');
   const [activeSectionId, setActiveSectionId] = useState<string>('mentor');
   const [sectionNavTop, setSectionNavTop] = useState<number | null>(null);
@@ -1022,6 +1108,7 @@ export const DashboardPage = () => {
     setEmailSchool(null);
     setEmailDatePreset('all');
     setCoverageRankingLevel('university');
+    setCoverageRankingMetric('coverage');
     setCoverageSortDirection('asc');
   }, [selectedIdentityId]);
 
@@ -1149,16 +1236,16 @@ export const DashboardPage = () => {
         tone: 'teal' as const,
       },
       {
-        title: '导师触达率',
+        title: '导师联系覆盖率',
         value: formatPercent(sentProfessorRate),
-        helper: `已发送 ${formatNumber(sentProfessorCount)} / ${formatNumber(totalProfessorCount)} 位导师`,
+        helper: `已联系 ${formatNumber(sentProfessorCount)} / ${formatNumber(totalProfessorCount)} 位导师`,
         icon: <UserRoundCheck className="h-5 w-5" />,
         tone: 'amber' as const,
       },
       {
         title: '已回复',
         value: formatNumber(summary.replied_count),
-        helper: '收到回复的邮件',
+        helper: '收到回复的导师',
         icon: <Reply className="h-5 w-5" />,
         tone: 'sky' as const,
       },
@@ -1353,8 +1440,8 @@ export const DashboardPage = () => {
               className="scroll-mt-44"
             >
               <ModuleHeader
-                title="邮件触达"
-                description="发送进度、院校覆盖、回复效率和触达趋势"
+                title="联系进展"
+                description="联系进度、院校表现、回复效率和发送趋势"
                 icon={<ClipboardCheck className="h-5 w-5" />}
               />
               {communicationIdentityIds.length > 1 ? (
@@ -1410,16 +1497,18 @@ export const DashboardPage = () => {
                 <ChartCard
                   className="flex h-[24rem] min-w-0 flex-col overflow-hidden"
                   testId="outreach-coverage-card"
-                  title="院校触达覆盖率"
+                  title="院校联系效果"
                 >
                   <OutreachCoverageRanking
                     data={overview.email.outreach_coverage ?? { universities: [], schools: [] }}
                     level={coverageRankingLevel}
+                    metric={coverageRankingMetric}
                     sortDirection={coverageSortDirection}
                     selectedUniversity={emailUniversity}
                     selectedSchool={emailSchool}
                     dateLabel={`${emailDatePresetLabels[emailDatePreset] ?? '当前时间范围'}内`}
                     onLevelChange={setCoverageRankingLevel}
+                    onMetricChange={setCoverageRankingMetric}
                     onSortDirectionChange={setCoverageSortDirection}
                     onSelectUniversity={(university) => {
                       setEmailUniversity(university);

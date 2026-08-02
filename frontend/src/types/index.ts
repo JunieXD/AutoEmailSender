@@ -1286,6 +1286,9 @@ export interface DashboardOutreachCoverageItemDTO {
   total_professor_count: number;
   unsent_professor_count: number;
   sent_professor_rate: number;
+  contacted_professor_count: number;
+  replied_professor_count: number;
+  reply_rate: number;
 }
 
 export interface DashboardOutreachCoverageDTO {

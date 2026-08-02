@@ -346,9 +346,15 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(university_coverage["示例大学"].sent_professor_count, 1)
         self.assertEqual(university_coverage["示例大学"].total_professor_count, 3)
         self.assertAlmostEqual(university_coverage["示例大学"].sent_professor_rate, 1 / 3)
+        self.assertEqual(university_coverage["示例大学"].contacted_professor_count, 1)
+        self.assertEqual(university_coverage["示例大学"].replied_professor_count, 0)
+        self.assertEqual(university_coverage["示例大学"].reply_rate, 0.0)
         self.assertEqual(university_coverage["第二大学"].sent_professor_count, 1)
         self.assertEqual(university_coverage["第二大学"].total_professor_count, 2)
         self.assertEqual(university_coverage["第二大学"].sent_professor_rate, 0.5)
+        self.assertEqual(university_coverage["第二大学"].contacted_professor_count, 1)
+        self.assertEqual(university_coverage["第二大学"].replied_professor_count, 1)
+        self.assertEqual(university_coverage["第二大学"].reply_rate, 1.0)
         school_coverage = {
             (item.university, item.school): item
             for item in result.email.outreach_coverage.schools
@@ -358,6 +364,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(computer_school.total_professor_count, 2)
         self.assertEqual(computer_school.unsent_professor_count, 1)
         self.assertEqual(computer_school.sent_professor_rate, 0.5)
+        self.assertEqual(computer_school.contacted_professor_count, 1)
+        self.assertEqual(computer_school.replied_professor_count, 0)
+        self.assertEqual(computer_school.reply_rate, 0.0)
         self.assertEqual(result.email.reply_wait.sample_count, 1)
         self.assertEqual(result.email.reply_wait.median_hours, 48.0)
         self.assertEqual(result.email.reply_wait.p75_hours, 48.0)
@@ -556,6 +565,13 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 1)
         self.assertEqual(result.email.summary.reply_rate, 1.0)
+        university_coverage = {
+            item.university: item
+            for item in result.email.outreach_coverage.universities
+        }
+        self.assertEqual(university_coverage["第四大学"].contacted_professor_count, 1)
+        self.assertEqual(university_coverage["第四大学"].replied_professor_count, 1)
+        self.assertEqual(university_coverage["第四大学"].reply_rate, 1.0)
         self.assertEqual(result.email.reply_wait.sample_count, 0)
         self.assertIsNone(result.email.reply_wait.median_hours)
         self.assertTrue(all(item.count == 0 for item in result.email.reply_wait.distribution))
@@ -804,6 +820,9 @@ class DashboardStatsTests(unittest.TestCase):
         }
         self.assertEqual(coverage_by_university["示例大学"].sent_professor_count, 0)
         self.assertEqual(coverage_by_university["第二大学"].sent_professor_count, 1)
+        self.assertEqual(coverage_by_university["第二大学"].contacted_professor_count, 1)
+        self.assertEqual(coverage_by_university["第二大学"].replied_professor_count, 0)
+        self.assertEqual(coverage_by_university["第二大学"].reply_rate, 0.0)
 
     def test_dashboard_service_filters_reply_wait_by_first_reply_date(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
@@ -1032,6 +1051,9 @@ class DashboardStatsTests(unittest.TestCase):
         }
         self.assertEqual(coverage_by_university["示例大学"]["sent_professor_count"], 1)
         self.assertEqual(coverage_by_university["示例大学"]["total_professor_count"], 3)
+        self.assertEqual(coverage_by_university["示例大学"]["contacted_professor_count"], 1)
+        self.assertEqual(coverage_by_university["示例大学"]["replied_professor_count"], 0)
+        self.assertEqual(coverage_by_university["第二大学"]["reply_rate"], 1.0)
         self.assertEqual(payload["email"]["follow_ups"][0]["task_id"], 4)
 
     def test_dashboard_endpoint_does_not_require_llm_profile(self) -> None:
