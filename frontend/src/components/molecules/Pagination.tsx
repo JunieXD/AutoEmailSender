@@ -86,14 +86,61 @@ export const Pagination = ({
   );
   const [jumpValue, setJumpValue] = useState(String(safePage));
   const [jumpError, setJumpError] = useState<string | null>(null);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const jumpDialogId = useId();
   const jumpErrorId = useId();
+  const jumpRootRef = useRef<HTMLDivElement | null>(null);
+  const jumpTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const pendingFocusRef = useRef<PendingFocus | null>(null);
   const previousDisabledRef = useRef(disabled);
 
   useEffect(() => {
     setJumpValue(String(safePage));
     setJumpError(null);
+    setJumpOpen(false);
   }, [safePage, totalPages]);
+
+  useEffect(() => {
+    if (!jumpOpen) {
+      return;
+    }
+
+    jumpInputRef.current?.focus();
+    jumpInputRef.current?.select();
+
+    const closeJump = (restoreFocus: boolean) => {
+      setJumpOpen(false);
+      setJumpValue(String(safePage));
+      setJumpError(null);
+      if (restoreFocus) {
+        jumpTriggerRef.current?.focus();
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!jumpRootRef.current?.contains(event.target as Node)) {
+        closeJump(false);
+      }
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeJump(true);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [jumpOpen, safePage]);
+
+  useEffect(() => {
+    if (disabled) {
+      setJumpOpen(false);
+    }
+  }, [disabled]);
 
   useEffect(() => {
     const pendingFocus = pendingFocusRef.current;
@@ -194,6 +241,7 @@ export const Pagination = ({
     }
 
     setJumpError(null);
+    setJumpOpen(false);
     changePage(nextPage);
   };
 
@@ -202,8 +250,11 @@ export const Pagination = ({
       event.preventDefault();
       commitJump();
     } else if (event.key === "Escape") {
+      event.stopPropagation();
       setJumpValue(String(safePage));
       setJumpError(null);
+      setJumpOpen(false);
+      jumpTriggerRef.current?.focus();
     }
   };
 
@@ -243,7 +294,9 @@ export const Pagination = ({
               type="button"
               onClick={() => changePage(1)}
               disabled={disabled || safePage <= 1}
-              className={iconButtonClassName}
+              className={`${iconButtonClassName} ${
+                variant === "standard" ? "sm:hidden" : ""
+              }`}
               aria-label="首页"
               title="首页"
             >
@@ -317,7 +370,9 @@ export const Pagination = ({
               type="button"
               onClick={() => changePage(totalPages)}
               disabled={disabled || safePage >= totalPages}
-              className={iconButtonClassName}
+              className={`${iconButtonClassName} ${
+                variant === "standard" ? "sm:hidden" : ""
+              }`}
               aria-label="尾页"
               title="尾页"
             >
@@ -327,37 +382,76 @@ export const Pagination = ({
         ) : null}
 
         {showQuickJump ? (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
-            <span>前往</span>
-            <input
-              type="number"
-              min={1}
-              max={totalPages}
-              step={1}
-              value={jumpValue}
-              disabled={disabled}
-              aria-label="输入页码"
-              aria-invalid={Boolean(jumpError)}
-              aria-describedby={jumpError ? jumpErrorId : undefined}
-              onChange={(event) => {
-                setJumpValue(event.target.value);
-                setJumpError(null);
-              }}
-              onKeyDown={handleJumpKeyDown}
-              className="h-9 w-16 rounded-xl border border-stone-200 bg-white px-2 text-center text-sm tabular-nums text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
-            />
+          <div ref={jumpRootRef} className="relative hidden sm:block">
             <button
+              ref={jumpTriggerRef}
               type="button"
-              onClick={commitJump}
               disabled={disabled}
+              aria-haspopup="dialog"
+              aria-expanded={jumpOpen}
+              aria-controls={jumpDialogId}
+              onClick={() => {
+                setJumpValue(String(safePage));
+                setJumpError(null);
+                setJumpOpen((previous) => !previous);
+              }}
               className="ui-btn-secondary h-9 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
             >
-              跳转
+              跳页
             </button>
-            {jumpError ? (
-              <span id={jumpErrorId} role="alert" className="text-red-600">
-                {jumpError}
-              </span>
+
+            {jumpOpen ? (
+              <div
+                id={jumpDialogId}
+                role="dialog"
+                aria-label="跳页"
+                className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 w-56 rounded-2xl border border-stone-200/90 bg-white p-3 shadow-xl shadow-stone-900/10"
+              >
+                <div className="mb-2 text-xs font-medium text-stone-700">
+                  跳转到指定页
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={jumpInputRef}
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    step={1}
+                    value={jumpValue}
+                    disabled={disabled}
+                    aria-label="输入页码"
+                    aria-invalid={Boolean(jumpError)}
+                    aria-describedby={jumpError ? jumpErrorId : undefined}
+                    onChange={(event) => {
+                      setJumpValue(event.target.value);
+                      setJumpError(null);
+                    }}
+                    onKeyDown={handleJumpKeyDown}
+                    className="h-9 min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-2 text-center text-sm tabular-nums text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    onClick={commitJump}
+                    disabled={disabled}
+                    className="ui-btn-secondary h-9 shrink-0 px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    跳转
+                  </button>
+                </div>
+                {jumpError ? (
+                  <div
+                    id={jumpErrorId}
+                    role="alert"
+                    className="mt-2 text-xs text-red-600"
+                  >
+                    {jumpError}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-stone-400">
+                    可输入 1–{totalPages} 页
+                  </div>
+                )}
+              </div>
             ) : null}
           </div>
         ) : null}

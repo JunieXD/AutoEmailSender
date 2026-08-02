@@ -123,18 +123,24 @@ export const getPaginationItems = (
     return Array.from({ length: safeTotalPages }, (_, index) => index + 1);
   }
 
-  const leadingWindowEnd = 3 + safeSiblingCount * 2;
-  const trailingWindowStart = safeTotalPages - (2 + safeSiblingCount * 2);
+  const edgeWindowSize = safeSiblingCount * 2 + 1;
 
   if (safePage <= safeSiblingCount + 3) {
     return [
-      ...Array.from({ length: leadingWindowEnd }, (_, index) => index + 1),
+      ...Array.from(
+        { length: Math.max(edgeWindowSize, safePage) },
+        (_, index) => index + 1,
+      ),
       "ellipsis-end",
       safeTotalPages,
     ];
   }
 
   if (safePage >= safeTotalPages - safeSiblingCount - 2) {
+    const trailingWindowStart = Math.min(
+      safePage,
+      safeTotalPages - edgeWindowSize + 1,
+    );
     return [
       1,
       "ellipsis-start",

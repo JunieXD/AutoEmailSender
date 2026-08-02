@@ -71,8 +71,14 @@ describe('pagination', () => {
       1,
       2,
       3,
+      'ellipsis-end',
+      20,
+    ]);
+    expect(getPaginationItems(4, 20)).toEqual([
+      1,
+      2,
+      3,
       4,
-      5,
       'ellipsis-end',
       20,
     ]);
@@ -88,8 +94,6 @@ describe('pagination', () => {
     expect(getPaginationItems(20, 20)).toEqual([
       1,
       'ellipsis-start',
-      16,
-      17,
       18,
       19,
       20,
