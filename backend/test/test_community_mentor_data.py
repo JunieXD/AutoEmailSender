@@ -401,6 +401,39 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
+    def test_record_accepts_http_official_urls_and_rejects_unsafe_schemes(self) -> None:
+        raw = _record_payload(
+            profile_url="http://example.edu/faculty/zhang",
+            source_url="http://example.edu/faculty/zhang",
+        )
+        contact = dict(raw["contacts"][0])  # type: ignore[index]
+        contact["source_url"] = "http://example.edu/faculty/zhang"
+        affiliation = dict(raw["affiliations"][0])  # type: ignore[index]
+        affiliation["source_url"] = "http://example.edu/faculty/zhang"
+        raw["contacts"] = [contact]
+        raw["affiliations"] = [affiliation]
+
+        record = CommunityMentorRecord.model_validate(raw)
+
+        self.assertEqual(record.profile_url, "http://example.edu/faculty/zhang")
+        self.assertEqual(record.contacts[0].source_url, "http://example.edu/faculty/zhang")
+        for unsafe_url in (
+            "javascript:alert(1)",
+            "http://user:password@example.edu/faculty/zhang",
+            "http://example.edu:8080/faculty/zhang",
+        ):
+            with self.subTest(unsafe_url=unsafe_url):
+                with self.assertRaises(ValueError):
+                    CommunityMentorRecord.model_validate(
+                        _record_payload(profile_url=unsafe_url),
+                    )
+
+    def test_record_accepts_realistic_long_publication_summary(self) -> None:
+        record = CommunityMentorRecord.model_validate(
+            _record_payload(recent_papers=["P" * 3_405]),
+        )
+        self.assertEqual(len(record.recent_papers[0]), 3_405)
+
     def test_cache_pruning_removes_obsolete_versions_and_oldest_shards(self) -> None:
         current_version = "2026-08-03T000002Z-cccccccccccc"
         previous_version = "2026-08-03T000001Z-bbbbbbbbbbbb"

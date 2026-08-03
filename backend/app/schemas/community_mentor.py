@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -66,6 +67,22 @@ CommunityFieldState = Literal[
     "conflict",
 ]
 CommunityFieldChoice = Literal["community", "local"]
+
+
+def _validated_community_web_url(value: str, *, label: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError(f"{label}无效") from error
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{label}必须使用 HTTP 或 HTTPS")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{label}不得包含用户名或密码")
+    expected_port = 80 if parsed.scheme == "http" else 443
+    if port not in (None, expected_port):
+        raise ValueError(f"{label}包含不安全端口")
+    return parsed.geturl()
 
 
 class CommunityDatasetSchema(BaseModel):
@@ -180,9 +197,7 @@ class CommunityMentorContact(CommunityDatasetSchema):
     @field_validator("source_url")
     @classmethod
     def _validate_source_url(cls, value: str) -> str:
-        if not value.startswith("https://"):
-            raise ValueError("社区来源链接必须使用 HTTPS")
-        return value
+        return _validated_community_web_url(value, label="社区来源链接")
 
 
 class CommunityMentorAffiliation(CommunityDatasetSchema):
@@ -200,9 +215,7 @@ class CommunityMentorAffiliation(CommunityDatasetSchema):
     @field_validator("source_url")
     @classmethod
     def _validate_source_url(cls, value: str) -> str:
-        if not value.startswith("https://"):
-            raise ValueError("社区任职来源链接必须使用 HTTPS")
-        return value
+        return _validated_community_web_url(value, label="社区任职来源链接")
 
 
 class CommunityMentorContributor(CommunityDatasetSchema):
@@ -250,15 +263,15 @@ class CommunityMentorRecord(CommunityDatasetSchema):
     @field_validator("profile_url", "source_url")
     @classmethod
     def _validate_urls(cls, value: str | None) -> str | None:
-        if value is not None and not value.startswith("https://"):
-            raise ValueError("社区链接必须使用 HTTPS")
-        return value
+        if value is None:
+            return None
+        return _validated_community_web_url(value, label="社区链接")
 
     @field_validator("recent_papers")
     @classmethod
     def _validate_recent_papers(cls, values: list[str]) -> list[str]:
         normalized = [value.strip() for value in values]
-        if any(not value or len(value) > 2_000 for value in normalized):
+        if any(not value or len(value) > 5_000 for value in normalized):
             raise ValueError("社区论文条目无效")
         if len(normalized) != len(set(normalized)):
             raise ValueError("社区论文条目重复")
@@ -335,9 +348,9 @@ class CommunityRevocationRecord(CommunityDatasetSchema):
     @field_validator("source_url")
     @classmethod
     def _validate_source_url(cls, value: str | None) -> str | None:
-        if value is not None and not value.startswith("https://"):
-            raise ValueError("生命周期来源链接必须使用 HTTPS")
-        return value
+        if value is None:
+            return None
+        return _validated_community_web_url(value, label="生命周期来源链接")
 
 
 class CommunityRevocationsDocument(CommunityDatasetSchema):
