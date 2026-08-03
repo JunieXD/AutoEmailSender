@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from 'react-router-dom';
 import { DesktopStartupStatusBanner } from '@/components/organisms/DesktopStartupStatusBanner';
+import { AgentSupportOnboarding } from '@/components/organisms/AgentSupportOnboarding';
 import { KeepAliveLayout } from '@/components/organisms/KeepAliveLayout';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
@@ -60,6 +61,7 @@ const AppShell = () => (
             <SelectionProvider>
               <div className="flex min-h-screen flex-col bg-background">
                 <DesktopStartupStatusBanner />
+                <AgentSupportOnboarding />
                 <TopNavBar />
                 <div className="min-h-0 flex-1">
                   <Suspense fallback={routeLoadingFallback}>

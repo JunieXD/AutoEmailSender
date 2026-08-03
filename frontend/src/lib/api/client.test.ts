@@ -53,7 +53,9 @@ describe("api client desktop base url", () => {
 
   it("waits for a desktop backend ready event before fetching without an initial base url", async () => {
     let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok" })));
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      async () => new Response(JSON.stringify({ status: "ok" })),
+    );
     vi.stubGlobal("fetch", fetchMock);
     window.autoEmailSender = {
       getVersion: async () => "0.1.0",
@@ -84,13 +86,17 @@ describe("api client desktop base url", () => {
     await expect(request).resolves.toEqual({ status: "ok" });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:48124/health",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } }),
+      expect.objectContaining({ headers: expect.any(Headers) }),
     );
+    const requestHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(requestHeaders.get("Content-Type")).toBe("application/json");
   });
 
   it("keeps waiting while desktop backend status is starting", async () => {
     let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok" })));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" })),
+    );
     vi.stubGlobal("fetch", fetchMock);
     window.autoEmailSender = {
       getVersion: async () => "0.1.0",
@@ -133,7 +139,9 @@ describe("api client desktop base url", () => {
 
   it("keeps waiting while desktop backend status is restarting", async () => {
     let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok" })));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" })),
+    );
     vi.stubGlobal("fetch", fetchMock);
     window.autoEmailSender = {
       getVersion: async () => "0.1.0",
@@ -232,5 +240,60 @@ describe("api client desktop base url", () => {
 
     await expect(request).rejects.toThrow("当前数据需要 AutoEmailSender 2.4.0 或更高版本");
     await expect(request).rejects.toThrow("备份位置：C:\\Users\\Alice\\AppData\\Roaming\\AutoEmailSender\\backups\\schema");
+  });
+
+  it("adds the current desktop UI token to every request", async () => {
+    let accessToken = "first-ui-token";
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      async () => new Response(JSON.stringify({ status: "ok" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    window.autoEmailSender = {
+      backendBaseUrl: "http://127.0.0.1:48123",
+      getBackendAccessToken: () => accessToken,
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onUpdateStatus: () => () => undefined,
+    };
+
+    await apiFetch("/api/ping", { headers: [["X-Test", "one"]] });
+    accessToken = "rotated-ui-token";
+    await apiFetch("/api/ping");
+
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer first-ui-token",
+    );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("X-Test")).toBe("one");
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer rotated-ui-token",
+    );
+  });
+
+  it("does not overwrite an explicitly supplied Authorization header", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    window.autoEmailSender = {
+      backendBaseUrl: "http://127.0.0.1:48123",
+      getBackendAccessToken: () => "desktop-ui-token",
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onUpdateStatus: () => () => undefined,
+    };
+
+    await apiFetch("/api/ping", {
+      headers: new Headers({ Authorization: "Bearer explicit-token" }),
+    });
+
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer explicit-token",
+    );
   });
 });

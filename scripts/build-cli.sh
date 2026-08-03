@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+Clean=0
+while (($#)); do
+  case "$1" in
+    --clean|-Clean)
+      Clean=1
+      shift
+      ;;
+    *)
+      echo "用法: scripts/build-cli.sh [--clean]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+RepoRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CliDir="$RepoRoot/cli"
+TargetArchArgs=()
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  TargetArchArgs=(--target-arch arm64)
+fi
+
+cd "$CliDir"
+if ((Clean)); then
+  rm -rf "$CliDir/build" "$CliDir/dist"
+fi
+
+uv sync --dev
+uv run pyinstaller \
+  --noconfirm \
+  --clean \
+  --onefile \
+  --console \
+  --name auto-email-sender \
+  --distpath "$CliDir/dist" \
+  --workpath "$CliDir/build/work" \
+  --specpath "$CliDir/build" \
+  --paths "$CliDir/src" \
+  --copy-metadata auto-email-sender-cli \
+  "${TargetArchArgs[@]}" \
+  "$CliDir/src/auto_email_sender_cli/__main__.py"
+
+CliExecutable="$CliDir/dist/auto-email-sender"
+"$CliExecutable" --format json version
+"$CliExecutable" --format json guide --topic overview

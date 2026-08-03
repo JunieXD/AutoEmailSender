@@ -1,5 +1,12 @@
 ﻿import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { BackendStatus, MaterialOpenResult, StartupAtLoginStatus, UpdateStatus } from "./types.js";
+import type {
+  BackendConnection,
+  BackendStatus,
+  AgentSupportStatus,
+  MaterialOpenResult,
+  StartupAtLoginStatus,
+  UpdateStatus,
+} from "./types.js";
 
 const markDesktopRuntime = (): void => {
   document.documentElement.dataset.runtime = "desktop";
@@ -15,6 +22,7 @@ let backendBaseUrl: string | null =
   process.argv
     .find((value) => value.startsWith("--backend-base-url="))
     ?.replace("--backend-base-url=", "") ?? null;
+let backendConnection: BackendConnection | null = null;
 let currentBackendStatus: BackendStatus = {
   state: "starting",
   phase: "starting",
@@ -25,10 +33,17 @@ let currentBackendStatus: BackendStatus = {
 };
 const backendStatusCallbacks = new Set<(status: BackendStatus) => void>();
 
+ipcRenderer.on("backend:connection", (_event: IpcRendererEvent, connection: BackendConnection) => {
+  backendConnection = connection;
+  if (currentBackendStatus.state === "ready") {
+    backendBaseUrl = connection.baseUrl;
+  }
+});
+
 ipcRenderer.on("backend:status", (_event: IpcRendererEvent, status: BackendStatus) => {
   currentBackendStatus = status;
   if (status.state === "ready") {
-    backendBaseUrl = status.baseUrl;
+    backendBaseUrl = backendConnection?.baseUrl ?? status.baseUrl;
   } else {
     backendBaseUrl = null;
   }
@@ -38,6 +53,17 @@ ipcRenderer.on("backend:status", (_event: IpcRendererEvent, status: BackendStatu
 contextBridge.exposeInMainWorld("autoEmailSender", {
   backendBaseUrl,
   getBackendBaseUrl: () => backendBaseUrl,
+  getBackendAccessToken: () => backendConnection?.accessToken ?? null,
+  getAgentSupportStatus: () =>
+    ipcRenderer.invoke("agent-support:get-status") as Promise<AgentSupportStatus>,
+  enableAgentSupport: () =>
+    ipcRenderer.invoke("agent-support:enable") as Promise<AgentSupportStatus>,
+  repairAgentSupport: () =>
+    ipcRenderer.invoke("agent-support:repair") as Promise<AgentSupportStatus>,
+  disableAgentSupport: () =>
+    ipcRenderer.invoke("agent-support:disable") as Promise<AgentSupportStatus>,
+  dismissAgentSupportOnboarding: () =>
+    ipcRenderer.invoke("agent-support:dismiss-onboarding") as Promise<AgentSupportStatus>,
   getVersion: () => ipcRenderer.invoke("app:get-version") as Promise<string>,
   quitApp: () => ipcRenderer.invoke("app:quit") as Promise<void>,
   selectProfessorImportFile: () =>
@@ -64,6 +90,13 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
     queueMicrotask(() => callback(currentBackendStatus));
     return () => {
       backendStatusCallbacks.delete(callback);
+    };
+  },
+  onAgentSupportStatus: (callback: (status: AgentSupportStatus) => void) => {
+    const listener = (_event: IpcRendererEvent, status: AgentSupportStatus) => callback(status);
+    ipcRenderer.on("agent-support:status", listener);
+    return () => {
+      ipcRenderer.removeListener("agent-support:status", listener);
     };
   },
   onUpdateStatus: (callback: (status: UpdateStatus) => void) => {

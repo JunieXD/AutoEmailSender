@@ -42,8 +42,11 @@ describe("api client", () => {
       "/api/ping",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: expect.any(Headers),
       }),
+    );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Content-Type")).toBe(
+      "application/json",
     );
     expect(getDiagnosticEvents()).toEqual([
       expect.objectContaining({
@@ -69,9 +72,10 @@ describe("api client", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/materials",
       expect.objectContaining({
-        headers: {},
+        headers: expect.any(Headers),
       }),
     );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Content-Type")).toBeNull();
   });
 
   it("throws ApiError with backend detail, message, text, or fallback error messages", async () => {

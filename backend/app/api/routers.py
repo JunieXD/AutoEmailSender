@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api.agent_v1 import router as agent_v1_router
 from app.api.batch_tasks import router as batch_tasks_router
 from app.api.communication_groups import router as communication_groups_router
 from app.api.community_mentors import router as community_mentors_router
@@ -25,6 +26,7 @@ from app.api.token_usage import router as token_usage_router
 from app.api.workspaces import router as workspaces_router
 
 API_ROUTERS: tuple[APIRouter, ...] = (
+    agent_v1_router,
     identities_router,
     communication_groups_router,
     materials_router,

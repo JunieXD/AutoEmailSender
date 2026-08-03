@@ -1,0 +1,28 @@
+[project]
+name = "auto-email-sender-cli"
+version = "2.4.1"
+description = "Agent-friendly command line interface for Auto Email Sender"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1,<1",
+    "pydantic>=2.12.5,<3",
+    "typer>=0.16,<1",
+]
+
+[project.scripts]
+auto-email-sender = "auto_email_sender_cli.main:run"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auto_email_sender_cli"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.20.0",
+]

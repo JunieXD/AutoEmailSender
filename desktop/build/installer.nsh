@@ -14,6 +14,15 @@ Var /GLOBAL UninstallShouldDeleteAppData
 !macroend
 
 !macro customUnInstall
+  SetShellVarContext current
+  ${If} ${FileExists} "$INSTDIR\resources\agent-support\windows-uninstall.ps1"
+    DetailPrint "正在安全移除命令行与 Agent 支持…"
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\agent-support\windows-uninstall.ps1"'
+    Pop $R0
+    ${If} $R0 != "0"
+      DetailPrint "命令行与 Agent 支持清理未完全执行（退出码 $R0）；为避免误删，剩余文件已保留。"
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 !macro customUnInstallSection

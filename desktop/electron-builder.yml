@@ -15,6 +15,13 @@ extraResources:
     to: backend
   - from: ../backend/ms-playwright
     to: ms-playwright
+  - from: ../cli/dist
+    to: cli
+    filter:
+      - auto-email-sender
+      - auto-email-sender.exe
+  - from: ../agent-support
+    to: agent-support
   - from: build/icon.ico
     to: build/icon.ico
   - from: build/icon.png

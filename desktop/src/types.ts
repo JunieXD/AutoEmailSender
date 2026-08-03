@@ -13,13 +13,22 @@ export type BackendEnvInput = {
   userDataPath: string;
   appVersion: string;
   electronExecutablePath: string;
+  uiAccessToken?: string;
+  agentAccessToken?: string;
 };
 
 export type BackendController = {
   baseUrl: string;
+  uiAccessToken: string;
+  agentAccessToken: string;
   ready: Promise<void>;
   onStatus: (handler: (status: BackendStatus) => void) => () => void;
   stop: () => Promise<void>;
+};
+
+export type BackendConnection = {
+  baseUrl: string;
+  accessToken: string;
 };
 
 export type BackendExit = {
@@ -137,4 +146,24 @@ export type StartupAtLoginStatus = {
   supported: boolean;
   enabled: boolean;
   message?: string;
+};
+
+export type AgentSupportState =
+  | "not_enabled"
+  | "installing"
+  | "enabled"
+  | "needs_repair"
+  | "updating"
+  | "unsupported";
+
+export type AgentSupportStatus = {
+  supported: boolean;
+  state: AgentSupportState;
+  message: string;
+  onboardingPending: boolean;
+  cliCommand: string;
+  cliPath: string;
+  skillPath: string;
+  appVersion: string;
+  requiresAgentRestart: boolean;
 };

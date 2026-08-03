@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import traceback
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
@@ -15,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import API_ROUTERS
 from app.core.config import get_settings
+from app.core.api_auth import ApiAuthMiddleware
+from app.core.agent_api_errors import AgentApiError, agent_api_error_handler
 from app.core.database import dispose_engine, get_session_factory
 from app.core.error_formatting import safe_exception_message
 from app.core.migrations import ensure_database_schema
@@ -244,15 +247,22 @@ def log_runtime_initialization_failure(task: asyncio.Task[None]) -> None:
 def create_app() -> FastAPI:
     write_startup_phase_log("main.create_app.start")
     app = FastAPI(title="Auto Email Agent API", version="3.0", lifespan=lifespan)
+    app.add_exception_handler(AgentApiError, agent_api_error_handler)
 
     app.add_middleware(
+        ApiAuthMiddleware,
+        ui_token=os.getenv("AUTO_EMAIL_SENDER_UI_TOKEN"),
+        agent_token=os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN"),
+    )
+    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["null"],
+        allow_origin_regex=r"^https?://(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(RequestContextMiddleware)
 
     for router in API_ROUTERS:
         app.include_router(router)

@@ -94,12 +94,17 @@ async function executeApiFetchOnce<T>(
   startedAt?: number,
   method?: string,
 ): Promise<T> {
+  const headers = new Headers(options?.headers);
+  if (!(options?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const desktopAccessToken = window.autoEmailSender?.getBackendAccessToken?.()?.trim();
+  if (desktopAccessToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${desktopAccessToken}`);
+  }
   const response = await fetch(apiPath, {
     ...options,
-    headers: {
-      ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(options?.headers ?? {}),
-    },
+    headers,
   });
 
   if (response.status === 204) {

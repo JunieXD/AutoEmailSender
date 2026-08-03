@@ -35,6 +35,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-time-usage.ps1
 
+      - name: Test Windows Agent support cleanup
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/windows-agent-support-cleanup.test.ps1
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -42,6 +46,10 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Build Agent CLI
+        run: ./scripts/build-cli.ps1 -Clean
+        shell: pwsh
 
       - name: Install backend dependencies
         working-directory: backend
@@ -98,6 +106,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Build Agent CLI
+        run: ./scripts/build-cli.sh --clean
 
       - name: Install backend dependencies
         working-directory: backend

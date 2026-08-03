@@ -23,6 +23,8 @@ website/.vitepress/cache/
 backend/build/
 backend/dist/
 backend/ms-playwright/
+cli/build/
+cli/dist/
 desktop/dist/
 desktop/release/
 desktop/native/sparkle/build/

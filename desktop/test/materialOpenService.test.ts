@@ -35,15 +35,17 @@ describe("desktop material open service", () => {
     const writtenPaths: string[] = [];
     const chmodMock = vi.fn().mockResolvedValue(undefined);
     const openPathMock = vi.fn().mockResolvedValue("");
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      okResponse("document content", {
+        "content-disposition": "attachment; filename*=UTF-8''resume.docx",
+      }),
+    );
     const service = createMaterialOpenService({
       getBackendBaseUrl: () => "http://127.0.0.1:8010",
+      getBackendAccessToken: () => "ui-access-token",
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       dependencies: {
-        fetch: vi.fn<typeof fetch>().mockResolvedValueOnce(
-          okResponse("document content", {
-            "content-disposition": "attachment; filename*=UTF-8''resume.docx",
-          }),
-        ),
+        fetch: fetchMock,
         mkdir: vi.fn().mockResolvedValue(undefined),
         readdir: vi.fn().mockRejectedValue(new Error("missing")),
         chmod: chmodMock,
@@ -62,6 +64,10 @@ describe("desktop material open service", () => {
     expect(writtenPaths[0]).toMatch(/42-\d+-resume\.docx$/);
     expect(chmodMock).toHaveBeenCalledWith(writtenPaths[0], 0o444);
     expect(openPathMock).toHaveBeenCalledWith(writtenPaths[0]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8010/api/materials/42/download",
+      { headers: { Authorization: "Bearer ui-access-token" } },
+    );
   });
 
   it("reports missing backend files as not found", async () => {

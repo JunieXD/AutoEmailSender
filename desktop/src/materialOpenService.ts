@@ -23,6 +23,7 @@ type MaterialOpenDependencies = {
 
 export type MaterialOpenServiceOptions = {
   getBackendBaseUrl: () => string | null | undefined;
+  getBackendAccessToken?: () => string | null | undefined;
   userDataPath: string;
   dependencies?: Partial<MaterialOpenDependencies>;
 };
@@ -60,11 +61,13 @@ export function createMaterialOpenService(options: MaterialOpenServiceOptions) {
       if (!backendBaseUrl) {
         return buildError("MaterialOpenBackendUnavailable", "系统服务尚未就绪，请稍后再试");
       }
+      const backendAccessToken = options.getBackendAccessToken?.()?.trim() || undefined;
 
       await cleanupExpiredCopies(tempDir, dependencies);
 
       const copyResult = await createReadonlyCopy({
         backendBaseUrl,
+        backendAccessToken,
         materialId: parsedMaterialId,
         tempDir,
         dependencies,
@@ -121,6 +124,7 @@ export function sanitizeCopyFilename(materialId: number, originalFilename: strin
 
 async function createReadonlyCopy(options: {
   backendBaseUrl: string;
+  backendAccessToken?: string;
   materialId: number;
   tempDir: string;
   dependencies: MaterialOpenDependencies;
@@ -130,6 +134,7 @@ async function createReadonlyCopy(options: {
     const response = await fetchWithBackendError(
       options.dependencies,
       `${options.backendBaseUrl}/api/materials/${options.materialId}/download`,
+      options.backendAccessToken,
     );
     if ("error" in response) {
       return response;
@@ -157,10 +162,13 @@ async function createReadonlyCopy(options: {
 async function fetchWithBackendError(
   dependencies: MaterialOpenDependencies,
   url: string,
+  accessToken?: string,
 ): Promise<{ response: Response } | { error: MaterialOpenResult }> {
   let response: Response;
   try {
-    response = await dependencies.fetch(url);
+    response = await dependencies.fetch(url, {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
   } catch (error) {
     return { error: buildError("MaterialOpenBackendUnavailable", "系统服务尚未就绪，请稍后再试") };
   }
@@ -224,4 +232,3 @@ function getFilenameFromContentDisposition(value: string): string | null {
   const plainMatch = /filename=([^;]+)/i.exec(value);
   return plainMatch?.[1]?.trim() ?? null;
 }
-

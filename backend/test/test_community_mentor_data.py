@@ -875,7 +875,7 @@ class CommunityMigrationTests(unittest.TestCase):
                 get_settings.cache_clear()
                 config = get_alembic_config()
                 command.upgrade(config, "20260730_db_performance")
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260803_merge_community_batch")
 
                 connection = sqlite3.connect(database_path)
                 try:
@@ -931,7 +931,7 @@ class CommunityMigrationTests(unittest.TestCase):
                         get_settings.cache_clear()
                         config = get_alembic_config()
                         command.upgrade(config, source_revision)
-                        command.upgrade(config, "head")
+                        command.upgrade(config, "20260803_merge_community_batch")
 
                         connection = sqlite3.connect(database_path)
                         try:
@@ -981,7 +981,7 @@ class CommunityMigrationTests(unittest.TestCase):
                 finally:
                     connection.close()
 
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260803_merge_community_batch")
                 connection = sqlite3.connect(database_path)
                 try:
                     revision = connection.execute(
@@ -1025,7 +1025,7 @@ class CommunityMigrationTests(unittest.TestCase):
                 finally:
                     connection.close()
 
-                command.upgrade(config, "head")
+                command.upgrade(config, "20260803_merge_community_batch")
                 connection = sqlite3.connect(database_path)
                 try:
                     merged_heads = [

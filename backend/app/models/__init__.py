@@ -1,4 +1,5 @@
 from app.models.app_setting import AppSetting
+from app.models.agent_action_plan import AgentActionPlan
 from app.models.base import Base
 from app.models.batch_task import BatchTask, BatchTaskStatus
 from app.models.crawl_chunk import CrawlPageChunk, CrawlPageChunkStatus
@@ -61,6 +62,7 @@ from app.models.test_compose_session import TestComposeSession
 from app.models.thinking_adaptation_cache import ThinkingAdaptationCache
 
 __all__ = [
+    "AgentActionPlan",
     "AppSetting",
     "Base",
     "BatchTask",

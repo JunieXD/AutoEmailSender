@@ -2,6 +2,13 @@ import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, type Menu
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
+import {
+  AGENT_RUNTIME_PROTOCOL_VERSION,
+  cleanupAgentRuntimeDescriptor,
+  isAgentBackgroundLaunch,
+  writeAgentRuntimeDescriptor,
+} from "./agentRuntime.js";
+import { createAgentSupportService } from "./agentSupportService.js";
 import { registerExternalUrlIpc } from "./externalUrlService.js";
 import { registerFileSelectionIpc } from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
@@ -14,7 +21,14 @@ import {
   startWindowCreationOnce,
 } from "./windowLifecycle.js";
 import { createTrayIcon, getWindowIconPath } from "./windowIcon.js";
-import type { BackendController, BackendExit, BackendStatus, StartupAtLoginStatus } from "./types.js";
+import type {
+  BackendConnection,
+  BackendController,
+  BackendExit,
+  BackendStatus,
+  AgentSupportStatus,
+  StartupAtLoginStatus,
+} from "./types.js";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -23,16 +37,32 @@ let restartingBackend = false;
 let isQuitting = false;
 let backendStopPromise: Promise<void> | null = null;
 let currentBackendStatus: BackendStatus = createInitialBackendStatus();
+let currentBackendConnection: BackendConnection | null = null;
+let currentAgentSupportStatus: AgentSupportStatus | null = null;
 let currentStartupAtLoginStatus: StartupAtLoginStatus | null = null;
 const windowCreationState = { pendingCreation: null as Promise<void> | null };
 
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
+const agentSupportService = createAgentSupportService({
+  platform: process.platform,
+  arch: process.arch,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  repoRoot,
+  userDataPath: app.getPath("userData"),
+  homePath: app.getPath("home"),
+  localAppDataPath: process.env.LOCALAPPDATA,
+  appVersion: app.getVersion(),
+  desktopExecutablePath: process.execPath,
+  environmentPath: process.env.PATH,
+});
 const launchedAtStartup = isLaunchedAtStartup({
   argv: process.argv,
   platform: process.platform,
   getLoginItemSettings: () => app.getLoginItemSettings(),
 });
+const launchedInAgentBackground = isAgentBackgroundLaunch(process.argv);
 app.setAppUserModelId("com.juniexd.autoemailsender");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -62,9 +92,16 @@ function stopBackendAndExit(exitCode: number): void {
 
   const currentBackend = backend;
   backend = null;
-  backendStopPromise = (currentBackend?.stop() ?? Promise.resolve()).finally(() => {
-    app.exit(exitCode);
-  });
+  currentBackendConnection = null;
+  backendStopPromise = Promise.all([
+    currentBackend?.stop() ?? Promise.resolve(),
+    currentBackend ? removeAgentRuntime(currentBackend) : Promise.resolve(false),
+  ]).then(
+    () => undefined,
+    () => undefined,
+  ).finally(() => {
+      app.exit(exitCode);
+    });
 }
 
 function getStartupInput() {
@@ -174,7 +211,7 @@ async function createWindow(): Promise<void> {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    show: !launchedAtStartup,
+    show: !launchedAtStartup && !launchedInAgentBackground,
     autoHideMenuBar: true,
     icon: getWindowIconPath({
       isPackaged: app.isPackaged,
@@ -198,7 +235,13 @@ async function createWindow(): Promise<void> {
     return { action: "allow" };
   });
   mainWindow.webContents.on("did-finish-load", () => {
+    if (currentBackendConnection !== null) {
+      mainWindow?.webContents.send("backend:connection", currentBackendConnection);
+    }
     mainWindow?.webContents.send("backend:status", currentBackendStatus);
+    if (currentAgentSupportStatus !== null) {
+      mainWindow?.webContents.send("agent-support:status", currentAgentSupportStatus);
+    }
   });
   mainWindow.on("close", (event) => {
     if (!shouldHideWindowOnClose({
@@ -243,7 +286,7 @@ function parseWebUrl(value: string): string | null {
 }
 
 async function startDesktopBackend(): Promise<BackendController> {
-  return startBackend({
+  const controller = await startBackend({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     repoRoot,
@@ -252,6 +295,22 @@ async function startDesktopBackend(): Promise<BackendController> {
       void restartBackendAfterUnexpectedExit(exit);
     },
   });
+  try {
+    await writeAgentRuntimeDescriptor({
+      userDataPath: app.getPath("userData"),
+      descriptor: {
+        protocol_version: AGENT_RUNTIME_PROTOCOL_VERSION,
+        app_version: app.getVersion(),
+        base_url: controller.baseUrl,
+        access_token: controller.agentAccessToken,
+        desktop_pid: process.pid,
+        started_at: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.warn(`Unable to publish Agent runtime descriptor: ${getErrorMessage(error)}`);
+  }
+  return controller;
 }
 
 async function restartBackendAfterUnexpectedExit(exit: BackendExit): Promise<void> {
@@ -260,7 +319,12 @@ async function restartBackendAfterUnexpectedExit(exit: BackendExit): Promise<voi
   }
 
   restartingBackend = true;
+  const exitedBackend = backend;
   backend = null;
+  currentBackendConnection = null;
+  if (exitedBackend !== null) {
+    await removeAgentRuntime(exitedBackend);
+  }
   publishBackendStatus({
     state: "restarting",
     code: exit.code,
@@ -284,6 +348,11 @@ async function restartBackendAfterUnexpectedExit(exit: BackendExit): Promise<voi
 }
 
 function publishBackendReady(controller: BackendController): void {
+  currentBackendConnection = {
+    baseUrl: controller.baseUrl,
+    accessToken: controller.uiAccessToken,
+  };
+  mainWindow?.webContents.send("backend:connection", currentBackendConnection);
   publishBackendStatus(createInitialBackendStatus());
   const unsubscribe = controller.onStatus((status) => publishBackendStatus(status));
   controller.ready
@@ -306,9 +375,59 @@ function publishBackendReady(controller: BackendController): void {
     });
 }
 
+async function removeAgentRuntime(controller: BackendController): Promise<boolean> {
+  return cleanupAgentRuntimeDescriptor({
+    userDataPath: app.getPath("userData"),
+    desktopPid: process.pid,
+    accessToken: controller.agentAccessToken,
+  });
+}
+
 function publishBackendStatus(status: typeof currentBackendStatus): void {
   currentBackendStatus = status;
   mainWindow?.webContents.send("backend:status", status);
+}
+
+function publishAgentSupportStatus(status: AgentSupportStatus): AgentSupportStatus {
+  currentAgentSupportStatus = status;
+  mainWindow?.webContents.send("agent-support:status", status);
+  return status;
+}
+
+async function runAgentSupportAction(
+  state: "installing" | "updating",
+  action: () => Promise<AgentSupportStatus>,
+): Promise<AgentSupportStatus> {
+  const current = currentAgentSupportStatus ?? await agentSupportService.getStatus();
+  publishAgentSupportStatus({
+    ...current,
+    state,
+    message: state === "installing" ? "正在安装命令行与 Agent 使用说明…" : "正在更新命令行与 Agent 使用说明…",
+  });
+  try {
+    return publishAgentSupportStatus(await action());
+  } catch (error) {
+    const fallback = await agentSupportService.getStatus();
+    publishAgentSupportStatus({
+      ...fallback,
+      state: "needs_repair",
+      message: getErrorMessage(error),
+    });
+    throw error;
+  }
+}
+
+async function synchronizeAgentSupportOnStartup(): Promise<void> {
+  try {
+    publishAgentSupportStatus(await agentSupportService.synchronize());
+  } catch (error) {
+    const fallback = await agentSupportService.getStatus();
+    publishAgentSupportStatus({
+      ...fallback,
+      state: "needs_repair",
+      message: `自动更新命令行与 Agent 支持失败：${getErrorMessage(error)}`,
+    });
+  }
 }
 
 function createInitialBackendStatus(): BackendStatus {
@@ -344,16 +463,36 @@ ipcMain.handle("startup:set-enabled", async (_event, enabled: unknown) => {
   refreshTrayContextMenu();
   return currentStartupAtLoginStatus;
 });
+ipcMain.handle("agent-support:get-status", async () =>
+  publishAgentSupportStatus(await agentSupportService.getStatus()),
+);
+ipcMain.handle("agent-support:enable", async () =>
+  runAgentSupportAction("installing", agentSupportService.enable),
+);
+ipcMain.handle("agent-support:repair", async () =>
+  runAgentSupportAction("installing", agentSupportService.repair),
+);
+ipcMain.handle("agent-support:disable", async () =>
+  runAgentSupportAction("updating", agentSupportService.disable),
+);
+ipcMain.handle("agent-support:dismiss-onboarding", async () =>
+  publishAgentSupportStatus(await agentSupportService.dismissOnboarding()),
+);
 registerUpdateIpc(() => mainWindow);
 registerFileSelectionIpc();
 registerExternalUrlIpc();
 registerMaterialOpenIpc({
   getBackendBaseUrl: () => (currentBackendStatus.state === "ready" ? currentBackendStatus.baseUrl : null),
+  getBackendAccessToken: () => backend?.uiAccessToken ?? null,
   userDataPath: app.getPath("userData"),
 });
 
 if (hasSingleInstanceLock) {
-  app.on("second-instance", showMainWindow);
+  app.on("second-instance", (_event, argv) => {
+    if (!isAgentBackgroundLaunch(argv)) {
+      showMainWindow();
+    }
+  });
 
   app.whenReady().then(() => {
     startWindowCreationOnce(windowCreationState, createWindow).catch((error: unknown) => {
@@ -361,6 +500,7 @@ if (hasSingleInstanceLock) {
       dialog.showErrorBox("启动失败", message);
       app.quit();
     });
+    void synchronizeAgentSupportOnStartup();
   });
 }
 

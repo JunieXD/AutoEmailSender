@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auto Email Sender"
+  short_description: "通过安全 CLI 查询并操作 Auto Email Sender"
+  default_prompt: "Use $auto-email-sender to inspect my local Auto Email Sender data and safely carry out this request."

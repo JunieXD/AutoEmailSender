@@ -62,6 +62,18 @@ describe("windows installer packaging", () => {
     expect(config).toContain("to: ms-playwright");
   });
 
+  it("packages the platform CLI and Agent usage guide as runtime resources", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+    const workflow = readFileSync(path.resolve("..", ".github", "workflows", "release.yml"), "utf8");
+
+    expect(config).toContain("from: ../cli/dist");
+    expect(config).toContain("to: cli");
+    expect(config).toContain("from: ../agent-support");
+    expect(config).toContain("to: agent-support");
+    expect(workflow).toContain("./scripts/build-cli.ps1 -Clean");
+    expect(workflow).toContain("./scripts/build-cli.sh --clean");
+  });
+
   it("uses a multi-size PNG-backed Windows icon", () => {
     const entries = readIconEntries(path.resolve("build", "icon.ico"));
 
@@ -99,6 +111,23 @@ describe("windows installer packaging", () => {
     expect(script).toContain("!macro customUnInstallSection");
     expect(script).toContain("un.ConfirmAndDeleteAutoEmailSenderAppData");
     expect(script).toContain("un.DeleteAutoEmailSenderAppDataFromFlag");
+  });
+
+  it("cleans up only manifest-owned Agent support during Windows uninstall", () => {
+    const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
+    const cleanupScriptPath = path.resolve("..", "agent-support", "windows-uninstall.ps1");
+    const cleanupTestPath = path.resolve("..", "scripts", "windows-agent-support-cleanup.test.ps1");
+    const cleanupScript = readFileSync(cleanupScriptPath, "utf8");
+    const workflow = readFileSync(path.resolve("..", ".github", "workflows", "release.yml"), "utf8");
+
+    expect(existsSync(cleanupScriptPath)).toBe(true);
+    expect(existsSync(cleanupTestPath)).toBe(true);
+    expect(installerScript).toContain("resources\\agent-support\\windows-uninstall.ps1");
+    expect(installerScript).toContain("nsExec::ExecToLog");
+    expect(cleanupScript).toContain("Test-SamePath ([string]$manifestCliTarget) $CliTarget");
+    expect(cleanupScript).toContain("last_backup_directory");
+    expect(cleanupScript).toContain("Remove-ManagedUserPathEntry");
+    expect(workflow).toContain("scripts/windows-agent-support-cleanup.test.ps1");
   });
 });
 

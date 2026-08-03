@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { app } from "electron";
+import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import type {
   BackendController,
@@ -56,6 +57,12 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
     ...input.baseEnv,
     AUTO_EMAIL_SENDER_DATA_DIR: input.userDataPath,
     AUTO_EMAIL_SENDER_APP_VERSION: input.appVersion,
+    ...(input.uiAccessToken
+      ? { AUTO_EMAIL_SENDER_UI_TOKEN: input.uiAccessToken }
+      : {}),
+    ...(input.agentAccessToken
+      ? { AUTO_EMAIL_SENDER_AGENT_TOKEN: input.agentAccessToken }
+      : {}),
     ENABLE_BACKGROUND_WORKERS: "true",
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
     ...(input.isPackaged
@@ -85,6 +92,8 @@ export async function startBackend(options: {
 }): Promise<BackendController> {
   const port = await findAvailablePort();
   const baseUrl = `http://127.0.0.1:${port}`;
+  const uiAccessToken = generateAccessToken();
+  const agentAccessToken = generateAccessToken();
   const backendPath = getBackendExecutablePath({
     ...options,
     platform: process.platform,
@@ -106,6 +115,8 @@ export async function startBackend(options: {
       userDataPath: options.userDataPath,
       appVersion: app.getVersion(),
       electronExecutablePath: process.execPath,
+      uiAccessToken,
+      agentAccessToken,
     }),
     repoRoot: options.repoRoot,
   });
@@ -123,6 +134,8 @@ export async function startBackend(options: {
 
   return {
     baseUrl,
+    uiAccessToken,
+    agentAccessToken,
     ready: waitForReady(baseUrl, child, emitStatus),
     onStatus: (handler) => {
       statusHandlers.add(handler);
@@ -132,6 +145,10 @@ export async function startBackend(options: {
     },
     stop: () => stopBackend(child, lifecycle, terminateBackendProcessTree, port),
   };
+}
+
+export function generateAccessToken(): string {
+  return randomBytes(32).toString("base64url");
 }
 
 type BackendLifecycle = {

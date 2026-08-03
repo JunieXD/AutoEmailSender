@@ -93,11 +93,37 @@ export type DesktopStartupAtLoginStatus = {
   message?: string;
 };
 
+export type DesktopAgentSupportState =
+  | "not_enabled"
+  | "installing"
+  | "enabled"
+  | "needs_repair"
+  | "updating"
+  | "unsupported";
+
+export type DesktopAgentSupportStatus = {
+  supported: boolean;
+  state: DesktopAgentSupportState;
+  message: string;
+  onboardingPending: boolean;
+  cliCommand: string;
+  cliPath: string;
+  skillPath: string;
+  appVersion: string;
+  requiresAgentRestart: boolean;
+};
+
 declare global {
   interface Window {
     autoEmailSender?: {
       backendBaseUrl?: string;
       getBackendBaseUrl?: () => string | undefined;
+      getBackendAccessToken?: () => string | null | undefined;
+      getAgentSupportStatus?: () => Promise<DesktopAgentSupportStatus>;
+      enableAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
+      repairAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
+      disableAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
+      dismissAgentSupportOnboarding?: () => Promise<DesktopAgentSupportStatus>;
       getVersion: () => Promise<string>;
       quitApp?: () => Promise<void>;
       selectProfessorImportFile?: () => Promise<{
@@ -114,6 +140,7 @@ declare global {
       switchToFullDownload: () => Promise<DesktopUpdateStatus>;
       quitAndInstall: () => Promise<void>;
       onBackendStatus?: (callback: (status: DesktopBackendStatus) => void) => () => void;
+      onAgentSupportStatus?: (callback: (status: DesktopAgentSupportStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: DesktopUpdateStatus) => void) => () => void;
     };
   }

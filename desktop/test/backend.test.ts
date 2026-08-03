@@ -8,6 +8,7 @@ import {
   buildBackendEnv,
   getBackendExecutablePath,
   getFrontendIndexPath,
+  generateAccessToken,
   notifyBackendExit,
   normalizePort,
   shouldDetachBackend,
@@ -135,6 +136,8 @@ describe("desktop backend helpers", () => {
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
       electronExecutablePath: "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",
+      uiAccessToken: "ui-token",
+      agentAccessToken: "agent-token",
     });
 
     expect(env.PATH).toBe("C:\\Windows");
@@ -148,7 +151,18 @@ describe("desktop backend helpers", () => {
       "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",
     );
     expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(env.AUTO_EMAIL_SENDER_UI_TOKEN).toBe("ui-token");
+    expect(env.AUTO_EMAIL_SENDER_AGENT_TOKEN).toBe("agent-token");
     expect(baseEnv).toEqual({ PATH: "C:\\Windows" });
+  });
+
+  it("generates high-entropy URL-safe access tokens", () => {
+    const first = generateAccessToken();
+    const second = generateAccessToken();
+
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
   it("uses repo browser cache for dev backend environment", () => {
