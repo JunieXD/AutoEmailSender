@@ -875,7 +875,7 @@ class CommunityMigrationTests(unittest.TestCase):
                 get_settings.cache_clear()
                 config = get_alembic_config()
                 command.upgrade(config, "20260730_db_performance")
-                command.upgrade(config, "20260803_community_links")
+                command.upgrade(config, "head")
 
                 connection = sqlite3.connect(database_path)
                 try:
@@ -885,10 +885,21 @@ class CommunityMigrationTests(unittest.TestCase):
                             "PRAGMA table_info(professor_community_links)",
                         )
                     }
+                    email_task_columns = {
+                        row[1]
+                        for row in connection.execute(
+                            "PRAGMA table_info(email_tasks)",
+                        )
+                    }
+                    revision = connection.execute(
+                        "SELECT version_num FROM alembic_version",
+                    ).fetchone()[0]
                 finally:
                     connection.close()
                 self.assertIn("community_record_id", columns)
                 self.assertIn("imported_snapshot_json", columns)
+                self.assertIn("batch_send_canceled_at", email_task_columns)
+                self.assertEqual("20260803_merge_community_batch", revision)
 
                 command.downgrade(config, "20260730_db_performance")
                 connection = sqlite3.connect(database_path)
@@ -902,6 +913,136 @@ class CommunityMigrationTests(unittest.TestCase):
                 get_settings.cache_clear()
 
         self.assertIsNone(table)
+
+    def test_merge_revision_upgrades_from_either_existing_head(self) -> None:
+        for source_revision in (
+            "20260802_batch_send_cancel",
+            "20260803_community_links",
+        ):
+            with self.subTest(source_revision=source_revision):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    database_path = Path(temp_dir) / "migration.db"
+                    with patch.dict(
+                        os.environ,
+                        {"DATABASE_URL": f"sqlite+aiosqlite:///{database_path.as_posix()}"},
+                    ):
+                        from app.core.config import get_settings
+
+                        get_settings.cache_clear()
+                        config = get_alembic_config()
+                        command.upgrade(config, source_revision)
+                        command.upgrade(config, "head")
+
+                        connection = sqlite3.connect(database_path)
+                        try:
+                            revision = connection.execute(
+                                "SELECT version_num FROM alembic_version",
+                            ).fetchone()[0]
+                            community_columns = {
+                                row[1]
+                                for row in connection.execute(
+                                    "PRAGMA table_info(professor_community_links)",
+                                )
+                            }
+                            email_task_columns = {
+                                row[1]
+                                for row in connection.execute(
+                                    "PRAGMA table_info(email_tasks)",
+                                )
+                            }
+                        finally:
+                            connection.close()
+                            get_settings.cache_clear()
+
+                self.assertEqual("20260803_merge_community_batch", revision)
+                self.assertIn("community_record_id", community_columns)
+                self.assertIn("batch_send_canceled_at", email_task_columns)
+
+    def test_community_migration_resumes_after_ddl_before_revision_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "migration.db"
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": f"sqlite+aiosqlite:///{database_path.as_posix()}"},
+            ):
+                from app.core.config import get_settings
+
+                get_settings.cache_clear()
+                config = get_alembic_config()
+                command.upgrade(config, "20260803_community_links")
+
+                connection = sqlite3.connect(database_path)
+                try:
+                    connection.execute(
+                        "UPDATE alembic_version SET version_num = ?",
+                        ("20260730_db_performance",),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                command.upgrade(config, "head")
+                connection = sqlite3.connect(database_path)
+                try:
+                    revision = connection.execute(
+                        "SELECT version_num FROM alembic_version",
+                    ).fetchone()[0]
+                    indexes = {
+                        row[1]
+                        for row in connection.execute(
+                            "PRAGMA index_list(professor_community_links)",
+                        )
+                    }
+                finally:
+                    connection.close()
+                    get_settings.cache_clear()
+
+        self.assertEqual("20260803_merge_community_batch", revision)
+        self.assertIn("ix_professor_community_links_remote_status", indexes)
+
+    def test_merge_revision_collapses_two_already_applied_heads(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "migration.db"
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": f"sqlite+aiosqlite:///{database_path.as_posix()}"},
+            ):
+                from app.core.config import get_settings
+
+                get_settings.cache_clear()
+                config = get_alembic_config()
+                command.upgrade(config, "20260802_batch_send_cancel")
+                command.upgrade(config, "20260803_community_links")
+
+                connection = sqlite3.connect(database_path)
+                try:
+                    applied_heads = {
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT version_num FROM alembic_version",
+                        )
+                    }
+                finally:
+                    connection.close()
+
+                command.upgrade(config, "head")
+                connection = sqlite3.connect(database_path)
+                try:
+                    merged_heads = [
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT version_num FROM alembic_version",
+                        )
+                    ]
+                finally:
+                    connection.close()
+                    get_settings.cache_clear()
+
+        self.assertEqual(
+            {"20260802_batch_send_cancel", "20260803_community_links"},
+            applied_heads,
+        )
+        self.assertEqual(["20260803_merge_community_batch"], merged_heads)
 
 
 class CommunityApiTests(unittest.TestCase):
