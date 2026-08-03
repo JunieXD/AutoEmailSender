@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from alembic import command
+from alembic.script import ScriptDirectory
 from app.core.config import get_settings
 from app.services.outreach_templates import import_outreach_template_file
 from app.core.migrations import get_alembic_config, get_head_revision
@@ -91,6 +92,17 @@ class MigrationScriptTests(unittest.TestCase):
         }
 
         self.assertEqual({}, duplicates)
+
+    def test_alembic_graph_has_exactly_one_head(self) -> None:
+        config = get_alembic_config()
+        heads = ScriptDirectory.from_config(config).get_heads()
+
+        self.assertEqual(
+            1,
+            len(heads),
+            f"Alembic migration graph must have exactly one head, found: {heads}",
+        )
+        self.assertEqual(heads[0], get_head_revision(config))
 
     def test_professor_history_queue_migration_upgrades_and_downgrades(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_history_queue.db"
