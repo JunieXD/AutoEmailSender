@@ -132,7 +132,7 @@ import {
 } from "@/features/professor-management/client/sortManagementProfessors";
 
 type ArchiveFilter = "active" | "archived" | "all";
-const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "无" };
+const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "未填写" };
 const activeInformationEnrichmentStatuses = new Set(["queued", "running"]);
 type TrackedSingleInformationEnrichment = {
   job: ProfessorInformationEnrichmentJobDTO;
@@ -1043,20 +1043,12 @@ export const ProfessorsPage = () => {
     ],
     [filterOptions.tags],
   );
-  const tagLabelByValue = useMemo(
-    () => new Map(tagFilterEntries.map((entry) => [entry.value, entry.label])),
-    [tagFilterEntries],
-  );
-  const tagValueByLabel = useMemo(
-    () => new Map(tagFilterEntries.map((entry) => [entry.label, entry.value])),
-    [tagFilterEntries],
-  );
-  const selectedTagLabels = useMemo(
+  const tagOptionLabels = useMemo(
     () =>
-      filters.tagIds
-        .map((value) => tagLabelByValue.get(value))
-        .filter((value): value is string => Boolean(value)),
-    [filters.tagIds, tagLabelByValue],
+      Object.fromEntries(
+        tagFilterEntries.map((entry) => [entry.value, entry.label]),
+      ),
+    [tagFilterEntries],
   );
   const filteredProfessors = useMemo(
     () => filterManagementProfessors(professors, filters),
@@ -1089,17 +1081,12 @@ export const ProfessorsPage = () => {
     }));
   };
 
-  const toggleFilterValue = (
+  const setFilterValues = (
     key: "universities" | "schools" | "departments" | "titles" | "tagIds",
-    value: string,
+    nextValues: string[],
   ) => {
     setCurrentPage(1);
     setFilters((previous) => {
-      const currentValues = previous[key];
-      const nextValues = currentValues.includes(value)
-        ? currentValues.filter((item) => item !== value)
-        : [...currentValues, value];
-
       if (key === "universities" || key === "schools") {
         const nextFilters = {
           ...previous,
@@ -2353,10 +2340,9 @@ export const ProfessorsPage = () => {
                       NO_FIELD_FILTER_VALUE,
                     ]}
                     optionLabels={noFieldOptionLabels}
-                    onToggle={(value) =>
-                      toggleFilterValue("universities", value)
+                    onChange={(values) =>
+                      setFilterValues("universities", values)
                     }
-                    onClear={() => updateFilters({ universities: [] })}
                   />
                   <MultiSelectFilter
                     label="学院"
@@ -2364,8 +2350,7 @@ export const ProfessorsPage = () => {
                     selectedValues={filters.schools}
                     options={[...filterOptions.schools, NO_FIELD_FILTER_VALUE]}
                     optionLabels={noFieldOptionLabels}
-                    onToggle={(value) => toggleFilterValue("schools", value)}
-                    onClear={() => updateFilters({ schools: [] })}
+                    onChange={(values) => setFilterValues("schools", values)}
                   />
                   <MultiSelectFilter
                     label="系所"
@@ -2376,10 +2361,9 @@ export const ProfessorsPage = () => {
                       NO_FIELD_FILTER_VALUE,
                     ]}
                     optionLabels={noFieldOptionLabels}
-                    onToggle={(value) =>
-                      toggleFilterValue("departments", value)
+                    onChange={(values) =>
+                      setFilterValues("departments", values)
                     }
-                    onClear={() => updateFilters({ departments: [] })}
                   />
                   <MultiSelectFilter
                     label="职称 / 导师资格"
@@ -2387,21 +2371,15 @@ export const ProfessorsPage = () => {
                     selectedValues={filters.titles}
                     options={[...filterOptions.titles, NO_FIELD_FILTER_VALUE]}
                     optionLabels={noFieldOptionLabels}
-                    onToggle={(value) => toggleFilterValue("titles", value)}
-                    onClear={() => updateFilters({ titles: [] })}
+                    onChange={(values) => setFilterValues("titles", values)}
                   />
                   <MultiSelectFilter
                     label="标签"
                     allLabel="全部标签"
-                    selectedValues={selectedTagLabels}
-                    options={tagFilterEntries.map((entry) => entry.label)}
-                    onToggle={(label) => {
-                      const value = tagValueByLabel.get(label);
-                      if (value) {
-                        toggleFilterValue("tagIds", value);
-                      }
-                    }}
-                    onClear={() => updateFilters({ tagIds: [] })}
+                    selectedValues={filters.tagIds}
+                    options={tagFilterEntries.map((entry) => entry.value)}
+                    optionLabels={tagOptionLabels}
+                    onChange={(values) => setFilterValues("tagIds", values)}
                   />
                 </div>
               </div>

@@ -99,7 +99,10 @@ import type {
 const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
-const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "无" };
+const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "未填写" };
+const dashboardStatusOptionLabels = Object.fromEntries(
+  PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([value, label]) => [value, label]),
+) as Record<string, string>;
 
 const dashboardStatusValues = new Set(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([status]) => status),
@@ -728,11 +731,6 @@ export const HomePage = () => {
     () => getActiveDashboardFilterCount(filters),
     [filters],
   );
-  const selectedStatusLabels = useMemo(
-    () =>
-      filters.statuses.map((item) => getProfessorDashboardStatusLabel(item)),
-    [filters.statuses],
-  );
   const tagFilterEntries = useMemo(
     () => [
       ...filterOptions.tags.map((tag) => ({
@@ -743,20 +741,12 @@ export const HomePage = () => {
     ],
     [filterOptions.tags],
   );
-  const tagLabelByValue = useMemo(
-    () => new Map(tagFilterEntries.map((entry) => [entry.value, entry.label])),
-    [tagFilterEntries],
-  );
-  const tagValueByLabel = useMemo(
-    () => new Map(tagFilterEntries.map((entry) => [entry.label, entry.value])),
-    [tagFilterEntries],
-  );
-  const selectedTagLabels = useMemo(
+  const tagOptionLabels = useMemo(
     () =>
-      filters.tagIds
-        .map((value) => tagLabelByValue.get(value))
-        .filter((value): value is string => Boolean(value)),
-    [filters.tagIds, tagLabelByValue],
+      Object.fromEntries(
+        tagFilterEntries.map((entry) => [entry.value, entry.label]),
+      ),
+    [tagFilterEntries],
   );
 
   const updateFilters = (nextFilters: Partial<DashboardFilterState>) => {
@@ -772,16 +762,11 @@ export const HomePage = () => {
     });
   };
 
-  const toggleStringFilterValue = (
+  const setStringFilterValues = (
     key: "universities" | "schools" | "departments" | "titles" | "tagIds",
-    value: string,
+    nextValues: string[],
   ) => {
     setFilters((previous) => {
-      const currentValues = previous[key];
-      const nextValues = currentValues.includes(value)
-        ? currentValues.filter((item) => item !== value)
-        : [...currentValues, value];
-
       if (key === "universities") {
         return pruneDashboardFilters(professors, {
           ...previous,
@@ -797,16 +782,6 @@ export const HomePage = () => {
       }
 
       return { ...previous, [key]: nextValues };
-    });
-  };
-
-  const toggleStatusFilterValue = (value: ProfessorDashboardFilterStatus) => {
-    setFilters((previous) => {
-      const nextValues = previous.statuses.includes(value)
-        ? previous.statuses.filter((item) => item !== value)
-        : [...previous.statuses, value];
-
-      return { ...previous, statuses: nextValues };
     });
   };
 
@@ -1364,10 +1339,9 @@ export const HomePage = () => {
                   selectedValues={filters.universities}
                   options={[...filterOptions.universities, NO_FIELD_FILTER_VALUE]}
                   optionLabels={noFieldOptionLabels}
-                  onToggle={(value) =>
-                    toggleStringFilterValue("universities", value)
+                  onChange={(values) =>
+                    setStringFilterValues("universities", values)
                   }
-                  onClear={() => updateFilters({ universities: [] })}
                 />
                 <MultiSelectFilter
                   label="学院"
@@ -1375,10 +1349,9 @@ export const HomePage = () => {
                   selectedValues={filters.schools}
                   options={[...filterOptions.schools, NO_FIELD_FILTER_VALUE]}
                   optionLabels={noFieldOptionLabels}
-                  onToggle={(value) =>
-                    toggleStringFilterValue("schools", value)
+                  onChange={(values) =>
+                    setStringFilterValues("schools", values)
                   }
-                  onClear={() => updateFilters({ schools: [] })}
                 />
                 <MultiSelectFilter
                   label="系所"
@@ -1386,10 +1359,9 @@ export const HomePage = () => {
                   selectedValues={filters.departments}
                   options={[...filterOptions.departments, NO_FIELD_FILTER_VALUE]}
                   optionLabels={noFieldOptionLabels}
-                  onToggle={(value) =>
-                    toggleStringFilterValue("departments", value)
+                  onChange={(values) =>
+                    setStringFilterValues("departments", values)
                   }
-                  onClear={() => updateFilters({ departments: [] })}
                 />
                 <MultiSelectFilter
                   label="职称"
@@ -1397,38 +1369,29 @@ export const HomePage = () => {
                   selectedValues={filters.titles}
                   options={[...filterOptions.titles, NO_FIELD_FILTER_VALUE]}
                   optionLabels={noFieldOptionLabels}
-                  onToggle={(value) => toggleStringFilterValue("titles", value)}
-                  onClear={() => updateFilters({ titles: [] })}
+                  onChange={(values) => setStringFilterValues("titles", values)}
                 />
                 <MultiSelectFilter
                   label="状态"
                   allLabel="全部状态"
-                  selectedValues={selectedStatusLabels}
+                  selectedValues={filters.statuses}
                   options={PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(
-                    ([, label]) => label,
+                    ([value]) => value,
                   )}
-                  onToggle={(label) => {
-                    const option = PROFESSOR_DASHBOARD_STATUS_OPTIONS.find(
-                      ([, optionLabel]) => optionLabel === label,
-                    );
-                    if (option) {
-                      toggleStatusFilterValue(option[0]);
-                    }
-                  }}
-                  onClear={() => updateFilters({ statuses: [] })}
+                  optionLabels={dashboardStatusOptionLabels}
+                  onChange={(values) =>
+                    updateFilters({
+                      statuses: values as ProfessorDashboardFilterStatus[],
+                    })
+                  }
                 />
                 <MultiSelectFilter
                   label="标签"
                   allLabel="全部标签"
-                  selectedValues={selectedTagLabels}
-                  options={tagFilterEntries.map((entry) => entry.label)}
-                  onToggle={(label) => {
-                    const value = tagValueByLabel.get(label);
-                    if (value) {
-                      toggleStringFilterValue("tagIds", value);
-                    }
-                  }}
-                  onClear={() => updateFilters({ tagIds: [] })}
+                  selectedValues={filters.tagIds}
+                  options={tagFilterEntries.map((entry) => entry.value)}
+                  optionLabels={tagOptionLabels}
+                  onChange={(values) => setStringFilterValues("tagIds", values)}
                 />
                 <div className="block">
                   <div className="mb-2 text-sm font-medium text-stone-800">

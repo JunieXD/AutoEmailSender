@@ -522,7 +522,7 @@ describe("filterDashboardProfessors", () => {
         titles: ["教授", "副教授"],
         minMatchScore: "80",
       }),
-    ).toBe(4);
+    ).toBe(3);
   });
 
   it("does not mutate the input array", () => {

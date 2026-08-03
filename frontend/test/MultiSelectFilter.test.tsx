@@ -10,8 +10,7 @@ describe("MultiSelectFilter", () => {
         allLabel="全部学校"
         selectedValues={[]}
         options={["MIT", "Stanford"]}
-        onToggle={vi.fn()}
-        onClear={vi.fn()}
+        onChange={vi.fn()}
       />,
     );
 
@@ -19,7 +18,7 @@ describe("MultiSelectFilter", () => {
   });
 
   it("opens options and toggles values", async () => {
-    const onToggle = vi.fn();
+    const onChange = vi.fn();
 
     render(
       <MultiSelectFilter
@@ -27,8 +26,7 @@ describe("MultiSelectFilter", () => {
         allLabel="全部学校"
         selectedValues={["MIT"]}
         options={["MIT", "Stanford"]}
-        onToggle={onToggle}
-        onClear={vi.fn()}
+        onChange={onChange}
       />,
     );
 
@@ -41,8 +39,10 @@ describe("MultiSelectFilter", () => {
     );
 
     fireEvent.click(within(listbox).getByRole("option", { name: "Stanford" }));
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
-    expect(onToggle).toHaveBeenCalledWith("Stanford");
+    expect(onChange).toHaveBeenCalledWith([]);
   });
 
   it("keeps visible spacing between dropdown options", () => {
@@ -52,8 +52,7 @@ describe("MultiSelectFilter", () => {
         allLabel="全部学校"
         selectedValues={[]}
         options={["MIT", "Stanford"]}
-        onToggle={vi.fn()}
-        onClear={vi.fn()}
+        onChange={vi.fn()}
       />,
     );
 
@@ -63,25 +62,25 @@ describe("MultiSelectFilter", () => {
     expect(listbox).toHaveClass("flex", "flex-col", "gap-1");
   });
 
-  it("summarizes multiple selected values and clears them", async () => {
-    const onClear = vi.fn();
+  it("summarizes multiple selected values and clears the filter", async () => {
+    const onChange = vi.fn();
 
     render(
       <MultiSelectFilter
         label="职称"
         allLabel="全部职称"
-        selectedValues={["教授", "副教授", "助理教授"]}
+        selectedValues={["教授", "副教授"]}
         options={["教授", "副教授", "助理教授"]}
-        onToggle={vi.fn()}
-        onClear={onClear}
+        onChange={onChange}
       />,
     );
 
-    expect(screen.getByRole("button", { name: "职称：教授 等 3 项" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "职称：教授 等 2 项" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "职称：教授 等 3 项" }));
-    fireEvent.click(screen.getByRole("button", { name: "清空职称筛选" }));
+    fireEvent.click(screen.getByRole("button", { name: "职称：教授 等 2 项" }));
+    fireEvent.click(screen.getByRole("button", { name: "清除职称筛选" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
-    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith([]);
   });
 });

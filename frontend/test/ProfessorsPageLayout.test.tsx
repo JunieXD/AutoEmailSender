@@ -746,11 +746,23 @@ describe("ProfessorsPage layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
     fireEvent.click(screen.getByRole("button", { name: "职称 / 导师资格：全部职称 / 导师资格" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "Professor" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
     fireEvent.click(screen.getByRole("button", { name: "学校：全部学校" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "样例大学" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
     fireEvent.click(screen.getByRole("button", { name: "学院：全部学院" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "生命科学学院" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(screen.queryByText("李教授")).not.toBeInTheDocument();
     expect(screen.getByText("王教授")).toBeInTheDocument();

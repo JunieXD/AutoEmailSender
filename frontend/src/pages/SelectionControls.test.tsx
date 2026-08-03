@@ -693,7 +693,11 @@ describe("selection controls", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "学校：全部学校" }),
     );
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "示例大学" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     await waitFor(() => {
       expect(
@@ -777,7 +781,11 @@ describe("selection controls", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "学校：全部学校" }),
     );
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "示例大学" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     await waitFor(() => {
       expect(

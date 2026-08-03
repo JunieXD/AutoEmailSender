@@ -386,7 +386,11 @@ describe("HomePage onboarding", () => {
     expect(screen.getByRole("option", { name: "失败" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "已排程" })).toBeInTheDocument();
 
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "已联系" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     await waitFor(() => {
       expect(screen.queryByText("未开始导师")).not.toBeInTheDocument();
@@ -427,15 +431,21 @@ describe("HomePage onboarding", () => {
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
     fireEvent.click(screen.getByRole("button", { name: "学院：全部学院" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "School of Medicine" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
     expect(
       screen.getByRole("button", { name: "学院：School of Medicine" }),
     ).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "Escape" });
 
     fireEvent.click(screen.getByRole("button", { name: "学校：全部学校" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "取消全选当前结果" }),
+    );
     fireEvent.click(screen.getByRole("option", { name: "MIT" }));
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(
       screen.getByRole("button", { name: "学院：全部学院" }),

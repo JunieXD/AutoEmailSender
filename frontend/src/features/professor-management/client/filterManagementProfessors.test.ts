@@ -460,7 +460,7 @@ describe("filterManagementProfessors", () => {
         universities: ["MIT"],
         titles: ["教授", "副教授"],
       }),
-    ).toBe(3);
+    ).toBe(2);
   });
 
   it("prunes filters when universities or options disappear", () => {

@@ -230,11 +230,11 @@ export const buildManagementFilterOptions = (
 export const getActiveManagementAdvancedFilterCount = (
   filters: ProfessorManagementFilterState,
 ): number =>
-  filters.universities.length +
-  filters.schools.length +
-  filters.departments.length +
-  filters.titles.length +
-  filters.tagIds.length;
+  Number(filters.universities.length > 0) +
+  Number(filters.schools.length > 0) +
+  Number(filters.departments.length > 0) +
+  Number(filters.titles.length > 0) +
+  Number(filters.tagIds.length > 0);
 
 export const filterManagementProfessors = (
   professors: ProfessorManagementItemDTO[],
