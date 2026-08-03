@@ -15,13 +15,16 @@ import {
 
 const temporaryDirectories: string[] = [];
 
-async function createFixture(platform: NodeJS.Platform = "darwin") {
+async function createFixture(
+  platform: NodeJS.Platform = "darwin",
+  isPackaged = true,
+) {
   const root = await mkdtemp(path.join(tmpdir(), "auto-email-sender-agent-support-"));
   temporaryDirectories.push(root);
   const options: AgentSupportServiceOptions = {
     platform,
     arch: platform === "darwin" ? "arm64" : "x64",
-    isPackaged: true,
+    isPackaged,
     resourcesPath: path.join(root, "resources"),
     repoRoot: path.join(root, "repo"),
     userDataPath: path.join(root, "user-data"),
@@ -60,6 +63,21 @@ afterEach(async () => {
 });
 
 describe("Agent support installation", () => {
+  it("explains how to recover missing development assets without asking for an installer", async () => {
+    const { options, paths } = await createFixture("darwin", false);
+    await rm(paths.cliSource, { force: true });
+    const service = createAgentSupportService(options);
+
+    const status = await service.getStatus();
+    expect(status).toMatchObject({
+      state: "unsupported",
+      message: expect.stringContaining("重新运行 desktop 目录中的 npm run dev"),
+    });
+    expect(status.message).toContain("bash scripts/build-cli.sh --clean");
+    expect(status.message).not.toContain("请安装完整版本");
+    await expect(service.enable()).rejects.toThrow("开发版命令行尚未构建");
+  });
+
   it("enables and disables a managed macOS CLI, Skill, and PATH block", async () => {
     const { options, paths } = await createFixture("darwin");
     await mkdir(options.homePath, { recursive: true });

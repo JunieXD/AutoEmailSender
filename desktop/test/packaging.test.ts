@@ -18,6 +18,18 @@ const readIconEntries = (iconPath: string) => {
   });
 };
 
+describe("desktop development", () => {
+  it("prepares the Agent CLI before launching Electron", () => {
+    const packageJson = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as {
+      scripts: { dev: string };
+    };
+
+    expect(packageJson.scripts.dev).toBe(
+      "npm run build && node dist/src/prepareDevCli.js && electron . --dev",
+    );
+  });
+});
+
 describe("windows installer packaging", () => {
   it("builds preload as CommonJS for Electron sandbox preload", () => {
     const packageJson = readFileSync(path.resolve("package.json"), "utf8");

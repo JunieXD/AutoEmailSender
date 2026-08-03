@@ -117,7 +117,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     if (!(await pathExists(paths.cliSource)) || !(await pathExists(path.join(paths.skillSource, "SKILL.md")))) {
       return buildStatus(
         "unsupported",
-        "当前安装包缺少命令行或 Agent 使用说明文件，请安装完整版本。",
+        getMissingAgentSupportFilesMessage(options),
         false,
       );
     }
@@ -304,7 +304,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       return buildStatus("unsupported", unsupportedReason, false);
     }
     if (!(await pathExists(paths.cliSource)) || !(await pathExists(path.join(paths.skillSource, "SKILL.md")))) {
-      throw new Error("当前安装包缺少命令行或 Agent 使用说明文件。");
+      throw new Error(getMissingAgentSupportFilesMessage(options));
     }
 
     const conflicts = await findUnmanagedConflicts(paths, previousManifest);
@@ -579,6 +579,16 @@ async function findUnmanagedConflicts(
     conflicts.push(paths.skillTarget);
   }
   return conflicts;
+}
+
+function getMissingAgentSupportFilesMessage(options: AgentSupportServiceOptions): string {
+  if (options.isPackaged) {
+    return "当前安装包缺少命令行或 Agent 使用说明文件，请安装完整版本。";
+  }
+  const manualCommand = options.platform === "win32"
+    ? "pwsh -NoProfile -File scripts/build-cli.ps1 -Clean"
+    : "bash scripts/build-cli.sh --clean";
+  return `开发版命令行尚未构建，或 Agent 使用说明文件缺失。请重新运行 desktop 目录中的 npm run dev；也可以在仓库根目录执行 ${manualCommand} 后重启桌面开发版。`;
 }
 
 function getUnsupportedReason(options: AgentSupportServiceOptions): string | null {
