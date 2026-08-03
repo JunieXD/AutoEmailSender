@@ -25,6 +25,11 @@ const NotFoundPage = lazy(() =>
 const ProfessorsPage = lazy(() =>
   import('@/pages/ProfessorsPage').then((module) => ({ default: module.ProfessorsPage })),
 );
+const CommunityMentorsPage = lazy(() =>
+  import('@/pages/CommunityMentorsPage').then((module) => ({
+    default: module.CommunityMentorsPage,
+  })),
+);
 const DashboardPage = lazy(() =>
   import('@/pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
 );
@@ -84,6 +89,7 @@ const routes = [
           { index: true, element: <HomePage /> },
           { path: 'dashboard', element: <DashboardPage /> },
           { path: 'professors', element: <ProfessorsPage /> },
+          { path: 'community', element: <CommunityMentorsPage /> },
           { path: 'tasks', element: <TasksPage /> },
           { path: 'profile', element: <ProfilePage /> },
           { path: 'create-task', element: <CreateTaskPage /> },

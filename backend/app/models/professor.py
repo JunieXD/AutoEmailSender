@@ -14,6 +14,7 @@ from app.models.types import UTCDateTime
 if TYPE_CHECKING:
     from app.models.email_log import EmailLog
     from app.models.email_task import EmailTask
+    from app.models.professor_community_link import ProfessorCommunityLink
 
 
 class Professor(Base):
@@ -79,6 +80,11 @@ class Professor(Base):
         secondary="professor_tag_links",
         order_by="ProfessorTagLink.sort_order, ProfessorTag.name",
         lazy="selectin",
+    )
+    community_link: Mapped["ProfessorCommunityLink | None"] = relationship(
+        back_populates="professor",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
 
