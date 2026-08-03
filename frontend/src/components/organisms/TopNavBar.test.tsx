@@ -52,7 +52,7 @@ describe("TopNavBar", () => {
     expect(link).toHaveAttribute("href", "/dashboard");
   });
 
-  it("places the statistics panel before profile in the main navigation order", () => {
+  it("places the community library at the far right after profile", () => {
     render(
       <MemoryRouter>
         <TopNavBar />
@@ -63,7 +63,7 @@ describe("TopNavBar", () => {
       .getAllByRole("link")
       .map((link) => link.textContent?.replace(/\s+/g, "") ?? "")
       .filter((label) =>
-        ["首页", "导师管理", "任务中心", "统计面板", "个人中心"].includes(label),
+        ["首页", "导师管理", "任务中心", "统计面板", "个人中心", "社区导师库"].includes(label),
       );
 
     expect(navLabels).toEqual([
@@ -72,6 +72,7 @@ describe("TopNavBar", () => {
       "任务中心",
       "统计面板",
       "个人中心",
+      "社区导师库",
     ]);
   });
 

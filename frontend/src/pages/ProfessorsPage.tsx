@@ -65,6 +65,7 @@ import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import { getCommunitySharePackageDownloadUrl } from "@/lib/api/communityMentorsApi";
 import {
+  COMMUNITY_BATCH_CONTRIBUTION_URL,
   COMMUNITY_CONTRIBUTION_URL,
   buildCommunityContributionClipboard,
   copyCommunityText,
@@ -698,6 +699,8 @@ const ProfessorsPageLoadingSkeleton = () => (
 export const ProfessorsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedKeyword = searchParams.get("keyword")?.trim() ?? "";
+  const batchContributionMode =
+    searchParams.get("community_contribution") === "batch";
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { selectedLlmProfileId } = useSelectionContext();
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
@@ -1317,9 +1320,10 @@ export const ProfessorsPage = () => {
         selectedProfessors.map((professor) => professor.id),
       ),
     );
+    openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL);
     notifySuccess(
-      "社区共享包开始下载",
-      `已准备 ${selectedProfessors.length} 位导师的安全 XLSX；个人备注、标签、任务和通信数据不会导出。`,
+      "共享包已生成，批量投稿表已打开",
+      `下载完成后把包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
     );
   };
 
@@ -2007,6 +2011,55 @@ export const ProfessorsPage = () => {
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">
+      {batchContributionMode ? (
+        <section
+          data-testid="community-batch-contribution-guide"
+          aria-labelledby="community-batch-contribution-title"
+          className="mb-6 rounded-[28px] border border-orange-200 bg-[linear-gradient(135deg,#fff7ed,#ffffff)] p-5 shadow-sm"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-white shadow-sm shadow-primary/20">
+                <FileSpreadsheet className="h-5 w-5" />
+              </div>
+              <div>
+                <h2
+                  id="community-batch-contribution-title"
+                  className="font-semibold text-stone-950"
+                >
+                  按学校/学院批量贡献
+                </h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-600">
+                  先把该学校或学院的导师抓取或导入本地，再使用学校/学院筛选，点击表头“选择全部筛选结果”。选择完成后，在页面底部点击“生成共享包并投稿”。
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL)}
+                className="ui-btn-secondary"
+              >
+                已有共享包，打开投稿表
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchParams((previous) => {
+                    const next = new URLSearchParams(previous);
+                    next.delete("community_contribution");
+                    return next;
+                  }, { replace: true });
+                }}
+                className="ui-btn-secondary"
+              >
+                关闭提示
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <section
         aria-labelledby="professors-workbench-title"
         className="rounded-[32px] border border-stone-200 bg-[linear-gradient(180deg,#fcfbf8,#fffaf2)] p-6 shadow-sm"
@@ -2606,7 +2659,7 @@ export const ProfessorsPage = () => {
               <div className="mt-1 text-xs text-stone-500">
                 {archiveFilter === "archived"
                   ? "这些导师会被恢复到正常列表，可重新参与筛选与任务。"
-                  : "这些导师会被移入回收站，但历史任务和通信不会删除。"}
+                  : "可批量改标签、智能补全、生成社区共享包，或移入回收站。"}
               </div>
             </div>
             <div className="flex max-w-full flex-wrap gap-3">
@@ -2628,10 +2681,10 @@ export const ProfessorsPage = () => {
               <button
                 type="button"
                 onClick={handleBulkExportCommunitySharePackage}
-                className="ui-btn-secondary"
+                className="ui-btn-primary"
               >
                 <FileSpreadsheet className="h-4 w-4" />
-                导出社区共享包
+                生成共享包并投稿
               </button>
               {archiveFilter !== "archived" ? (
                 <button

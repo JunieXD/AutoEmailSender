@@ -22,10 +22,10 @@ export const TopNavBar = () => {
   const navItems = [
     { label: "首页", href: "/" },
     { label: "导师管理", href: "/professors" },
-    { label: "社区导师库", href: "/community" },
     { label: "任务中心", href: "/tasks" },
     { label: "统计面板", href: "/dashboard" },
     { label: "个人中心", href: "/profile" },
+    { label: "社区导师库", href: "/community" },
   ];
 
   const identityOptions = identities.map((identity) => {

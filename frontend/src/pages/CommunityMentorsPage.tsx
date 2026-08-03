@@ -10,8 +10,8 @@ import {
   ChevronRight,
   Database,
   ExternalLink,
+  FileSpreadsheet,
   FileWarning,
-  GitPullRequestArrow,
   Inbox,
   Loader2,
   Mail,
@@ -29,7 +29,6 @@ import {
   previewCommunityMentorImport,
 } from '@/lib/api/communityMentorsApi';
 import {
-  COMMUNITY_CONTRIBUTION_URL,
   buildCommunityReportClipboard,
   buildCommunityReportUrl,
   copyCommunityText,
@@ -627,25 +626,28 @@ export const CommunityMentorsPage = () => {
               在软件内浏览并导入大家共享的高校导师公开信息。社区数据只补全本地空字段；有冲突时由你选择，个人备注、标签、任务和发送记录不会进入社区流程。
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => openExternalHttpUrl(COMMUNITY_CONTRIBUTION_URL)}
-              className="ui-btn-secondary"
-            >
-              <GitPullRequestArrow className="h-4 w-4" />
-              贡献一位导师
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              disabled={catalogRefreshing}
-              onClick={() => void loadCatalog(true)}
-              className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RefreshCcw className={clsx('h-4 w-4', catalogRefreshing && 'animate-spin')} />
-              刷新社区目录
-            </button>
+          <div className="flex max-w-md flex-col gap-2 lg:items-end">
+            <div className="flex flex-wrap gap-3">
+              <Link
+                to="/professors?community_contribution=batch"
+                className="ui-btn-primary"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                批量贡献学校/学院
+              </Link>
+              <button
+                type="button"
+                disabled={catalogRefreshing}
+                onClick={() => void loadCatalog(true)}
+                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCcw className={clsx('h-4 w-4', catalogRefreshing && 'animate-spin')} />
+                刷新社区目录
+              </button>
+            </div>
+            <p className="text-xs leading-5 text-stone-500 lg:text-right">
+              在导师管理中按学校或学院筛选并全选，软件会生成安全共享包并打开 GitHub 批量投稿表。
+            </p>
           </div>
         </div>
         {catalog ? (
@@ -732,10 +734,13 @@ export const CommunityMentorsPage = () => {
           <p className="mx-auto mt-2 max-w-xl text-sm leading-7 text-stone-600">
             当前生产目录已经可以安全使用，但还没有发布导师数据。第一批投稿仍会轻量人工确认学校、学院命名和官方来源。
           </p>
-          <button type="button" className="ui-btn-primary mt-6" onClick={() => openExternalHttpUrl(COMMUNITY_CONTRIBUTION_URL)}>
-            成为第一批贡献者
-            <ExternalLink className="h-4 w-4" />
-          </button>
+          <Link
+            to="/professors?community_contribution=batch"
+            className="ui-btn-primary mt-6"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            批量贡献第一所学校/学院
+          </Link>
         </div>
       ) : catalog ? (
         <div className="mt-8 grid gap-6 lg:grid-cols-[21rem,minmax(0,1fr)]">

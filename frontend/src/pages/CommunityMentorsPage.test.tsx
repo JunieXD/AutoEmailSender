@@ -207,7 +207,13 @@ describe('CommunityMentorsPage', () => {
     renderPage();
 
     expect(await screen.findByText('社区库正在起步')).toBeInTheDocument();
-    expect(screen.getByText('成为第一批贡献者')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: '批量贡献第一所学校/学院' }),
+    ).toHaveAttribute('href', '/professors?community_contribution=batch');
+    expect(
+      screen.getByRole('link', { name: '批量贡献学校/学院' }),
+    ).toHaveAttribute('href', '/professors?community_contribution=batch');
+    expect(screen.queryByRole('button', { name: '贡献一位导师' })).not.toBeInTheDocument();
     expect(apiMocks.getCatalog).toHaveBeenCalledWith(true);
     expect(notificationMocks.notifySuccess).not.toHaveBeenCalled();
   });

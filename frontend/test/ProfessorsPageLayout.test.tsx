@@ -14,6 +14,7 @@ import type {
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const listProfessorsForManagement = vi.hoisted(() => vi.fn());
 const getProfessorExportDownloadUrl = vi.hoisted(() => vi.fn());
+const getCommunitySharePackageDownloadUrl = vi.hoisted(() => vi.fn());
 const updateProfessor = vi.hoisted(() => vi.fn());
 const updateProfessorNote = vi.hoisted(() => vi.fn());
 const createSingleProfessorInformationEnrichment = vi.hoisted(() => vi.fn());
@@ -38,6 +39,10 @@ vi.mock("@/lib/api/professorsApi", () => ({
   triggerCrawler: vi.fn(),
   updateProfessor,
   updateProfessorNote,
+}));
+
+vi.mock("@/lib/api/communityMentorsApi", () => ({
+  getCommunitySharePackageDownloadUrl,
 }));
 
 vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
@@ -153,9 +158,9 @@ const buildInformationEnrichmentItem = (
   ...overrides,
 });
 
-const renderPage = () =>
+const renderPage = (initialEntry = "/professors") =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <NotificationProvider>
         <BackgroundTaskNotificationProvider>
           <ProfessorsPage />
@@ -194,6 +199,10 @@ describe("ProfessorsPage layout", () => {
     getProfessorExportDownloadUrl.mockImplementation(
       (format: "xlsx" | "csv") => `/exports/professors.${format}`,
     );
+    getCommunitySharePackageDownloadUrl.mockReset();
+    getCommunitySharePackageDownloadUrl.mockReturnValue(
+      "/api/community-mentors/share-package?professor_ids=1",
+    );
     updateProfessor.mockReset();
     updateProfessor.mockResolvedValue(professor);
     updateProfessorNote.mockReset();
@@ -227,6 +236,66 @@ describe("ProfessorsPage layout", () => {
       queued_count: 1,
       running_count: 0,
     });
+  });
+
+  it("guides community visitors through a school or college batch contribution", async () => {
+    renderPage("/professors?community_contribution=batch");
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    const guide = screen.getByTestId("community-batch-contribution-guide");
+    expect(
+      within(guide).getByRole("heading", { name: "按学校/学院批量贡献" }),
+    ).toBeInTheDocument();
+    expect(within(guide).getByText(/选择全部筛选结果/)).toBeInTheDocument();
+    expect(within(guide).getByText(/生成共享包并投稿/)).toBeInTheDocument();
+
+    fireEvent.click(within(guide).getByRole("button", { name: "关闭提示" }));
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("community-batch-contribution-guide"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("downloads the selected batch and opens the GitHub batch contribution form", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    listProfessorsForManagement.mockResolvedValue([
+      { ...professor, source_url: "https://example.edu/li" },
+    ]);
+    renderPage("/professors?community_contribution=batch");
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
+
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "生成共享包并投稿" }),
+    );
+
+    expect(getCommunitySharePackageDownloadUrl).toHaveBeenCalledWith([1]);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      expect.stringContaining("template=batch-contribution.yml"),
+    );
+
+    click.mockRestore();
   });
 
   it("omits the low-value summary cards from the workbench header", async () => {
