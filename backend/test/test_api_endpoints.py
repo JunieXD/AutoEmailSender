@@ -9080,6 +9080,182 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(second_state["status"], "review_required")
         self.assertIsNone(second_state["approved_subject"])
 
+    def test_bulk_approve_batch_drafts_snapshots_all_confirmed_items(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        first_professor_id = self._create_professor(
+            email="bulk-review-first@example.edu",
+        )
+        second_professor_id = self._create_professor(
+            email="bulk-review-second@example.edu",
+        )
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        first_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=first_professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            generated_subject="第一封 AI 主题",
+            generated_content_text="第一封 AI 正文",
+            generated_content_html="<p>第一封 AI 正文</p>",
+        )
+        second_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=second_professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            generated_subject="第二封 AI 主题",
+            generated_content_text="第二封 AI 正文",
+            generated_content_html="<p>第二封 AI 正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/approve-all-drafts",
+            json={"item_ids": [first_task_id, second_task_id]},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(response.json()["approved_count"], 2)
+        self.assertEqual(response.json()["task"]["review_required_count"], 0)
+        self.assertEqual(response.json()["task"]["approved_count"], 2)
+        first_state = self._get_email_task_delete_state(first_task_id)
+        second_state = self._get_email_task_delete_state(second_task_id)
+        self.assertEqual(first_state["status"], "approved")
+        self.assertEqual(first_state["approved_subject"], "第一封 AI 主题")
+        self.assertEqual(first_state["approved_body_text"], "第一封 AI 正文")
+        self.assertEqual(first_state["approved_body_html"], "<p>第一封 AI 正文</p>")
+        self.assertIsNotNone(first_state["approved_at"])
+        self.assertEqual(second_state["status"], "approved")
+        self.assertEqual(second_state["approved_subject"], "第二封 AI 主题")
+        self.assertEqual(second_state["approved_body_text"], "第二封 AI 正文")
+        self.assertIsNotNone(second_state["approved_at"])
+
+    def test_bulk_approve_batch_drafts_preserves_scheduled_delivery(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(
+            email="bulk-review-scheduled@example.edu",
+        )
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            generated_subject="定时 AI 主题",
+            generated_content_text="定时 AI 正文",
+            generated_content_html="<p>定时 AI 正文</p>",
+        )
+        scheduled_at = datetime.now(UTC) + timedelta(days=1)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE batch_tasks
+                SET schedule_type = 'scheduled', scheduled_dates = ?,
+                    window_start_time = '09:00', window_end_time = '18:00',
+                    emails_per_window = 10
+                WHERE id = ?
+                """,
+                (json.dumps([scheduled_at.date().isoformat()]), batch_task_id),
+            )
+            connection.execute(
+                "UPDATE email_tasks SET scheduled_at = ? WHERE id = ?",
+                (scheduled_at.isoformat(), task_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        response = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/approve-all-drafts",
+            json={"item_ids": [task_id]},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["approved_count"], 1)
+        self.assertEqual(response.json()["task"]["approved_count"], 0)
+        self.assertEqual(response.json()["task"]["scheduled_count"], 1)
+        items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        self.assertEqual(items.json()[0]["status"], "scheduled")
+        self.assertIsNotNone(items.json()[0]["scheduled_at"])
+
+    def test_bulk_approve_batch_drafts_is_atomic_when_review_snapshot_changes(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        first_professor_id = self._create_professor(
+            email="bulk-review-conflict-first@example.edu",
+        )
+        second_professor_id = self._create_professor(
+            email="bulk-review-conflict-second@example.edu",
+        )
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=None,
+        )
+        pending_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=first_professor_id,
+            status="review_required",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            generated_subject="仍待审核主题",
+            generated_content_text="仍待审核正文",
+            generated_content_html="<p>仍待审核正文</p>",
+        )
+        changed_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=second_professor_id,
+            status="approved",
+            primary_material_id=None,
+            batch_task_id=batch_task_id,
+            source="batch",
+            generated_subject="已变化主题",
+            generated_content_text="已变化正文",
+            generated_content_html="<p>已变化正文</p>",
+            approved_subject="已经审核",
+            approved_body_text="已经审核正文",
+            approved_body_html="<p>已经审核正文</p>",
+        )
+
+        response = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/approve-all-drafts",
+            json={"item_ids": [pending_task_id, changed_task_id]},
+        )
+
+        self.assertEqual(response.status_code, 409, msg=response.text)
+        self.assertIn("待审核草稿列表已发生变化", response.json()["detail"])
+        pending_state = self._get_email_task_delete_state(pending_task_id)
+        self.assertEqual(pending_state["status"], "review_required")
+        self.assertIsNone(pending_state["approved_subject"])
+        self.assertIsNone(pending_state["approved_at"])
+
     def test_email_task_approval_response_is_scoped_to_requested_task(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()

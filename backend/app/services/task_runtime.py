@@ -108,6 +108,10 @@ RECENT_HISTORY_STRATEGY_NAME = RECENT_V2_STRATEGY_VERSION
 logger = logging.getLogger(__name__)
 
 
+class BatchDraftApprovalConflictError(ValueError):
+    """Raised when the confirmed batch review snapshot is no longer current."""
+
+
 @dataclass(frozen=True, slots=True)
 class RecentHistoryWindow:
     start_date: date
@@ -1729,6 +1733,103 @@ async def approve_and_send_task(
         respect_identity_send_window=False,
     )
     return professor_id, identity_id, llm_profile_id
+
+
+async def approve_generated_batch_drafts(
+    session_factory: async_sessionmaker[AsyncSession],
+    batch_task_id: int,
+    item_ids: list[int],
+) -> int:
+    if not item_ids:
+        raise BatchDraftApprovalConflictError("请至少选择一封待审核草稿。")
+
+    async with session_factory() as session:
+        tasks = list(
+            (
+                await session.execute(
+                    select(EmailTask)
+                    .options(selectinload(EmailTask.batch_task))
+                    .where(
+                        EmailTask.id.in_(item_ids),
+                        EmailTask.batch_task_id == batch_task_id,
+                        EmailTask.source == EmailTaskSource.BATCH.value,
+                    )
+                    .order_by(EmailTask.id.asc())
+                    .with_for_update(),
+                )
+            ).scalars().unique()
+        )
+        if len(tasks) != len(item_ids):
+            raise BatchDraftApprovalConflictError(
+                "待审核草稿列表已发生变化，请刷新后重新确认。",
+            )
+
+        batch_task = tasks[0].batch_task
+        if (
+            batch_task is None
+            or batch_task.deleted_at is not None
+            or batch_task.status
+            not in {
+                BatchTaskStatus.RUNNING.value,
+                BatchTaskStatus.PAUSED.value,
+            }
+        ):
+            raise BatchDraftApprovalConflictError(
+                "批量任务状态已发生变化，请刷新后重新确认。",
+            )
+
+        for task in tasks:
+            if (
+                task.status != EmailTaskStatus.REVIEW_REQUIRED.value
+                or task.batch_send_canceled_at is not None
+                or not (
+                    (task.generated_content_text or "").strip()
+                    or (task.generated_content_html or "").strip()
+                )
+            ):
+                raise BatchDraftApprovalConflictError(
+                    "待审核草稿列表已发生变化，请刷新后重新确认。",
+                )
+            _ensure_task_allows_legacy_manual_actions(task)
+            _ensure_task_allows_approval(task)
+            _ensure_batch_task_has_future_window(task)
+
+        for task in tasks:
+            await _snapshot_approval(
+                session,
+                task,
+                EmailTaskApprovalRequest(
+                    subject=task.generated_subject,
+                    body_text=task.generated_content_text or "",
+                    body_html=task.generated_content_html,
+                    selected_material_ids=task.selected_material_ids,
+                ),
+            )
+            if _is_scheduled_batch_task(task) and task.scheduled_at is not None:
+                task.status = EmailTaskStatus.SCHEDULED.value
+            else:
+                task.status = EmailTaskStatus.APPROVED.value
+                task.scheduled_at = None
+            await _record_email_task_log(
+                session,
+                task,
+                "email_task.approved",
+                metadata={
+                    "selected_material_ids": task.selected_material_ids,
+                    "approval_method": "bulk",
+                },
+            )
+
+        await record_operation_log(
+            session,
+            category="email",
+            event_name="batch_task.drafts_bulk_approved",
+            entity_type="batch_task",
+            entity_id=str(batch_task_id),
+            metadata={"approved_count": len(tasks)},
+        )
+        await session.commit()
+        return len(tasks)
 
 
 async def approve_draft_task(

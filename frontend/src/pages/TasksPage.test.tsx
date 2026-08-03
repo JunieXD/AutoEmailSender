@@ -38,6 +38,7 @@ const apiMocks = vi.hoisted(() => ({
   getBatchTaskItemThread: vi.fn(),
   regenerateBatchTaskItemDraft: vi.fn(),
   approveBatchTaskItemDraft: vi.fn(),
+  approveAllBatchTaskDrafts: vi.fn(),
   approveAndSendBatchTaskItemDraft: vi.fn(),
   cancelBatchTaskItemSend: vi.fn(),
   deleteBatchTaskItem: vi.fn(),
@@ -136,6 +137,7 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   getBatchTaskItemThread: apiMocks.getBatchTaskItemThread,
   regenerateBatchTaskItemDraft: apiMocks.regenerateBatchTaskItemDraft,
   approveBatchTaskItemDraft: apiMocks.approveBatchTaskItemDraft,
+  approveAllBatchTaskDrafts: apiMocks.approveAllBatchTaskDrafts,
   approveAndSendBatchTaskItemDraft: apiMocks.approveAndSendBatchTaskItemDraft,
   cancelBatchTaskItemSend: apiMocks.cancelBatchTaskItemSend,
   deleteBatchTaskItem: apiMocks.deleteBatchTaskItem,
@@ -842,6 +844,14 @@ beforeEach(() => {
       approved_at: "2026-05-08T01:00:00",
     },
   }));
+  apiMocks.approveAllBatchTaskDrafts.mockResolvedValue({
+    ok: true,
+    approved_count: 1,
+    task: buildBatchTask({
+      review_required_count: 0,
+      approved_count: 1,
+    }),
+  });
   apiMocks.approveAndSendBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
     current_task: {
       ...buildWorkspaceThread().current_task,
@@ -1920,6 +1930,129 @@ describe("TasksPage batch draft review", () => {
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith("草稿已从批量任务中移除");
     expect(screen.queryByText("第二位导师")).not.toBeInTheDocument();
+  });
+
+  it("bulk approves all current review drafts only after the required confirmation", async () => {
+    const task = buildBatchTask({
+      name: "AI 批量审核任务",
+      schedule_type: "immediate",
+      outreach_generation_mode: "llm",
+      target_count: 3,
+      generating_draft_count: 1,
+      review_required_count: 2,
+      approved_count: 0,
+    });
+    const firstItem = buildBatchItem({
+      id: 41,
+      professor_name: "第一位待审核导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const secondItem = buildBatchItem({
+      id: 42,
+      professor_name: "第二位待审核导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const generatingItem = buildBatchItem({
+      id: 43,
+      professor_name: "生成中的导师",
+      status: "generating_draft",
+      next_action: "waiting_draft_generation",
+    });
+    const approvedTask = buildBatchTask({
+      ...task,
+      generating_draft_count: 1,
+      review_required_count: 0,
+      approved_count: 2,
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([
+      firstItem,
+      secondItem,
+      generatingItem,
+    ]);
+    apiMocks.approveAllBatchTaskDrafts.mockResolvedValue({
+      ok: true,
+      approved_count: 2,
+      task: approvedTask,
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("AI 批量审核任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "全部通过审核（2 封）" }),
+    );
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "确认全部通过这 2 封 AI 改写草稿？",
+          description: expect.stringContaining("确认后会立即进入发送队列"),
+          confirmLabel: "确认全部通过",
+          cancelLabel: "继续逐封审核",
+          tone: "danger",
+        }),
+      );
+    });
+    expect(confirmMock.mock.calls[0][0].description).toContain(
+      "生成中或生成失败的邮件不会被处理",
+    );
+    await waitFor(() => {
+      expect(apiMocks.approveAllBatchTaskDrafts).toHaveBeenCalledWith(
+        task.id,
+        [firstItem.id, secondItem.id],
+      );
+    });
+    expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
+      "已通过 2 封草稿",
+      "邮件已进入发送队列。",
+    );
+  });
+
+  it("keeps all batch review drafts pending when bulk approval is canceled", async () => {
+    const task = buildBatchTask({
+      name: "取消批量审核任务",
+      schedule_type: "scheduled",
+      outreach_generation_mode: "llm",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 51,
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    confirmMock.mockResolvedValueOnce(false);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("取消批量审核任务")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "全部通过审核（1 封）" }),
+    );
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: expect.stringContaining("按原计划"),
+        }),
+      );
+    });
+    expect(apiMocks.approveAllBatchTaskDrafts).not.toHaveBeenCalled();
   });
 
   it("approves batch review drafts through scoped batch item APIs", async () => {

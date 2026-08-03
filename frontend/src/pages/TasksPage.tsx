@@ -41,6 +41,7 @@ import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
+  approveAllBatchTaskDrafts,
   approveAndSendBatchTaskItemDraft,
   approveBatchTaskItemDraft,
   cancelBatchTaskItemSend,
@@ -877,6 +878,7 @@ export const TasksPage = () => {
   const [batchReviewThread, setBatchReviewThread] =
     useState<WorkspaceThreadDTO | null>(null);
   const [batchReviewLoading, setBatchReviewLoading] = useState(false);
+  const [batchBulkApprovalLoading, setBatchBulkApprovalLoading] = useState(false);
   const [batchReviewItemActions, setBatchReviewItemActions] =
     useState<BatchReviewItemActions>({});
   const [batchSendItemAction, setBatchSendItemAction] =
@@ -2915,6 +2917,71 @@ export const TasksPage = () => {
     }
   };
 
+  const handleApproveAllBatchDrafts = async () => {
+    if (!selectedBatchTask || reviewRequiredBatchTaskItems.length === 0) {
+      return;
+    }
+
+    const taskId = selectedBatchTask.id;
+    const itemIds = reviewRequiredBatchTaskItems.map((item) => item.id);
+    const approvedCount = itemIds.length;
+    const deliveryDescription =
+      selectedBatchTask.status === "paused"
+        ? selectedBatchTask.schedule_type === "scheduled"
+          ? `任务当前处于暂停状态；确认后仍不会发送，恢复任务后会按原计划（${buildScheduleLabel(selectedBatchTask)}）发送。`
+          : "任务当前处于暂停状态；确认后仍不会发送，恢复任务后才会进入发送流程。"
+        : selectedBatchTask.schedule_type === "scheduled"
+          ? `确认后会按原计划（${buildScheduleLabel(selectedBatchTask)}）进入定时发送流程；邮件发出后无法撤回。`
+          : "确认后会立即进入发送队列，邮件发出后无法撤回。";
+    const ignoredDraftDescription =
+      generatingDraftBatchTaskItems.length > 0 ||
+      draftFailedBatchTaskItems.length > 0
+        ? "本次只处理当前已经生成且仍为待审核状态的草稿；生成中或生成失败的邮件不会被处理。"
+        : null;
+    const confirmed = await confirm({
+      title: `确认全部通过这 ${approvedCount} 封 AI 改写草稿？`,
+      description: [
+        "系统将直接采用每封邮件当前的 AI 主题、正文和附件设置，不再逐封检查。",
+        deliveryDescription,
+        ignoredDraftDescription,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      confirmLabel: "确认全部通过",
+      cancelLabel: "继续逐封审核",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setBatchBulkApprovalLoading(true);
+    try {
+      const result = await approveAllBatchTaskDrafts(taskId, itemIds);
+      setSelectedBatchTask((current) =>
+        current?.id === taskId ? result.task : current,
+      );
+      notifySuccess(
+        `已通过 ${result.approved_count} 封草稿`,
+        result.task.status === "paused"
+          ? "任务仍处于暂停状态，恢复后才会发送。"
+          : result.task.schedule_type === "scheduled"
+            ? "邮件将按原定时间和每日数量进入发送流程。"
+            : "邮件已进入发送队列。",
+      );
+      await Promise.all([loadBatchTaskDetails(taskId), loadTasks()]);
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error
+          ? actionError.message
+          : "批量审核草稿失败";
+      notifyError("批量审核草稿失败", message);
+      await loadBatchTaskDetails(taskId);
+    } finally {
+      setBatchBulkApprovalLoading(false);
+    }
+  };
+
   const handleDeleteBatchDraftItem = async (item: BatchTaskItemDTO) => {
     if (!selectedBatchTask) {
       return;
@@ -4712,10 +4779,28 @@ export const TasksPage = () => {
                     已通过的模板邮件会按批量任务的日期、时间窗口和每日数量自动发送，不需要逐封手动设定发送时间。
                   </p>
                 ) : null}
-                {selectedBatchTask.review_required_count > 0 ? (
-                  <p className="mt-2 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
-                    AI 改写草稿生成后仍需逐封审核通过，审核后才会进入发送或定时发送流程。
-                  </p>
+                {reviewRequiredBatchTaskItems.length > 0 ? (
+                  <div className="mt-2 flex flex-col gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+                    <p>
+                      当前有 {reviewRequiredBatchTaskItems.length} 封 AI
+                      改写草稿待审核。你可以逐封检查，也可以直接通过当前全部待审核草稿。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleApproveAllBatchDrafts()}
+                      disabled={batchBulkApprovalLoading || batchTaskDetailsLoading}
+                      className="ui-btn-secondary shrink-0 justify-center border-amber-200 bg-white text-amber-800 hover:border-amber-300 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {batchBulkApprovalLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
+                      {batchBulkApprovalLoading
+                        ? `正在通过 ${reviewRequiredBatchTaskItems.length} 封...`
+                        : `全部通过审核（${reviewRequiredBatchTaskItems.length} 封）`}
+                    </button>
+                  </div>
                 ) : null}
                 <div className="mt-3 space-y-2">
                   {pendingBatchTaskItems.length > 0 ? (

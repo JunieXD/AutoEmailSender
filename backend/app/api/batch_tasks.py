@@ -26,6 +26,8 @@ from app.models import (
 )
 from app.schemas.batch_task import (
     BatchTaskActionResponse,
+    BatchTaskBulkApproveDraftsRequest,
+    BatchTaskBulkApproveDraftsResponse,
     BatchTaskCardRead,
     BatchTaskItemRead,
     BatchTaskResendContextRead,
@@ -71,8 +73,10 @@ from app.services.outreach_templates import (
 from app.services.smtp_error_explanations import explain_smtp_error
 from app.services import llm_runtime
 from app.services.task_runtime import (
+    BatchDraftApprovalConflictError,
     approve_and_send_task,
     approve_draft_task,
+    approve_generated_batch_drafts,
     expire_batch_task_if_needed,
     regenerate_task_draft,
 )
@@ -568,6 +572,36 @@ async def get_batch_task_item_thread(
 ) -> WorkspaceThreadRead:
     await _get_batch_task_item(session, task_id, item_id)
     return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
+@router.post(
+    "/{task_id}/approve-all-drafts",
+    response_model=BatchTaskBulkApproveDraftsResponse,
+)
+async def approve_all_batch_task_drafts(
+    task_id: int,
+    payload: BatchTaskBulkApproveDraftsRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> BatchTaskBulkApproveDraftsResponse:
+    await _get_batch_task(session, task_id)
+    try:
+        approved_count = await approve_generated_batch_drafts(
+            get_session_factory(),
+            task_id,
+            payload.item_ids,
+        )
+    except BatchDraftApprovalConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    session.expire_all()
+    task = await _get_batch_task(session, task_id)
+    return BatchTaskBulkApproveDraftsResponse(
+        ok=True,
+        approved_count=approved_count,
+        task=_serialize_batch_task(task),
+    )
 
 
 @router.post("/{task_id}/items/{item_id}/regenerate-draft", response_model=WorkspaceThreadRead)

@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api/client';
 import type {
+  BatchTaskBulkApproveDraftsResultDTO,
   BatchTaskCardDTO,
   BatchTaskItemDTO,
   BatchTaskResendContextDTO,
@@ -38,6 +39,15 @@ export const getBatchTaskResendContext = (taskId: number) =>
 
 export const getBatchTaskItemThread = (taskId: number, itemId: number) =>
   apiFetch<WorkspaceThreadDTO>(`/api/batch-tasks/${taskId}/items/${itemId}/thread`);
+
+export const approveAllBatchTaskDrafts = (taskId: number, itemIds: number[]) =>
+  apiFetch<BatchTaskBulkApproveDraftsResultDTO>(
+    `/api/batch-tasks/${taskId}/approve-all-drafts`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ item_ids: itemIds }),
+    },
+  );
 
 export const regenerateBatchTaskItemDraft = (taskId: number, itemId: number) =>
   apiFetch<WorkspaceThreadDTO>(

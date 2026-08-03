@@ -784,6 +784,12 @@ export interface BatchTaskCardDTO {
   deleted_at: string | null;
 }
 
+export interface BatchTaskBulkApproveDraftsResultDTO {
+  ok: boolean;
+  approved_count: number;
+  task: BatchTaskCardDTO;
+}
+
 export interface BatchTaskItemDTO {
   id: number;
   professor_id: number;

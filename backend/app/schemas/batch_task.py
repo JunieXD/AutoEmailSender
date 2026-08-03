@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.base import ApiSchema
 
@@ -85,6 +85,23 @@ class BatchTaskItemRead(ApiSchema):
 
 class BatchTaskActionResponse(ApiSchema):
     ok: bool
+    task: BatchTaskCardRead
+
+
+class BatchTaskBulkApproveDraftsRequest(BaseModel):
+    item_ids: list[int] = Field(min_length=1)
+
+    @field_validator("item_ids")
+    @classmethod
+    def validate_unique_item_ids(cls, item_ids: list[int]) -> list[int]:
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("待审核草稿不能重复")
+        return item_ids
+
+
+class BatchTaskBulkApproveDraftsResponse(ApiSchema):
+    ok: bool
+    approved_count: int
     task: BatchTaskCardRead
 
 class BatchTaskResendContextTaskRead(ApiSchema):
