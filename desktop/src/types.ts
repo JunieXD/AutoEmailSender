@@ -142,6 +142,10 @@ export type MaterialOpenResult =
       message: string;
     };
 
+export type CommunityShareSaveResult =
+  | { status: "saved" }
+  | { status: "canceled" };
+
 export type StartupAtLoginStatus = {
   supported: boolean;
   enabled: boolean;

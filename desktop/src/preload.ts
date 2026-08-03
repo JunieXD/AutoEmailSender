@@ -3,6 +3,7 @@ import type {
   BackendConnection,
   BackendStatus,
   AgentSupportStatus,
+  CommunityShareSaveResult,
   MaterialOpenResult,
   StartupAtLoginStatus,
   UpdateStatus,
@@ -72,6 +73,11 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
       type: string;
       data: ArrayBuffer;
     } | null>,
+  saveCommunitySharePackage: (data: ArrayBuffer) =>
+    ipcRenderer.invoke(
+      "community-share:save",
+      data,
+    ) as Promise<CommunityShareSaveResult>,
   openMaterial: (request: { materialId: number }) =>
     ipcRenderer.invoke("materials:open", request) as Promise<MaterialOpenResult>,
   openExternalUrl: (url: string) => ipcRenderer.invoke("external-url:open", url) as Promise<void>,

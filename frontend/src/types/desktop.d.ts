@@ -44,6 +44,10 @@ export type DesktopMaterialOpenResult =
       message: string;
     };
 
+export type DesktopCommunityShareSaveResult =
+  | { status: "saved" }
+  | { status: "canceled" };
+
 export type DesktopBackendDatabaseError = {
   code: "DATABASE_REQUIRES_NEWER_APP";
   message: string;
@@ -131,6 +135,9 @@ declare global {
         type: string;
         data: ArrayBuffer;
       } | null>;
+      saveCommunitySharePackage?: (
+        data: ArrayBuffer,
+      ) => Promise<DesktopCommunityShareSaveResult>;
       openMaterial?: (request: { materialId: number }) => Promise<DesktopMaterialOpenResult>;
       openExternalUrl?: (url: string) => Promise<void>;
       getStartupAtLoginStatus?: () => Promise<DesktopStartupAtLoginStatus>;

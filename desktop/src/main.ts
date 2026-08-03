@@ -10,7 +10,10 @@ import {
 } from "./agentRuntime.js";
 import { createAgentSupportService } from "./agentSupportService.js";
 import { registerExternalUrlIpc } from "./externalUrlService.js";
-import { registerFileSelectionIpc } from "./fileSelection.js";
+import {
+  registerCommunityShareSaveIpc,
+  registerFileSelectionIpc,
+} from "./fileSelection.js";
 import { registerMaterialOpenIpc } from "./materialOpenService.js";
 import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "./startup.js";
 import { bindTrayInteractions } from "./trayController.js";
@@ -480,6 +483,7 @@ ipcMain.handle("agent-support:dismiss-onboarding", async () =>
 );
 registerUpdateIpc(() => mainWindow);
 registerFileSelectionIpc();
+registerCommunityShareSaveIpc();
 registerExternalUrlIpc();
 registerMaterialOpenIpc({
   getBackendBaseUrl: () => (currentBackendStatus.state === "ready" ? currentBackendStatus.baseUrl : null),

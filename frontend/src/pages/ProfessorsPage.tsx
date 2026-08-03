@@ -517,6 +517,19 @@ const triggerBlobDownload = (blob: Blob, filename: string) => {
   URL.revokeObjectURL(objectUrl);
 };
 
+const saveCommunitySharePackageBlob = async (
+  blob: Blob,
+): Promise<"saved" | "canceled"> => {
+  const saveWithDesktopDialog =
+    window.autoEmailSender?.saveCommunitySharePackage;
+  if (!saveWithDesktopDialog) {
+    triggerBlobDownload(blob, "community-share.xlsx");
+    return "saved";
+  }
+  const result = await saveWithDesktopDialog(await blob.arrayBuffer());
+  return result.status;
+};
+
 const getActionErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
@@ -1288,9 +1301,13 @@ export const ProfessorsPage = () => {
     setExportingCommunitySharePackage(true);
     try {
       const blob = await downloadCommunitySharePackage([editingProfessor.id]);
-      triggerBlobDownload(blob, "community-share.xlsx");
+      const saveStatus = await saveCommunitySharePackageBlob(blob);
+      if (saveStatus === "canceled") {
+        notifyWarning("已取消保存", "社区共享包未保存。");
+        return;
+      }
       notifySuccess(
-        "社区共享包已下载",
+        "社区共享包已保存",
         "得到 XLSX 后可直接拖入 GitHub 的“批量贡献导师”表单。",
       );
     } catch (error) {
@@ -1329,11 +1346,18 @@ export const ProfessorsPage = () => {
       const blob = await downloadCommunitySharePackage(
         selectedProfessors.map((professor) => professor.id),
       );
-      triggerBlobDownload(blob, "community-share.xlsx");
+      const saveStatus = await saveCommunitySharePackageBlob(blob);
+      if (saveStatus === "canceled") {
+        notifyWarning(
+          "已取消保存",
+          "共享包未保存，因此没有打开 GitHub 投稿页。",
+        );
+        return;
+      }
       openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL);
       notifySuccess(
-        "共享包已生成，批量投稿表已打开",
-        `下载完成后把包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
+        "共享包已保存，批量投稿表已打开",
+        `把刚保存的、包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
       );
     } catch (error) {
       notifyError(

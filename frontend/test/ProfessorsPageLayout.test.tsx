@@ -264,11 +264,17 @@ describe("ProfessorsPage layout", () => {
     });
   });
 
-  it("downloads the selected batch and opens the GitHub batch contribution form", async () => {
+  it("waits for desktop save completion before opening the GitHub contribution form", async () => {
     const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    let resolveSave: ((result: { status: "saved" }) => void) | undefined;
+    const saveResult = new Promise<{ status: "saved" }>((resolve) => {
+      resolveSave = resolve;
+    });
+    const saveCommunitySharePackage = vi.fn(() => saveResult);
     window.autoEmailSender = {
       getVersion: async () => "0.1.0",
       openExternalUrl,
+      saveCommunitySharePackage,
       checkForUpdate: vi.fn(),
       downloadUpdate: vi.fn(),
       switchToFullDownload: vi.fn(),
@@ -284,20 +290,6 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
     fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
-
-    const nativeUrl = URL;
-    const createObjectURL = vi.fn(() => "blob:community-share");
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal(
-      "URL",
-      class extends nativeUrl {
-        static createObjectURL = createObjectURL;
-        static revokeObjectURL = revokeObjectURL;
-      },
-    );
-    const click = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => undefined);
     const locationBeforeContribution = window.location.href;
 
     const contributionButton = screen.getByRole("button", {
@@ -311,20 +303,55 @@ describe("ProfessorsPage layout", () => {
 
     await waitFor(() => {
       expect(downloadCommunitySharePackage).toHaveBeenCalledWith([1]);
-      expect(click).toHaveBeenCalledTimes(1);
+      expect(saveCommunitySharePackage).toHaveBeenCalledWith(
+        expect.any(ArrayBuffer),
+      );
     });
-    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
-    const downloadedLink = click.mock.instances[0] as HTMLAnchorElement | undefined;
-    expect(downloadedLink).toBeDefined();
-    expect(downloadedLink).toHaveAttribute("href", "blob:community-share");
-    expect(downloadedLink).toHaveAttribute("download", "community-share.xlsx");
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:community-share");
+    expect(openExternalUrl).not.toHaveBeenCalled();
     expect(window.location.href).toBe(locationBeforeContribution);
-    expect(openExternalUrl).toHaveBeenCalledWith(
-      expect.stringContaining("template=batch-contribution.yml"),
-    );
 
-    click.mockRestore();
+    resolveSave?.({ status: "saved" });
+
+    await waitFor(() => {
+      expect(openExternalUrl).toHaveBeenCalledWith(
+        expect.stringContaining("template=batch-contribution.yml"),
+      );
+    });
+    expect(window.location.href).toBe(locationBeforeContribution);
+  });
+
+  it("does not open GitHub when desktop share package saving is canceled", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    const saveCommunitySharePackage = vi
+      .fn()
+      .mockResolvedValue({ status: "canceled" as const });
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      saveCommunitySharePackage,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    listProfessorsForManagement.mockResolvedValue([
+      { ...professor, source_url: "https://example.edu/li" },
+    ]);
+    renderPage("/professors?community_contribution=batch");
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
+    fireEvent.click(screen.getByRole("button", { name: "贡献到社区" }));
+
+    expect(await screen.findByText("已取消保存")).toBeInTheDocument();
+    expect(
+      screen.getByText("共享包未保存，因此没有打开 GitHub 投稿页。"),
+    ).toBeInTheDocument();
+    expect(saveCommunitySharePackage).toHaveBeenCalledTimes(1);
+    expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
   it("keeps the app open when the community share package request fails", async () => {
