@@ -5,6 +5,7 @@ import {
   addVisibleRecordSelection,
   getVisibleRecordSelectionState,
 } from '@/lib/communityMentorSelection';
+import { resetCommunityMentorCatalogSessionCacheForTests } from '@/lib/communityMentorCatalogCache';
 import { CommunityMentorsPage } from '@/pages/CommunityMentorsPage';
 import type {
   CommunityCatalogDTO,
@@ -195,6 +196,7 @@ const renderPage = () =>
 describe('CommunityMentorsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetCommunityMentorCatalogSessionCacheForTests();
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -206,7 +208,8 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('社区库正在起步')).toBeInTheDocument();
+    expect(await screen.findByText('还没有导师数据')).toBeInTheDocument();
+    expect(screen.getByText('按学校和学院查找导师，预览后导入本地。')).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: '批量贡献第一所学校/学院' }),
     ).toHaveAttribute('href', '/professors?community_contribution=batch');
@@ -214,8 +217,11 @@ describe('CommunityMentorsPage', () => {
       screen.getByRole('link', { name: '批量贡献学校/学院' }),
     ).toHaveAttribute('href', '/professors?community_contribution=batch');
     expect(screen.queryByRole('button', { name: '贡献一位导师' })).not.toBeInTheDocument();
-    expect(apiMocks.getCatalog).toHaveBeenCalledWith(true);
+    expect(apiMocks.getCatalog).toHaveBeenCalledWith(false);
     expect(notificationMocks.notifySuccess).not.toHaveBeenCalled();
+    expect(screen.queryByText('版本化、可追踪来源、导入前逐项确认')).not.toBeInTheDocument();
+    expect(screen.queryByText('数据版本')).not.toBeInTheDocument();
+    expect(screen.queryByText('最后验证缓存')).not.toBeInTheDocument();
   });
 
   it('keeps an offline-cache warning visible instead of relying on a toast', async () => {
@@ -232,7 +238,46 @@ describe('CommunityMentorsPage', () => {
       await screen.findByText('当前显示的是上次验证成功的数据'),
     ).toBeInTheDocument();
     expect(screen.getByText(/网络刷新失败/)).toBeInTheDocument();
-    expect(apiMocks.getCatalog).toHaveBeenCalledWith(true);
+    expect(apiMocks.getCatalog).toHaveBeenNthCalledWith(1, false);
+    await waitFor(() => expect(apiMocks.getCatalog).toHaveBeenCalledWith(true));
+  });
+
+  it('reuses the session catalog immediately when returning to the page', async () => {
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+
+    const firstRender = renderPage();
+    expect(await screen.findByText('示例大学')).toBeInTheDocument();
+    expect(apiMocks.getCatalog).toHaveBeenCalledTimes(1);
+    firstRender.unmount();
+
+    renderPage();
+
+    expect(screen.getByText('示例大学')).toBeInTheDocument();
+    expect(screen.queryByText('正在加载社区导师库…')).not.toBeInTheDocument();
+    expect(apiMocks.getCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps cached data usable while checking for updates in the background', async () => {
+    let resolveRefresh: ((value: CommunityCatalogDTO) => void) | undefined;
+    apiMocks.getCatalog
+      .mockResolvedValueOnce({ ...populatedCatalog, source: 'cache' })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+
+    renderPage();
+
+    expect(await screen.findByText('示例大学')).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.getCatalog).toHaveBeenCalledTimes(2));
+    expect(apiMocks.getCatalog).toHaveBeenNthCalledWith(1, false);
+    expect(apiMocks.getCatalog).toHaveBeenNthCalledWith(2, true);
+    expect(screen.queryByText('正在加载社区导师库…')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '刷新社区目录' })).toBeDisabled();
+
+    resolveRefresh?.(populatedCatalog);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '刷新社区目录' })).toBeEnabled();
+    });
   });
 
   it('explains and blocks a unit that would exceed the 2000-record load limit', async () => {

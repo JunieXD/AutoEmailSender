@@ -17,17 +17,20 @@ import {
   Mail,
   RefreshCcw,
   Search,
-  ShieldCheck,
   Users,
   X,
 } from 'lucide-react';
 import { useNotification } from '@/context/NotificationContext';
 import {
-  getCommunityMentorCatalog,
   importCommunityMentors,
   listCommunityMentors,
   previewCommunityMentorImport,
 } from '@/lib/api/communityMentorsApi';
+import {
+  getCommunityMentorCatalogSessionSnapshot,
+  requestCommunityMentorCatalog,
+  shouldAutomaticallyRefreshCommunityMentorCatalog,
+} from '@/lib/communityMentorCatalogCache';
 import {
   buildCommunityReportClipboard,
   buildCommunityReportUrl,
@@ -254,8 +257,12 @@ const DifferenceField = ({
 
 export const CommunityMentorsPage = () => {
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
-  const [catalog, setCatalog] = useState<CommunityCatalogDTO | null>(null);
-  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalog, setCatalog] = useState<CommunityCatalogDTO | null>(
+    getCommunityMentorCatalogSessionSnapshot,
+  );
+  const [catalogLoading, setCatalogLoading] = useState(
+    () => getCommunityMentorCatalogSessionSnapshot() === null,
+  );
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogKeyword, setCatalogKeyword] = useState('');
@@ -280,12 +287,13 @@ export const CommunityMentorsPage = () => {
     async (refresh: boolean, announceResult = refresh) => {
       if (refresh) {
         setCatalogRefreshing(true);
-      } else {
+      }
+      if (!getCommunityMentorCatalogSessionSnapshot()) {
         setCatalogLoading(true);
       }
       setCatalogError(null);
       try {
-        const nextCatalog = await getCommunityMentorCatalog(refresh);
+        const nextCatalog = await requestCommunityMentorCatalog(refresh);
         setCatalog((previous) => {
           if (previous && previous.dataset_version !== nextCatalog.dataset_version) {
             setSelectedUnitPaths([]);
@@ -297,17 +305,19 @@ export const CommunityMentorsPage = () => {
           }
           return nextCatalog;
         });
-        if (nextCatalog.warning) {
+        if (nextCatalog.warning && announceResult) {
           notifyWarning('正在使用社区缓存', nextCatalog.warning);
         } else if (announceResult) {
           notifySuccess('社区目录已刷新', `当前共有 ${nextCatalog.record_count} 位导师。`);
         }
+        return nextCatalog;
       } catch (error) {
         const message = getErrorMessage(error, '社区导师库暂时无法读取');
         setCatalogError(message);
         if (announceResult) {
           notifyError('刷新社区目录失败', message);
         }
+        return null;
       } finally {
         setCatalogLoading(false);
         setCatalogRefreshing(false);
@@ -317,7 +327,16 @@ export const CommunityMentorsPage = () => {
   );
 
   useEffect(() => {
-    void loadCatalog(true, false);
+    const bootstrapCatalog = async () => {
+      const initialCatalog = getCommunityMentorCatalogSessionSnapshot()
+        ?? await loadCatalog(false, false);
+      if (!initialCatalog || !shouldAutomaticallyRefreshCommunityMentorCatalog(initialCatalog)) {
+        return;
+      }
+      void loadCatalog(true, false);
+    };
+
+    void bootstrapCatalog();
   }, [loadCatalog]);
 
   const filteredUniversities = useMemo(() => {
@@ -615,59 +634,34 @@ export const CommunityMentorsPage = () => {
   return (
     <main className="mx-auto w-full max-w-7xl px-6 py-8">
       <section className="overflow-hidden rounded-[32px] border border-orange-100 bg-[radial-gradient(circle_at_top_right,rgba(251,146,60,0.18),transparent_34%),linear-gradient(135deg,#fffaf3,#ffffff)] p-6 shadow-sm md:p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-white/80 px-3 py-1 text-xs font-semibold text-orange-700">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              版本化、可追踪来源、导入前逐项确认
-            </div>
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-stone-950">社区导师库</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-stone-600">
-              在软件内浏览并导入大家共享的高校导师公开信息。社区数据只补全本地空字段；有冲突时由你选择，个人备注、标签、任务和发送记录不会进入社区流程。
-            </p>
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-stone-950">社区导师库</h1>
+            <p className="mt-2 text-sm text-stone-600">按学校和学院查找导师，预览后导入本地。</p>
+            {catalog && catalog.record_count > 0 ? (
+              <p className="mt-3 text-xs font-medium text-orange-700">已收录 {catalog.record_count} 位导师</p>
+            ) : null}
           </div>
-          <div className="flex max-w-md flex-col gap-2 lg:items-end">
-            <div className="flex flex-wrap gap-3">
-              <Link
-                to="/professors?community_contribution=batch"
-                className="ui-btn-primary"
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                批量贡献学校/学院
-              </Link>
-              <button
-                type="button"
-                disabled={catalogRefreshing}
-                onClick={() => void loadCatalog(true)}
-                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <RefreshCcw className={clsx('h-4 w-4', catalogRefreshing && 'animate-spin')} />
-                刷新社区目录
-              </button>
-            </div>
-            <p className="text-xs leading-5 text-stone-500 lg:text-right">
-              在导师管理中按学校或学院筛选并全选，软件会生成安全共享包并打开 GitHub 批量投稿表。
-            </p>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              to="/professors?community_contribution=batch"
+              className="ui-btn-primary"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              批量贡献学校/学院
+            </Link>
+            <button
+              type="button"
+              aria-label="刷新社区目录"
+              disabled={catalogRefreshing}
+              onClick={() => void loadCatalog(true)}
+              className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCcw className={clsx('h-4 w-4', catalogRefreshing && 'animate-spin')} />
+              刷新
+            </button>
           </div>
         </div>
-        {catalog ? (
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/80 bg-white/75 p-4">
-              <div className="text-xs text-stone-500">已发布导师</div>
-              <div className="mt-1 text-2xl font-semibold text-stone-900">{catalog.record_count}</div>
-            </div>
-            <div className="rounded-2xl border border-white/80 bg-white/75 p-4">
-              <div className="text-xs text-stone-500">数据版本</div>
-              <div className="mt-1 truncate text-sm font-semibold text-stone-900" title={catalog.dataset_version}>
-                {catalog.dataset_version}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-white/80 bg-white/75 p-4">
-              <div className="text-xs text-stone-500">最后验证缓存</div>
-              <div className="mt-1 text-sm font-semibold text-stone-900">{formatDate(catalog.verified_at)}</div>
-            </div>
-          </div>
-        ) : null}
       </section>
 
       {catalog?.warning ? (
@@ -713,10 +707,10 @@ export const CommunityMentorsPage = () => {
         </section>
       ) : null}
 
-      {catalogLoading ? (
+      {catalogLoading && !catalog ? (
         <div className="mt-8 flex min-h-64 items-center justify-center rounded-[28px] border border-stone-200 bg-white">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          <span className="ml-3 text-sm text-stone-600">正在验证社区目录…</span>
+          <span className="ml-3 text-sm text-stone-600">正在加载社区导师库…</span>
         </div>
       ) : catalogError && !catalog ? (
         <div className="mt-8 rounded-[28px] border border-red-200 bg-red-50 p-8 text-center">
@@ -730,10 +724,8 @@ export const CommunityMentorsPage = () => {
       ) : catalog && catalog.universities.length === 0 ? (
         <div className="mt-8 rounded-[32px] border border-dashed border-orange-200 bg-white p-10 text-center">
           <Inbox className="mx-auto h-10 w-10 text-orange-400" />
-          <h2 className="mt-4 text-xl font-semibold text-stone-900">社区库正在起步</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm leading-7 text-stone-600">
-            当前生产目录已经可以安全使用，但还没有发布导师数据。第一批投稿仍会轻量人工确认学校、学院命名和官方来源。
-          </p>
+          <h2 className="mt-4 text-xl font-semibold text-stone-900">还没有导师数据</h2>
+          <p className="mt-2 text-sm text-stone-600">欢迎贡献第一个学校或学院。</p>
           <Link
             to="/professors?community_contribution=batch"
             className="ui-btn-primary mt-6"
