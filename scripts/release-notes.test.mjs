@@ -31,9 +31,8 @@ describe("release notes generator", () => {
     expect(notes).toContain(
       "[导师抓取 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)",
     );
-    expect(notes).toContain(
-      "[`crawl-mentors-to-xlsx-v2.0.2.zip`](https://github.com/JunieXD/AutoEmailSender/releases/download/v2.0.2/crawl-mentors-to-xlsx-v2.0.2.zip)",
-    );
+    expect(notes).not.toContain("crawl-mentors-to-xlsx-v2.0.2.zip");
+    expect(notes).not.toContain("也可以直接下载");
     expect(notes.lastIndexOf("导师抓取 Skill 安装与使用教程")).toBeGreaterThan(
       notes.lastIndexOf("## 自动更新"),
     );

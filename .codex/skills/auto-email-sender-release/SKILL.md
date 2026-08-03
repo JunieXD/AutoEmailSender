@@ -86,7 +86,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 - Keep the generated `## 安装说明` and `## 自动更新` sections in the final public release note.
 - Keep `## 导师抓取 Skill` after `## 自动更新`, with the clickable public guide URL `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`.
-- Name the standalone Skill asset exactly `crawl-mentors-to-xlsx-v<version>.zip`, and keep that exact versioned filename in the generated announcement.
+- Name the standalone Skill asset exactly `crawl-mentors-to-xlsx-v<version>.zip`, but do not add its direct download link to the generated announcement; direct users to the installation guide instead.
 - Keep the exact package names:
   - Windows: `AutoEmailSender-Setup-x.y.z.exe`
   - macOS Apple Silicon: `AutoEmailSender-x.y.z-arm64.dmg`

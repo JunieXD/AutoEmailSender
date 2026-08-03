@@ -34,7 +34,6 @@ export function buildReleaseNotes(version) {
     "## 导师抓取 Skill",
     "",
     "- 想用 Codex 或 Claude Code 从学校官网整理导师信息并生成导入表？查看[导师抓取 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)。",
-    `- 也可以直接下载 [\`crawl-mentors-to-xlsx-v${normalizedVersion}.zip\`](https://github.com/JunieXD/AutoEmailSender/releases/download/v${normalizedVersion}/crawl-mentors-to-xlsx-v${normalizedVersion}.zip) 手动安装。`,
     "",
   ].join("\n");
 }

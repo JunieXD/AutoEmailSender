@@ -51,7 +51,10 @@ assert_contains "$notes" "macOS Apple Silicon：下载 \`AutoEmailSender-1.0.1-a
 assert_contains "$notes" "系统设置 > 隐私与安全性" "公告模板缺少 macOS 首次打开说明。"
 assert_contains "$notes" "macOS Apple Silicon：支持自动检查并在应用内安装更新" "公告模板缺少 macOS 自动更新说明。"
 assert_contains "$notes" "导师抓取 Skill 安装与使用教程" "公告模板缺少 Skill 安装教程入口。"
-assert_contains "$notes" "crawl-mentors-to-xlsx-v1.0.1.zip" "公告模板缺少 Skill ZIP 附件名。"
+if [[ "$notes" == *"crawl-mentors-to-xlsx-v1.0.1.zip"* ]]; then
+  printf '%s\n%s\n' "公告模板不应该包含 Skill ZIP 下载链接。" "$notes" >&2
+  exit 1
+fi
 if [[ "$notes" == *"fix(更新): 修复公告弹窗高度"* ]]; then
   printf '%s\n%s\n' "公告模板不应该直接包含 commit subject。" "$notes" >&2
   exit 1
