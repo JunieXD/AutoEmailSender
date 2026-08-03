@@ -28,6 +28,7 @@ from app.core.time import utc_now
 from app.models import Professor, ProfessorCommunityLink
 from app.schemas.community_mentor import (
     COMMUNITY_IMPORT_FIELDS,
+    MAX_COMMUNITY_LOADED_RECORDS,
     CommunityCatalogDocument,
     CommunityFieldComparisonRead,
     CommunityImportItemPayload,
@@ -61,8 +62,10 @@ CACHE_INDEX_NAME = "cache-index.json"
 QUERY_IN_BATCH_SIZE = 10_000
 COMMUNITY_CACHE_MAX_BYTES = 500 * 1024 * 1024
 COMMUNITY_CACHE_RETAINED_VERSIONS = 2
+MAX_LOADED_RECORDS = MAX_COMMUNITY_LOADED_RECORDS
 SAFE_SHARE_COLUMNS = list(COMMUNITY_IMPORT_FIELDS)
 FORMULA_PREFIXES = ("=", "+", "-", "@")
+URL_IMPORT_FIELDS = {"profile_url", "source_url"}
 
 FIELD_LABELS = {
     "name": "姓名",
@@ -112,6 +115,16 @@ class CommunityRecordBundle:
     source: str
     stale: bool
     warning: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CommunityCatalogUnitContext:
+    university_id: str
+    university_name: str
+    unit_id: str
+    unit_name: str
+    unit_type: str
+    record_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,12 +240,20 @@ class CommunityMentorDataService:
             )
 
         catalog_units = {
-            unit.path: (university.id, unit.id, unit.record_count)
+            unit.path: CommunityCatalogUnitContext(
+                university_id=university.id,
+                university_name=university.name,
+                unit_id=unit.id,
+                unit_name=unit.name,
+                unit_type=unit.type,
+                record_count=unit.record_count,
+            )
             for university in bundle.catalog.universities
             for unit in university.units
         }
         manifest_files = {item.path: item for item in bundle.manifest.files}
         total_declared_bytes = 0
+        total_selected_records = 0
         for path in unit_paths:
             self._validate_data_path(path)
             if path not in catalog_units or path not in manifest_files:
@@ -241,6 +262,13 @@ class CommunityMentorDataService:
                     code="COMMUNITY_DATA_PATH_INVALID",
                 )
             total_declared_bytes += manifest_files[path].bytes
+            total_selected_records += catalog_units[path].record_count
+        if total_selected_records > MAX_LOADED_RECORDS:
+            raise CommunityDataError(
+                f"所选学院共有 {total_selected_records} 位导师，一次最多加载 "
+                f"{MAX_LOADED_RECORDS} 位；请减少学院后分批处理",
+                code="COMMUNITY_DATA_TOO_LARGE",
+            )
         if total_declared_bytes > TOTAL_SELECTED_SHARDS_MAX_BYTES:
             raise CommunityDataError(
                 "一次选择的学院数据过大，请减少学院数量后重试",
@@ -264,11 +292,14 @@ class CommunityMentorDataService:
                     f"学院分片版本不一致：{path}",
                     code="COMMUNITY_DATA_INVALID",
                 )
-            expected_university_id, expected_unit_id, expected_count = catalog_units[path]
+            expected = catalog_units[path]
             if (
-                shard.university.id != expected_university_id
-                or shard.unit.id != expected_unit_id
-                or len(shard.records) != expected_count
+                shard.university.id != expected.university_id
+                or shard.university.name != expected.university_name
+                or shard.unit.id != expected.unit_id
+                or shard.unit.name != expected.unit_name
+                or shard.unit.type != expected.unit_type
+                or len(shard.records) != expected.record_count
                 or shard.generated_at != bundle.catalog.generated_at
             ):
                 raise CommunityDataError(
@@ -276,6 +307,11 @@ class CommunityMentorDataService:
                     code="COMMUNITY_DATA_INVALID",
                 )
             for shard_record in shard.records:
+                self._validate_shard_record_membership(
+                    shard_record,
+                    expected=expected,
+                    path=path,
+                )
                 revocation = revocations_by_id.get(shard_record.id)
                 record = (
                     shard_record.model_copy(update={"status": revocation.status})
@@ -312,6 +348,31 @@ class CommunityMentorDataService:
             stale=bundle.stale,
             warning=bundle.warning,
         )
+
+    @staticmethod
+    def _validate_shard_record_membership(
+        record: CommunityMentorRecord,
+        *,
+        expected: CommunityCatalogUnitContext,
+        path: str,
+    ) -> None:
+        primary_affiliation = next(
+            affiliation for affiliation in record.affiliations if affiliation.is_primary
+        )
+        unit_projection_matches = (
+            expected.unit_type != "school" or record.school == expected.unit_name
+        ) and (
+            expected.unit_type != "department" or record.department == expected.unit_name
+        )
+        if (
+            record.university != expected.university_name
+            or primary_affiliation.organization_id != expected.unit_id
+            or not unit_projection_matches
+        ):
+            raise CommunityDataError(
+                f"导师 {record.name} 不属于目录声明的学校或学院分片：{path}",
+                code="COMMUNITY_DATA_INVALID",
+            )
 
     async def _refresh_catalog_from_base(self, base_url: str) -> CommunityCatalogBundle:
         latest_payload = await self._download_bytes(base_url, "latest.json", LATEST_MAX_BYTES)
@@ -431,7 +492,13 @@ class CommunityMentorDataService:
             raise CommunityDataError("本地社区目录缓存核验时间缺少时区")
 
         version_root = self.cache_directory / "datasets" / dataset_version
-        latest_payload = self._read_cache_file(self.cache_directory / "latest.json", LATEST_MAX_BYTES)
+        version_latest_path = version_root / "latest.json"
+        latest_path = (
+            version_latest_path
+            if version_latest_path.is_file()
+            else self.cache_directory / "latest.json"
+        )
+        latest_payload = self._read_cache_file(latest_path, LATEST_MAX_BYTES)
         manifest_payload = self._read_cache_file(
             version_root / "manifest.json",
             MANIFEST_MAX_BYTES,
@@ -706,10 +773,6 @@ class CommunityMentorDataService:
         verified_at: datetime,
     ) -> None:
         version_root = self.cache_directory / "datasets" / version
-        self._write_atomic(version_root / "manifest.json", manifest_payload)
-        self._write_atomic(version_root / "catalog.json", catalog_payload)
-        self._write_atomic(version_root / "revocations.json", revocations_payload)
-        self._write_atomic(self.cache_directory / "latest.json", latest_payload)
         index_payload = json.dumps(
             {
                 "schema_version": 1,
@@ -721,7 +784,18 @@ class CommunityMentorDataService:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        self._write_atomic(self.cache_directory / CACHE_INDEX_NAME, index_payload)
+        try:
+            self._write_atomic(version_root / "latest.json", latest_payload)
+            self._write_atomic(version_root / "manifest.json", manifest_payload)
+            self._write_atomic(version_root / "catalog.json", catalog_payload)
+            self._write_atomic(version_root / "revocations.json", revocations_payload)
+            # cache-index.json 是唯一的“当前版本”指针，必须最后提交。
+            self._write_atomic(self.cache_directory / CACHE_INDEX_NAME, index_payload)
+        except OSError as exc:
+            raise CommunityDataError(
+                "本地社区缓存写入失败，仍保留上一个完整版本",
+                code="COMMUNITY_DATA_CACHE_WRITE_FAILED",
+            ) from exc
         self._prune_cache(current_version=version)
 
     def _prune_cache(self, *, current_version: str) -> None:
@@ -841,11 +915,16 @@ class CommunityMentorDataService:
 
     @staticmethod
     def _write_atomic(path: Path, payload: bytes) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             temporary.write_bytes(payload)
             os.replace(temporary, path)
+        except OSError as exc:
+            raise CommunityDataError(
+                f"本地社区缓存写入失败：{path.name}",
+                code="COMMUNITY_DATA_CACHE_WRITE_FAILED",
+            ) from exc
         finally:
             try:
                 temporary.unlink(missing_ok=True)
@@ -898,12 +977,44 @@ def _normalize_string(value: str) -> str:
     return " ".join(normalized.split())
 
 
+def _normalize_url(value: str) -> str:
+    stripped = value.strip()
+    try:
+        parsed = urlsplit(stripped)
+        port = parsed.port
+    except ValueError:
+        return stripped
+    if not parsed.scheme or parsed.hostname is None:
+        return stripped
+
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname.lower()
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    userinfo = ""
+    if "@" in parsed.netloc:
+        userinfo = f"{parsed.netloc.rpartition('@')[0]}@"
+    default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    port_suffix = "" if port is None or default_port else f":{port}"
+    return urlunsplit(
+        (
+            scheme,
+            f"{userinfo}{hostname}{port_suffix}",
+            parsed.path or "/",
+            parsed.query,
+            parsed.fragment,
+        ),
+    )
+
+
 def _comparison_value(field: str, value: Any) -> Any:
     if value is None:
         return None
     if field == "recent_papers":
         return tuple(_normalize_string(str(item)) for item in value if str(item).strip())
     if isinstance(value, str):
+        if field in URL_IMPORT_FIELDS:
+            return _normalize_url(value) or None
         normalized = _normalize_string(value)
         if field == "email":
             return normalized.lower()
@@ -993,6 +1104,42 @@ def _build_field_comparisons(
             ),
         )
     return comparisons
+
+
+def _build_comparison_token(
+    *,
+    record: CommunityMentorRecord,
+    category: str,
+    professor: Professor | None,
+    link: ProfessorCommunityLink | None,
+    linked: bool,
+    identity_conflict: bool,
+    match_reason: str | None,
+    import_blocked: bool,
+    import_blocked_reason: str | None,
+    fields: list[CommunityFieldComparisonRead],
+) -> str:
+    payload = {
+        "record": record.model_dump(mode="json"),
+        "category": category,
+        "local_professor_id": professor.id if professor is not None else None,
+        "local_archived": bool(professor and professor.archived_at is not None),
+        "linked": linked,
+        "identity_conflict": identity_conflict,
+        "match_reason": match_reason,
+        "import_blocked": import_blocked,
+        "import_blocked_reason": import_blocked_reason,
+        "link_dataset_version": link.dataset_version if link is not None else None,
+        "link_remote_status": link.remote_status if link is not None else None,
+        "fields": [field.model_dump(mode="json") for field in fields],
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 async def build_community_comparisons(
@@ -1134,9 +1281,22 @@ async def build_community_comparisons(
             category = "fill_available"
         else:
             category = "linked_unchanged"
+        comparison_token = _build_comparison_token(
+            record=record,
+            category=category,
+            professor=professor,
+            link=link,
+            linked=linked,
+            identity_conflict=identity_conflict,
+            match_reason=match_reason,
+            import_blocked=import_blocked,
+            import_blocked_reason=import_blocked_reason,
+            fields=fields,
+        )
         results.append(
             CommunityMentorComparisonRead(
                 record=record,
+                comparison_token=comparison_token,
                 category=category,
                 local_professor_id=professor.id if professor is not None else None,
                 local_professor_name=professor.name if professor is not None else None,
@@ -1217,6 +1377,12 @@ async def import_community_records(
                 f"所选导师不在当前学院数据中：{item.community_record_id}",
                 code="COMMUNITY_DATA_SELECTION_INVALID",
             )
+        if item.comparison_token != comparison.comparison_token:
+            raise CommunityDataError(
+                f"导师 {comparison.record.name} 的本地信息在预览后发生了变化；"
+                "请关闭当前预览并重新预览后再导入",
+                code="COMMUNITY_DATA_PREVIEW_STALE",
+            )
         if comparison.category == "retired_or_revoked" or comparison.record.status != "active":
             raise CommunityDataError(
                 f"导师 {comparison.record.name} 已退休、离职或撤销，不能作为新数据导入",
@@ -1244,6 +1410,23 @@ async def import_community_records(
             if comparison.local_professor_id is not None
             else None
         )
+        if professor is not None:
+            await session.refresh(professor)
+            local_values = professor_values(professor)
+            preview_fields = {field.field: field for field in comparison.fields}
+            local_changed_after_comparison = any(
+                not _values_equal(field, local_values[field], preview_fields[field].local_value)
+                for field in COMMUNITY_IMPORT_FIELDS
+            )
+            if (
+                local_changed_after_comparison
+                or bool(professor.archived_at is not None) != comparison.local_archived
+            ):
+                raise CommunityDataError(
+                    f"导师 {comparison.record.name} 的本地信息刚刚发生了变化；"
+                    "请关闭当前预览并重新预览后再导入",
+                    code="COMMUNITY_DATA_PREVIEW_STALE",
+                )
         remote_values = community_record_values(comparison.record)
         action: str
         if professor is None:
@@ -1267,9 +1450,26 @@ async def import_community_records(
                 )
             changed = False
             field_comparisons = {field.field: field for field in comparison.fields}
+            resolved_choices = {
+                field: item.field_choices.get(
+                    field,
+                    field_comparisons[field].suggested_choice,
+                )
+                for field in COMMUNITY_IMPORT_FIELDS
+            }
+            for field, choice in resolved_choices.items():
+                if choice != "community":
+                    continue
+                next_value = remote_values[field]
+                current_value = getattr(professor, field)
+                if _is_empty(field, next_value) and not _is_empty(field, current_value):
+                    raise CommunityDataError(
+                        f"导师 {comparison.record.name} 的社区{FIELD_LABELS[field]}为空，"
+                        "不能清空本地已有内容；请选择保留本地后重试",
+                        code="COMMUNITY_DATA_FIELD_CHOICE_INVALID",
+                    )
             for field in COMMUNITY_IMPORT_FIELDS:
-                field_comparison = field_comparisons[field]
-                choice = item.field_choices.get(field, field_comparison.suggested_choice)
+                choice = resolved_choices[field]
                 if choice != "community":
                     continue
                 next_value = remote_values[field]

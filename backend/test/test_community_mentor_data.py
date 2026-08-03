@@ -22,6 +22,7 @@ from app.core.migrations import get_alembic_config
 from app.models import Base, Professor, ProfessorCommunityLink
 from app.schemas.community_mentor import (
     CommunityImportItemPayload,
+    CommunityMentorComparisonRead,
     CommunityMentorRecord,
     CommunityRevocationRecord,
 )
@@ -202,6 +203,18 @@ def _transport_for_payloads(payloads: dict[str, bytes]) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+def _import_item(
+    comparison: CommunityMentorComparisonRead,
+    **overrides: object,
+) -> CommunityImportItemPayload:
+    payload: dict[str, object] = {
+        "community_record_id": comparison.record.id,
+        "comparison_token": comparison.comparison_token,
+    }
+    payload.update(overrides)
+    return CommunityImportItemPayload.model_validate(payload)
+
+
 class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -250,6 +263,48 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached.source, "cache")
         self.assertTrue(cached.stale)
         self.assertIn("网络刷新失败", cached.warning or "")
+
+    async def test_cache_index_commit_failure_keeps_previous_version_readable(self) -> None:
+        payloads = _dataset_payloads()
+        service = self._service(_transport_for_payloads(payloads))
+        await service.get_catalog(force_refresh=True)
+        original_write_atomic = service._write_atomic
+
+        def fail_before_index_commit(path: Path, payload: bytes) -> None:
+            if path.name == "cache-index.json":
+                raise OSError("simulated interrupted cache switch")
+            original_write_atomic(path, payload)
+
+        version_root = f"/mentor-data/datasets/{DATASET_VERSION}"
+        with patch.object(service, "_write_atomic", side_effect=fail_before_index_commit):
+            with self.assertRaisesRegex(CommunityDataError, "保留上一个完整版本"):
+                service._cache_catalog(
+                    latest_payload=payloads["/mentor-data/latest.json"],
+                    manifest_payload=payloads[f"{version_root}/manifest.json"],
+                    catalog_payload=payloads[f"{version_root}/catalog.json"],
+                    revocations_payload=payloads[f"{version_root}/revocations.json"],
+                    version="2026-08-03T000001Z-bbbbbbbbbbbb",
+                    base_url=BASE_URL,
+                    verified_at=datetime.now(UTC),
+                )
+
+        cached = await service.get_catalog(force_refresh=False)
+        self.assertEqual(cached.catalog.dataset_version, DATASET_VERSION)
+
+    async def test_reads_legacy_cache_with_root_latest_file(self) -> None:
+        service = self._service(_transport_for_payloads(_dataset_payloads()))
+        await service.get_catalog(force_refresh=True)
+        version_latest = (
+            self.cache_directory / "datasets" / DATASET_VERSION / "latest.json"
+        )
+        legacy_latest = self.cache_directory / "latest.json"
+        legacy_latest.write_bytes(version_latest.read_bytes())
+        version_latest.unlink()
+
+        cached = await service.get_catalog(force_refresh=False)
+
+        self.assertEqual(cached.catalog.dataset_version, DATASET_VERSION)
+        self.assertEqual(cached.source, "cache")
 
     async def test_rejects_hash_mismatch_before_caching(self) -> None:
         payloads = _dataset_payloads()
@@ -303,6 +358,39 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
                 dataset_version=DATASET_VERSION,
                 unit_paths=[SHARD_PATH],
             )
+
+    async def test_rejects_record_that_does_not_belong_to_shard_university(self) -> None:
+        wrong_record = _record_payload()
+        wrong_affiliation = dict(wrong_record["affiliations"][0])  # type: ignore[index]
+        wrong_affiliation["university"] = "另一所大学"
+        wrong_record.update(
+            university="另一所大学",
+            affiliations=[wrong_affiliation],
+        )
+        service = self._service(
+            _transport_for_payloads(_dataset_payloads(records=[wrong_record])),
+        )
+        await service.get_catalog(force_refresh=True)
+
+        with self.assertRaisesRegex(CommunityDataError, "不属于目录声明"):
+            await service.load_records(
+                dataset_version=DATASET_VERSION,
+                unit_paths=[SHARD_PATH],
+            )
+
+    async def test_rejects_unit_selection_above_record_limit_before_downloading(self) -> None:
+        service = self._service(_transport_for_payloads(_dataset_payloads()))
+        await service.get_catalog(force_refresh=True)
+
+        with patch("app.services.community_mentor_data.MAX_LOADED_RECORDS", 0):
+            with self.assertRaises(CommunityDataError) as raised:
+                await service.load_records(
+                    dataset_version=DATASET_VERSION,
+                    unit_paths=[SHARD_PATH],
+                )
+
+        self.assertEqual(raised.exception.code, "COMMUNITY_DATA_TOO_LARGE")
+        self.assertIn("共有 1 位导师", str(raised.exception))
 
     def test_revocation_record_rejects_active_status(self) -> None:
         with self.assertRaises(ValueError):
@@ -376,7 +464,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 dataset_version=DATASET_VERSION,
                 comparisons=comparisons,
-                items=[CommunityImportItemPayload(community_record_id=record.id)],
+                items=[_import_item(comparisons[0])],
             )
             await session.commit()
 
@@ -413,7 +501,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 dataset_version=DATASET_VERSION,
                 comparisons=comparisons,
-                items=[CommunityImportItemPayload(community_record_id=record.id)],
+                items=[_import_item(comparisons[0])],
             )
             await session.commit()
             await session.refresh(professor)
@@ -441,7 +529,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
                     session,
                     dataset_version=DATASET_VERSION,
                     comparisons=comparisons,
-                    items=[CommunityImportItemPayload(community_record_id=record.id)],
+                    items=[_import_item(comparisons[0])],
                 )
 
     async def test_three_way_comparison_distinguishes_local_remote_and_conflict(self) -> None:
@@ -475,6 +563,84 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(states["title"], "conflict")
         self.assertEqual(states["research_direction"], "remote_modified")
         self.assertEqual(comparison.category, "conflict")
+
+    async def test_old_preview_cannot_overwrite_a_new_local_edit(self) -> None:
+        record = CommunityMentorRecord.model_validate(_record_payload())
+        async with self.session_factory() as session:
+            professor = Professor(**community_record_values(record))
+            session.add(professor)
+            await session.flush()
+            preview_comparison = (await build_community_comparisons(session, [record]))[0]
+
+            professor.department = "用户刚刚修改的系所"
+            await session.flush()
+            current_comparison = (await build_community_comparisons(session, [record]))[0]
+
+            with self.assertRaises(CommunityDataError) as raised:
+                await import_community_records(
+                    session,
+                    dataset_version=DATASET_VERSION,
+                    comparisons=[current_comparison],
+                    items=[_import_item(preview_comparison)],
+                )
+
+            self.assertEqual(professor.department, "用户刚刚修改的系所")
+
+        self.assertEqual(raised.exception.code, "COMMUNITY_DATA_PREVIEW_STALE")
+        self.assertIn("重新预览", str(raised.exception))
+
+    async def test_community_empty_value_cannot_clear_local_field(self) -> None:
+        raw_record = _record_payload(department=None)
+        primary_affiliation = dict(raw_record["affiliations"][0])  # type: ignore[index]
+        primary_affiliation["department"] = None
+        raw_record["affiliations"] = [primary_affiliation]
+        record = CommunityMentorRecord.model_validate(raw_record)
+        async with self.session_factory() as session:
+            local_values = community_record_values(record)
+            local_values["department"] = "本地保留的系所"
+            professor = Professor(**local_values)
+            session.add(professor)
+            await session.flush()
+            comparison = (await build_community_comparisons(session, [record]))[0]
+            department = next(
+                field for field in comparison.fields if field.field == "department"
+            )
+            self.assertEqual(department.state, "local_only")
+
+            with self.assertRaises(CommunityDataError) as raised:
+                await import_community_records(
+                    session,
+                    dataset_version=DATASET_VERSION,
+                    comparisons=[comparison],
+                    items=[
+                        _import_item(
+                            comparison,
+                            field_choices={"department": "community"},
+                        ),
+                    ],
+                )
+
+            self.assertEqual(professor.department, "本地保留的系所")
+
+        self.assertEqual(raised.exception.code, "COMMUNITY_DATA_FIELD_CHOICE_INVALID")
+        self.assertIn("不能清空本地已有内容", str(raised.exception))
+
+    async def test_url_comparison_preserves_path_case(self) -> None:
+        record = CommunityMentorRecord.model_validate(
+            _record_payload(profile_url="https://EXAMPLE.edu/Faculty/Zhang"),
+        )
+        async with self.session_factory() as session:
+            professor = Professor(**community_record_values(record))
+            professor.profile_url = "https://example.edu/faculty/zhang"
+            session.add(professor)
+            await session.flush()
+
+            comparison = (await build_community_comparisons(session, [record]))[0]
+
+        profile_url = next(
+            field for field in comparison.fields if field.field == "profile_url"
+        )
+        self.assertEqual(profile_url.state, "conflict")
 
     async def test_email_match_already_linked_to_another_record_is_reported_as_duplicate(self) -> None:
         record = CommunityMentorRecord.model_validate(
@@ -514,8 +680,8 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
                     dataset_version=DATASET_VERSION,
                     comparisons=[comparison],
                     items=[
-                        CommunityImportItemPayload(
-                            community_record_id=record.id,
+                        _import_item(
+                            comparison,
                             confirm_identity_match=True,
                         ),
                     ],
@@ -604,7 +770,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
                     session,
                     dataset_version=DATASET_VERSION,
                     comparisons=[comparison],
-                    items=[CommunityImportItemPayload(community_record_id=comparison.record.id)],
+                    items=[_import_item(comparison)],
                 )
 
         self.assertEqual(raised.exception.code, "COMMUNITY_DATA_LIFECYCLE_BLOCKED")
@@ -811,6 +977,7 @@ class CommunityApiTests(unittest.TestCase):
             json={**selection, "record_ids": ["mentor_example0001"]},
         )
         self.assertEqual(preview_response.status_code, 200, msg=preview_response.text)
+        preview_comparison = preview_response.json()["records"][0]
 
         import_response = self.client.post(
             "/api/community-mentors/import",
@@ -819,6 +986,7 @@ class CommunityApiTests(unittest.TestCase):
                 "items": [
                     {
                         "community_record_id": "mentor_example0001",
+                        "comparison_token": preview_comparison["comparison_token"],
                         "field_choices": {},
                         "confirm_identity_match": False,
                     },
@@ -841,6 +1009,46 @@ class CommunityApiTests(unittest.TestCase):
             recheck_response.json()["records"][0]["category"],
             "linked_unchanged",
         )
+
+        connection = sqlite3.connect(self.database_path)
+        try:
+            connection.execute(
+                "UPDATE professor_community_links SET dataset_version = ?",
+                ("previous-version",),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        linked_preview_response = self.client.post(
+            "/api/community-mentors/preview",
+            json={**selection, "record_ids": ["mentor_example0001"]},
+        )
+        self.assertEqual(
+            linked_preview_response.status_code,
+            200,
+            msg=linked_preview_response.text,
+        )
+        linked_comparison = linked_preview_response.json()["records"][0]
+        linked_import_response = self.client.post(
+            "/api/community-mentors/import",
+            json={
+                **selection,
+                "items": [
+                    {
+                        "community_record_id": "mentor_example0001",
+                        "comparison_token": linked_comparison["comparison_token"],
+                        "field_choices": {},
+                        "confirm_identity_match": False,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(
+            linked_import_response.status_code,
+            200,
+            msg=linked_import_response.text,
+        )
+        self.assertEqual(linked_import_response.json()["linked_count"], 1)
 
 
 if __name__ == "__main__":

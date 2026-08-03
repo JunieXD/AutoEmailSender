@@ -14,6 +14,7 @@ ORGANIZATION_ID_PATTERN = r"^org_[a-z0-9][a-z0-9_-]{2,63}$"
 AFFILIATION_ID_PATTERN = r"^aff_[a-z0-9][a-z0-9_-]{7,63}$"
 DATA_FILE_PATTERN = r"^data/[a-z0-9_-]+/[a-z0-9_-]+\.json$"
 MANIFEST_FILE_PATTERN = r"^(catalog|revocations|data/[a-z0-9_-]+/[a-z0-9_-]+)\.json$"
+MAX_COMMUNITY_LOADED_RECORDS = 2_000
 
 COMMUNITY_IMPORT_FIELDS = (
     "name",
@@ -134,6 +135,7 @@ class CommunityCatalogDocument(CommunityDatasetSchema):
     @model_validator(mode="after")
     def _validate_catalog_counts_and_paths(self) -> "CommunityCatalogDocument":
         university_ids: set[str] = set()
+        unit_ids: set[str] = set()
         paths: set[str] = set()
         calculated_total = 0
         for university in self.universities:
@@ -142,12 +144,15 @@ class CommunityCatalogDocument(CommunityDatasetSchema):
             university_ids.add(university.id)
             unit_total = 0
             for unit in university.units:
+                if unit.id in unit_ids:
+                    raise ValueError("Catalog 包含重复学院 ID")
+                unit_ids.add(unit.id)
                 if unit.path in paths:
                     raise ValueError("Catalog 包含重复学院分片路径")
                 paths.add(unit.path)
-                expected_prefix = f"data/{university.id}/"
-                if not unit.path.startswith(expected_prefix):
-                    raise ValueError("Catalog 学校 ID 与学院分片路径不一致")
+                expected_path = f"data/{university.id}/{unit.id}.json"
+                if unit.path != expected_path:
+                    raise ValueError("Catalog 学校或学院 ID 与分片路径不一致")
                 unit_total += unit.record_count
             if unit_total != university.record_count:
                 raise ValueError("Catalog 学校记录数与学院合计不一致")
@@ -310,7 +315,7 @@ class CommunityShardDocument(CommunityDatasetSchema):
     generated_at: datetime
     university: CommunityShardOrganization
     unit: CommunityShardUnit
-    records: list[CommunityMentorRecord] = Field(max_length=50_000)
+    records: list[CommunityMentorRecord] = Field(max_length=MAX_COMMUNITY_LOADED_RECORDS)
 
     @model_validator(mode="after")
     def _validate_unique_records(self) -> "CommunityShardDocument":
@@ -417,6 +422,7 @@ class CommunityFieldComparisonRead(ApiSchema):
 
 class CommunityMentorComparisonRead(ApiSchema):
     record: CommunityMentorRecord
+    comparison_token: str = Field(pattern=r"^[a-f0-9]{64}$")
     category: CommunityComparisonCategory
     local_professor_id: int | None
     local_professor_name: str | None
@@ -440,6 +446,7 @@ class CommunityRecordsRead(ApiSchema):
 
 class CommunityImportItemPayload(BaseModel):
     community_record_id: str = Field(pattern=MENTOR_ID_PATTERN)
+    comparison_token: str = Field(pattern=r"^[a-f0-9]{64}$")
     field_choices: dict[str, CommunityFieldChoice] = Field(default_factory=dict)
     confirm_identity_match: bool = False
 

@@ -1,7 +1,10 @@
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addVisibleRecordSelection } from '@/lib/communityMentorSelection';
+import {
+  addVisibleRecordSelection,
+  getVisibleRecordSelectionState,
+} from '@/lib/communityMentorSelection';
 import { CommunityMentorsPage } from '@/pages/CommunityMentorsPage';
 import type {
   CommunityCatalogDTO,
@@ -120,6 +123,7 @@ const comparison: CommunityMentorComparisonDTO = {
       },
     ],
   },
+  comparison_token: 'a'.repeat(64),
   category: 'new',
   local_professor_id: null,
   local_professor_name: null,
@@ -162,6 +166,25 @@ const recordsPayload: CommunityRecordsDTO = {
   lifecycle_warnings: [],
 };
 
+const buildComparison = (index: number): CommunityMentorComparisonDTO => {
+  const suffix = String(index + 1).padStart(4, '0');
+  const email = `mentor${suffix}@example.edu`;
+  return {
+    ...comparison,
+    comparison_token: index.toString(16).padStart(64, '0'),
+    record: {
+      ...comparison.record,
+      id: `mentor_batch${suffix}`,
+      name: `导师${suffix}`,
+      email,
+      contacts: comparison.record.contacts.map((contact) => ({
+        ...contact,
+        email,
+      })),
+    },
+  };
+};
+
 const renderPage = () =>
   render(
     <MemoryRouter>
@@ -185,6 +208,52 @@ describe('CommunityMentorsPage', () => {
 
     expect(await screen.findByText('社区库正在起步')).toBeInTheDocument();
     expect(screen.getByText('成为第一批贡献者')).toBeInTheDocument();
+    expect(apiMocks.getCatalog).toHaveBeenCalledWith(true);
+    expect(notificationMocks.notifySuccess).not.toHaveBeenCalled();
+  });
+
+  it('keeps an offline-cache warning visible instead of relying on a toast', async () => {
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      source: 'cache',
+      stale: true,
+      warning: '网络刷新失败，正在使用最后一次验证成功的缓存',
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText('当前显示的是上次验证成功的数据'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/网络刷新失败/)).toBeInTheDocument();
+    expect(apiMocks.getCatalog).toHaveBeenCalledWith(true);
+  });
+
+  it('explains and blocks a unit that would exceed the 2000-record load limit', async () => {
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: 2001,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: 2001,
+        units: university.units.map((unit) => ({
+          ...unit,
+          record_count: 2001,
+        })),
+      })),
+    });
+
+    renderPage();
+
+    const unitCheckbox = await screen.findByLabelText(/计算机学院/);
+    fireEvent.click(unitCheckbox);
+
+    expect(unitCheckbox).not.toBeChecked();
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
+      '所选导师太多',
+      expect.stringContaining('一次最多加载 2000 位'),
+    );
+    expect(apiMocks.listRecords).not.toHaveBeenCalled();
   });
 
   it('loads a selected unit, previews fields, and imports without opening a browser', async () => {
@@ -223,6 +292,21 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认导入 1 位' }));
 
     await waitFor(() => expect(apiMocks.importRecords).toHaveBeenCalledTimes(1));
+    expect(apiMocks.importRecords).toHaveBeenCalledWith({
+      dataset_version: populatedCatalog.dataset_version,
+      unit_paths: ['data/org_example_university/org_example_school.json'],
+      items: [
+        {
+          community_record_id: comparison.record.id,
+          comparison_token: comparison.comparison_token,
+          field_choices: {
+            name: 'community',
+            email: 'community',
+          },
+          confirm_identity_match: true,
+        },
+      ],
+    });
     expect(openExternalHttpUrl).not.toHaveBeenCalled();
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
       '社区导师已导入',
@@ -250,6 +334,143 @@ describe('CommunityMentorsPage', () => {
     );
   });
 
+  it('finds mentors by alternate email and secondary affiliation', async () => {
+    const searchableComparison: CommunityMentorComparisonDTO = {
+      ...comparison,
+      record: {
+        ...comparison.record,
+        contacts: [
+          ...comparison.record.contacts,
+          {
+            email: 'alternate@example.edu',
+            is_primary: false,
+            affiliation_id: 'aff_example0002',
+            source_url: 'https://example.edu/alternate',
+            observed_at: '2026-08-03T00:00:00Z',
+          },
+        ],
+        affiliations: [
+          ...comparison.record.affiliations,
+          {
+            id: 'aff_example0002',
+            organization_id: 'org_second_institute',
+            status: 'current',
+            is_primary: false,
+            title: '访问教授',
+            university: '第二大学',
+            school: '数据研究院',
+            department: '交叉研究中心',
+            source_url: 'https://second.example.edu/profile',
+            observed_at: '2026-08-03T00:00:00Z',
+          },
+        ],
+      },
+    };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue({
+      ...recordsPayload,
+      records: [searchableComparison],
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('张老师');
+    const searchInput = screen.getByPlaceholderText('姓名、全部邮箱、任职、方向');
+
+    fireEvent.change(searchInput, { target: { value: '不存在的关键词' } });
+    expect(screen.queryByText('张老师')).not.toBeInTheDocument();
+    fireEvent.change(searchInput, { target: { value: 'alternate@example.edu' } });
+    expect(screen.getByText('张老师')).toBeInTheDocument();
+    fireEvent.change(searchInput, { target: { value: '访问教授' } });
+    expect(screen.getByText('张老师')).toBeInTheDocument();
+  });
+
+  it('paginates large results and keeps 500 of 501 as a partial selection', async () => {
+    const comparisons = Array.from({ length: 501 }, (_, index) => buildComparison(index));
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: comparisons.length,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: comparisons.length,
+        units: university.units.map((unit) => ({
+          ...unit,
+          record_count: comparisons.length,
+        })),
+      })),
+    });
+    apiMocks.listRecords.mockResolvedValue({
+      ...recordsPayload,
+      records: comparisons,
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    expect(await screen.findByText('导师0001')).toBeInTheDocument();
+    expect(screen.queryByText('导师0101')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+    expect(await screen.findByText('导师0101')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择当前筛选结果' }));
+    await waitFor(() => {
+      const selectAll = screen.getByRole('checkbox', { name: '选择当前筛选结果' });
+      expect(selectAll).not.toBeChecked();
+      expect((selectAll as HTMLInputElement).indeterminate).toBe(true);
+    });
+    expect(screen.getByText(/已选 500\/501/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择当前筛选结果' }));
+    await waitFor(() => {
+      const selectAll = screen.getByRole('checkbox', { name: '选择当前筛选结果' });
+      expect(selectAll).not.toBeChecked();
+      expect((selectAll as HTMLInputElement).indeterminate).toBe(true);
+    });
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
+      '已选择前 500 位导师',
+      expect.stringContaining('还有 1 位未选中'),
+    );
+  });
+
+  it('does not offer a community empty value that would clear local data', async () => {
+    const localOnlyComparison: CommunityMentorComparisonDTO = {
+      ...comparison,
+      category: 'conflict',
+      local_professor_id: 42,
+      local_professor_name: '张老师',
+      fields: [
+        {
+          field: 'department',
+          label: '系所',
+          local_value: '本地系所',
+          community_value: null,
+          baseline_present: false,
+          baseline_value: null,
+          state: 'local_only',
+          suggested_choice: 'local',
+        },
+      ],
+    };
+    const localOnlyPayload = {
+      ...recordsPayload,
+      records: [localOnlyComparison],
+    };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(localOnlyPayload);
+    apiMocks.preview.mockResolvedValue(localOnlyPayload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('zhang@example.edu');
+    fireEvent.click(screen.getByLabelText('选择 张老师'));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
+
+    expect(await screen.findByRole('button', { name: '采用社区系所' })).toBeDisabled();
+    expect(screen.getByText(/不能用空值清掉本地资料/)).toBeInTheDocument();
+  });
+
   it('selects at most 500 mentors from the current filter and reports the remainder', () => {
     const visibleRecordIds = Array.from(
       { length: 501 },
@@ -261,6 +482,13 @@ describe('CommunityMentorsPage', () => {
     expect(result.recordIds).toHaveLength(500);
     expect(result.recordIds).toEqual(visibleRecordIds.slice(0, 500));
     expect(result.omittedCount).toBe(1);
+    expect(
+      getVisibleRecordSelectionState(result.recordIds, visibleRecordIds),
+    ).toEqual({
+      selectedVisibleCount: 500,
+      allVisibleSelected: false,
+      partiallyVisibleSelected: true,
+    });
   });
 
   it('keeps the loaded list but disables preview when the selected units change', async () => {

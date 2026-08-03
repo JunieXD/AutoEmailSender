@@ -530,6 +530,7 @@ export interface CommunityFieldComparisonDTO {
 
 export interface CommunityMentorComparisonDTO {
   record: CommunityMentorRecordDTO;
+  comparison_token: string;
   category: CommunityComparisonCategoryDTO;
   local_professor_id: number | null;
   local_professor_name: string | null;
@@ -562,6 +563,7 @@ export interface CommunityPreviewPayloadDTO extends CommunityRecordSelectionPayl
 
 export interface CommunityImportItemPayloadDTO {
   community_record_id: string;
+  comparison_token: string;
   field_choices: Record<string, CommunityFieldChoiceDTO>;
   confirm_identity_match: boolean;
 }

@@ -71,11 +71,11 @@ async def list_community_records(
             dataset_version=payload.dataset_version,
             unit_paths=payload.unit_paths,
         )
-        comparisons = await build_community_comparisons(session, record_bundle.records)
         lifecycle_warnings = await sync_community_link_lifecycle(
             session,
             record_bundle.catalog_bundle,
         )
+        comparisons = await build_community_comparisons(session, record_bundle.records)
         await session.commit()
     except CommunityDataError as exc:
         await session.rollback()
@@ -106,11 +106,11 @@ async def preview_community_import(
                 code="COMMUNITY_DATA_SELECTION_INVALID",
             )
         selected_records = [records_by_id[record_id] for record_id in payload.record_ids]
-        comparisons = await build_community_comparisons(session, selected_records)
         lifecycle_warnings = await sync_community_link_lifecycle(
             session,
             record_bundle.catalog_bundle,
         )
+        comparisons = await build_community_comparisons(session, selected_records)
         await session.commit()
     except CommunityDataError as exc:
         await session.rollback()
@@ -148,8 +148,8 @@ async def import_from_community(
             records_by_id[item.community_record_id]
             for item in payload.items
         ]
-        comparisons = await build_community_comparisons(session, selected_records)
         await sync_community_link_lifecycle(session, record_bundle.catalog_bundle)
+        comparisons = await build_community_comparisons(session, selected_records)
         summary = await import_community_records(
             session,
             dataset_version=payload.dataset_version,
@@ -235,12 +235,15 @@ def _community_http_error(exc: CommunityDataError) -> HTTPException:
         "COMMUNITY_DATA_REQUIRES_NEWER_APP",
         "COMMUNITY_DATA_IDENTITY_CONFLICT",
         "COMMUNITY_DATA_LIFECYCLE_BLOCKED",
+        "COMMUNITY_DATA_PREVIEW_STALE",
     }:
         status_code = 409
     elif exc.code in {
         "COMMUNITY_DATA_SELECTION_INVALID",
         "COMMUNITY_DATA_PATH_INVALID",
         "COMMUNITY_DATA_CONFIG_INVALID",
+        "COMMUNITY_DATA_FIELD_CHOICE_INVALID",
+        "COMMUNITY_DATA_TOO_LARGE",
     }:
         status_code = 400
     elif exc.code == "COMMUNITY_DATA_UNAVAILABLE":

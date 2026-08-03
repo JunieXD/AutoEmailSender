@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Link } from 'react-router-dom';
 import {
@@ -6,6 +6,8 @@ import {
   Building2,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Database,
   ExternalLink,
   FileWarning,
@@ -35,6 +37,8 @@ import {
 import { openExternalHttpUrl } from '@/lib/externalUrls';
 import {
   addVisibleRecordSelection,
+  getVisibleRecordSelectionState,
+  MAX_LOADED_COMMUNITY_MENTORS,
   MAX_SELECTED_COMMUNITY_MENTORS,
 } from '@/lib/communityMentorSelection';
 import type {
@@ -52,6 +56,8 @@ import type {
 
 const MAX_SELECTED_UNITS = 20;
 const MAX_SELECTED_RECORDS = MAX_SELECTED_COMMUNITY_MENTORS;
+const MAX_LOADED_RECORDS = MAX_LOADED_COMMUNITY_MENTORS;
+const RECORDS_PER_PAGE = 100;
 
 const haveSamePaths = (left: string[], right: string[]) =>
   left.length === right.length && left.every((path) => right.includes(path));
@@ -155,6 +161,13 @@ const recordSearchText = (item: CommunityMentorComparisonDTO) =>
     item.record.school,
     item.record.department,
     item.record.research_direction,
+    ...item.record.contacts.map((contact) => contact.email),
+    ...item.record.affiliations.flatMap((affiliation) => [
+      affiliation.title,
+      affiliation.university,
+      affiliation.school,
+      affiliation.department,
+    ]),
   ]
     .filter(Boolean)
     .join('\n')
@@ -186,50 +199,59 @@ const DifferenceField = ({
   choice: CommunityFieldChoiceDTO;
   allowLocalChoice: boolean;
   onChange: (choice: CommunityFieldChoiceDTO) => void;
-}) => (
-  <div className="rounded-2xl border border-stone-200 bg-white p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="text-sm font-semibold text-stone-900">{field.label}</div>
-      <div className={clsx('text-xs font-medium', fieldStateMeta[field.state].className)}>
-        {fieldStateMeta[field.state].label}
+}) => {
+  const allowCommunityChoice = field.state !== 'local_only';
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-stone-900">{field.label}</div>
+        <div className={clsx('text-xs font-medium', fieldStateMeta[field.state].className)}>
+          {fieldStateMeta[field.state].label}
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <button
+          type="button"
+          disabled={!allowLocalChoice}
+          onClick={() => onChange('local')}
+          className={clsx(
+            'rounded-xl border p-3 text-left transition',
+            choice === 'local'
+              ? 'border-violet-300 bg-violet-50 ring-2 ring-violet-100'
+              : 'border-stone-200 bg-stone-50',
+            !allowLocalChoice && 'cursor-not-allowed opacity-50',
+          )}
+        >
+          <span className="text-xs font-semibold text-stone-500">保留本地</span>
+          <span className="mt-1 block whitespace-pre-wrap break-words text-sm text-stone-800">
+            {formatFieldValue(field.local_value)}
+          </span>
+        </button>
+        <button
+          type="button"
+          aria-label={`采用社区${field.label}`}
+          disabled={!allowCommunityChoice}
+          onClick={() => onChange('community')}
+          className={clsx(
+            'rounded-xl border p-3 text-left transition',
+            choice === 'community'
+              ? 'border-primary/40 bg-primary/5 ring-2 ring-primary/10'
+              : 'border-stone-200 bg-stone-50',
+            !allowCommunityChoice && 'cursor-not-allowed opacity-50',
+          )}
+        >
+          <span className="text-xs font-semibold text-primary">采用社区</span>
+          <span className="mt-1 block whitespace-pre-wrap break-words text-sm text-stone-800">
+            {formatFieldValue(field.community_value)}
+          </span>
+          {!allowCommunityChoice ? (
+            <span className="mt-2 block text-xs text-stone-500">社区没有内容，不能用空值清掉本地资料。</span>
+          ) : null}
+        </button>
       </div>
     </div>
-    <div className="mt-3 grid gap-3 md:grid-cols-2">
-      <button
-        type="button"
-        disabled={!allowLocalChoice}
-        onClick={() => onChange('local')}
-        className={clsx(
-          'rounded-xl border p-3 text-left transition',
-          choice === 'local'
-            ? 'border-violet-300 bg-violet-50 ring-2 ring-violet-100'
-            : 'border-stone-200 bg-stone-50',
-          !allowLocalChoice && 'cursor-not-allowed opacity-50',
-        )}
-      >
-        <span className="text-xs font-semibold text-stone-500">保留本地</span>
-        <span className="mt-1 block whitespace-pre-wrap break-words text-sm text-stone-800">
-          {formatFieldValue(field.local_value)}
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('community')}
-        className={clsx(
-          'rounded-xl border p-3 text-left transition',
-          choice === 'community'
-            ? 'border-primary/40 bg-primary/5 ring-2 ring-primary/10'
-            : 'border-stone-200 bg-stone-50',
-        )}
-      >
-        <span className="text-xs font-semibold text-primary">采用社区</span>
-        <span className="mt-1 block whitespace-pre-wrap break-words text-sm text-stone-800">
-          {formatFieldValue(field.community_value)}
-        </span>
-      </button>
-    </div>
-  </div>
-);
+  );
+};
 
 export const CommunityMentorsPage = () => {
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
@@ -244,6 +266,7 @@ export const CommunityMentorsPage = () => {
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordKeyword, setRecordKeyword] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<CommunityComparisonCategoryDTO | 'all'>('all');
+  const [recordPage, setRecordPage] = useState(1);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [previewPayload, setPreviewPayload] = useState<CommunityRecordsDTO | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -252,9 +275,10 @@ export const CommunityMentorsPage = () => {
     Record<string, Record<string, CommunityFieldChoiceDTO>>
   >({});
   const [identityConfirmations, setIdentityConfirmations] = useState<Record<string, boolean>>({});
+  const selectVisibleCheckboxRef = useRef<HTMLInputElement>(null);
 
   const loadCatalog = useCallback(
-    async (refresh: boolean) => {
+    async (refresh: boolean, announceResult = refresh) => {
       if (refresh) {
         setCatalogRefreshing(true);
       } else {
@@ -270,18 +294,19 @@ export const CommunityMentorsPage = () => {
             setRecordsPayload(null);
             setSelectedRecordIds([]);
             setPreviewPayload(null);
+            setRecordPage(1);
           }
           return nextCatalog;
         });
         if (nextCatalog.warning) {
           notifyWarning('正在使用社区缓存', nextCatalog.warning);
-        } else if (refresh) {
+        } else if (announceResult) {
           notifySuccess('社区目录已刷新', `当前共有 ${nextCatalog.record_count} 位导师。`);
         }
       } catch (error) {
         const message = getErrorMessage(error, '社区导师库暂时无法读取');
         setCatalogError(message);
-        if (refresh) {
+        if (announceResult) {
           notifyError('刷新社区目录失败', message);
         }
       } finally {
@@ -293,7 +318,7 @@ export const CommunityMentorsPage = () => {
   );
 
   useEffect(() => {
-    void loadCatalog(false);
+    void loadCatalog(true, false);
   }, [loadCatalog]);
 
   const filteredUniversities = useMemo(() => {
@@ -316,11 +341,35 @@ export const CommunityMentorsPage = () => {
       .filter((university) => university.units.length > 0);
   }, [catalog, catalogKeyword]);
 
+  const catalogUnitsByPath = useMemo(
+    () => new Map(
+      (catalog?.universities ?? []).flatMap((university) =>
+        university.units.map((unit) => [unit.path, unit] as const),
+      ),
+    ),
+    [catalog],
+  );
+  const selectedUnitRecordCount = selectedUnitPaths.reduce(
+    (total, path) => total + (catalogUnitsByPath.get(path)?.record_count ?? 0),
+    0,
+  );
+
   const loadRecordsForPaths = async (unitPaths: string[]) => {
     if (!catalog || unitPaths.length === 0) {
       return;
     }
     const requestedUnitPaths = [...unitPaths];
+    const requestedRecordCount = requestedUnitPaths.reduce(
+      (total, path) => total + (catalogUnitsByPath.get(path)?.record_count ?? 0),
+      0,
+    );
+    if (requestedRecordCount > MAX_LOADED_RECORDS) {
+      notifyWarning(
+        '所选导师太多',
+        `当前学院共有 ${requestedRecordCount} 位导师，一次最多加载 ${MAX_LOADED_RECORDS} 位，请分批处理。`,
+      );
+      return;
+    }
     setRecordsLoading(true);
     try {
       const result = await listCommunityMentors({
@@ -331,6 +380,7 @@ export const CommunityMentorsPage = () => {
       setLoadedUnitPaths(requestedUnitPaths);
       setSelectedRecordIds([]);
       setPreviewPayload(null);
+      setRecordPage(1);
       if (result.warning) {
         notifyWarning('学院数据来自缓存', result.warning);
       }
@@ -350,6 +400,19 @@ export const CommunityMentorsPage = () => {
         notifyWarning('学院选择过多', `一次最多加载 ${MAX_SELECTED_UNITS} 个学院。`);
         return current;
       }
+      const unit = catalogUnitsByPath.get(path);
+      const currentRecordCount = current.reduce(
+        (total, item) => total + (catalogUnitsByPath.get(item)?.record_count ?? 0),
+        0,
+      );
+      const nextRecordCount = currentRecordCount + (unit?.record_count ?? 0);
+      if (nextRecordCount > MAX_LOADED_RECORDS) {
+        notifyWarning(
+          '所选导师太多',
+          `加入该学院后共有 ${nextRecordCount} 位导师，一次最多加载 ${MAX_LOADED_RECORDS} 位，请分批处理。`,
+        );
+        return current;
+      }
       return [...current, path];
     });
   };
@@ -364,31 +427,43 @@ export const CommunityMentorsPage = () => {
     });
   }, [categoryFilter, recordKeyword, recordsPayload]);
 
-  const selectableVisibleRecords = visibleRecords.filter(
-    isRecordSelectable,
+  const selectableVisibleRecords = useMemo(
+    () => visibleRecords.filter(isRecordSelectable),
+    [visibleRecords],
   );
-  const selectableVisibleIds = selectableVisibleRecords.map((item) => item.record.id);
+  const selectableVisibleIds = useMemo(
+    () => selectableVisibleRecords.map((item) => item.record.id),
+    [selectableVisibleRecords],
+  );
   const selectedRecordIdSet = useMemo(
     () => new Set(selectedRecordIds),
     [selectedRecordIds],
   );
-  const selectedVisibleCount = selectableVisibleIds.filter((id) =>
-    selectedRecordIdSet.has(id),
-  ).length;
-  const selectedOutsideVisibleCount = selectedRecordIds.length - selectedVisibleCount;
-  const selectableVisibleCapacity = Math.min(
-    selectableVisibleIds.length,
-    Math.max(0, MAX_SELECTED_RECORDS - selectedOutsideVisibleCount),
+  const {
+    selectedVisibleCount,
+    allVisibleSelected,
+    partiallyVisibleSelected,
+  } = getVisibleRecordSelectionState(selectedRecordIds, selectableVisibleIds);
+  const totalRecordPages = Math.max(
+    1,
+    Math.ceil(visibleRecords.length / RECORDS_PER_PAGE),
   );
-  const allVisibleSelected =
-    selectableVisibleRecords.length > 0 &&
-    selectableVisibleCapacity > 0 &&
-    selectedVisibleCount === selectableVisibleCapacity;
+  const currentRecordPage = Math.min(recordPage, totalRecordPages);
+  const paginatedVisibleRecords = visibleRecords.slice(
+    (currentRecordPage - 1) * RECORDS_PER_PAGE,
+    currentRecordPage * RECORDS_PER_PAGE,
+  );
   const recordsSelectionStale = Boolean(
     recordsPayload &&
       loadedUnitPaths &&
       !haveSamePaths(selectedUnitPaths, loadedUnitPaths),
   );
+
+  useEffect(() => {
+    if (selectVisibleCheckboxRef.current) {
+      selectVisibleCheckboxRef.current.indeterminate = partiallyVisibleSelected;
+    }
+  }, [partiallyVisibleSelected, selectableVisibleIds, selectedRecordIds]);
 
   const toggleRecord = (recordId: string) => {
     setSelectedRecordIds((current) => {
@@ -423,6 +498,11 @@ export const CommunityMentorsPage = () => {
       }
       return recordIds;
     });
+  };
+
+  const clearVisibleRecords = () => {
+    const visibleIdSet = new Set(selectableVisibleIds);
+    setSelectedRecordIds((current) => current.filter((id) => !visibleIdSet.has(id)));
   };
 
   const openPreview = async () => {
@@ -517,6 +597,7 @@ export const CommunityMentorsPage = () => {
         unit_paths: loadedUnitPaths,
         items: previewPayload.records.map((item) => ({
           community_record_id: item.record.id,
+          comparison_token: item.comparison_token,
           field_choices: fieldChoices[item.record.id] ?? {},
           confirm_identity_match: identityConfirmations[item.record.id] ?? false,
         })),
@@ -587,6 +668,19 @@ export const CommunityMentorsPage = () => {
         ) : null}
       </section>
 
+      {catalog?.warning ? (
+        <section className="mt-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-amber-900">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div>
+              <h2 className="font-semibold">当前显示的是上次验证成功的数据</h2>
+              <p className="mt-1 text-sm leading-6 text-amber-800">{catalog.warning}</p>
+              <p className="mt-1 text-xs text-amber-700">你仍可浏览和导入；恢复联网后点击“刷新社区目录”即可获取最新版本。</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {(catalog?.lifecycle_warnings.length ?? 0) > 0 ? (
         <section className="mt-6 rounded-[28px] border border-red-200 bg-red-50 p-5">
           <div className="flex items-start gap-3">
@@ -649,7 +743,9 @@ export const CommunityMentorsPage = () => {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-semibold text-stone-900">选择学校与学院</h2>
-                <p className="mt-1 text-xs text-stone-500">已选 {selectedUnitPaths.length}/{MAX_SELECTED_UNITS}</p>
+                <p className="mt-1 text-xs text-stone-500">
+                  已选 {selectedUnitPaths.length}/{MAX_SELECTED_UNITS} 个学院 · {selectedUnitRecordCount}/{MAX_LOADED_RECORDS} 位
+                </p>
               </div>
               <Building2 className="h-5 w-5 text-primary" />
             </div>
@@ -701,9 +797,9 @@ export const CommunityMentorsPage = () => {
                   <div className="flex flex-wrap gap-2">
                     <div className="relative min-w-56 flex-1">
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-                      <input value={recordKeyword} onChange={(event) => setRecordKeyword(event.target.value)} className="w-full rounded-xl border border-stone-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary" placeholder="姓名、邮箱、学校、方向" />
+                      <input value={recordKeyword} onChange={(event) => { setRecordKeyword(event.target.value); setRecordPage(1); }} className="w-full rounded-xl border border-stone-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary" placeholder="姓名、全部邮箱、任职、方向" />
                     </div>
-                    <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CommunityComparisonCategoryDTO | 'all')} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none focus:border-primary">
+                    <select value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value as CommunityComparisonCategoryDTO | 'all'); setRecordPage(1); }} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none focus:border-primary">
                       <option value="all">全部状态</option>
                       {Object.entries(categoryMeta).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
                     </select>
@@ -726,10 +822,31 @@ export const CommunityMentorsPage = () => {
                   </div>
                 ) : null}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-stone-50 px-4 py-3">
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-stone-700">
-                    <input type="checkbox" className="h-4 w-4 accent-orange-600" checked={allVisibleSelected} onChange={toggleVisibleRecords} />
-                    选择当前筛选结果
-                  </label>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-stone-700">
+                      <input
+                        ref={selectVisibleCheckboxRef}
+                        type="checkbox"
+                        aria-label="选择当前筛选结果"
+                        className="h-4 w-4 accent-orange-600"
+                        checked={allVisibleSelected}
+                        onChange={toggleVisibleRecords}
+                      />
+                      <span>
+                        选择当前筛选结果
+                        {selectedVisibleCount > 0 ? `（已选 ${selectedVisibleCount}/${selectableVisibleIds.length}）` : ''}
+                      </span>
+                    </label>
+                    {selectedVisibleCount > 0 ? (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-stone-600 underline decoration-stone-300 underline-offset-2"
+                        onClick={clearVisibleRecords}
+                      >
+                        清除当前筛选选择
+                      </button>
+                    ) : null}
+                  </div>
                   <button type="button" disabled={previewLoading || selectedRecordIds.length === 0 || recordsSelectionStale} onClick={() => void openPreview()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-50">
                     {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                     预览并导入 {selectedRecordIds.length > 0 ? selectedRecordIds.length : ''}
@@ -738,7 +855,7 @@ export const CommunityMentorsPage = () => {
                 <div className="mt-4 space-y-3">
                   {visibleRecords.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-stone-200 p-10 text-center text-sm text-stone-500">没有匹配的导师。</div>
-                  ) : visibleRecords.map((item) => {
+                  ) : paginatedVisibleRecords.map((item) => {
                     const meta = categoryMeta[item.category];
                     const selectable = isRecordSelectable(item);
                     return (
@@ -785,6 +902,35 @@ export const CommunityMentorsPage = () => {
                     );
                   })}
                 </div>
+                {visibleRecords.length > RECORDS_PER_PAGE ? (
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
+                    <span className="text-xs text-stone-500">
+                      第 {currentRecordPage}/{totalRecordPages} 页 · 当前筛选共 {visibleRecords.length} 位
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        aria-label="上一页"
+                        disabled={currentRecordPage <= 1}
+                        onClick={() => setRecordPage((current) => Math.max(1, current - 1))}
+                        className="ui-btn-secondary px-3 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        上一页
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="下一页"
+                        disabled={currentRecordPage >= totalRecordPages}
+                        onClick={() => setRecordPage((current) => Math.min(totalRecordPages, current + 1))}
+                        className="ui-btn-secondary px-3 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        下一页
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </>
             )}
           </section>
