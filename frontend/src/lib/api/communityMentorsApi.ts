@@ -1,4 +1,4 @@
-import { apiFetch, buildApiUrl } from '@/lib/api/client';
+import { apiFetch, apiFetchBlob } from '@/lib/api/client';
 import type {
   CommunityCatalogDTO,
   CommunityImportPayloadDTO,
@@ -32,7 +32,7 @@ export const importCommunityMentors = (payload: CommunityImportPayloadDTO) =>
     body: JSON.stringify(payload),
   });
 
-export const getCommunitySharePackageDownloadUrl = (professorIds: number[]) =>
-  buildApiUrl('/api/community-mentors/share-package', {
+export const downloadCommunitySharePackage = (professorIds: number[]) =>
+  apiFetchBlob('/api/community-mentors/share-package', undefined, {
     professor_ids: professorIds.join(','),
   });

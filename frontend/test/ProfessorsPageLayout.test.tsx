@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskNotificationProvider } from "@/context/BackgroundTaskNotificationContext";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { formatApiDateTime } from "@/lib/dateTime";
@@ -14,7 +14,7 @@ import type {
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const listProfessorsForManagement = vi.hoisted(() => vi.fn());
 const getProfessorExportDownloadUrl = vi.hoisted(() => vi.fn());
-const getCommunitySharePackageDownloadUrl = vi.hoisted(() => vi.fn());
+const downloadCommunitySharePackage = vi.hoisted(() => vi.fn());
 const updateProfessor = vi.hoisted(() => vi.fn());
 const updateProfessorNote = vi.hoisted(() => vi.fn());
 const createSingleProfessorInformationEnrichment = vi.hoisted(() => vi.fn());
@@ -42,7 +42,7 @@ vi.mock("@/lib/api/professorsApi", () => ({
 }));
 
 vi.mock("@/lib/api/communityMentorsApi", () => ({
-  getCommunitySharePackageDownloadUrl,
+  downloadCommunitySharePackage,
 }));
 
 vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
@@ -176,6 +176,10 @@ const expectToAppearBefore = (first: HTMLElement, second: HTMLElement) => {
 };
 
 describe("ProfessorsPage layout", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
@@ -199,9 +203,9 @@ describe("ProfessorsPage layout", () => {
     getProfessorExportDownloadUrl.mockImplementation(
       (format: "xlsx" | "csv") => `/exports/professors.${format}`,
     );
-    getCommunitySharePackageDownloadUrl.mockReset();
-    getCommunitySharePackageDownloadUrl.mockReturnValue(
-      "/api/community-mentors/share-package?professor_ids=1",
+    downloadCommunitySharePackage.mockReset();
+    downloadCommunitySharePackage.mockResolvedValue(
+      new Blob(["community-share"]),
     );
     updateProfessor.mockReset();
     updateProfessor.mockResolvedValue(professor);
@@ -281,9 +285,20 @@ describe("ProfessorsPage layout", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
 
+    const nativeUrl = URL;
+    const createObjectURL = vi.fn(() => "blob:community-share");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal(
+      "URL",
+      class extends nativeUrl {
+        static createObjectURL = createObjectURL;
+        static revokeObjectURL = revokeObjectURL;
+      },
+    );
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
+    const locationBeforeContribution = window.location.href;
 
     const contributionButton = screen.getByRole("button", {
       name: "贡献到社区",
@@ -294,13 +309,54 @@ describe("ProfessorsPage layout", () => {
 
     fireEvent.click(contributionButton);
 
-    expect(getCommunitySharePackageDownloadUrl).toHaveBeenCalledWith([1]);
-    expect(click).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(downloadCommunitySharePackage).toHaveBeenCalledWith([1]);
+      expect(click).toHaveBeenCalledTimes(1);
+    });
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    const downloadedLink = click.mock.instances[0] as HTMLAnchorElement | undefined;
+    expect(downloadedLink).toBeDefined();
+    expect(downloadedLink).toHaveAttribute("href", "blob:community-share");
+    expect(downloadedLink).toHaveAttribute("download", "community-share.xlsx");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:community-share");
+    expect(window.location.href).toBe(locationBeforeContribution);
     expect(openExternalUrl).toHaveBeenCalledWith(
       expect.stringContaining("template=batch-contribution.yml"),
     );
 
     click.mockRestore();
+  });
+
+  it("keeps the app open when the community share package request fails", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    downloadCommunitySharePackage.mockRejectedValueOnce(
+      new Error("共享包下载失败"),
+    );
+    listProfessorsForManagement.mockResolvedValue([
+      { ...professor, source_url: "https://example.edu/li" },
+    ]);
+    renderPage("/professors?community_contribution=batch");
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "选择 李教授" }));
+    const locationBeforeContribution = window.location.href;
+    fireEvent.click(screen.getByRole("button", { name: "贡献到社区" }));
+
+    expect(await screen.findByText("贡献准备失败")).toBeInTheDocument();
+    expect(screen.getByText("共享包下载失败")).toBeInTheDocument();
+    expect(window.location.href).toBe(locationBeforeContribution);
+    expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
   it("omits the low-value summary cards from the workbench header", async () => {

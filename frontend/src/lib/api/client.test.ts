@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   apiFetch,
+  apiFetchBlob,
   buildApiPath,
   buildApiUrl,
   updateDesktopBackendBaseUrl,
@@ -269,6 +270,44 @@ describe("api client desktop base url", () => {
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("X-Test")).toBe("one");
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Authorization")).toBe(
       "Bearer rotated-ui-token",
+    );
+  });
+
+  it("downloads binary responses with the current desktop UI token", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("xlsx-content", {
+        status: 200,
+        headers: {
+          "Content-Type":
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    window.autoEmailSender = {
+      backendBaseUrl: "http://127.0.0.1:48123",
+      getBackendAccessToken: () => "desktop-ui-token",
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onUpdateStatus: () => () => undefined,
+    };
+
+    const blob = await apiFetchBlob(
+      "/api/community-mentors/share-package",
+      undefined,
+      { professor_ids: "1,2" },
+    );
+
+    expect(await blob.text()).toBe("xlsx-content");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:48123/api/community-mentors/share-package?professor_ids=1%2C2",
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer desktop-ui-token",
     );
   });
 

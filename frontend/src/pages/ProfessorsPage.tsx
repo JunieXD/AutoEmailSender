@@ -63,7 +63,7 @@ import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
-import { getCommunitySharePackageDownloadUrl } from "@/lib/api/communityMentorsApi";
+import { downloadCommunitySharePackage } from "@/lib/api/communityMentorsApi";
 import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
   COMMUNITY_CONTRIBUTION_URL,
@@ -506,6 +506,17 @@ const triggerDownload = (url: string) => {
   link.remove();
 };
 
+const triggerBlobDownload = (blob: Blob, filename: string) => {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+};
+
 const getActionErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
@@ -781,6 +792,8 @@ export const ProfessorsPage = () => {
   const [importResult, setImportResult] =
     useState<ProfessorImportFileResultDTO | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportingCommunitySharePackage, setExportingCommunitySharePackage] =
+    useState(false);
   const [crawlerModalOpen, setCrawlerModalOpen] = useState(false);
   const [crawlerFormState, setCrawlerFormState] = useState<CrawlerJobFormState>(
     emptyCrawlerJobForm(),
@@ -1261,7 +1274,7 @@ export const ProfessorsPage = () => {
       });
   };
 
-  const handleExportCommunitySharePackage = () => {
+  const handleExportCommunitySharePackage = async () => {
     if (!editingProfessor) {
       return;
     }
@@ -1272,16 +1285,25 @@ export const ProfessorsPage = () => {
       );
       return;
     }
-    triggerDownload(
-      getCommunitySharePackageDownloadUrl([editingProfessor.id]),
-    );
-    notifySuccess(
-      "社区共享包开始下载",
-      "得到 XLSX 后可直接拖入 GitHub 的“批量贡献导师”表单。",
-    );
+    setExportingCommunitySharePackage(true);
+    try {
+      const blob = await downloadCommunitySharePackage([editingProfessor.id]);
+      triggerBlobDownload(blob, "community-share.xlsx");
+      notifySuccess(
+        "社区共享包已下载",
+        "得到 XLSX 后可直接拖入 GitHub 的“批量贡献导师”表单。",
+      );
+    } catch (error) {
+      notifyError(
+        "社区共享包导出失败",
+        getActionErrorMessage(error, "请稍后重试。"),
+      );
+    } finally {
+      setExportingCommunitySharePackage(false);
+    }
   };
 
-  const handleBulkExportCommunitySharePackage = () => {
+  const handleBulkExportCommunitySharePackage = async () => {
     const selectedProfessors = professors.filter((professor) =>
       selectedIds.has(professor.id),
     );
@@ -1302,16 +1324,25 @@ export const ProfessorsPage = () => {
       );
       return;
     }
-    triggerDownload(
-      getCommunitySharePackageDownloadUrl(
+    setExportingCommunitySharePackage(true);
+    try {
+      const blob = await downloadCommunitySharePackage(
         selectedProfessors.map((professor) => professor.id),
-      ),
-    );
-    openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL);
-    notifySuccess(
-      "共享包已生成，批量投稿表已打开",
-      `下载完成后把包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
-    );
+      );
+      triggerBlobDownload(blob, "community-share.xlsx");
+      openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL);
+      notifySuccess(
+        "共享包已生成，批量投稿表已打开",
+        `下载完成后把包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
+      );
+    } catch (error) {
+      notifyError(
+        "贡献准备失败",
+        getActionErrorMessage(error, "社区共享包生成失败，请稍后重试。"),
+      );
+    } finally {
+      setExportingCommunitySharePackage(false);
+    }
   };
 
   const handleSingleInformationEnrichment = async () => {
@@ -2693,11 +2724,16 @@ export const ProfessorsPage = () => {
               </button>
               <button
                 type="button"
-                onClick={handleBulkExportCommunitySharePackage}
-                className="ui-btn-primary"
+                onClick={() => void handleBulkExportCommunitySharePackage()}
+                disabled={exportingCommunitySharePackage}
+                className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <FileSpreadsheet className="h-4 w-4" />
-                贡献到社区
+                {exportingCommunitySharePackage ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4" />
+                )}
+                {exportingCommunitySharePackage ? "正在生成共享包…" : "贡献到社区"}
               </button>
             </div>
           </div>
@@ -2925,11 +2961,18 @@ export const ProfessorsPage = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={handleExportCommunitySharePackage}
-                  className="ui-btn-secondary"
+                  onClick={() => void handleExportCommunitySharePackage()}
+                  disabled={exportingCommunitySharePackage}
+                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <FileSpreadsheet className="h-4 w-4" />
-                  导出社区共享包
+                  {exportingCommunitySharePackage ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="h-4 w-4" />
+                  )}
+                  {exportingCommunitySharePackage
+                    ? "正在生成共享包…"
+                    : "导出社区共享包"}
                 </button>
               </>
             ) : null}

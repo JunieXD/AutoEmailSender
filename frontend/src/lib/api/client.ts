@@ -40,11 +40,32 @@ export const buildApiUrl = (
   return apiPath.startsWith("http") ? apiPath : new URL(apiPath, window.location.origin).toString();
 };
 
-export const apiFetch = async <T>(
+type ApiSuccessParser<T> = (response: Response) => Promise<T>;
+
+export const apiFetch = <T>(
   path: string,
   options?: RequestInit,
   params?: Record<string, string | number | null | undefined>,
-): Promise<T> => {
+): Promise<T> =>
+  executeApiRequest(
+    path,
+    options,
+    params,
+    async (response) => (await readResponseData(response)) as T,
+  );
+
+export const apiFetchBlob = (
+  path: string,
+  options?: RequestInit,
+  params?: Record<string, string | number | null | undefined>,
+): Promise<Blob> => executeApiRequest(path, options, params, (response) => response.blob());
+
+async function executeApiRequest<T>(
+  path: string,
+  options: RequestInit | undefined,
+  params: Record<string, string | number | null | undefined> | undefined,
+  parseSuccess: ApiSuccessParser<T>,
+): Promise<T> {
   const startedAt = now();
   const method = (options?.method ?? "GET").toUpperCase();
   const apiPath = await buildApiPathForFetch(path, params);
@@ -55,18 +76,19 @@ export const apiFetch = async <T>(
   let lastError: unknown;
 
   try {
-    return await executeApiFetchOnce<T>(apiPath, options, startedAt, method);
+    return await executeApiFetchOnce(apiPath, options, startedAt, method, parseSuccess);
   } catch (error) {
     lastError = error;
     if (shouldRetryDesktopNetworkError(error)) {
       updateDesktopBackendBaseUrl(null);
       try {
         await waitForDesktopBackendBaseUrl();
-        return await executeApiFetchOnce<T>(
+        return await executeApiFetchOnce(
           await buildApiPathForFetch(path, params),
           options,
           startedAt,
           method,
+          parseSuccess,
         );
       } catch (retryError) {
         lastError = retryError;
@@ -86,13 +108,14 @@ export const apiFetch = async <T>(
     }
     throw lastError;
   }
-};
+}
 
 async function executeApiFetchOnce<T>(
   apiPath: string,
-  options?: RequestInit,
-  startedAt?: number,
-  method?: string,
+  options: RequestInit | undefined,
+  startedAt: number,
+  method: string,
+  parseSuccess: ApiSuccessParser<T>,
 ): Promise<T> {
   const headers = new Headers(options?.headers);
   if (!(options?.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -112,52 +135,56 @@ async function executeApiFetchOnce<T>(
       level: "info",
       eventName: "api.request_succeeded",
       data: {
-        method: method ?? (options?.method ?? "GET").toUpperCase(),
+        method,
         path: stripQueryAndHash(apiPath),
         status: response.status,
-        durationMs: elapsedMs(startedAt ?? now()),
+        durationMs: elapsedMs(startedAt),
       },
     });
     return undefined as T;
   }
 
-  const text = await response.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-  }
-
   if (!response.ok) {
+    const data = await readResponseData(response);
     const message = getApiErrorMessage(data);
     recordApiDiagnosticEvent({
       level: "error",
       eventName: "api.request_failed",
       data: {
-        method: method ?? (options?.method ?? "GET").toUpperCase(),
+        method,
         path: stripQueryAndHash(apiPath),
         status: response.status,
-        durationMs: elapsedMs(startedAt ?? now()),
+        durationMs: elapsedMs(startedAt),
         message: sanitizeDiagnosticMessage(message),
       },
     });
     throw new ApiError(response.status, message);
   }
 
+  const data = await parseSuccess(response);
   recordApiDiagnosticEvent({
     level: "info",
     eventName: "api.request_succeeded",
     data: {
-      method: method ?? (options?.method ?? "GET").toUpperCase(),
+      method,
       path: stripQueryAndHash(apiPath),
       status: response.status,
-      durationMs: elapsedMs(startedAt ?? now()),
+      durationMs: elapsedMs(startedAt),
     },
   });
-  return data as T;
+  return data;
+}
+
+async function readResponseData(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 function getApiErrorMessage(data: unknown): string {
