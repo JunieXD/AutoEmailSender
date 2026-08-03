@@ -250,7 +250,7 @@ describe("ProfessorsPage layout", () => {
       within(guide).getByRole("heading", { name: "按学校/学院批量贡献" }),
     ).toBeInTheDocument();
     expect(within(guide).getByText(/选择全部筛选结果/)).toBeInTheDocument();
-    expect(within(guide).getByText(/生成共享包并投稿/)).toBeInTheDocument();
+    expect(within(guide).getByText(/贡献到社区/)).toBeInTheDocument();
 
     fireEvent.click(within(guide).getByRole("button", { name: "关闭提示" }));
     await waitFor(() => {
@@ -285,9 +285,14 @@ describe("ProfessorsPage layout", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "生成共享包并投稿" }),
+    const contributionButton = screen.getByRole("button", {
+      name: "贡献到社区",
+    });
+    expect(contributionButton.parentElement?.lastElementChild).toBe(
+      contributionButton,
     );
+
+    fireEvent.click(contributionButton);
 
     expect(getCommunitySharePackageDownloadUrl).toHaveBeenCalledWith([1]);
     expect(click).toHaveBeenCalledTimes(1);

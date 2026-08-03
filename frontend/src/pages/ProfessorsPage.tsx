@@ -2017,7 +2017,7 @@ export const ProfessorsPage = () => {
                   按学校/学院批量贡献
                 </h2>
                 <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-600">
-                  先把该学校或学院的导师抓取或导入本地，再使用学校/学院筛选，点击表头“选择全部筛选结果”。选择完成后，在页面底部点击“生成共享包并投稿”。
+                  先把该学校或学院的导师抓取或导入本地，再使用学校/学院筛选，点击表头“选择全部筛选结果”。选择完成后，在页面底部点击“贡献到社区”。
                 </p>
               </div>
             </div>
@@ -2637,7 +2637,7 @@ export const ProfessorsPage = () => {
               <div className="mt-1 text-xs text-stone-500">
                 {archiveFilter === "archived"
                   ? "这些导师会被恢复到正常列表，可重新参与筛选与任务。"
-                  : "可批量改标签、智能补全、生成社区共享包，或移入回收站。"}
+                  : "可批量改标签、智能补全、移入回收站，或贡献到社区。"}
               </div>
             </div>
             <div className="flex max-w-full flex-wrap gap-3">
@@ -2655,14 +2655,6 @@ export const ProfessorsPage = () => {
               >
                 <Tags className="h-4 w-4" />
                 批量改标签
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkExportCommunitySharePackage}
-                className="ui-btn-primary"
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                生成共享包并投稿
               </button>
               {archiveFilter !== "archived" ? (
                 <button
@@ -2698,6 +2690,14 @@ export const ProfessorsPage = () => {
                   <Archive className="h-4 w-4" />
                 )}
                 {archiveFilter === "archived" ? "批量恢复" : "批量移入回收站"}
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkExportCommunitySharePackage}
+                className="ui-btn-primary"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                贡献到社区
               </button>
             </div>
           </div>
