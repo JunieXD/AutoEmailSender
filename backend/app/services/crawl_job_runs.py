@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from app.core.schema_metadata import get_current_app_version
 from app.core.time import as_utc_aware, utc_now
 
 from sqlalchemy import func, select
@@ -41,6 +42,7 @@ async def create_initial_crawl_job_run(
         job_id=job.id,
         attempt_number=1,
         status=job.status,
+        app_version=get_current_app_version(),
         created_at=resolved_now,
         updated_at=resolved_now,
     )
@@ -64,6 +66,7 @@ async def create_retry_crawl_job_run(
         job_id=job.id,
         attempt_number=int(max_attempt or 0) + 1,
         status=CrawlJobStatus.QUEUED.value,
+        app_version=get_current_app_version(),
         created_at=resolved_now,
         updated_at=resolved_now,
     )

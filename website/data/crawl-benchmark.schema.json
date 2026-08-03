@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JunieXD/AutoEmailSender/website/data/crawl-benchmark.schema.json",
+  "title": "Auto Email Sender 公开智能抓取实测数据",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "methodology", "records"],
+  "properties": {
+    "schemaVersion": {
+      "const": 2
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverageDefinition", "recordPolicy", "privacy"],
+      "properties": {
+        "coverageDefinition": { "type": "string", "minLength": 1 },
+        "recordPolicy": { "type": "string", "minLength": 1 },
+        "privacy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    }
+  },
+  "$defs": {
+    "nullableString": {
+      "type": ["string", "null"]
+    },
+    "nullableCount": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recordId",
+        "sourceKind",
+        "university",
+        "school",
+        "startUrl",
+        "entryType",
+        "testedAt",
+        "appVersion",
+        "runtimeVersion",
+        "modelName",
+        "publicStatus",
+        "candidateCount",
+        "emailCount",
+        "titleCount",
+        "researchDirectionCount",
+        "enrichmentSelectedCount",
+        "enrichmentSucceededCount",
+        "enrichmentPendingCount",
+        "enrichmentFailedCount",
+        "pageCount",
+        "durationSeconds",
+        "inputTokens",
+        "cachedTokens",
+        "outputTokens",
+        "totalTokens"
+      ],
+      "properties": {
+        "recordId": { "type": "string", "minLength": 1 },
+        "sourceKind": { "enum": ["database", "legacy_xlsx"] },
+        "university": { "type": "string", "minLength": 2 },
+        "school": { "type": "string", "minLength": 2 },
+        "startUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
+        "entryType": { "enum": ["list", "profile"] },
+        "testedAt": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "null" }
+          ]
+        },
+        "appVersion": { "$ref": "#/$defs/nullableString" },
+        "runtimeVersion": { "$ref": "#/$defs/nullableString" },
+        "modelName": { "$ref": "#/$defs/nullableString" },
+        "publicStatus": { "enum": ["verified", "adapting"] },
+        "candidateCount": { "type": "integer", "minimum": 0 },
+        "emailCount": { "type": "integer", "minimum": 0 },
+        "titleCount": { "type": "integer", "minimum": 0 },
+        "researchDirectionCount": { "type": "integer", "minimum": 0 },
+        "enrichmentSelectedCount": { "$ref": "#/$defs/nullableCount" },
+        "enrichmentSucceededCount": { "$ref": "#/$defs/nullableCount" },
+        "enrichmentPendingCount": { "$ref": "#/$defs/nullableCount" },
+        "enrichmentFailedCount": { "$ref": "#/$defs/nullableCount" },
+        "pageCount": { "$ref": "#/$defs/nullableCount" },
+        "durationSeconds": { "type": "integer", "minimum": 0 },
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "cachedTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -223,6 +223,7 @@ class CrawlJobRun(Base):
     paused_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     active_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    app_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

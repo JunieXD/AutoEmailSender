@@ -19,11 +19,17 @@ hero:
       link: /docs/feedback
 ---
 
+<script setup>
+import CrawlBenchmarkPromo from './.vitepress/theme/components/CrawlBenchmarkPromo.vue'
+</script>
+
 <section class="home-screenshot-section">
   <div class="home-screenshot-card">
     <img src="/screenshots/home.png" alt="Auto Email Sender 首页截图" />
   </div>
 </section>
+
+<CrawlBenchmarkPromo />
 
 <section class="home-feature-section">
   <div class="home-feature-heading">

@@ -12,6 +12,7 @@ export default defineConfig({
     nav: [
       { text: "首页", link: "/" },
       { text: "文档", link: "/docs/getting-started" },
+      { text: "实测数据", link: "/crawl-benchmark" },
       { text: "下载", link: "https://github.com/JunieXD/AutoEmailSender/releases" },
       { text: "GitHub", link: "https://github.com/JunieXD/AutoEmailSender" }
     ],

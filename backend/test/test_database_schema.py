@@ -2266,6 +2266,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "job_id",
                 "attempt_number",
                 "active_seconds",
+                "app_version",
                 "input_tokens",
                 "output_tokens",
                 "cached_tokens",

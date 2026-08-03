@@ -1,0 +1,4 @@
+interface:
+  display_name: "更新智能抓取实测"
+  short_description: "安全汇总多台电脑的本地抓取数据库并验证、更新官网实测看板"
+  default_prompt: "使用 $update-crawl-benchmark 从本地数据库合并并更新官网智能抓取实测数据，完成隐私、测试和构建检查。"

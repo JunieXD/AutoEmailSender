@@ -17,6 +17,9 @@ data/*.db
 data/*.db-*
 data/
 data/uploads/
+!website/data/
+!website/data/crawl-benchmark.json
+!website/data/crawl-benchmark.schema.json
 frontend/dist/
 website/.vitepress/dist/
 website/.vitepress/cache/
@@ -37,6 +40,8 @@ desktop/native/sparkle/vendor/
 .codex/skills/*
 !.codex/skills/auto-email-sender-release/
 !.codex/skills/auto-email-sender-release/**
+!.codex/skills/update-crawl-benchmark/
+!.codex/skills/update-crawl-benchmark/**
 .agents
 !.agents/
 .agents/*

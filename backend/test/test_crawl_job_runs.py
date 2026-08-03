@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from app.models import CrawlJobRun
-from app.services.crawl_job_runs import _settle_active_segment, extract_token_usage, extract_token_usage_from_llm_response
+from app.services.crawl_job_runs import (
+    _settle_active_segment,
+    create_initial_crawl_job_run,
+    create_retry_crawl_job_run,
+    extract_token_usage,
+    extract_token_usage_from_llm_response,
+)
 
 
 
@@ -22,6 +31,30 @@ class CrawlJobRunDurationTests(unittest.TestCase):
 
         self.assertEqual(run.active_seconds, 630)
         self.assertIsNone(run.active_started_at)
+
+
+class CrawlJobRunAppVersionSnapshotTests(unittest.TestCase):
+    def test_initial_and_retry_runs_snapshot_the_current_app_version(self) -> None:
+        session = SimpleNamespace(
+            add=unittest.mock.Mock(),
+            flush=AsyncMock(),
+            scalar=AsyncMock(return_value=1),
+        )
+        job = SimpleNamespace(id=42, status="queued", current_run_id=None)
+
+        with patch(
+            "app.services.crawl_job_runs.get_current_app_version",
+            return_value="9.8.7",
+        ):
+            initial = asyncio.run(create_initial_crawl_job_run(session, job))
+            retry = asyncio.run(create_retry_crawl_job_run(session, job))
+
+        self.assertEqual(initial.app_version, "9.8.7")
+        self.assertEqual(retry.app_version, "9.8.7")
+        self.assertEqual(initial.attempt_number, 1)
+        self.assertEqual(retry.attempt_number, 2)
+
+
 class _FakeLLMResponse:
     def __init__(self) -> None:
         self.response_metadata = {
