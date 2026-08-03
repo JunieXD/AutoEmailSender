@@ -53,7 +53,9 @@ describe("Agent support UI", () => {
 
     expect(await screen.findByText("未启用")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /命令行与 Agent/ }));
-    expect(screen.getByText(/读取全部回信/)).toBeInTheDocument();
+    expect(screen.getByText(/找出回信中表示没名额的导师/)).toBeInTheDocument();
+    expect(screen.getByText("Agent 可以根据当前 CLI 提供的能力操控软件。")).toBeInTheDocument();
+    expect(screen.queryByText(/每次 CLI 响应/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "启用" }));
 
     await waitFor(() => {
@@ -61,6 +63,25 @@ describe("Agent support UI", () => {
       expect(screen.getByText("已启用")).toBeInTheDocument();
     });
     expect(screen.getByText(/新建一个 Agent 对话/)).toBeInTheDocument();
+  });
+
+  it("keeps the card body mounted until the collapse transition finishes", async () => {
+    render(<AgentSupportCard />);
+
+    const toggle = await screen.findByRole("button", { name: /命令行与 Agent/ });
+    fireEvent.click(toggle);
+
+    const content = document.getElementById("agent-support-card-content");
+    expect(content).toHaveAttribute("data-state", "open");
+    expect(content).toHaveClass("collapsible-card-content");
+
+    fireEvent.click(toggle);
+    expect(content).toHaveAttribute("data-state", "closed");
+
+    fireEvent.transitionEnd(content as HTMLElement, {
+      propertyName: "grid-template-rows",
+    });
+    expect(document.getElementById("agent-support-card-content")).toBeNull();
   });
 
   it("persists the first-run postpone choice while keeping the card available", async () => {

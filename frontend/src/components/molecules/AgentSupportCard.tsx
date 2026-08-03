@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type TransitionEvent } from "react";
 import clsx from "clsx";
 import {
   Bot,
@@ -46,6 +46,7 @@ const unsupportedStatus: DesktopAgentSupportStatus = {
 
 export function AgentSupportCard() {
   const [open, setOpen] = useState(false);
+  const [renderContent, setRenderContent] = useState(false);
   const [status, setStatus] = useState<DesktopAgentSupportStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<"enable" | "repair" | "disable" | "refresh" | null>(null);
@@ -93,6 +94,23 @@ export function AgentSupportCard() {
     [displayStatus.state],
   );
 
+  const toggleOpen = () => {
+    setOpen((current) => {
+      const next = !current;
+      if (next) {
+        setRenderContent(true);
+      }
+      return next;
+    });
+  };
+
+  const handleContentTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
+    if (open || event.propertyName !== "grid-template-rows") {
+      return;
+    }
+    setRenderContent(false);
+  };
+
   const runAction = async (
     nextAction: "enable" | "repair" | "disable" | "refresh",
   ) => {
@@ -129,7 +147,7 @@ export function AgentSupportCard() {
         type="button"
         aria-expanded={open}
         aria-controls="agent-support-card-content"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleOpen}
         className={clsx(
           "collapsible-card-toggle flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition hover:bg-stone-50 active:bg-stone-50",
           open ? "rounded-t-2xl" : "rounded-2xl",
@@ -154,8 +172,14 @@ export function AgentSupportCard() {
         />
       </button>
 
-      {open ? (
-        <div id="agent-support-card-content" className="border-t border-stone-100 px-6 pb-6">
+      {renderContent ? (
+        <div
+          id="agent-support-card-content"
+          data-state={open ? "open" : "closed"}
+          onTransitionEnd={handleContentTransitionEnd}
+          className="collapsible-card-content"
+        >
+          <div className="collapsible-card-body min-h-0 px-6">
           <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr,0.9fr]">
             <div className="rounded-2xl border border-stone-200 bg-[#fcfbf8] p-5">
               <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
@@ -163,10 +187,10 @@ export function AgentSupportCard() {
                 它能做什么
               </div>
               <p className="mt-3 text-sm leading-6 text-stone-600">
-                例如，你可以让 Agent 读取全部回信，自行找出“意思是没有名额”的导师，选择模板和附件生成草稿。真正发送前，它必须先展示一次性发送计划，并等你明确确认。
+                举例来说，你可以让 Agent 读取全部回信，找出回信中表示没名额的导师，选择模板和附件生成草稿再次发送邮件。真正发送前，它会先展示一次性发送计划，并等你明确确认。
               </p>
               <p className="mt-3 text-sm leading-6 text-stone-500">
-                这不是只支持某一个例子，也不绑定某个 Agent；Agent 会根据当前 CLI 提供的能力组合查询、草稿、计划和发送操作。
+                Agent 可以根据当前 CLI 提供的能力操控软件。
               </p>
             </div>
 
@@ -183,7 +207,7 @@ export function AgentSupportCard() {
                 <div>
                   <dt className="text-stone-500">Agent 使用说明（Skill）</dt>
                   <dd className="mt-1 text-xs leading-5 text-stone-700">
-                    告诉 Agent 每个命令能做什么、怎样查询，以及发送前必须遵守的确认规则。每次 CLI 响应也会提醒 Agent 阅读对应说明。
+                    告诉 Agent 每个命令能做什么、怎样查询，以及发送前必须遵守的确认规则。
                   </dd>
                 </div>
               </dl>
@@ -252,6 +276,7 @@ export function AgentSupportCard() {
                 关闭支持
               </button>
             ) : null}
+          </div>
           </div>
         </div>
       ) : null}
