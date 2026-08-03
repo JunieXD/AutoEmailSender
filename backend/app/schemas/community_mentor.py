@@ -37,6 +37,14 @@ CommunityMentorStatus = Literal[
     "disputed",
     "removed",
 ]
+CommunityRevokedStatus = Literal[
+    "retired",
+    "departed",
+    "deceased",
+    "stale",
+    "disputed",
+    "removed",
+]
 CommunityComparisonCategory = Literal[
     "new",
     "linked_unchanged",
@@ -314,7 +322,7 @@ class CommunityShardDocument(CommunityDatasetSchema):
 
 class CommunityRevocationRecord(CommunityDatasetSchema):
     community_record_id: str = Field(pattern=MENTOR_ID_PATTERN)
-    status: CommunityMentorStatus
+    status: CommunityRevokedStatus
     reason: str | None = Field(default=None, max_length=1_000)
     source_url: str | None = Field(default=None, max_length=500)
     observed_at: datetime | None = None
@@ -416,6 +424,8 @@ class CommunityMentorComparisonRead(ApiSchema):
     linked: bool
     identity_conflict: bool
     match_reason: str | None
+    import_blocked: bool = False
+    import_blocked_reason: str | None = None
     fields: list[CommunityFieldComparisonRead]
 
 

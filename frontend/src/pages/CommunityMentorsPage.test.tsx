@@ -1,6 +1,7 @@
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { addVisibleRecordSelection } from '@/lib/communityMentorSelection';
 import { CommunityMentorsPage } from '@/pages/CommunityMentorsPage';
 import type {
   CommunityCatalogDTO,
@@ -126,6 +127,8 @@ const comparison: CommunityMentorComparisonDTO = {
   linked: false,
   identity_conflict: false,
   match_reason: null,
+  import_blocked: false,
+  import_blocked_reason: null,
   fields: [
     {
       field: 'name',
@@ -212,6 +215,11 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
     expect(await screen.findByRole('dialog', { name: '社区导师导入预览' })).toBeInTheDocument();
+    expect(apiMocks.preview).toHaveBeenCalledWith({
+      dataset_version: populatedCatalog.dataset_version,
+      unit_paths: ['data/org_example_university/org_example_school.json'],
+      record_ids: ['mentor_example0001'],
+    });
     fireEvent.click(screen.getByRole('button', { name: '确认导入 1 位' }));
 
     await waitFor(() => expect(apiMocks.importRecords).toHaveBeenCalledTimes(1));
@@ -240,5 +248,88 @@ describe('CommunityMentorsPage', () => {
         expect.stringContaining('社区导师 ID：mentor_example0001'),
       ),
     );
+  });
+
+  it('selects at most 500 mentors from the current filter and reports the remainder', () => {
+    const visibleRecordIds = Array.from(
+      { length: 501 },
+      (_, index) => `mentor_example${String(index).padStart(4, '0')}`,
+    );
+
+    const result = addVisibleRecordSelection([], visibleRecordIds);
+
+    expect(result.recordIds).toHaveLength(500);
+    expect(result.recordIds).toEqual(visibleRecordIds.slice(0, 500));
+    expect(result.omittedCount).toBe(1);
+  });
+
+  it('keeps the loaded list but disables preview when the selected units change', async () => {
+    const secondPath = 'data/org_example_university/org_example_institute.json';
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: 2,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: 2,
+        units: [
+          ...university.units,
+          {
+            id: 'org_example_institute',
+            name: '人工智能研究院',
+            type: 'institute' as const,
+            record_count: 1,
+            path: secondPath,
+          },
+        ],
+      })),
+    });
+    apiMocks.listRecords.mockResolvedValue(recordsPayload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('zhang@example.edu');
+    fireEvent.click(screen.getByLabelText('选择 张老师'));
+    fireEvent.click(screen.getByLabelText(/人工智能研究院/));
+
+    expect(
+      await screen.findByText(/当前列表来自上一次加载/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/已选择 1\/500/)).toBeInTheDocument();
+    const previewButton = screen.getByRole('button', { name: /预览并导入 1/ });
+    expect(previewButton).toBeDisabled();
+    fireEvent.click(previewButton);
+    expect(apiMocks.preview).not.toHaveBeenCalled();
+  });
+
+  it('blocks a mentor that becomes unsafe during preview and shows the next action', async () => {
+    const blockedComparison: CommunityMentorComparisonDTO = {
+      ...comparison,
+      category: 'conflict',
+      identity_conflict: true,
+      match_reason: '该本地导师已关联另一条社区记录',
+      import_blocked: true,
+      import_blocked_reason: '请先处理原有关联，再重新加载社区导师列表',
+    };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(recordsPayload);
+    apiMocks.preview.mockResolvedValue({
+      ...recordsPayload,
+      records: [blockedComparison],
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('zhang@example.edu');
+    fireEvent.click(screen.getByLabelText('选择 张老师'));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
+
+    expect(await screen.findByText(/暂不可导入：/)).toBeInTheDocument();
+    expect(screen.getByText(/请先处理原有关联/)).toBeInTheDocument();
+    expect(screen.getByLabelText('选择 张老师')).toBeDisabled();
+    expect(screen.queryByText(/人工确认同一导师/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '社区导师导入预览' })).not.toBeInTheDocument();
+    expect(apiMocks.importRecords).not.toHaveBeenCalled();
   });
 });

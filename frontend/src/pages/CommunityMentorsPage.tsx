@@ -33,6 +33,10 @@ import {
   copyCommunityText,
 } from '@/lib/communityMentorLinks';
 import { openExternalHttpUrl } from '@/lib/externalUrls';
+import {
+  addVisibleRecordSelection,
+  MAX_SELECTED_COMMUNITY_MENTORS,
+} from '@/lib/communityMentorSelection';
 import type {
   CommunityCatalogDTO,
   CommunityComparisonCategoryDTO,
@@ -47,6 +51,13 @@ import type {
 
 
 const MAX_SELECTED_UNITS = 20;
+const MAX_SELECTED_RECORDS = MAX_SELECTED_COMMUNITY_MENTORS;
+
+const haveSamePaths = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((path) => right.includes(path));
+
+const isRecordSelectable = (item: CommunityMentorComparisonDTO) =>
+  item.category !== 'retired_or_revoked' && !item.import_blocked;
 
 const categoryMeta: Record<
   CommunityComparisonCategoryDTO,
@@ -228,6 +239,7 @@ export const CommunityMentorsPage = () => {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogKeyword, setCatalogKeyword] = useState('');
   const [selectedUnitPaths, setSelectedUnitPaths] = useState<string[]>([]);
+  const [loadedUnitPaths, setLoadedUnitPaths] = useState<string[] | null>(null);
   const [recordsPayload, setRecordsPayload] = useState<CommunityRecordsDTO | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordKeyword, setRecordKeyword] = useState('');
@@ -254,8 +266,10 @@ export const CommunityMentorsPage = () => {
         setCatalog((previous) => {
           if (previous && previous.dataset_version !== nextCatalog.dataset_version) {
             setSelectedUnitPaths([]);
+            setLoadedUnitPaths(null);
             setRecordsPayload(null);
             setSelectedRecordIds([]);
+            setPreviewPayload(null);
           }
           return nextCatalog;
         });
@@ -306,14 +320,17 @@ export const CommunityMentorsPage = () => {
     if (!catalog || unitPaths.length === 0) {
       return;
     }
+    const requestedUnitPaths = [...unitPaths];
     setRecordsLoading(true);
     try {
       const result = await listCommunityMentors({
         dataset_version: catalog.dataset_version,
-        unit_paths: unitPaths,
+        unit_paths: requestedUnitPaths,
       });
       setRecordsPayload(result);
+      setLoadedUnitPaths(requestedUnitPaths);
       setSelectedRecordIds([]);
+      setPreviewPayload(null);
       if (result.warning) {
         notifyWarning('学院数据来自缓存', result.warning);
       }
@@ -348,31 +365,110 @@ export const CommunityMentorsPage = () => {
   }, [categoryFilter, recordKeyword, recordsPayload]);
 
   const selectableVisibleRecords = visibleRecords.filter(
-    (item) => item.category !== 'retired_or_revoked',
+    isRecordSelectable,
+  );
+  const selectableVisibleIds = selectableVisibleRecords.map((item) => item.record.id);
+  const selectedRecordIdSet = useMemo(
+    () => new Set(selectedRecordIds),
+    [selectedRecordIds],
+  );
+  const selectedVisibleCount = selectableVisibleIds.filter((id) =>
+    selectedRecordIdSet.has(id),
+  ).length;
+  const selectedOutsideVisibleCount = selectedRecordIds.length - selectedVisibleCount;
+  const selectableVisibleCapacity = Math.min(
+    selectableVisibleIds.length,
+    Math.max(0, MAX_SELECTED_RECORDS - selectedOutsideVisibleCount),
   );
   const allVisibleSelected =
     selectableVisibleRecords.length > 0 &&
-    selectableVisibleRecords.every((item) => selectedRecordIds.includes(item.record.id));
+    selectableVisibleCapacity > 0 &&
+    selectedVisibleCount === selectableVisibleCapacity;
+  const recordsSelectionStale = Boolean(
+    recordsPayload &&
+      loadedUnitPaths &&
+      !haveSamePaths(selectedUnitPaths, loadedUnitPaths),
+  );
 
   const toggleRecord = (recordId: string) => {
-    setSelectedRecordIds((current) =>
-      current.includes(recordId)
-        ? current.filter((item) => item !== recordId)
-        : [...current, recordId],
-    );
+    setSelectedRecordIds((current) => {
+      if (current.includes(recordId)) {
+        return current.filter((item) => item !== recordId);
+      }
+      if (current.length >= MAX_SELECTED_RECORDS) {
+        notifyWarning(
+          '已达到导入上限',
+          `一次最多选择 ${MAX_SELECTED_RECORDS} 位导师，请先导入当前选择。`,
+        );
+        return current;
+      }
+      return [...current, recordId];
+    });
+  };
+
+  const toggleVisibleRecords = () => {
+    setSelectedRecordIds((current) => {
+      if (allVisibleSelected) {
+        return current.filter((id) => !selectableVisibleIds.includes(id));
+      }
+      const { recordIds, omittedCount } = addVisibleRecordSelection(
+        current,
+        selectableVisibleIds,
+      );
+      if (omittedCount > 0) {
+        notifyWarning(
+          '已选择前 500 位导师',
+          `还有 ${omittedCount} 位未选中；一次最多导入 ${MAX_SELECTED_RECORDS} 位，请分批处理。`,
+        );
+      }
+      return recordIds;
+    });
   };
 
   const openPreview = async () => {
-    if (!catalog || selectedRecordIds.length === 0) {
+    if (
+      !catalog ||
+      !loadedUnitPaths ||
+      selectedRecordIds.length === 0 ||
+      recordsSelectionStale
+    ) {
+      if (recordsSelectionStale) {
+        notifyWarning('请先重新加载导师列表', '学院选择已改变，当前列表仍是上一次加载的结果。');
+      }
       return;
     }
+    const recordIds = selectedRecordIds.slice(0, MAX_SELECTED_RECORDS);
     setPreviewLoading(true);
     try {
       const result = await previewCommunityMentorImport({
         dataset_version: catalog.dataset_version,
-        unit_paths: selectedUnitPaths,
-        record_ids: selectedRecordIds,
+        unit_paths: loadedUnitPaths,
+        record_ids: recordIds,
       });
+      const refreshedById = new Map(
+        result.records.map((item) => [item.record.id, item]),
+      );
+      setRecordsPayload((current) =>
+        current
+          ? {
+              ...current,
+              records: current.records.map(
+                (item) => refreshedById.get(item.record.id) ?? item,
+              ),
+            }
+          : current,
+      );
+      const blockedRecords = result.records.filter((item) => !isRecordSelectable(item));
+      if (blockedRecords.length > 0) {
+        const blockedIds = new Set(blockedRecords.map((item) => item.record.id));
+        setSelectedRecordIds((current) => current.filter((id) => !blockedIds.has(id)));
+        const firstBlocked = blockedRecords[0];
+        notifyWarning(
+          '导师状态刚刚发生变化',
+          `“${firstBlocked.record.name}”${firstBlocked.import_blocked_reason ? `：${firstBlocked.import_blocked_reason}` : '暂不可导入'}。已从选择中移除，请重新预览。`,
+        );
+        return;
+      }
       const nextChoices: Record<string, Record<string, CommunityFieldChoiceDTO>> = {};
       const nextConfirmations: Record<string, boolean> = {};
       result.records.forEach((comparison) => {
@@ -392,7 +488,19 @@ export const CommunityMentorsPage = () => {
   };
 
   const submitImport = async () => {
-    if (!catalog || !previewPayload) {
+    if (!catalog || !previewPayload || !loadedUnitPaths) {
+      return;
+    }
+    if (recordsSelectionStale) {
+      notifyWarning('请先重新加载导师列表', '学院选择已改变，不能用旧列表继续导入。');
+      return;
+    }
+    const blocked = previewPayload.records.find((item) => !isRecordSelectable(item));
+    if (blocked) {
+      notifyWarning(
+        '存在暂不可导入的导师',
+        blocked.import_blocked_reason ?? `“${blocked.record.name}”当前不能导入。`,
+      );
       return;
     }
     const unconfirmed = previewPayload.records.find(
@@ -406,7 +514,7 @@ export const CommunityMentorsPage = () => {
     try {
       const result = await importCommunityMentors({
         dataset_version: previewPayload.dataset_version,
-        unit_paths: selectedUnitPaths,
+        unit_paths: loadedUnitPaths,
         items: previewPayload.records.map((item) => ({
           community_record_id: item.record.id,
           field_choices: fieldChoices[item.record.id] ?? {},
@@ -416,7 +524,7 @@ export const CommunityMentorsPage = () => {
       notifySuccess('社区导师已导入', result.message);
       setPreviewPayload(null);
       setSelectedRecordIds([]);
-      await loadRecordsForPaths(selectedUnitPaths);
+      await loadRecordsForPaths(loadedUnitPaths);
     } catch (error) {
       notifyError('社区导入失败', getErrorMessage(error, '社区导师导入失败'));
     } finally {
@@ -588,7 +696,7 @@ export const CommunityMentorsPage = () => {
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                   <div>
                     <h2 className="text-xl font-semibold text-stone-900">导师列表</h2>
-                    <p className="mt-1 text-sm text-stone-500">已加载 {recordsPayload.records.length} 位，已选择 {selectedRecordIds.length} 位</p>
+                    <p className="mt-1 text-sm text-stone-500">已加载 {recordsPayload.records.length} 位，已选择 {selectedRecordIds.length}/{MAX_SELECTED_RECORDS}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <div className="relative min-w-56 flex-1">
@@ -601,15 +709,28 @@ export const CommunityMentorsPage = () => {
                     </select>
                   </div>
                 </div>
+                {recordsSelectionStale ? (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <span className="inline-flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      当前列表来自上一次加载。学院选择已经改变，请重新加载后再预览或导入。
+                    </span>
+                    <button
+                      type="button"
+                      disabled={recordsLoading || selectedUnitPaths.length === 0}
+                      onClick={() => void loadRecordsForPaths(selectedUnitPaths)}
+                      className="font-semibold text-amber-900 underline decoration-amber-400 underline-offset-2 disabled:opacity-50"
+                    >
+                      重新加载
+                    </button>
+                  </div>
+                ) : null}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-stone-50 px-4 py-3">
                   <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-stone-700">
-                    <input type="checkbox" className="h-4 w-4 accent-orange-600" checked={allVisibleSelected} onChange={() => {
-                      const visibleIds = selectableVisibleRecords.map((item) => item.record.id);
-                      setSelectedRecordIds((current) => allVisibleSelected ? current.filter((id) => !visibleIds.includes(id)) : Array.from(new Set([...current, ...visibleIds])));
-                    }} />
+                    <input type="checkbox" className="h-4 w-4 accent-orange-600" checked={allVisibleSelected} onChange={toggleVisibleRecords} />
                     选择当前筛选结果
                   </label>
-                  <button type="button" disabled={previewLoading || selectedRecordIds.length === 0} onClick={() => void openPreview()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-50">
+                  <button type="button" disabled={previewLoading || selectedRecordIds.length === 0 || recordsSelectionStale} onClick={() => void openPreview()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-50">
                     {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                     预览并导入 {selectedRecordIds.length > 0 ? selectedRecordIds.length : ''}
                   </button>
@@ -619,11 +740,11 @@ export const CommunityMentorsPage = () => {
                     <div className="rounded-2xl border border-dashed border-stone-200 p-10 text-center text-sm text-stone-500">没有匹配的导师。</div>
                   ) : visibleRecords.map((item) => {
                     const meta = categoryMeta[item.category];
-                    const selectable = item.category !== 'retired_or_revoked';
+                    const selectable = isRecordSelectable(item);
                     return (
                       <article key={item.record.id} className="rounded-2xl border border-stone-200 p-4 transition hover:border-orange-200 hover:shadow-sm">
                         <div className="flex items-start gap-3">
-                          <input type="checkbox" aria-label={`选择 ${item.record.name}`} disabled={!selectable} checked={selectedRecordIds.includes(item.record.id)} onChange={() => toggleRecord(item.record.id)} className="mt-1 h-4 w-4 shrink-0 accent-orange-600 disabled:opacity-40" />
+                          <input type="checkbox" aria-label={`选择 ${item.record.name}`} disabled={!selectable} checked={selectedRecordIdSet.has(item.record.id)} onChange={() => toggleRecord(item.record.id)} className="mt-1 h-4 w-4 shrink-0 accent-orange-600 disabled:opacity-40" />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <h3 className="font-semibold text-stone-950">{item.record.name}</h3>
@@ -637,7 +758,12 @@ export const CommunityMentorsPage = () => {
                               <span>{[item.record.university, item.record.school, item.record.department].filter(Boolean).join(' · ')}</span>
                             </div>
                             {item.record.research_direction ? <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">{item.record.research_direction}</p> : null}
-                            {item.identity_conflict ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800"><AlertTriangle className="mr-1 inline h-3.5 w-3.5" />{item.match_reason}</div> : null}
+                            {item.import_blocked ? (
+                              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-800">
+                                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
+                                <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
+                              </div>
+                            ) : item.identity_conflict ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800"><AlertTriangle className="mr-1 inline h-3.5 w-3.5" />{item.match_reason}</div> : null}
                             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-stone-500">
                               <span>核验：{formatDate(item.record.last_verified_at)}</span>
                               <span>贡献者：{item.record.contributors.map((contributor) => `@${contributor.github_login_at_submission}`).join('、') || '未记录'}</span>
@@ -689,7 +815,11 @@ export const CommunityMentorsPage = () => {
                       {item.local_professor_id ? <Link to={`/professors?keyword=${encodeURIComponent(item.local_professor_name ?? item.record.name)}`} className="text-xs font-medium text-primary hover:underline">查看本地导师</Link> : null}
                     </div>
                     {item.local_archived ? <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">这位导师在本地回收站中。导入可以补全字段，但不会自动恢复。</div> : null}
-                    {item.identity_conflict ? (
+                    {item.import_blocked ? (
+                      <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                        <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
+                      </div>
+                    ) : item.identity_conflict ? (
                       <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                         <input type="checkbox" className="mt-0.5 h-4 w-4 accent-amber-600" checked={identityConfirmations[item.record.id] ?? false} onChange={(event) => setIdentityConfirmations((current) => ({ ...current, [item.record.id]: event.target.checked }))} />
                         <span><strong>人工确认同一导师：</strong>{item.match_reason}</span>
@@ -710,7 +840,7 @@ export const CommunityMentorsPage = () => {
               <p className="text-xs text-stone-500">不会导入标签、个人备注、任务、发送记录或匹配结果。</p>
               <div className="flex gap-3">
                 <button type="button" disabled={importing} onClick={() => setPreviewPayload(null)} className="ui-btn-secondary">取消</button>
-                <button type="button" disabled={importing} onClick={() => void submitImport()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60">{importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}确认导入 {previewPayload.records.length} 位</button>
+                <button type="button" disabled={importing || recordsSelectionStale || previewPayload.records.some((item) => !isRecordSelectable(item))} onClick={() => void submitImport()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60">{importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}确认导入 {previewPayload.records.length} 位</button>
               </div>
             </div>
           </div>

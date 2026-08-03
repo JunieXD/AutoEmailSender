@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -57,6 +58,9 @@ TOTAL_SELECTED_SHARDS_MAX_BYTES = 80 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 20.0
 CACHE_INDEX_NAME = "cache-index.json"
+QUERY_IN_BATCH_SIZE = 10_000
+COMMUNITY_CACHE_MAX_BYTES = 500 * 1024 * 1024
+COMMUNITY_CACHE_RETAINED_VERSIONS = 2
 SAFE_SHARE_COLUMNS = list(COMMUNITY_IMPORT_FIELDS)
 FORMULA_PREFIXES = ("=", "+", "-", "@")
 
@@ -71,6 +75,14 @@ FIELD_LABELS = {
     "recent_papers": "近期论文",
     "profile_url": "官方主页",
     "source_url": "证据来源",
+}
+LIFECYCLE_STATUS_LABELS = {
+    "retired": "已退休",
+    "departed": "已离职或调动",
+    "deceased": "已去世",
+    "stale": "信息过时",
+    "disputed": "信息有争议",
+    "removed": "已撤销",
 }
 
 
@@ -112,6 +124,7 @@ class CommunityImportSummary:
 
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+ValueT = TypeVar("ValueT")
 
 
 class CommunityMentorDataService:
@@ -121,6 +134,8 @@ class CommunityMentorDataService:
         cache_directory: Path | None = None,
         base_urls: tuple[str, ...] | None = None,
         http_client: httpx.AsyncClient | None = None,
+        cache_max_bytes: int = COMMUNITY_CACHE_MAX_BYTES,
+        cache_retained_versions: int = COMMUNITY_CACHE_RETAINED_VERSIONS,
     ) -> None:
         self.cache_directory = (
             cache_directory
@@ -133,7 +148,11 @@ class CommunityMentorDataService:
         )
         if not self.base_urls:
             raise CommunityDataError("未配置社区导师库数据地址", code="COMMUNITY_DATA_CONFIG_INVALID")
+        if cache_max_bytes <= 0 or cache_retained_versions <= 0:
+            raise ValueError("社区导师缓存容量和保留版本数必须为正整数")
         self.http_client = http_client
+        self.cache_max_bytes = cache_max_bytes
+        self.cache_retained_versions = cache_retained_versions
 
     @staticmethod
     def _configured_base_urls() -> tuple[str, ...]:
@@ -230,6 +249,10 @@ class CommunityMentorDataService:
 
         records: list[CommunityMentorRecord] = []
         seen_record_ids: set[str] = set()
+        revocations_by_id = {
+            item.community_record_id: item
+            for item in bundle.revocations.records
+        }
         downloaded_from_network = False
         for path in unit_paths:
             manifest_file = manifest_files[path]
@@ -246,12 +269,19 @@ class CommunityMentorDataService:
                 shard.university.id != expected_university_id
                 or shard.unit.id != expected_unit_id
                 or len(shard.records) != expected_count
+                or shard.generated_at != bundle.catalog.generated_at
             ):
                 raise CommunityDataError(
                     f"学院分片与目录不一致：{path}",
                     code="COMMUNITY_DATA_INVALID",
                 )
-            for record in shard.records:
+            for shard_record in shard.records:
+                revocation = revocations_by_id.get(shard_record.id)
+                record = (
+                    shard_record.model_copy(update={"status": revocation.status})
+                    if revocation is not None
+                    else shard_record
+                )
                 if record.id in seen_record_ids:
                     raise CommunityDataError(
                         f"多个学院分片包含同一导师：{record.id}",
@@ -458,6 +488,7 @@ class CommunityMentorDataService:
         try:
             cached_payload = self._read_cache_file(cache_path, SHARD_MAX_BYTES)
             self._verify_manifest_payload(cached_payload, manifest_file)
+            self._touch_cache_file(cache_path)
             return cached_payload, "cache"
         except CommunityDataError:
             pass
@@ -472,6 +503,7 @@ class CommunityMentorDataService:
                 payload = await self._download_bytes(base_url, relative_path, SHARD_MAX_BYTES)
                 self._verify_manifest_payload(payload, manifest_file)
                 self._write_atomic(cache_path, payload)
+                self._prune_cache(current_version=bundle.catalog.dataset_version)
                 return payload, "network"
             except CommunityDataError as exc:
                 failures.append(str(exc))
@@ -690,6 +722,114 @@ class CommunityMentorDataService:
             separators=(",", ":"),
         ).encode("utf-8")
         self._write_atomic(self.cache_directory / CACHE_INDEX_NAME, index_payload)
+        self._prune_cache(current_version=version)
+
+    def _prune_cache(self, *, current_version: str) -> None:
+        datasets_root = self.cache_directory / "datasets"
+        try:
+            children = list(datasets_root.iterdir())
+        except OSError:
+            return
+
+        version_directories = [
+            child
+            for child in children
+            if not child.is_symlink()
+            and child.is_dir()
+            and re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z-[a-f0-9]{12}",
+                child.name,
+            )
+        ]
+        versions_to_keep = {current_version}
+        for directory in sorted(
+            version_directories,
+            key=lambda item: item.name,
+            reverse=True,
+        ):
+            if len(versions_to_keep) >= self.cache_retained_versions:
+                break
+            versions_to_keep.add(directory.name)
+
+        for directory in version_directories:
+            if directory.name not in versions_to_keep:
+                self._remove_cache_tree(directory)
+
+        total_bytes = self._cache_total_size()
+        if total_bytes <= self.cache_max_bytes:
+            return
+
+        previous_versions = sorted(
+            (
+                directory
+                for directory in version_directories
+                if directory.name in versions_to_keep
+                and directory.name != current_version
+                and directory.exists()
+            ),
+            key=lambda item: item.name,
+        )
+        for directory in previous_versions:
+            self._remove_cache_tree(directory)
+            total_bytes = self._cache_total_size()
+            if total_bytes <= self.cache_max_bytes:
+                return
+
+        shard_root = datasets_root / current_version / "data"
+        try:
+            shard_files = [
+                path
+                for path in shard_root.rglob("*.json")
+                if path.is_file() and not path.is_symlink()
+            ]
+        except OSError:
+            return
+        shard_files.sort(key=self._cache_file_mtime)
+        for path in shard_files:
+            try:
+                size = path.stat().st_size
+                path.unlink()
+            except OSError:
+                continue
+            total_bytes = max(0, total_bytes - size)
+            if total_bytes <= self.cache_max_bytes:
+                break
+
+    def _cache_total_size(self) -> int:
+        total = 0
+        try:
+            paths = self.cache_directory.rglob("*")
+            for path in paths:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            return total
+        return total
+
+    @staticmethod
+    def _remove_cache_tree(path: Path) -> None:
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _cache_file_mtime(path: Path) -> int:
+        try:
+            return path.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    @staticmethod
+    def _touch_cache_file(path: Path) -> None:
+        try:
+            os.utime(path, None)
+        except OSError:
+            pass
 
     def _cache_dataset_path(self, dataset_version: str, relative_path: str) -> Path:
         self._validate_relative_path(relative_path)
@@ -792,6 +932,13 @@ def _identity_conflict_reason(professor: Professor, record: CommunityMentorRecor
     return None
 
 
+def _chunked_values(values: list[ValueT]) -> list[list[ValueT]]:
+    return [
+        values[start : start + QUERY_IN_BATCH_SIZE]
+        for start in range(0, len(values), QUERY_IN_BATCH_SIZE)
+    ]
+
+
 def _build_field_comparisons(
     *,
     professor: Professor | None,
@@ -853,42 +1000,51 @@ async def build_community_comparisons(
     records: list[CommunityMentorRecord] | tuple[CommunityMentorRecord, ...],
 ) -> list[CommunityMentorComparisonRead]:
     record_ids = [record.id for record in records]
-    links = list(
-        (
-            await session.execute(
-                select(ProfessorCommunityLink)
-                .options(selectinload(ProfessorCommunityLink.professor))
-                .where(ProfessorCommunityLink.community_record_id.in_(record_ids)),
-            )
-        ).scalars(),
-    )
-    links_by_record_id = {link.community_record_id: link for link in links}
-    record_emails = {record.email.lower() for record in records}
-    professors_by_email: dict[str, list[Professor]] = {}
-    candidate_links_by_professor_id: dict[int, ProfessorCommunityLink] = {}
-    if record_emails:
-        professors = list(
+    links: list[ProfessorCommunityLink] = []
+    for record_id_batch in _chunked_values(record_ids):
+        links.extend(
             (
                 await session.execute(
-                    select(Professor).where(func.lower(Professor.email).in_(record_emails)),
+                    select(ProfessorCommunityLink)
+                    .options(selectinload(ProfessorCommunityLink.professor))
+                    .where(
+                        ProfessorCommunityLink.community_record_id.in_(record_id_batch),
+                    ),
                 )
             ).scalars(),
         )
-        for professor in professors:
-            if professor.email:
-                professors_by_email.setdefault(professor.email.lower(), []).append(professor)
-        if professors:
-            candidate_links = list(
+    links_by_record_id = {link.community_record_id: link for link in links}
+    record_emails = sorted({record.email.lower() for record in records})
+    professors_by_email: dict[str, list[Professor]] = {}
+    candidate_links_by_professor_id: dict[int, ProfessorCommunityLink] = {}
+    if record_emails:
+        professors: list[Professor] = []
+        for email_batch in _chunked_values(record_emails):
+            professors.extend(
                 (
                     await session.execute(
-                        select(ProfessorCommunityLink).where(
-                            ProfessorCommunityLink.professor_id.in_(
-                                [professor.id for professor in professors],
-                            ),
+                        select(Professor).where(
+                            func.lower(Professor.email).in_(email_batch),
                         ),
                     )
                 ).scalars(),
             )
+        for professor in professors:
+            if professor.email:
+                professors_by_email.setdefault(professor.email.lower(), []).append(professor)
+        if professors:
+            candidate_links: list[ProfessorCommunityLink] = []
+            professor_ids = [professor.id for professor in professors]
+            for professor_id_batch in _chunked_values(professor_ids):
+                candidate_links.extend(
+                    (
+                        await session.execute(
+                            select(ProfessorCommunityLink).where(
+                                ProfessorCommunityLink.professor_id.in_(professor_id_batch),
+                            ),
+                        )
+                    ).scalars(),
+                )
             candidate_links_by_professor_id = {
                 candidate_link.professor_id: candidate_link
                 for candidate_link in candidate_links
@@ -902,6 +1058,8 @@ async def build_community_comparisons(
         linked = link is not None
         match_reason: str | None = "stable_id" if linked else None
         identity_conflict = False
+        import_blocked = False
+        import_blocked_reason: str | None = None
         if link is not None and isinstance(link.imported_snapshot_json, dict):
             snapshot = link.imported_snapshot_json
         if professor is not None:
@@ -929,6 +1087,10 @@ async def build_community_comparisons(
                     match_reason = (
                         "该本地导师已经稳定关联另一条社区记录，可能存在社区重复实体"
                     )
+                    import_blocked = True
+                    import_blocked_reason = (
+                        "这位本地导师已关联另一条社区记录，请先处理原有关联"
+                    )
                 else:
                     conflict_reason = _identity_conflict_reason(professor, record)
                     if conflict_reason:
@@ -937,6 +1099,8 @@ async def build_community_comparisons(
             elif len(candidates) > 1:
                 identity_conflict = True
                 match_reason = "该邮箱在本地匹配到多条记录，无法自动确定导师实体"
+                import_blocked = True
+                import_blocked_reason = "该邮箱匹配到多位本地导师，请先整理重复记录"
 
         fields = _build_field_comparisons(
             professor=professor,
@@ -946,6 +1110,16 @@ async def build_community_comparisons(
         states = {field.state for field in fields}
         if record.status != "active" or (link is not None and link.remote_status != "active"):
             category = "retired_or_revoked"
+            lifecycle_status = (
+                record.status
+                if record.status != "active"
+                else link.remote_status if link is not None else "removed"
+            )
+            import_blocked = True
+            import_blocked_reason = (
+                f"社区已将这位导师标记为{LIFECYCLE_STATUS_LABELS.get(lifecycle_status, '非在职状态')}，"
+                "暂时不能导入"
+            )
         elif professor is not None and professor.archived_at is not None:
             category = "archived_local"
         elif identity_conflict or "conflict" in states:
@@ -970,6 +1144,8 @@ async def build_community_comparisons(
                 linked=linked,
                 identity_conflict=identity_conflict,
                 match_reason=match_reason,
+                import_blocked=import_blocked,
+                import_blocked_reason=import_blocked_reason,
                 fields=fields,
             ),
         )
@@ -1045,6 +1221,12 @@ async def import_community_records(
             raise CommunityDataError(
                 f"导师 {comparison.record.name} 已退休、离职或撤销，不能作为新数据导入",
                 code="COMMUNITY_DATA_LIFECYCLE_BLOCKED",
+            )
+        if comparison.import_blocked:
+            raise CommunityDataError(
+                comparison.import_blocked_reason
+                or f"导师 {comparison.record.name} 暂时不能导入，请先处理本地冲突",
+                code="COMMUNITY_DATA_IDENTITY_CONFLICT",
             )
         if comparison.identity_conflict and comparison.local_professor_id is None:
             raise CommunityDataError(

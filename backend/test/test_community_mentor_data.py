@@ -23,6 +23,7 @@ from app.models import Base, Professor, ProfessorCommunityLink
 from app.schemas.community_mentor import (
     CommunityImportItemPayload,
     CommunityMentorRecord,
+    CommunityRevocationRecord,
 )
 from app.services.community_mentor_data import (
     CommunityDataError,
@@ -110,6 +111,7 @@ def _dataset_payloads(
     records: list[dict[str, object]] | None = None,
     revocation_records: list[dict[str, object]] | None = None,
     minimum_app_version: str = "2.4.1",
+    shard_generated_at: str = GENERATED_AT,
 ) -> dict[str, bytes]:
     shard_records = records if records is not None else [_record_payload()]
     catalog = {
@@ -144,7 +146,7 @@ def _dataset_payloads(
     shard = {
         "schema_version": 1,
         "dataset_version": DATASET_VERSION,
-        "generated_at": GENERATED_AT,
+        "generated_at": shard_generated_at,
         "university": {"id": UNIVERSITY_ID, "name": "示例大学"},
         "unit": {"id": UNIT_ID, "name": "计算机学院", "type": "school"},
         "records": shard_records,
@@ -287,6 +289,62 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
                 dataset_version=DATASET_VERSION,
                 unit_paths=[SHARD_PATH],
             )
+
+    async def test_rejects_shard_with_a_different_generation_time(self) -> None:
+        service = self._service(
+            _transport_for_payloads(
+                _dataset_payloads(shard_generated_at="2026-08-03T00:00:01Z"),
+            ),
+        )
+        await service.get_catalog(force_refresh=True)
+
+        with self.assertRaisesRegex(CommunityDataError, "学院分片与目录不一致"):
+            await service.load_records(
+                dataset_version=DATASET_VERSION,
+                unit_paths=[SHARD_PATH],
+            )
+
+    def test_revocation_record_rejects_active_status(self) -> None:
+        with self.assertRaises(ValueError):
+            CommunityRevocationRecord.model_validate(
+                {
+                    "community_record_id": "mentor_example0001",
+                    "status": "active",
+                },
+            )
+
+    def test_cache_pruning_removes_obsolete_versions_and_oldest_shards(self) -> None:
+        current_version = "2026-08-03T000002Z-cccccccccccc"
+        previous_version = "2026-08-03T000001Z-bbbbbbbbbbbb"
+        obsolete_version = "2026-08-03T000000Z-aaaaaaaaaaaa"
+        service = CommunityMentorDataService(
+            cache_directory=self.cache_directory,
+            base_urls=(BASE_URL,),
+            cache_max_bytes=25,
+            cache_retained_versions=2,
+        )
+        current_data = self.cache_directory / "datasets" / current_version / "data"
+        previous_root = self.cache_directory / "datasets" / previous_version
+        obsolete_root = self.cache_directory / "datasets" / obsolete_version
+        oldest_shard = current_data / "org_example_university" / "old.json"
+        newest_shard = current_data / "org_example_university" / "new.json"
+        for path, payload in (
+            (oldest_shard, b"o" * 20),
+            (newest_shard, b"n" * 20),
+            (previous_root / "catalog.json", b"p" * 8),
+            (obsolete_root / "catalog.json", b"x" * 8),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        os.utime(oldest_shard, (1, 1))
+        os.utime(newest_shard, (2, 2))
+
+        service._prune_cache(current_version=current_version)
+
+        self.assertFalse(obsolete_root.exists())
+        self.assertFalse(previous_root.exists())
+        self.assertFalse(oldest_shard.exists())
+        self.assertTrue(newest_shard.exists())
 
     def test_rejects_path_traversal_and_cross_origin_urls(self) -> None:
         for path in ("../latest.json", "/latest.json", "data/../../secret.json", "https://evil.example/x"):
@@ -447,7 +505,9 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             comparison = (await build_community_comparisons(session, [record]))[0]
 
             self.assertTrue(comparison.identity_conflict)
+            self.assertTrue(comparison.import_blocked)
             self.assertIn("重复实体", comparison.match_reason or "")
+            self.assertIn("原有关联", comparison.import_blocked_reason or "")
             with self.assertRaisesRegex(CommunityDataError, "已关联另一条社区记录"):
                 await import_community_records(
                     session,
@@ -460,6 +520,94 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
                         ),
                     ],
                 )
+
+    async def test_comparisons_batch_large_identity_queries(self) -> None:
+        base_record = CommunityMentorRecord.model_validate(_record_payload())
+        records = [
+            base_record.model_copy(
+                update={
+                    "id": f"mentor_batch{i:04d}",
+                    "email": f"batch{i}@example.edu",
+                    "contacts": [
+                        base_record.contacts[0].model_copy(
+                            update={"email": f"batch{i}@example.edu"},
+                        ),
+                    ],
+                },
+            )
+            for i in range(5)
+        ]
+        async with self.session_factory() as session:
+            for record in records:
+                professor = Professor(
+                    name=record.name,
+                    email=record.email,
+                    university=record.university,
+                )
+                session.add(professor)
+                await session.flush()
+                session.add(
+                    ProfessorCommunityLink(
+                        professor_id=professor.id,
+                        community_record_id=record.id,
+                        dataset_version=DATASET_VERSION,
+                        imported_snapshot_json={"name": record.name, "email": record.email},
+                        remote_status="active",
+                    ),
+                )
+            await session.flush()
+
+            with patch(
+                "app.services.community_mentor_data.QUERY_IN_BATCH_SIZE",
+                2,
+            ):
+                comparisons = await build_community_comparisons(session, records)
+
+        self.assertEqual(len(comparisons), 5)
+        self.assertTrue(all(item.linked for item in comparisons))
+
+    async def test_revocation_overrides_active_shard_and_blocks_import(self) -> None:
+        revocation = {
+            "community_record_id": "mentor_example0001",
+            "status": "retired",
+            "reason": "学校官网显示已退休",
+            "source_url": "https://example.edu/retired",
+            "observed_at": GENERATED_AT,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            client = httpx.AsyncClient(
+                transport=_transport_for_payloads(
+                    _dataset_payloads(revocation_records=[revocation]),
+                ),
+            )
+            try:
+                service = CommunityMentorDataService(
+                    cache_directory=Path(temp_dir) / "cache",
+                    base_urls=(BASE_URL,),
+                    http_client=client,
+                )
+                await service.get_catalog(force_refresh=True)
+                bundle = await service.load_records(
+                    dataset_version=DATASET_VERSION,
+                    unit_paths=[SHARD_PATH],
+                )
+            finally:
+                await client.aclose()
+
+        self.assertEqual(bundle.records[0].status, "retired")
+        async with self.session_factory() as session:
+            comparison = (await build_community_comparisons(session, bundle.records))[0]
+            self.assertEqual(comparison.category, "retired_or_revoked")
+            self.assertTrue(comparison.import_blocked)
+            with self.assertRaises(CommunityDataError) as raised:
+                await import_community_records(
+                    session,
+                    dataset_version=DATASET_VERSION,
+                    comparisons=[comparison],
+                    items=[CommunityImportItemPayload(community_record_id=comparison.record.id)],
+                )
+
+        self.assertEqual(raised.exception.code, "COMMUNITY_DATA_LIFECYCLE_BLOCKED")
 
     async def test_retirement_updates_link_warning_without_deleting_local_professor(self) -> None:
         revocation = {

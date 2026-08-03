@@ -537,6 +537,8 @@ export interface CommunityMentorComparisonDTO {
   linked: boolean;
   identity_conflict: boolean;
   match_reason: string | null;
+  import_blocked: boolean;
+  import_blocked_reason: string | null;
   fields: CommunityFieldComparisonDTO[];
 }
 
