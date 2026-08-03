@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.batch_tasks import router as batch_tasks_router
 from app.api.communication_groups import router as communication_groups_router
+from app.api.community_mentors import router as community_mentors_router
 from app.api.dashboard import router as dashboard_router
 from app.api.crawl_jobs import router as crawl_jobs_router
 from app.api.diagnostics import router as diagnostics_router
@@ -31,6 +32,7 @@ API_ROUTERS: tuple[APIRouter, ...] = (
     match_analysis_jobs_router,
     llm_profiles_router,
     professors_router,
+    community_mentors_router,
     professor_information_enrichment_professor_router,
     professor_information_enrichment_jobs_router,
     test_compose_router,

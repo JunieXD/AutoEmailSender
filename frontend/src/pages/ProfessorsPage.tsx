@@ -27,6 +27,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  Share2,
   Square,
   SquareCheck,
   SquareMinus,
@@ -62,6 +63,12 @@ import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
+import { getCommunitySharePackageDownloadUrl } from "@/lib/api/communityMentorsApi";
+import {
+  COMMUNITY_CONTRIBUTION_URL,
+  buildCommunityContributionClipboard,
+  copyCommunityText,
+} from "@/lib/communityMentorLinks";
 import {
   createProfessorInformationEnrichmentJob,
   createSingleProfessorInformationEnrichment,
@@ -1238,6 +1245,82 @@ export const ProfessorsPage = () => {
     } finally {
       setSavingProfessor(false);
     }
+  };
+
+  const handleContributeProfessor = () => {
+    if (!editingProfessor) {
+      return;
+    }
+    const payload = toProfessorPayload(formState);
+    const copyPromise = copyCommunityText(
+      buildCommunityContributionClipboard(payload),
+    );
+    openExternalHttpUrl(COMMUNITY_CONTRIBUTION_URL);
+    void copyPromise
+      .then(() => {
+        notifySuccess(
+          "导师信息已复制",
+          "GitHub 投稿表已在系统浏览器中打开，粘贴后核对并提交即可。",
+        );
+      })
+      .catch(() => {
+        notifyWarning(
+          "GitHub 投稿表已打开",
+          "剪贴板写入失败，请在投稿表中手动填写导师信息。",
+        );
+      });
+  };
+
+  const handleExportCommunitySharePackage = () => {
+    if (!editingProfessor) {
+      return;
+    }
+    if (!editingProfessor.email || !editingProfessor.source_url) {
+      notifyWarning(
+        "暂时无法导出",
+        "社区共享包必须包含已保存的公开工作邮箱和官方来源链接，请先补全并保存导师。",
+      );
+      return;
+    }
+    triggerDownload(
+      getCommunitySharePackageDownloadUrl([editingProfessor.id]),
+    );
+    notifySuccess(
+      "社区共享包开始下载",
+      "得到 XLSX 后可直接拖入 GitHub 的“批量贡献导师”表单。",
+    );
+  };
+
+  const handleBulkExportCommunitySharePackage = () => {
+    const selectedProfessors = professors.filter((professor) =>
+      selectedIds.has(professor.id),
+    );
+    if (selectedProfessors.length === 0) {
+      return;
+    }
+    if (selectedProfessors.length > 500) {
+      notifyWarning("选择数量过多", "一次最多导出 500 位导师的社区共享包。");
+      return;
+    }
+    const incompleteProfessor = selectedProfessors.find(
+      (professor) => !professor.email || !professor.source_url,
+    );
+    if (incompleteProfessor) {
+      notifyWarning(
+        "暂时无法导出",
+        `导师“${incompleteProfessor.name}”缺少公开工作邮箱或官方来源链接，请先补全。`,
+      );
+      return;
+    }
+    triggerDownload(
+      getCommunitySharePackageDownloadUrl(
+        selectedProfessors.map((professor) => professor.id),
+      ),
+    );
+    notifySuccess(
+      "社区共享包开始下载",
+      `已准备 ${selectedProfessors.length} 位导师的安全 XLSX；个人备注、标签、任务和通信数据不会导出。`,
+    );
   };
 
   const handleSingleInformationEnrichment = async () => {
@@ -2542,6 +2625,14 @@ export const ProfessorsPage = () => {
                 <Tags className="h-4 w-4" />
                 批量改标签
               </button>
+              <button
+                type="button"
+                onClick={handleBulkExportCommunitySharePackage}
+                className="ui-btn-secondary"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                导出社区共享包
+              </button>
               {archiveFilter !== "archived" ? (
                 <button
                   type="button"
@@ -2788,25 +2879,50 @@ export const ProfessorsPage = () => {
             }
           />
         </div>
-        <div className="mt-6 flex flex-wrap justify-end gap-3">
-          <button
-            type="button"
-            onClick={closeUpsertModal}
-            className="ui-btn-secondary"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSaveProfessor()}
-            disabled={savingProfessor}
-            className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {savingProfessor ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-3">
+            {editingProfessor ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleContributeProfessor}
+                  className="ui-btn-secondary"
+                >
+                  <Share2 className="h-4 w-4" />
+                  贡献到社区
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportCommunitySharePackage}
+                  className="ui-btn-secondary"
+                >
+                  <FileSpreadsheet className="h-4 w-4" />
+                  导出社区共享包
+                </button>
+              </>
             ) : null}
-            保存导师
-          </button>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={closeUpsertModal}
+              className="ui-btn-secondary"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSaveProfessor()}
+              disabled={savingProfessor}
+              className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingProfessor ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : null}
+              保存导师
+            </button>
+          </div>
         </div>
       </ModalShell>
 

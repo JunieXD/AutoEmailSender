@@ -14,6 +14,7 @@ const nodeTestFiles = [
   "src/features/token-usage/client/tokenUsage.test.ts",
   "src/lib/dateTime.test.ts",
   "src/lib/charting.test.ts",
+  "src/lib/communityMentorLinks.test.ts",
   "src/lib/pagination.test.ts",
   "src/lib/professorTitle.test.ts",
   "src/lib/professorSearchField.test.ts",

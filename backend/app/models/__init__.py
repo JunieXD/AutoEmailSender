@@ -55,6 +55,7 @@ from app.models.match_analysis_run import MatchAnalysisRun
 from app.models.operation_log import OperationLog
 from app.models.outreach_template import OutreachTemplate
 from app.models.professor import Professor, ProfessorTag, ProfessorTagLink
+from app.models.professor_community_link import ProfessorCommunityLink
 from app.models.test_compose_message import TestComposeMessage
 from app.models.test_compose_session import TestComposeSession
 from app.models.thinking_adaptation_cache import ThinkingAdaptationCache
@@ -111,6 +112,7 @@ __all__ = [
     "OperationLog",
     "OutreachTemplate",
     "Professor",
+    "ProfessorCommunityLink",
     "ProfessorTag",
     "ProfessorTagLink",
     "TestComposeMessage",

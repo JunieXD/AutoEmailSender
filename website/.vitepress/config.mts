@@ -35,6 +35,7 @@ export default defineConfig({
           items: [
             { text: "首页", link: "/docs/dashboard" },
             { text: "导师管理", link: "/docs/mentors" },
+            { text: "社区导师库", link: "/docs/community-mentors" },
             { text: "导师抓取 Skill", link: "/docs/mentor-crawler-skill" },
             { text: "匹配分析", link: "/docs/matching" },
             { text: "任务与工作区", link: "/docs/tasks-workspace" }
