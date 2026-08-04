@@ -294,6 +294,47 @@ describe("ProfilePage onboarding", () => {
     );
   });
 
+  it("hides setup recommendations after all four stages are completed", async () => {
+    const completedIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      materials: [
+        {
+          id: 7,
+          display_name: "简历.pdf",
+          original_filename: "resume.pdf",
+          mime_type: "application/pdf",
+          size_bytes: 1024,
+          material_type: "resume",
+          is_primary: true,
+          created_at: "2026-04-22T00:00:00Z",
+        },
+      ],
+    };
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [completedIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: completedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity: completedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    });
+    mockedGetTestComposeStatus.mockResolvedValueOnce({
+      completed: true,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "首次配置建议" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("marks test compose as completed when the current thread has sent history", async () => {
     mockedGetTestComposeStatus.mockResolvedValueOnce({
       completed: true,

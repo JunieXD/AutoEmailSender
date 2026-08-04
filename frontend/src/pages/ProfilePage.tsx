@@ -2290,6 +2290,7 @@ export const ProfilePage = () => {
     setupLlmProfile,
     testComposeSetupStatus,
   ]);
+  const hasCompletedProfileSetup = setupItems.every((item) => item.completed);
 
   useEffect(() => {
     if (!selectedIdentityId) {
@@ -3182,58 +3183,60 @@ export const ProfilePage = () => {
         </div>
       ) : (
         <div className="mt-6 space-y-6">
-          <section className="rounded-3xl border border-stone-200 bg-[linear-gradient(135deg,rgba(248,244,236,0.95),rgba(255,255,255,0.98))] p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold text-stone-900">
-                  首次配置建议
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-stone-600">
-                  按顺序完成身份、材料、模型和测试写信。
-                </p>
+          {!hasCompletedProfileSetup ? (
+            <section className="rounded-3xl border border-stone-200 bg-[linear-gradient(135deg,rgba(248,244,236,0.95),rgba(255,255,255,0.98))] p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold text-stone-900">
+                    首次配置建议
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-stone-600">
+                    按顺序完成身份、材料、模型和测试写信。
+                  </p>
+                </div>
+                <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-600">
+                  新用户上手流程
+                </span>
               </div>
-              <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-600">
-                新用户上手流程
-              </span>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {setupItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => openAndScrollToSetupSection(item.id)}
-                  className={clsx(
-                    "rounded-2xl border bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/20",
-                    item.completed ? "border-emerald-200" : "border-amber-200",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-stone-900">
-                      {item.label}
-                    </span>
-                    <span
-                      className={clsx(
-                        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium",
-                        item.completed
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-amber-100 text-amber-700",
-                      )}
-                    >
-                      {item.completed ? (
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      ) : (
-                        <XCircle className="h-3.5 w-3.5" />
-                      )}
-                      {item.completed ? "已完成" : "待完成"}
-                    </span>
-                  </div>
-                  <div className="mt-2 text-xs leading-5 text-stone-500">
-                    {item.statusDetail}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {setupItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => openAndScrollToSetupSection(item.id)}
+                    className={clsx(
+                      "rounded-2xl border bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/20",
+                      item.completed ? "border-emerald-200" : "border-amber-200",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-stone-900">
+                        {item.label}
+                      </span>
+                      <span
+                        className={clsx(
+                          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium",
+                          item.completed
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700",
+                        )}
+                      >
+                        {item.completed ? (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <XCircle className="h-3.5 w-3.5" />
+                        )}
+                        {item.completed ? "已完成" : "待完成"}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs leading-5 text-stone-500">
+                      {item.statusDetail}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <ProfileSetupSection
             sectionId="identity"
