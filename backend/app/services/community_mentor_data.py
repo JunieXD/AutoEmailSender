@@ -64,6 +64,7 @@ QUERY_IN_BATCH_SIZE = 10_000
 COMMUNITY_CACHE_MAX_BYTES = 500 * 1024 * 1024
 COMMUNITY_CACHE_RETAINED_VERSIONS = 2
 MAX_LOADED_RECORDS = MAX_COMMUNITY_LOADED_RECORDS
+COMMUNITY_SHARE_MAX_BYTES = 5 * 1024 * 1024
 SAFE_SHARE_COLUMNS = list(COMMUNITY_IMPORT_FIELDS)
 FORMULA_PREFIXES = ("=", "+", "-", "@")
 URL_IMPORT_FIELDS = {"profile_url", "source_url"}
@@ -1627,6 +1628,11 @@ def build_community_share_package(professors: list[Professor]) -> bytes:
         sheet.column_dimensions[column].width = width
     sheet.freeze_panes = "A2"
     output = io.BytesIO()
-    workbook.save(output)
-    workbook.close()
-    return output.getvalue()
+    try:
+        workbook.save(output)
+    finally:
+        workbook.close()
+    payload = output.getvalue()
+    if len(payload) > COMMUNITY_SHARE_MAX_BYTES:
+        raise ValueError("社区共享包超过 5 MiB，请减少导师数量后再投稿")
+    return payload

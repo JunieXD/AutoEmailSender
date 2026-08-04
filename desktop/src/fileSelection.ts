@@ -15,7 +15,7 @@ export type SelectedImportFile = {
 };
 
 const PROFESSOR_IMPORT_EXTENSIONS = ["csv", "xlsx"];
-export const COMMUNITY_SHARE_MAX_BYTES = 25 * 1024 * 1024;
+export const COMMUNITY_SHARE_MAX_BYTES = 5 * 1024 * 1024;
 
 type CommunityShareSaveDependencies = {
   showSaveDialog: (
@@ -70,7 +70,7 @@ export function createCommunityShareSaveService(
         data.byteLength === 0 ||
         data.byteLength > COMMUNITY_SHARE_MAX_BYTES
       ) {
-        throw new Error("社区共享包文件无效");
+        throw new Error("社区共享包文件无效或超过 5 MiB");
       }
 
       const result = await dependencies.showSaveDialog(

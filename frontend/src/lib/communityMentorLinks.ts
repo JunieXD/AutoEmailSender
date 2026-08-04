@@ -142,7 +142,10 @@ export const buildCommunityBatchContributionUrl = (
   return url.toString();
 };
 
-const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
+const buildCommunityReportCurrentValue = (
+  record: CommunityMentorRecordDTO,
+  includeResearchDirection: boolean,
+) =>
   [
     `姓名：${record.name}`,
     `邮箱：${record.email}`,
@@ -150,7 +153,9 @@ const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
     `学校：${record.university}`,
     `学院：${valueOrEmpty(record.school)}`,
     `系所：${valueOrEmpty(record.department)}`,
-    `研究方向：${valueOrEmpty(record.research_direction)}`,
+    ...(includeResearchDirection
+      ? [`研究方向：${valueOrEmpty(record.research_direction)}`]
+      : []),
     `高校官网详情页：${valueOrEmpty(record.profile_url)}`,
     `发现来源页：${record.source_url}`,
   ].join('\n');
@@ -161,6 +166,13 @@ export const buildCommunityReportUrl = (record: CommunityMentorRecordDTO) => {
   const titledMentorName = mentorName.endsWith('老师') ? mentorName : `${mentorName}老师`;
   url.searchParams.set('title', `[信息反馈] ${record.university.trim()}${titledMentorName}`);
   url.searchParams.set('record_id', record.id);
-  url.searchParams.set('current_value', buildCommunityReportCurrentValue(record));
+  const coreCurrentValue = buildCommunityReportCurrentValue(record, false);
+  url.searchParams.set('current_value', coreCurrentValue);
+  if (valueOrEmpty(record.research_direction)) {
+    url.searchParams.set('current_value', buildCommunityReportCurrentValue(record, true));
+    if (url.toString().length > COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH) {
+      url.searchParams.set('current_value', coreCurrentValue);
+    }
+  }
   return url.toString();
 };

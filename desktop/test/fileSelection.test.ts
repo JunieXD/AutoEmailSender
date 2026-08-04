@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildCommunityShareSaveDialogOptions,
   buildProfessorImportDialogOptions,
+  COMMUNITY_SHARE_MAX_BYTES,
   createCommunityShareSaveService,
 } from "../src/fileSelection.js";
 
@@ -48,6 +49,18 @@ describe("desktop file selection", () => {
     await expect(
       service.save(new Uint8Array([1]).buffer),
     ).resolves.toEqual({ status: "canceled" });
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects a share package above GitHub's 5 MiB intake limit", async () => {
+    const showSaveDialog = vi.fn();
+    const writeFile = vi.fn();
+    const service = createCommunityShareSaveService({ showSaveDialog, writeFile });
+
+    await expect(
+      service.save(new ArrayBuffer(COMMUNITY_SHARE_MAX_BYTES + 1)),
+    ).rejects.toThrow("超过 5 MiB");
+    expect(showSaveDialog).not.toHaveBeenCalled();
     expect(writeFile).not.toHaveBeenCalled();
   });
 
