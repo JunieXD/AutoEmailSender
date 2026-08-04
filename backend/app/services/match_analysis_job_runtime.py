@@ -51,105 +51,133 @@ async def create_match_analysis_job(
     professor_ids: list[int],
     name: str | None = None,
 ) -> MatchAnalysisJob:
-    unique_professor_ids = list(dict.fromkeys(professor_ids))
-    if not unique_professor_ids:
-        raise ValueError("请选择要分析匹配度的导师")
-
     async with session_factory() as session:
-        identity = await session.get(IdentityProfile, identity_id)
-        if identity is None:
-            raise ValueError("身份不存在")
-        if identity.current_primary_material_id is None:
-            raise ValueError("请到个人页设置默认材料")
-
-        llm_profile = await session.get(LLMProfile, llm_profile_id)
-        if llm_profile is None:
-            raise ValueError("LLM 配置不存在")
-
-        professors = list(
-            await session.scalars(
-                select(Professor)
-                .where(
-                    Professor.id.in_(unique_professor_ids),
-                    Professor.archived_at.is_(None),
-                )
-                .order_by(Professor.id.asc()),
-            ),
-        )
-        if not professors:
-            raise ValueError("没有可分析的导师")
-
-        now = utc_now()
-        job = MatchAnalysisJob(
-            name=name or f"批量匹配分析 {now:%Y-%m-%d %H:%M}",
+        job = await create_match_analysis_job_record(
+            session,
             identity_id=identity_id,
             llm_profile_id=llm_profile_id,
-            status=MatchAnalysisJobStatus.QUEUED.value,
-            target_count=0,
-            skipped_count=0,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(job)
-        await session.flush()
-
-        queued_count = 0
-        skipped_count = 0
-        for professor in professors:
-            if _has_professor_match_evidence(professor):
-                email_task = await _ensure_match_email_task(
-                    session,
-                    professor=professor,
-                    identity=identity,
-                    llm_profile=llm_profile,
-                )
-                item = MatchAnalysisJobItem(
-                    job_id=job.id,
-                    professor_id=professor.id,
-                    email_task_id=email_task.id,
-                    status=MatchAnalysisJobItemStatus.QUEUED.value,
-                    created_at=now,
-                    updated_at=now,
-                )
-                queued_count += 1
-            else:
-                item = MatchAnalysisJobItem(
-                    job_id=job.id,
-                    professor_id=professor.id,
-                    email_task_id=None,
-                    status=MatchAnalysisJobItemStatus.SKIPPED.value,
-                    skip_reason="缺少研究方向或近期论文",
-                    finished_at=now,
-                    created_at=now,
-                    updated_at=now,
-                )
-                skipped_count += 1
-            session.add(item)
-
-        if queued_count == 0:
-            await session.rollback()
-            raise ValueError("已选导师都缺少研究方向或近期论文，暂不能分析匹配度")
-
-        job.target_count = queued_count
-        job.skipped_count = skipped_count
-        await record_operation_log(
-            session,
-            category="match_analysis",
-            event_name="match_analysis_job.created",
-            entity_type="match_analysis_job",
-            entity_id=str(job.id),
-            metadata={
-                "name": job.name,
-                "identity_id": identity_id,
-                "llm_profile_id": llm_profile_id,
-                "selected_count": len(professors),
-                "target_count": queued_count,
-                "skipped_count": skipped_count,
-            },
+            professor_ids=professor_ids,
+            name=name,
         )
         await session.commit()
         await session.refresh(job)
         return job
+
+
+async def create_match_analysis_job_record(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    llm_profile_id: int,
+    professor_ids: list[int],
+    name: str | None = None,
+    event_name: str = "match_analysis_job.created",
+    actor: str | None = None,
+) -> MatchAnalysisJob:
+    """Create a job in the caller's transaction without committing it."""
+
+    unique_professor_ids = list(dict.fromkeys(professor_ids))
+    if not unique_professor_ids:
+        raise ValueError("请选择要分析匹配度的导师")
+
+    identity = await session.get(IdentityProfile, identity_id)
+    if identity is None:
+        raise ValueError("身份不存在")
+    if identity.current_primary_material_id is None:
+        raise ValueError("请到个人页设置默认材料")
+
+    llm_profile = await session.get(LLMProfile, llm_profile_id)
+    if llm_profile is None:
+        raise ValueError("LLM 配置不存在")
+
+    professors = list(
+        await session.scalars(
+            select(Professor)
+            .where(
+                Professor.id.in_(unique_professor_ids),
+                Professor.archived_at.is_(None),
+            )
+            .order_by(Professor.id.asc()),
+        ),
+    )
+    if not professors:
+        raise ValueError("没有可分析的导师")
+
+    has_evidence = {
+        professor.id: _has_professor_match_evidence(professor)
+        for professor in professors
+    }
+    if not any(has_evidence.values()):
+        raise ValueError("已选导师都缺少研究方向或近期论文，暂不能分析匹配度")
+
+    now = utc_now()
+    job = MatchAnalysisJob(
+        name=name or f"批量匹配分析 {now:%Y-%m-%d %H:%M}",
+        identity_id=identity_id,
+        llm_profile_id=llm_profile_id,
+        status=MatchAnalysisJobStatus.QUEUED.value,
+        target_count=0,
+        skipped_count=0,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(job)
+    await session.flush()
+
+    queued_count = 0
+    skipped_count = 0
+    for professor in professors:
+        if has_evidence[professor.id]:
+            email_task = await _ensure_match_email_task(
+                session,
+                professor=professor,
+                identity=identity,
+                llm_profile=llm_profile,
+            )
+            item = MatchAnalysisJobItem(
+                job_id=job.id,
+                professor_id=professor.id,
+                email_task_id=email_task.id,
+                status=MatchAnalysisJobItemStatus.QUEUED.value,
+                created_at=now,
+                updated_at=now,
+            )
+            queued_count += 1
+        else:
+            item = MatchAnalysisJobItem(
+                job_id=job.id,
+                professor_id=professor.id,
+                email_task_id=None,
+                status=MatchAnalysisJobItemStatus.SKIPPED.value,
+                skip_reason="缺少研究方向或近期论文",
+                finished_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            skipped_count += 1
+        session.add(item)
+
+    job.target_count = queued_count
+    job.skipped_count = skipped_count
+    metadata: dict[str, object] = {
+        "name": job.name,
+        "identity_id": identity_id,
+        "llm_profile_id": llm_profile_id,
+        "selected_count": len(professors),
+        "target_count": queued_count,
+        "skipped_count": skipped_count,
+    }
+    if actor is not None:
+        metadata["actor"] = actor
+    await record_operation_log(
+        session,
+        category="match_analysis",
+        event_name=event_name,
+        entity_type="match_analysis_job",
+        entity_id=str(job.id),
+        metadata=metadata,
+    )
+    return job
 
 
 def serialize_match_analysis_job(job: MatchAnalysisJob) -> MatchAnalysisJobRead:
@@ -230,42 +258,54 @@ async def request_match_analysis_job_cancel(
     job_id: int,
 ) -> MatchAnalysisJob:
     async with session_factory() as session:
-        job = await session.get(MatchAnalysisJob, job_id)
-        if job is None:
-            raise ValueError("匹配分析任务不存在")
+        job = await request_match_analysis_job_cancel_record(session, job_id)
+        await session.commit()
+        await session.refresh(job)
+        return job
 
-        now = utc_now()
-        if job.status == MatchAnalysisJobStatus.QUEUED.value:
-            job.status = MatchAnalysisJobStatus.CANCELED.value
-            job.cancel_requested_at = now
-            job.finished_at = now
-            job.updated_at = now
-            await session.execute(
-                update(MatchAnalysisJobItem)
-                .where(
-                    MatchAnalysisJobItem.job_id == job.id,
-                    MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.QUEUED.value,
-                )
-                .values(
-                    status=MatchAnalysisJobItemStatus.CANCELED.value,
-                    finished_at=now,
-                    updated_at=now,
-                ),
+
+async def request_match_analysis_job_cancel_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    event_name: str = "match_analysis_job.cancel_requested",
+    actor: str | None = None,
+) -> MatchAnalysisJob:
+    """Request cancellation in the caller's transaction without committing it."""
+
+    job = await session.get(MatchAnalysisJob, job_id)
+    if job is None:
+        raise ValueError("匹配分析任务不存在")
+
+    now = utc_now()
+    metadata = {"actor": actor} if actor is not None else None
+    if job.status == MatchAnalysisJobStatus.QUEUED.value:
+        job.status = MatchAnalysisJobStatus.CANCELED.value
+        job.cancel_requested_at = now
+        job.finished_at = now
+        job.updated_at = now
+        await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.job_id == job.id,
+                MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.QUEUED.value,
             )
-            await _record_match_analysis_job_log(session, job, "match_analysis_job.cancel_requested")
-            await session.commit()
-            await session.refresh(job)
-            return job
+            .values(
+                status=MatchAnalysisJobItemStatus.CANCELED.value,
+                finished_at=now,
+                updated_at=now,
+            ),
+        )
+        await _record_match_analysis_job_log(session, job, event_name, metadata=metadata)
+        return job
 
-        if job.status == MatchAnalysisJobStatus.RUNNING.value:
-            job.cancel_requested_at = now
-            job.updated_at = now
-            await _record_match_analysis_job_log(session, job, "match_analysis_job.cancel_requested")
-            await session.commit()
-            await session.refresh(job)
-            return job
+    if job.status == MatchAnalysisJobStatus.RUNNING.value:
+        job.cancel_requested_at = now
+        job.updated_at = now
+        await _record_match_analysis_job_log(session, job, event_name, metadata=metadata)
+        return job
 
-        raise ValueError("只有排队中或运行中的匹配分析任务可以取消")
+    raise ValueError("只有排队中或运行中的匹配分析任务可以取消")
 
 
 async def retry_failed_match_analysis_job(
@@ -273,38 +313,116 @@ async def retry_failed_match_analysis_job(
     job_id: int,
 ) -> MatchAnalysisJob:
     async with session_factory() as session:
-        job = await session.get(MatchAnalysisJob, job_id)
-        if job is None:
-            raise ValueError("匹配分析任务不存在")
-        professor_ids = list(
-            await session.scalars(
-                select(MatchAnalysisJobItem.professor_id)
-                .where(
-                    MatchAnalysisJobItem.job_id == job_id,
-                    MatchAnalysisJobItem.status.in_(
-                        [
-                            MatchAnalysisJobItemStatus.FAILED.value,
-                            MatchAnalysisJobItemStatus.CANCELED.value,
-                        ]
-                    ),
-                )
-                .order_by(MatchAnalysisJobItem.id.asc()),
-            )
-        )
-        identity_id = job.identity_id
-        llm_profile_id = job.llm_profile_id
-        name = f"{job.name} - 重试"
+        job = await retry_failed_match_analysis_job_record(session, job_id)
+        await session.commit()
+        await session.refresh(job)
+        return job
 
+
+async def retry_failed_match_analysis_job_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    event_name: str = "match_analysis_job.created",
+    actor: str | None = None,
+) -> MatchAnalysisJob:
+    """Create a retry job in the caller's transaction without committing it."""
+
+    job = await session.get(MatchAnalysisJob, job_id)
+    if job is None:
+        raise ValueError("匹配分析任务不存在")
+    professor_ids = list(
+        await session.scalars(
+            select(MatchAnalysisJobItem.professor_id)
+            .where(
+                MatchAnalysisJobItem.job_id == job_id,
+                MatchAnalysisJobItem.status.in_(
+                    [
+                        MatchAnalysisJobItemStatus.FAILED.value,
+                        MatchAnalysisJobItemStatus.CANCELED.value,
+                    ]
+                ),
+            )
+            .order_by(MatchAnalysisJobItem.id.asc()),
+        )
+    )
     if not professor_ids:
         raise ValueError("没有可重试的失败项")
 
-    return await create_match_analysis_job(
-        session_factory,
-        identity_id=identity_id,
-        llm_profile_id=llm_profile_id,
+    return await create_match_analysis_job_record(
+        session,
+        identity_id=job.identity_id,
+        llm_profile_id=job.llm_profile_id,
         professor_ids=professor_ids,
-        name=name,
+        name=f"{job.name} - 重试",
+        event_name=event_name,
+        actor=actor,
     )
+
+
+MATCH_ANALYSIS_JOB_DELETABLE_STATUSES = {
+    MatchAnalysisJobStatus.COMPLETED.value,
+    MatchAnalysisJobStatus.PARTIAL_FAILED.value,
+    MatchAnalysisJobStatus.FAILED.value,
+    MatchAnalysisJobStatus.CANCELED.value,
+}
+
+
+async def delete_match_analysis_job_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    event_name: str = "match_analysis_job.deleted",
+    actor: str | None = None,
+) -> MatchAnalysisJob:
+    """Move a completed match-analysis job to the trash without committing it."""
+
+    job = await session.get(MatchAnalysisJob, job_id)
+    if job is None:
+        raise ValueError("匹配分析任务不存在")
+    if job.status not in MATCH_ANALYSIS_JOB_DELETABLE_STATUSES:
+        raise ValueError("请先中止/取消任务后再删除")
+    previous_deleted_at = job.deleted_at
+    if job.deleted_at is None:
+        now = utc_now()
+        job.deleted_at = now
+        job.updated_at = now
+    metadata: dict[str, object] = {
+        "previous_deleted_at": (
+            previous_deleted_at.isoformat() if previous_deleted_at is not None else None
+        ),
+    }
+    if actor is not None:
+        metadata["actor"] = actor
+    await _record_match_analysis_job_log(session, job, event_name, metadata=metadata)
+    return job
+
+
+async def restore_match_analysis_job_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    event_name: str = "match_analysis_job.restored",
+    actor: str | None = None,
+) -> MatchAnalysisJob:
+    """Restore a trashed match-analysis job without committing it."""
+
+    job = await session.get(MatchAnalysisJob, job_id)
+    if job is None:
+        raise ValueError("匹配分析任务不存在")
+    previous_deleted_at = job.deleted_at
+    if job.deleted_at is not None:
+        job.deleted_at = None
+        job.updated_at = utc_now()
+    metadata: dict[str, object] = {
+        "previous_deleted_at": (
+            previous_deleted_at.isoformat() if previous_deleted_at is not None else None
+        ),
+    }
+    if actor is not None:
+        metadata["actor"] = actor
+    await _record_match_analysis_job_log(session, job, event_name, metadata=metadata)
+    return job
 
 
 def _has_professor_match_evidence(professor: Professor) -> bool:

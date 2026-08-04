@@ -2,7 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.models import EmailTask, EmailTaskCancellationReason, EmailTaskStatus, IdentityMaterial
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models import (
+    BatchTask,
+    EmailTask,
+    EmailTaskCancellationReason,
+    EmailTaskStatus,
+    IdentityMaterial,
+    IdentityProfile,
+)
+from app.schemas.batch_task import (
+    BatchTaskResendContextRead,
+    BatchTaskResendContextTaskRead,
+    BatchTaskResendDefaultsRead,
+    BatchTaskResendItemRead,
+    BatchTaskResendSummaryRead,
+)
 from app.services.materials import material_can_be_primary
 
 SUCCESS_STATUSES = {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
@@ -28,6 +46,12 @@ class ResendItemDecision:
     default_selected: bool
     reason_label: str
     unavailable_reason: str | None
+
+
+class BatchTaskResendContextError(ValueError):
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
@@ -78,3 +102,128 @@ def filter_available_material_defaults(
     if selected_material_ids and len(next_selected_ids) != len(selected_material_ids):
         warnings.append("部分原随信附件已不存在，未带入新任务")
     return next_primary_id, next_selected_ids, list(dict.fromkeys(warnings))
+
+
+async def build_batch_task_resend_context(
+    session: AsyncSession,
+    task_id: int,
+) -> BatchTaskResendContextRead:
+    task = await session.scalar(
+        select(BatchTask)
+        .options(
+            selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
+            selectinload(BatchTask.email_tasks).selectinload(EmailTask.outreach_template),
+            selectinload(BatchTask.identity).selectinload(IdentityProfile.materials),
+        )
+        .where(BatchTask.id == task_id)
+        .execution_options(populate_existing=True),
+    )
+    if task is None:
+        raise BatchTaskResendContextError(404, "未找到批量任务")
+    if task.identity is None:
+        raise BatchTaskResendContextError(400, "原任务身份已不存在，无法直接重新发起。")
+
+    primary_material_id, selected_material_ids, warnings = filter_available_material_defaults(
+        materials=list(task.identity.materials),
+        primary_material_id=task.primary_material_id,
+        selected_material_ids=task.selected_material_ids,
+    )
+    sorted_email_tasks = sorted(task.email_tasks, key=lambda item: (item.created_at, item.id))
+    snapshot_task = sorted_email_tasks[0] if sorted_email_tasks else None
+    has_batch_outreach_snapshot = task.outreach_template_snapshot_version is not None
+    outreach_template_id = (
+        task.outreach_template_id
+        if has_batch_outreach_snapshot
+        else snapshot_task.outreach_template_id if snapshot_task else None
+    )
+    outreach_template_name_snapshot = (
+        task.outreach_template_name_snapshot
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template.name
+            if snapshot_task and snapshot_task.outreach_template
+            else None
+        )
+    )
+    outreach_generation_mode = (
+        task.outreach_generation_mode
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_generation_mode
+            if snapshot_task and snapshot_task.outreach_generation_mode
+            else task.identity.outreach_generation_mode
+        )
+    )
+    outreach_template_subject = (
+        task.outreach_template_subject
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template_subject
+            if snapshot_task and snapshot_task.outreach_template_subject is not None
+            else task.email_subject
+        )
+    )
+    outreach_template_body_text = (
+        task.outreach_template_body_text
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template_body_text
+            if snapshot_task and snapshot_task.outreach_template_body_text is not None
+            else task.email_body
+        )
+    )
+    outreach_template_body_html = (
+        task.outreach_template_body_html
+        if has_batch_outreach_snapshot
+        else (
+            snapshot_task.outreach_template_body_html
+            if snapshot_task and snapshot_task.outreach_template_body_html is not None
+            else None
+        )
+    )
+    items: list[BatchTaskResendItemRead] = []
+    for email_task in sorted_email_tasks:
+        decision = decide_resend_item(email_task)
+        professor = email_task.professor
+        items.append(
+            BatchTaskResendItemRead(
+                email_task_id=email_task.id,
+                professor_id=professor.id if professor else None,
+                professor_name=professor.name if professor else "已删除导师",
+                professor_email=professor.email if professor else None,
+                status=email_task.status,
+                cancellation_reason=email_task.cancellation_reason,
+                reason_label=decision.reason_label,
+                default_selected=decision.default_selected,
+                selectable=decision.selectable,
+                unavailable_reason=decision.unavailable_reason,
+                updated_at=email_task.updated_at,
+            ),
+        )
+
+    return BatchTaskResendContextRead(
+        task=BatchTaskResendContextTaskRead(
+            id=task.id,
+            name=task.name,
+            identity_id=task.identity_id,
+            schedule_type=task.schedule_type,
+        ),
+        defaults=BatchTaskResendDefaultsRead(
+            identity_id=task.identity_id,
+            outreach_template_id=outreach_template_id,
+            outreach_template_name_snapshot=outreach_template_name_snapshot,
+            outreach_generation_mode=outreach_generation_mode,
+            outreach_template_subject=outreach_template_subject,
+            outreach_template_body_text=outreach_template_body_text,
+            outreach_template_body_html=outreach_template_body_html,
+            primary_material_id=primary_material_id,
+            selected_material_ids=selected_material_ids,
+        ),
+        items=items,
+        summary=BatchTaskResendSummaryRead(
+            candidate_count=sum(1 for item in items if item.selectable),
+            default_selected_count=sum(1 for item in items if item.default_selected),
+            unavailable_count=sum(1 for item in items if not item.selectable),
+        ),
+        warnings=warnings,
+    )

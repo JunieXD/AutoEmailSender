@@ -90,6 +90,30 @@ async def create_professor_information_enrichment_job(
     trigger_mode: str,
     name: str | None = None,
 ) -> int:
+    async with session_factory() as session:
+        job = await create_professor_information_enrichment_job_record(
+            session,
+            professor_ids=professor_ids,
+            llm_profile_id=llm_profile_id,
+            trigger_mode=trigger_mode,
+            name=name,
+        )
+        await session.commit()
+        return job.id
+
+
+async def create_professor_information_enrichment_job_record(
+    session: AsyncSession,
+    *,
+    professor_ids: list[int],
+    llm_profile_id: int,
+    trigger_mode: str,
+    name: str | None = None,
+    event_name: str | None = None,
+    actor: str | None = None,
+) -> CrawlJob:
+    """Create an enrichment job in the caller's transaction without committing it."""
+
     requested_ids = list(dict.fromkeys(int(item) for item in professor_ids if int(item) > 0))
     if not requested_ids:
         raise ValueError("请至少选择一位导师")
@@ -101,125 +125,129 @@ async def create_professor_information_enrichment_job(
     if trigger_mode == CrawlJobTriggerMode.SINGLE.value and len(requested_ids) != 1:
         raise ValueError("单导师补全一次只能选择一位导师")
 
-    async with session_factory() as session:
-        llm_profile = await session.get(LLMProfile, llm_profile_id)
-        if llm_profile is None:
-            raise ValueError("所选模型配置不存在")
+    llm_profile = await session.get(LLMProfile, llm_profile_id)
+    if llm_profile is None:
+        raise ValueError("所选模型配置不存在")
 
-        professors = list(
-            await session.scalars(
-                select(Professor).where(Professor.id.in_(requested_ids)),
-            )
+    professors = list(
+        await session.scalars(
+            select(Professor).where(Professor.id.in_(requested_ids)),
         )
-        professors_by_id = {professor.id: professor for professor in professors}
-        missing_ids = [item for item in requested_ids if item not in professors_by_id]
-        if missing_ids:
-            raise ValueError("导师不存在")
+    )
+    professors_by_id = {professor.id: professor for professor in professors}
+    missing_ids = [item for item in requested_ids if item not in professors_by_id]
+    if missing_ids:
+        raise ValueError("导师不存在")
 
-        ordered_professors = [professors_by_id[item] for item in requested_ids]
-        active_professor_ids = await _active_professor_ids(session, requested_ids)
-        if trigger_mode == CrawlJobTriggerMode.SINGLE.value:
-            _validate_single_professor(
-                ordered_professors[0],
-                active=ordered_professors[0].id in active_professor_ids,
-            )
+    ordered_professors = [professors_by_id[item] for item in requested_ids]
+    active_professor_ids = await _active_professor_ids(session, requested_ids)
+    if trigger_mode == CrawlJobTriggerMode.SINGLE.value:
+        _validate_single_professor(
+            ordered_professors[0],
+            active=ordered_professors[0].id in active_professor_ids,
+        )
 
-        now = utc_now()
-        display_name = _build_display_name(
-            ordered_professors,
-            trigger_mode=trigger_mode,
-            requested_name=name,
-            now=now,
+    now = utc_now()
+    display_name = _build_display_name(
+        ordered_professors,
+        trigger_mode=trigger_mode,
+        requested_name=name,
+        now=now,
+    )
+    valid_urls = [
+        professor.profile_url.strip()
+        for professor in ordered_professors
+        if _is_valid_profile_url(professor.profile_url)
+    ]
+    job = CrawlJob(
+        university=_summarize_location(
+            [professor.university for professor in ordered_professors],
+            fallback="导师信息补全",
+            multiple="多所院校",
+        ),
+        school=_summarize_location(
+            [professor.school for professor in ordered_professors],
+            fallback="",
+            multiple="多个学院",
+        ),
+        start_url=valid_urls[0] if valid_urls else "https://example.invalid/information-enrichment",
+        start_urls=valid_urls,
+        entry_type="profile",
+        job_kind=CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+        trigger_mode=trigger_mode,
+        task_center_visible=trigger_mode == CrawlJobTriggerMode.BATCH.value,
+        display_name=display_name,
+        runtime_version="v2",
+        llm_profile_id=llm_profile.id,
+        status=CrawlJobStatus.QUEUED.value,
+        progress_current=0,
+        progress_total=len(ordered_professors),
+        agent_trace=[],
+    )
+    session.add(job)
+    await session.flush()
+    await create_initial_crawl_job_run(session, job, now=now)
+
+    queued_count = 0
+    skipped_count = 0
+    for professor in ordered_professors:
+        skip_reason = _batch_skip_reason(
+            professor,
+            active=professor.id in active_professor_ids,
         )
-        valid_urls = [
-            professor.profile_url.strip()
-            for professor in ordered_professors
-            if _is_valid_profile_url(professor.profile_url)
-        ]
-        job = CrawlJob(
-            university=_summarize_location(
-                [professor.university for professor in ordered_professors],
-                fallback="导师信息补全",
-                multiple="多所院校",
-            ),
-            school=_summarize_location(
-                [professor.school for professor in ordered_professors],
-                fallback="",
-                multiple="多个学院",
-            ),
-            start_url=valid_urls[0] if valid_urls else "https://example.invalid/information-enrichment",
-            start_urls=valid_urls,
-            entry_type="profile",
-            job_kind=CrawlJobKind.PROFESSOR_ENRICHMENT.value,
-            trigger_mode=trigger_mode,
-            task_center_visible=trigger_mode == CrawlJobTriggerMode.BATCH.value,
-            display_name=display_name,
-            runtime_version="v2",
-            llm_profile_id=llm_profile.id,
-            status=CrawlJobStatus.QUEUED.value,
-            progress_current=0,
-            progress_total=len(ordered_professors),
-            agent_trace=[],
-        )
-        session.add(job)
+        candidate = _build_candidate(job.id, professor)
+        session.add(candidate)
         await session.flush()
-        await create_initial_crawl_job_run(session, job, now=now)
+        task_status = (
+            CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
+            if skip_reason is not None
+            else CrawlCandidateEnrichmentTaskStatus.PENDING.value
+        )
+        session.add(
+            CrawlCandidateEnrichmentTask(
+                job_id=job.id,
+                candidate_id=candidate.id,
+                professor_id=professor.id,
+                status=task_status,
+                skip_reason=skip_reason,
+                enriched_fields=[],
+                finished_at=now if skip_reason is not None else None,
+            )
+        )
+        if skip_reason is None:
+            queued_count += 1
+        else:
+            skipped_count += 1
 
-        queued_count = 0
-        skipped_count = 0
-        for professor in ordered_professors:
-            skip_reason = _batch_skip_reason(
-                professor,
-                active=professor.id in active_professor_ids,
-            )
-            candidate = _build_candidate(job.id, professor)
-            session.add(candidate)
-            await session.flush()
-            task_status = (
-                CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
-                if skip_reason is not None
-                else CrawlCandidateEnrichmentTaskStatus.PENDING.value
-            )
-            session.add(
-                CrawlCandidateEnrichmentTask(
-                    job_id=job.id,
-                    candidate_id=candidate.id,
-                    professor_id=professor.id,
-                    status=task_status,
-                    skip_reason=skip_reason,
-                    enriched_fields=[],
-                    finished_at=now if skip_reason is not None else None,
-                )
-            )
-            if skip_reason is None:
-                queued_count += 1
-            else:
-                skipped_count += 1
-
-        await record_operation_log(
-            session,
-            category="professor_information_enrichment",
-            event_name=(
+    metadata: dict[str, object] = {
+        "trigger_mode": trigger_mode,
+        "llm_profile_id": llm_profile.id,
+        "target_count": len(ordered_professors),
+        "queued_count": queued_count,
+        "skipped_count": skipped_count,
+        "professor_ids": requested_ids,
+    }
+    if actor is not None:
+        metadata["actor"] = actor
+    await record_operation_log(
+        session,
+        category="professor_information_enrichment",
+        event_name=(
+            event_name
+            or (
                 "professor_information_enrichment.single_created"
                 if trigger_mode == CrawlJobTriggerMode.SINGLE.value
                 else "professor_information_enrichment.batch_created"
-            ),
-            entity_type="crawl_job",
-            entity_id=str(job.id),
-            metadata={
-                "trigger_mode": trigger_mode,
-                "llm_profile_id": llm_profile.id,
-                "target_count": len(ordered_professors),
-                "queued_count": queued_count,
-                "skipped_count": skipped_count,
-                "professor_ids": requested_ids,
-            },
-        )
-        job.progress_current = skipped_count
-        if queued_count == 0:
-            await finalize_professor_information_enrichment_job(session, job, now=now)
-        await session.commit()
-        return job.id
+            )
+        ),
+        entity_type="crawl_job",
+        entity_id=str(job.id),
+        metadata=metadata,
+    )
+    job.progress_current = skipped_count
+    if queued_count == 0:
+        await finalize_professor_information_enrichment_job(session, job, now=now)
+    return job
 
 
 async def list_professor_information_enrichment_jobs(
@@ -438,6 +466,9 @@ async def list_professor_information_enrichment_items(
 async def request_professor_information_enrichment_cancel(
     session: AsyncSession,
     job: CrawlJob,
+    *,
+    event_name: str = "professor_information_enrichment.cancel_requested",
+    actor: str | None = None,
 ) -> None:
     if job.status in DELETABLE_JOB_STATUSES:
         return
@@ -464,13 +495,16 @@ async def request_professor_information_enrichment_cancel(
         status=CrawlJobStatus.CANCELED.value,
         now=now,
     )
+    metadata: dict[str, object] = {"status": job.status}
+    if actor is not None:
+        metadata["actor"] = actor
     await record_operation_log(
         session,
         category="professor_information_enrichment",
-        event_name="professor_information_enrichment.cancel_requested",
+        event_name=event_name,
         entity_type="crawl_job",
         entity_id=str(job.id),
-        metadata={"status": job.status},
+        metadata=metadata,
     )
     profile_text_cache.discard_job(job_id=job.id)
 
@@ -480,50 +514,136 @@ async def retry_failed_professor_information_enrichment_job(
     job_id: int,
 ) -> int:
     async with session_factory() as session:
-        job = await _get_information_enrichment_job(session, job_id)
-        if job is None or not job.task_center_visible:
-            raise ValueError("信息补全任务不存在")
-        professor_ids = list(
-            await session.scalars(
-                select(CrawlCandidateEnrichmentTask.professor_id)
-                .where(
-                    CrawlCandidateEnrichmentTask.job_id == job.id,
-                    CrawlCandidateEnrichmentTask.status.in_(
-                        {
-                            CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
-                            CrawlCandidateEnrichmentTaskStatus.CANCELED.value,
-                        }
-                    ),
-                    CrawlCandidateEnrichmentTask.professor_id.is_not(None),
-                )
-                .order_by(CrawlCandidateEnrichmentTask.id.asc())
-            )
-        )
-        if not professor_ids:
-            raise ValueError("该任务没有可重试的失败或取消项")
-        llm_profile_id = job.llm_profile_id
-        if llm_profile_id is None:
-            raise ValueError("原任务缺少模型配置")
-        retry_name = f"{job.display_name or f'信息补全 #{job.id}'} · 失败重试"
-
-    new_job_id = await create_professor_information_enrichment_job(
-        session_factory,
-        professor_ids=[int(item) for item in professor_ids if item is not None],
-        llm_profile_id=llm_profile_id,
-        trigger_mode=CrawlJobTriggerMode.BATCH.value,
-        name=retry_name,
-    )
-    async with session_factory() as session:
-        await record_operation_log(
-            session,
-            category="professor_information_enrichment",
-            event_name="professor_information_enrichment.retry_created",
-            entity_type="crawl_job",
-            entity_id=str(new_job_id),
-            metadata={"source_job_id": job_id},
-        )
+        job = await retry_failed_professor_information_enrichment_job_record(session, job_id)
         await session.commit()
-    return new_job_id
+        return job.id
+
+
+async def retry_failed_professor_information_enrichment_job_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    actor: str | None = None,
+) -> CrawlJob:
+    """Create a retry job in the caller's transaction without committing it."""
+
+    job = await _get_information_enrichment_job(session, job_id)
+    if job is None or not job.task_center_visible:
+        raise ValueError("信息补全任务不存在")
+    professor_ids = list(
+        await session.scalars(
+            select(CrawlCandidateEnrichmentTask.professor_id)
+            .where(
+                CrawlCandidateEnrichmentTask.job_id == job.id,
+                CrawlCandidateEnrichmentTask.status.in_(
+                    {
+                        CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+                        CrawlCandidateEnrichmentTaskStatus.CANCELED.value,
+                    }
+                ),
+                CrawlCandidateEnrichmentTask.professor_id.is_not(None),
+            )
+            .order_by(CrawlCandidateEnrichmentTask.id.asc())
+        )
+    )
+    if not professor_ids:
+        raise ValueError("该任务没有可重试的失败或取消项")
+    if job.llm_profile_id is None:
+        raise ValueError("原任务缺少模型配置")
+
+    retry_job = await create_professor_information_enrichment_job_record(
+        session,
+        professor_ids=[int(item) for item in professor_ids if item is not None],
+        llm_profile_id=job.llm_profile_id,
+        trigger_mode=CrawlJobTriggerMode.BATCH.value,
+        name=f"{job.display_name or f'信息补全 #{job.id}'} · 失败重试",
+        event_name="professor_information_enrichment.batch_created",
+        actor=actor,
+    )
+    metadata: dict[str, object] = {"source_job_id": job_id}
+    if actor is not None:
+        metadata["actor"] = actor
+    await record_operation_log(
+        session,
+        category="professor_information_enrichment",
+        event_name="professor_information_enrichment.retry_created",
+        entity_type="crawl_job",
+        entity_id=str(retry_job.id),
+        metadata=metadata,
+    )
+    return retry_job
+
+
+async def delete_professor_information_enrichment_job_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    event_name: str = "professor_information_enrichment.deleted",
+    actor: str | None = None,
+) -> CrawlJob:
+    """Move a finished enrichment job to the trash without committing it."""
+
+    job = await _get_information_enrichment_job(session, job_id)
+    if job is None or not job.task_center_visible:
+        raise ValueError("信息补全任务不存在")
+    if job.status not in DELETABLE_JOB_STATUSES:
+        raise ValueError("请先取消任务后再删除")
+    previous_deleted_at = job.deleted_at
+    if job.deleted_at is None:
+        job.deleted_at = utc_now()
+        job.updated_at = utc_now()
+    metadata: dict[str, object] = {
+        "status": job.status,
+        "previous_deleted_at": (
+            previous_deleted_at.isoformat() if previous_deleted_at is not None else None
+        ),
+    }
+    if actor is not None:
+        metadata["actor"] = actor
+    await record_operation_log(
+        session,
+        category="professor_information_enrichment",
+        event_name=event_name,
+        entity_type="crawl_job",
+        entity_id=str(job.id),
+        metadata=metadata,
+    )
+    return job
+
+
+async def restore_professor_information_enrichment_job_record(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    event_name: str = "professor_information_enrichment.restored",
+    actor: str | None = None,
+) -> CrawlJob:
+    """Restore an enrichment job from the trash without committing it."""
+
+    job = await _get_information_enrichment_job(session, job_id)
+    if job is None or not job.task_center_visible:
+        raise ValueError("信息补全任务不存在")
+    previous_deleted_at = job.deleted_at
+    if job.deleted_at is not None:
+        job.deleted_at = None
+        job.updated_at = utc_now()
+    metadata: dict[str, object] = {
+        "status": job.status,
+        "previous_deleted_at": (
+            previous_deleted_at.isoformat() if previous_deleted_at is not None else None
+        ),
+    }
+    if actor is not None:
+        metadata["actor"] = actor
+    await record_operation_log(
+        session,
+        category="professor_information_enrichment",
+        event_name=event_name,
+        entity_type="crawl_job",
+        entity_id=str(job.id),
+        metadata=metadata,
+    )
+    return job
 
 
 async def finalize_professor_information_enrichment_job(

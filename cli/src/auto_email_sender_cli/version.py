@@ -6,7 +6,7 @@ from importlib import metadata
 
 PACKAGE_NAME = "auto-email-sender-cli"
 FALLBACK_VERSION = "2.4.1"
-PROTOCOL_VERSION = "1"
+PROTOCOL_VERSION = "2"
 SCHEMA_VERSION = "1"
 
 

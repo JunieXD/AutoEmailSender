@@ -1,15 +1,30 @@
 from __future__ import annotations
 
+import json
+import mimetypes
+import secrets
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from auto_email_sender_cli.commands.common import format_detail, format_page, run_read_command
+from auto_email_sender_cli.client import AgentApiClient
+from auto_email_sender_cli.commands.common import (
+    cli_context,
+    format_detail,
+    format_page,
+    run_read_command,
+    run_write_command,
+)
+from auto_email_sender_cli.errors import CliError
+from auto_email_sender_cli.output import emit_error, emit_success
 
 
 professors_app = typer.Typer(help="查询导师档案与标签。", no_args_is_help=True)
 tags_app = typer.Typer(help="查询导师标签。", no_args_is_help=True)
+community_app = typer.Typer(help="查询、比对和导入社区导师。", no_args_is_help=True)
 professors_app.add_typer(tags_app, name="tags")
+professors_app.add_typer(community_app, name="community")
 
 
 @professors_app.command("list")
@@ -41,6 +56,273 @@ def list_professors(
     )
 
 
+@professors_app.command("export")
+def export_professors(
+    ctx: typer.Context,
+    output: Annotated[Path, typer.Option("--output", "-o", help="导出文件保存位置。")],
+    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。") ] = "xlsx",
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+) -> None:
+    context = cli_context(ctx)
+    command = "professors.export"
+    try:
+        destination = output.expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        client = AgentApiClient(timeout=360.0)
+        content = client.download_bytes(
+            "/api/agent/v1/professors/export",
+            params={"format": format},
+        )
+        try:
+            with destination.open("wb" if force else "xb") as file:
+                file.write(content)
+        except FileExistsError as exc:
+            raise CliError(
+                code="OUTPUT_EXISTS",
+                message=f"输出文件已存在：{destination}",
+                exit_code=2,
+                suggested_command="重新选择 --output，或明确使用 --force 覆盖。",
+            ) from exc
+        except OSError as exc:
+            raise CliError(
+                code="OUTPUT_WRITE_FAILED",
+                message=f"无法写入导出文件：{exc}",
+                exit_code=5,
+            ) from exc
+        emit_success(
+            context,
+            command=command,
+            data={
+                "output": destination.as_posix(),
+                "format": format,
+                "size_bytes": len(content),
+            },
+            human_text=f"已导出导师表到：\n{destination}",
+            app_version=client.descriptor.app_version,
+        )
+    except CliError as error:
+        emit_error(context, command=command, error=error)
+        raise typer.Exit(error.exit_code) from error
+
+
+@professors_app.command("import")
+def prepare_professor_import(
+    ctx: typer.Context,
+    file_path: Annotated[
+        Path,
+        typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+) -> None:
+    context = cli_context(ctx)
+    command = "professors.import"
+    try:
+        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        with file_path.open("rb") as import_file:
+            client = AgentApiClient(timeout=360.0)
+            data = client.request(
+                "POST",
+                "/api/agent/v1/professors/prepare-import",
+                files={"file": (file_path.name, import_file, mime_type)},
+                idempotency_key=f"cli_{secrets.token_urlsafe(24)}",
+            )
+        emit_success(
+            context,
+            command=command,
+            data=data,
+            human_text=format_detail(data),
+            guide_topic="safety",
+            app_version=client.descriptor.app_version,
+        )
+    except OSError as exc:
+        error = CliError(
+            code="LOCAL_FILE_UNAVAILABLE",
+            message=f"无法读取导师导入文件：{exc}",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="safety")
+        raise typer.Exit(error.exit_code) from exc
+    except CliError as error:
+        emit_error(context, command=command, error=error, guide_topic="safety")
+        raise typer.Exit(error.exit_code) from error
+
+
+@community_app.command("catalog")
+def get_community_catalog(
+    ctx: typer.Context,
+    refresh: Annotated[bool, typer.Option("--refresh", help="从社区数据源刷新目录。") ] = False,
+) -> None:
+    run_read_command(
+        ctx,
+        command="professors.community.catalog",
+        path="/api/agent/v1/community-mentors/catalog",
+        params={"refresh": refresh},
+        guide_topic="community",
+        human_formatter=format_detail,
+        timeout=90.0,
+    )
+
+
+@community_app.command("records")
+def list_community_records(
+    ctx: typer.Context,
+    dataset_version: Annotated[str, typer.Option("--dataset-version", help="catalog 返回的数据版本。")],
+    unit_paths: Annotated[
+        list[str],
+        typer.Option("--unit-path", help="重复指定 catalog 中的学院分片路径。"),
+    ] = [],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.community.records",
+        path="/api/agent/v1/community-mentors/records",
+        json_body={"dataset_version": dataset_version, "unit_paths": unit_paths},
+        guide_topic="community",
+        human_formatter=format_detail,
+        timeout=90.0,
+        use_idempotency_key=False,
+    )
+
+
+@community_app.command("preview")
+def preview_community_import(
+    ctx: typer.Context,
+    dataset_version: Annotated[str, typer.Option("--dataset-version", help="catalog 返回的数据版本。")],
+    unit_paths: Annotated[
+        list[str],
+        typer.Option("--unit-path", help="重复指定 catalog 中的学院分片路径。"),
+    ] = [],
+    record_ids: Annotated[
+        list[str],
+        typer.Option("--record-id", help="重复指定要比对的社区导师 ID。"),
+    ] = [],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.community.preview",
+        path="/api/agent/v1/community-mentors/preview",
+        json_body={
+            "dataset_version": dataset_version,
+            "unit_paths": unit_paths,
+            "record_ids": record_ids,
+        },
+        guide_topic="community",
+        human_formatter=format_detail,
+        timeout=90.0,
+        use_idempotency_key=False,
+    )
+
+
+@community_app.command("import")
+def prepare_community_import(
+    ctx: typer.Context,
+    items_file: Annotated[
+        Path,
+        typer.Option(
+            "--items-file",
+            help="包含 dataset_version、unit_paths 和 items 的 JSON 文件。",
+        ),
+    ],
+) -> None:
+    context = cli_context(ctx)
+    command = "professors.community.import"
+    try:
+        payload = json.loads(items_file.read_text(encoding="utf-8"))
+    except OSError as exc:
+        error = CliError(
+            code="LOCAL_FILE_UNAVAILABLE",
+            message=f"无法读取社区导师导入文件：{exc}",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code) from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        error = CliError(
+            code="COMMUNITY_IMPORT_FILE_INVALID",
+            message="社区导师导入文件必须是 UTF-8 编码的 JSON 对象。",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code) from exc
+    if not isinstance(payload, dict):
+        error = CliError(
+            code="COMMUNITY_IMPORT_FILE_INVALID",
+            message="社区导师导入文件必须是一个 JSON 对象。",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code)
+    run_write_command(
+        ctx,
+        command=command,
+        path="/api/agent/v1/community-mentors/prepare-import",
+        json_body=payload,
+        guide_topic="community",
+        human_formatter=format_detail,
+        timeout=90.0,
+    )
+
+
+@community_app.command("export-package")
+def export_community_share_package(
+    ctx: typer.Context,
+    professor_ids: Annotated[
+        list[int],
+        typer.Option("--professor-id", min=1, help="重复指定要导出的本地导师 ID。"),
+    ] = [],
+    output: Annotated[Path, typer.Option("--output", "-o", help="导出文件保存位置。") ] = Path("community-share.xlsx"),
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+) -> None:
+    context = cli_context(ctx)
+    command = "professors.community.export-package"
+    if not professor_ids:
+        error = CliError(
+            code="PROFESSOR_IDS_REQUIRED",
+            message="请至少指定一位要导出的导师。",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code)
+    try:
+        destination = output.expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        client = AgentApiClient(timeout=90.0)
+        content = client.download_bytes(
+            "/api/agent/v1/community-mentors/share-package",
+            params={"professor_ids": ",".join(str(professor_id) for professor_id in professor_ids)},
+        )
+        try:
+            with destination.open("wb" if force else "xb") as file:
+                file.write(content)
+        except FileExistsError as exc:
+            raise CliError(
+                code="OUTPUT_EXISTS",
+                message=f"输出文件已存在：{destination}",
+                exit_code=2,
+                suggested_command="重新选择 --output，或明确使用 --force 覆盖。",
+            ) from exc
+        except OSError as exc:
+            raise CliError(
+                code="OUTPUT_WRITE_FAILED",
+                message=f"无法写入导出文件：{exc}",
+                exit_code=5,
+            ) from exc
+        emit_success(
+            context,
+            command=command,
+            data={
+                "output": destination.as_posix(),
+                "professor_ids": professor_ids,
+                "size_bytes": len(content),
+            },
+            human_text=f"已导出社区共享包到：\n{destination}",
+            guide_topic="community",
+            app_version=client.descriptor.app_version,
+        )
+    except CliError as error:
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code) from error
+
+
 @professors_app.command("get")
 def get_professor(
     ctx: typer.Context,
@@ -50,6 +332,139 @@ def get_professor(
         ctx,
         command="professors.get",
         path=f"/api/agent/v1/professors/{professor_id}",
+        human_formatter=format_detail,
+    )
+
+
+@professors_app.command("create")
+def create_professor(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Option("--name", help="导师姓名。")],
+    email: Annotated[str, typer.Option("--email", help="导师邮箱。")],
+    title: Annotated[str | None, typer.Option("--title")] = None,
+    university: Annotated[str | None, typer.Option("--university")] = None,
+    school: Annotated[str | None, typer.Option("--school")] = None,
+    department: Annotated[str | None, typer.Option("--department")] = None,
+    research_direction: Annotated[str | None, typer.Option("--research-direction")] = None,
+    recent_papers: Annotated[list[str], typer.Option("--recent-paper")] = [],
+    profile_url: Annotated[str | None, typer.Option("--profile-url")] = None,
+    source_url: Annotated[str | None, typer.Option("--source-url")] = None,
+    personal_note: Annotated[str | None, typer.Option("--personal-note")] = None,
+    tag_ids: Annotated[list[int], typer.Option("--tag-id", min=1)] = [],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.create",
+        path="/api/agent/v1/professors",
+        json_body={
+            "name": name,
+            "email": email,
+            "title": title,
+            "university": university,
+            "school": school,
+            "department": department,
+            "research_direction": research_direction,
+            "recent_papers": recent_papers,
+            "profile_url": profile_url,
+            "source_url": source_url,
+            "personal_note": personal_note,
+            "tag_ids": tag_ids,
+        },
+        human_formatter=format_detail,
+    )
+
+
+@professors_app.command("update")
+def update_professor(
+    ctx: typer.Context,
+    professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
+    name: Annotated[str | None, typer.Option("--name")] = None,
+    email: Annotated[str | None, typer.Option("--email")] = None,
+    title: Annotated[str | None, typer.Option("--title")] = None,
+    university: Annotated[str | None, typer.Option("--university")] = None,
+    school: Annotated[str | None, typer.Option("--school")] = None,
+    department: Annotated[str | None, typer.Option("--department")] = None,
+    research_direction: Annotated[str | None, typer.Option("--research-direction")] = None,
+    recent_papers: Annotated[list[str] | None, typer.Option("--recent-paper")] = None,
+    clear_recent_papers: Annotated[bool, typer.Option("--clear-recent-papers")] = False,
+    profile_url: Annotated[str | None, typer.Option("--profile-url")] = None,
+    source_url: Annotated[str | None, typer.Option("--source-url")] = None,
+    personal_note: Annotated[str | None, typer.Option("--personal-note")] = None,
+) -> None:
+    if clear_recent_papers and recent_papers is not None:
+        raise typer.BadParameter(
+            "--clear-recent-papers 不能和 --recent-paper 同时使用。",
+            param_hint="--clear-recent-papers",
+        )
+    payload = {
+        key: value
+        for key, value in {
+            "name": name,
+            "email": email,
+            "title": title,
+            "university": university,
+            "school": school,
+            "department": department,
+            "research_direction": research_direction,
+            "recent_papers": [] if clear_recent_papers else recent_papers,
+            "profile_url": profile_url,
+            "source_url": source_url,
+            "personal_note": personal_note,
+        }.items()
+        if value is not None
+    }
+    if not payload:
+        raise typer.BadParameter("请至少提供一个需要修改的字段。")
+    run_write_command(
+        ctx,
+        command="professors.update",
+        path=f"/api/agent/v1/professors/{professor_id}",
+        method="PUT",
+        json_body=payload,
+        human_formatter=format_detail,
+    )
+
+
+@professors_app.command("archive")
+def archive_professor(
+    ctx: typer.Context,
+    professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.archive",
+        path=f"/api/agent/v1/professors/{professor_id}/archive",
+        human_formatter=format_detail,
+    )
+
+
+@professors_app.command("prepare-bulk-archive")
+def prepare_bulk_professor_archive(
+    ctx: typer.Context,
+    professor_ids: Annotated[
+        list[int],
+        typer.Option("--professor-id", min=1, help="重复指定要移入回收站的导师 ID。"),
+    ] = [],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.prepare-bulk-archive",
+        path="/api/agent/v1/professors/prepare-bulk-archive",
+        json_body={"professor_ids": professor_ids},
+        guide_topic="safety",
+        human_formatter=format_detail,
+    )
+
+
+@professors_app.command("restore")
+def restore_professor(
+    ctx: typer.Context,
+    professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.restore",
+        path=f"/api/agent/v1/professors/{professor_id}/restore",
         human_formatter=format_detail,
     )
 
@@ -71,4 +486,100 @@ def list_professor_tags(
             data,
             columns=(("id", "ID"), ("name", "标签")),
         ),
+    )
+
+
+@tags_app.command("create")
+def create_professor_tag(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Option("--name")],
+    text_color: Annotated[str, typer.Option("--text-color")],
+    background_color: Annotated[str, typer.Option("--background-color")],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.tags.create",
+        path="/api/agent/v1/professor-tags",
+        json_body={
+            "name": name,
+            "text_color": text_color,
+            "background_color": background_color,
+        },
+        human_formatter=format_detail,
+    )
+
+
+@tags_app.command("usage")
+def get_professor_tag_usage(
+    ctx: typer.Context,
+    tag_id: Annotated[int, typer.Argument(min=1, help="标签 ID。")],
+) -> None:
+    run_read_command(
+        ctx,
+        command="professors.tags.usage",
+        path=f"/api/agent/v1/professor-tags/{tag_id}/usage",
+        human_formatter=format_detail,
+    )
+
+
+@tags_app.command("prepare-delete")
+def prepare_professor_tag_delete(
+    ctx: typer.Context,
+    tag_id: Annotated[int, typer.Argument(min=1, help="标签 ID。")],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.tags.prepare-delete",
+        path=f"/api/agent/v1/professor-tags/{tag_id}/prepare-delete",
+        guide_topic="safety",
+        human_formatter=format_detail,
+    )
+
+
+@tags_app.command("set")
+def set_professor_tags(
+    ctx: typer.Context,
+    professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
+    tag_ids: Annotated[
+        list[int],
+        typer.Option("--tag-id", min=1, help="重复指定；不提供则清空标签。"),
+    ] = [],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.tags.set",
+        path=f"/api/agent/v1/professors/{professor_id}/tags",
+        method="PUT",
+        json_body={"tag_ids": tag_ids},
+        human_formatter=format_detail,
+    )
+
+
+@tags_app.command("prepare-bulk")
+def prepare_bulk_professor_tags(
+    ctx: typer.Context,
+    professor_ids: Annotated[
+        list[int],
+        typer.Option("--professor-id", min=1, help="重复指定要修改的导师 ID。"),
+    ] = [],
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="add、remove 或 replace。"),
+    ] = "add",
+    tag_ids: Annotated[
+        list[int],
+        typer.Option("--tag-id", min=1, help="重复指定目标标签；replace 可不提供以清空。"),
+    ] = [],
+) -> None:
+    run_write_command(
+        ctx,
+        command="professors.tags.prepare-bulk",
+        path="/api/agent/v1/professors/prepare-bulk-tags",
+        json_body={
+            "professor_ids": professor_ids,
+            "mode": mode,
+            "tag_ids": tag_ids,
+        },
+        guide_topic="safety",
+        human_formatter=format_detail,
     )

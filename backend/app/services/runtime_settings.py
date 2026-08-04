@@ -42,6 +42,9 @@ async def get_runtime_settings(session: AsyncSession) -> AppSetting:
 async def update_runtime_settings(
     session: AsyncSession,
     payload: RuntimeSettingsUpdate,
+    *,
+    event_name: str = "runtime_settings.updated",
+    actor: str | None = None,
 ) -> AppSetting:
     settings = await get_or_create_app_settings(session)
     previous = serialize_runtime_settings(settings).model_dump(mode="json")
@@ -51,17 +54,19 @@ async def update_runtime_settings(
         setattr(settings, key, value)
     settings.updated_at = utc_now()
 
+    metadata: dict[str, object] = {
+        "previous": previous,
+        "next": next_values,
+    }
+    if actor is not None:
+        metadata["actor"] = actor
     await record_operation_log(
         session,
         category="backend",
-        event_name="runtime_settings.updated",
+        event_name=event_name,
         message="运行时设置已更新",
         entity_type="runtime_settings",
         entity_id="1",
-        metadata={
-            "previous": previous,
-            "next": next_values,
-        },
+        metadata=metadata,
     )
     return settings
-

@@ -1214,6 +1214,10 @@ class CommunityApiTests(unittest.TestCase):
     def setUp(self) -> None:
         from fastapi.testclient import TestClient
 
+        from app.api.agent_v1.router import (
+            get_agent_community_mentor_data_service,
+            get_agent_community_mentor_data_service_factory,
+        )
         from app.api.community_mentors import get_community_mentor_data_service
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
@@ -1244,6 +1248,10 @@ class CommunityApiTests(unittest.TestCase):
         )
         app = create_app()
         app.dependency_overrides[get_community_mentor_data_service] = lambda: self.service
+        app.dependency_overrides[get_agent_community_mentor_data_service] = lambda: self.service
+        app.dependency_overrides[get_agent_community_mentor_data_service_factory] = (
+            lambda: lambda: self.service
+        )
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -1355,6 +1363,75 @@ class CommunityApiTests(unittest.TestCase):
             msg=linked_import_response.text,
         )
         self.assertEqual(linked_import_response.json()["linked_count"], 1)
+
+    def test_agent_catalog_preview_planned_import_and_share_package(self) -> None:
+        catalog_response = self.client.get("/api/agent/v1/community-mentors/catalog?refresh=true")
+        self.assertEqual(catalog_response.status_code, 200, msg=catalog_response.text)
+        self.assertEqual(catalog_response.json()["dataset_version"], DATASET_VERSION)
+
+        selection = {
+            "dataset_version": DATASET_VERSION,
+            "unit_paths": [SHARD_PATH],
+        }
+        records_response = self.client.post(
+            "/api/agent/v1/community-mentors/records",
+            json=selection,
+        )
+        self.assertEqual(records_response.status_code, 200, msg=records_response.text)
+        self.assertEqual(records_response.json()["records"][0]["category"], "new")
+
+        preview_response = self.client.post(
+            "/api/agent/v1/community-mentors/preview",
+            json={**selection, "record_ids": ["mentor_example0001"]},
+        )
+        self.assertEqual(preview_response.status_code, 200, msg=preview_response.text)
+        comparison = preview_response.json()["records"][0]
+
+        plan_response = self.client.post(
+            "/api/agent/v1/community-mentors/prepare-import",
+            json={
+                **selection,
+                "items": [
+                    {
+                        "community_record_id": "mentor_example0001",
+                        "comparison_token": comparison["comparison_token"],
+                        "field_choices": {},
+                        "confirm_identity_match": False,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(plan_response.status_code, 201, msg=plan_response.text)
+        plan = plan_response.json()
+        self.assertEqual(plan["action"], "community_mentor.import")
+        self.assertEqual(plan["summary"]["inserted_count"], 1)
+        self.assertIn("尚未导入社区导师", plan["confirmation_message"])
+
+        missing_confirmation = self.client.post(
+            f"/api/agent/v1/plans/{plan['plan_id']}/execute",
+            json={"confirm": False},
+        )
+        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
+        self.assertEqual(missing_confirmation.json()["error"]["code"], "PLAN_CONFIRMATION_REQUIRED")
+
+        executed_response = self.client.post(
+            f"/api/agent/v1/plans/{plan['plan_id']}/execute",
+            json={"confirm": True},
+        )
+        self.assertEqual(executed_response.status_code, 200, msg=executed_response.text)
+        executed = executed_response.json()
+        self.assertEqual(executed["status"], "executed")
+        self.assertEqual(executed["result"]["inserted_count"], 1)
+
+        share_response = self.client.get(
+            "/api/agent/v1/community-mentors/share-package",
+            params={"professor_ids": str(executed["result"]["professors"][0]["professor_id"])},
+        )
+        self.assertEqual(share_response.status_code, 200, msg=share_response.text)
+        self.assertEqual(
+            share_response.headers["content-type"].split(";", 1)[0],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 
 if __name__ == "__main__":

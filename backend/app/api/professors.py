@@ -49,12 +49,21 @@ from app.services.professor_management import (
     normalize_professor_payload,
     parse_professor_import_file,
 )
+from app.services.professor_mutations import (
+    ProfessorMutationError,
+    archive_professor_record,
+    bulk_update_professor_tags_record,
+    create_professor_record,
+    create_professor_tag_record,
+    import_professor_records,
+    restore_professor_record,
+    set_professor_tags_record,
+    update_professor_record,
+)
 from app.services.sample_professors import SAMPLE_PROFESSORS
 
 
 router = APIRouter(prefix="/api/professors", tags=["professors"])
-DEFAULT_IMPORTED_TAG_TEXT_COLOR = "#166534"
-DEFAULT_IMPORTED_TAG_BACKGROUND_COLOR = "#dcfce7"
 
 
 @router.get("", response_model=list[ProfessorDashboardItemRead])
@@ -240,89 +249,22 @@ async def import_professors_from_file(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    inserted_count = 0
-    updated_count = 0
-    created_tag_count = 0
-    personal_note_column_present = any(
-        bool(payload.get("has_personal_note_column"))
-        for payload in parsed.data.values()
-    )
-    if parsed.data:
-        existing_professors = {
-            professor.email.lower(): professor
-            for professor in (
-                await session.execute(
-                    select(Professor).where(Professor.email.in_(list(parsed.data.keys()))),
-                )
-            ).scalars()
-            if professor.email
-        }
-
-        for email, payload in parsed.data.items():
-            professor = existing_professors.get(email)
-            if professor is None:
-                professor_data = {
-                    key: value
-                    for key, value in payload.items()
-                    if key not in {"tag_names", "has_personal_note_column"}
-                }
-                professor = Professor(**professor_data)
-                session.add(professor)
-                await session.flush()
-                created_tag_count += await _sync_professor_tags_by_names(
-                    session,
-                    professor,
-                    payload["tag_names"],
-                )
-                inserted_count += 1
-                continue
-
-            professor.name = payload["name"]
-            professor.email = payload["email"]
-            professor.title = payload["title"]
-            professor.university = payload["university"]
-            professor.school = payload["school"]
-            professor.department = payload["department"]
-            professor.research_direction = payload["research_direction"]
-            professor.recent_papers = payload["recent_papers"]
-            professor.profile_url = payload["profile_url"]
-            professor.source_url = payload["source_url"]
-            if payload.get("has_personal_note_column"):
-                professor.personal_note = payload["personal_note"]
-            if payload["tag_names"]:
-                created_tag_count += await _sync_professor_tags_by_names(
-                    session,
-                    professor,
-                    payload["tag_names"],
-                )
-            professor.archived_at = None
-            professor.updated_at = utc_now()
-            updated_count += 1
-
-    await record_operation_log(
+    result = await import_professor_records(
         session,
-        category="user_action",
+        parsed,
+        filename=file.filename,
         event_name="professor.import_file",
-        entity_type="professor",
-        metadata={
-            "filename": file.filename,
-            "inserted_count": inserted_count,
-            "updated_count": updated_count,
-            "created_tag_count": created_tag_count,
-            "failed_count": parsed.failed_count,
-            "row_count": len(parsed.data),
-            "personal_note_column_present": personal_note_column_present,
-        },
+        actor="desktop_ui",
     )
     await session.commit()
 
     return ProfessorImportFileResult(
-        inserted_count=inserted_count,
-        updated_count=updated_count,
-        failed_count=parsed.failed_count,
+        inserted_count=result.inserted_count,
+        updated_count=result.updated_count,
+        failed_count=result.failed_count,
         message=(
-            f"导入完成：新增 {inserted_count} 条，更新 {updated_count} 条，"
-            f"创建标签 {created_tag_count} 个，失败 {parsed.failed_count} 条。"
+            f"导入完成：新增 {result.inserted_count} 条，更新 {result.updated_count} 条，"
+            f"创建标签 {result.created_tag_count} 个，失败 {result.failed_count} 条。"
         ),
     )
 
@@ -387,21 +329,16 @@ async def create_professor_tag(
     payload: ProfessorTagPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorTagRead:
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="标签名不能为空")
-    existing = await session.scalar(select(ProfessorTag).where(ProfessorTag.name == name))
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="标签已存在")
-
-    tag = ProfessorTag(
-        name=name,
-        text_color=payload.text_color,
-        background_color=payload.background_color,
-    )
-    session.add(tag)
     try:
+        tag = await create_professor_tag_record(
+            session,
+            payload,
+            event_name="professor.tag_created",
+            actor="desktop_ui",
+        )
         await session.commit()
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail="标签已存在") from exc
@@ -434,21 +371,18 @@ async def update_professor_tags(
     payload: ProfessorTagUpdatePayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorManagementItemRead:
-    professor = await session.scalar(
-        select(Professor)
-        .options(selectinload(Professor.tags))
-        .where(Professor.id == professor_id),
-    )
-    if not professor:
-        raise HTTPException(status_code=404, detail="未找到导师")
-
-    await _sync_professor_tags(session, professor, payload.tag_ids)
-    professor.updated_at = utc_now()
-    await _record_professor_log(session, professor, "professor.tags_updated")
+    try:
+        professor = await set_professor_tags_record(
+            session,
+            professor_id,
+            payload,
+            event_name="professor.tags_updated",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
-    return _serialize_management_professor(
-        await _get_professor_with_tags_or_404(session, professor.id),
-    )
+    return _serialize_management_professor(professor)
 
 
 @router.post("", response_model=ProfessorManagementItemRead, status_code=status.HTTP_201_CREATED)
@@ -456,24 +390,17 @@ async def create_professor(
     payload: ProfessorUpsertPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorManagementItemRead:
-    professor_data = normalize_professor_payload(payload)
-    _ensure_professor_email_valid(professor_data["email"])
-
-    existing = await session.scalar(
-        select(Professor).where(Professor.email == professor_data["email"]),
-    )
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="该邮箱的导师已存在")
-
-    professor = Professor(**professor_data)
-    session.add(professor)
-    await session.flush()
-    await _sync_professor_tags(session, professor, payload.tag_ids)
-    await _record_professor_log(session, professor, "professor.created")
+    try:
+        professor = await create_professor_record(
+            session,
+            payload,
+            event_name="professor.created",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
-    return _serialize_management_professor(
-        await _get_professor_with_tags_or_404(session, professor.id),
-    )
+    return _serialize_management_professor(professor)
 
 
 @router.get("/{professor_id}", response_model=ProfessorRead)
@@ -517,46 +444,18 @@ async def update_professor(
     payload: ProfessorUpsertPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorManagementItemRead:
-    professor = await session.scalar(
-        select(Professor)
-        .options(selectinload(Professor.tags))
-        .where(Professor.id == professor_id),
-    )
-    if not professor:
-        raise HTTPException(status_code=404, detail="未找到导师")
-
-    professor_data = normalize_professor_payload(payload)
-    _ensure_professor_email_valid(professor_data["email"])
-
-    existing = await session.scalar(
-        select(Professor).where(
-            Professor.email == professor_data["email"],
-            Professor.id != professor_id,
-        ),
-    )
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="该邮箱已被其他导师使用")
-
-    professor.name = professor_data["name"]
-    professor.email = professor_data["email"]
-    professor.title = professor_data["title"]
-    professor.university = professor_data["university"]
-    professor.school = professor_data["school"]
-    professor.department = professor_data["department"]
-    professor.research_direction = professor_data["research_direction"]
-    professor.recent_papers = professor_data["recent_papers"]
-    professor.profile_url = professor_data["profile_url"]
-    professor.source_url = professor_data["source_url"]
-    if "personal_note" in payload.model_fields_set:
-        professor.personal_note = professor_data["personal_note"]
-    await _sync_professor_tags(session, professor, payload.tag_ids)
-    professor.updated_at = utc_now()
-
-    await _record_professor_log(session, professor, "professor.updated")
+    try:
+        professor = await update_professor_record(
+            session,
+            professor_id,
+            payload,
+            event_name="professor.updated",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
-    return _serialize_management_professor(
-        await _get_professor_with_tags_or_404(session, professor.id),
-    )
+    return _serialize_management_professor(professor)
 
 
 @router.patch("/{professor_id}/note", response_model=ProfessorNoteUpdateRead)
@@ -591,21 +490,15 @@ async def archive_professor(
     professor_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorActionResult:
-    professor = await session.get(Professor, professor_id)
-    if not professor:
-        raise HTTPException(status_code=404, detail="未找到导师")
-
-    affected_count = 0
-    if professor.archived_at is None:
-        professor.archived_at = utc_now()
-        professor.updated_at = utc_now()
-        affected_count = 1
-    await _record_professor_log(
-        session,
-        professor,
-        "professor.archived",
-        metadata={"affected_count": affected_count},
-    )
+    try:
+        _, affected_count = await archive_professor_record(
+            session,
+            professor_id,
+            event_name="professor.archived",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
 
     return ProfessorActionResult(
@@ -663,81 +556,15 @@ async def bulk_update_professor_tags(
     payload: ProfessorBulkTagsPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorBulkTagsResult:
-    if not payload.professor_ids:
-        raise HTTPException(status_code=400, detail="请至少选择一位导师")
-    if payload.mode in {"add", "remove"} and not payload.tag_ids:
-        raise HTTPException(status_code=400, detail="请选择要追加或移除的标签")
-
-    requested_professor_ids = list(dict.fromkeys(payload.professor_ids))
-    professors = list(
-        (
-            await session.execute(
-                select(Professor)
-                .options(selectinload(Professor.tags))
-                .where(Professor.id.in_(requested_professor_ids)),
-            )
-        ).scalars(),
-    )
-    professors_by_id = {professor.id: professor for professor in professors}
-    missing_professor_ids = [
-        professor_id
-        for professor_id in requested_professor_ids
-        if professor_id not in professors_by_id
-    ]
-    if missing_professor_ids:
-        raise HTTPException(status_code=404, detail="导师不存在")
-
-    tags = await _load_tags_by_ids(session, payload.tag_ids)
-    tag_ids = [tag.id for tag in tags]
-    now = utc_now()
-    for professor_id in requested_professor_ids:
-        professor = professors_by_id[professor_id]
-        current_tag_ids = [tag.id for tag in professor.tags]
-        if payload.mode == "add":
-            next_tag_ids = current_tag_ids + [
-                tag_id for tag_id in tag_ids if tag_id not in current_tag_ids
-            ]
-        elif payload.mode == "remove":
-            remove_tag_ids = set(tag_ids)
-            next_tag_ids = [
-                tag_id for tag_id in current_tag_ids if tag_id not in remove_tag_ids
-            ]
-        else:
-            next_tag_ids = tag_ids
-        await _sync_professor_tags(session, professor, next_tag_ids)
-        professor.updated_at = now
-
-    await session.flush()
-    refreshed_professors = list(
-        (
-            await session.execute(
-                select(Professor)
-                .options(selectinload(Professor.tags))
-                .where(Professor.id.in_(requested_professor_ids)),
-            )
-        ).scalars(),
-    )
-    refreshed_by_id = {
-        professor.id: professor for professor in refreshed_professors
-    }
-    ordered_professors = [
-        refreshed_by_id[professor_id]
-        for professor_id in requested_professor_ids
-    ]
-
-    await record_operation_log(
-        session,
-        category="user_action",
-        event_name="professor.bulk_tags_updated",
-        entity_type="professor",
-        metadata={
-            "requested_count": len(requested_professor_ids),
-            "affected_count": len(ordered_professors),
-            "ids": requested_professor_ids,
-            "mode": payload.mode,
-            "tag_ids": tag_ids,
-        },
-    )
+    try:
+        ordered_professors = await bulk_update_professor_tags_record(
+            session,
+            payload,
+            event_name="professor.bulk_tags_updated",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     return ProfessorBulkTagsResult(
         ok=True,
@@ -755,21 +582,15 @@ async def restore_professor(
     professor_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorActionResult:
-    professor = await session.get(Professor, professor_id)
-    if not professor:
-        raise HTTPException(status_code=404, detail="未找到导师")
-
-    affected_count = 0
-    if professor.archived_at is not None:
-        professor.archived_at = None
-        professor.updated_at = utc_now()
-        affected_count = 1
-    await _record_professor_log(
-        session,
-        professor,
-        "professor.restored",
-        metadata={"affected_count": affected_count},
-    )
+    try:
+        _, affected_count = await restore_professor_record(
+            session,
+            professor_id,
+            event_name="professor.restored",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
 
     return ProfessorActionResult(
@@ -923,107 +744,3 @@ def _build_personal_note_log_metadata(personal_note: str | None) -> dict[str, ob
         "has_personal_note": personal_note is not None,
         "personal_note_length": len(personal_note or ""),
     }
-
-
-async def _get_professor_with_tags_or_404(
-    session: AsyncSession,
-    professor_id: int,
-) -> Professor:
-    professor = await session.scalar(
-        select(Professor)
-        .options(selectinload(Professor.tags))
-        .where(Professor.id == professor_id),
-    )
-    if professor is None:
-        raise HTTPException(status_code=404, detail="未找到导师")
-    return professor
-
-
-async def _sync_professor_tags(
-    session: AsyncSession,
-    professor: Professor,
-    tag_ids: list[int],
-) -> None:
-    tags = await _load_tags_by_ids(session, tag_ids)
-    await session.execute(
-        delete(ProfessorTagLink).where(
-            ProfessorTagLink.professor_id == professor.id,
-        ),
-    )
-    for sort_order, tag in enumerate(tags):
-        session.add(
-            ProfessorTagLink(
-                professor_id=professor.id,
-                tag_id=tag.id,
-                sort_order=sort_order,
-            ),
-        )
-    session.expire(professor, ["tags"])
-
-
-async def _sync_professor_tags_by_names(
-    session: AsyncSession,
-    professor: Professor,
-    tag_names: list[str],
-) -> int:
-    tags, created_count = await _load_or_create_tags_by_names(session, tag_names)
-    await _sync_professor_tags(session, professor, [tag.id for tag in tags])
-    return created_count
-
-
-async def _load_or_create_tags_by_names(
-    session: AsyncSession,
-    tag_names: list[str],
-) -> tuple[list[ProfessorTag], int]:
-    if not tag_names:
-        return [], 0
-
-    existing_tags = list(
-        (
-            await session.execute(
-                select(ProfessorTag).where(ProfessorTag.name.in_(tag_names)),
-            )
-        ).scalars(),
-    )
-    tags_by_name = {tag.name: tag for tag in existing_tags}
-    created_count = 0
-    for name in tag_names:
-        if name in tags_by_name:
-            continue
-        tag = ProfessorTag(
-            name=name,
-            text_color=DEFAULT_IMPORTED_TAG_TEXT_COLOR,
-            background_color=DEFAULT_IMPORTED_TAG_BACKGROUND_COLOR,
-        )
-        session.add(tag)
-        await session.flush()
-        tags_by_name[name] = tag
-        created_count += 1
-
-    return [tags_by_name[name] for name in tag_names], created_count
-
-
-async def _load_tags_by_ids(
-    session: AsyncSession,
-    tag_ids: list[int],
-) -> list[ProfessorTag]:
-    if not tag_ids:
-        return []
-
-    if len(set(tag_ids)) != len(tag_ids):
-        raise HTTPException(status_code=400, detail="标签不能重复")
-
-    tags = list(
-        (
-            await session.execute(
-                select(ProfessorTag)
-                .where(ProfessorTag.id.in_(tag_ids))
-                .order_by(ProfessorTag.name.asc()),
-            )
-        ).scalars(),
-    )
-    tags_by_id = {tag.id: tag for tag in tags}
-    missing = [tag_id for tag_id in tag_ids if tag_id not in tags_by_id]
-    if missing:
-        raise HTTPException(status_code=400, detail="标签不存在")
-    return [tags_by_id[tag_id] for tag_id in tag_ids]

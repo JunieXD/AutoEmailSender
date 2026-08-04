@@ -324,6 +324,7 @@ async def ensure_workspace_task(
     professor_id: int,
     identity_id: int,
     llm_profile_id: int,
+    commit: bool = True,
 ) -> EmailTask:
     professor = await _get_professor(session, professor_id)
     identity = await _get_identity(session, identity_id)
@@ -334,7 +335,11 @@ async def ensure_workspace_task(
     current_task = await _get_latest_email_task(session, professor_pk, identity_pk)
     if current_task is not None:
         if _should_resume_workspace_task(current_task):
-            return await _create_workspace_resume_task(session, current_task)
+            return await _create_workspace_resume_task(
+                session,
+                current_task,
+                commit=commit,
+            )
         task_updated = _backfill_task_primary_material_from_identity(current_task, identity)
         if not _task_has_match_result(current_task):
             match_task = await _get_latest_identity_match_task(
@@ -348,8 +353,11 @@ async def ensure_workspace_task(
                 current_task.updated_at = utc_now()
                 task_updated = True
         if task_updated:
-            await session.commit()
-            await session.refresh(current_task)
+            if commit:
+                await session.commit()
+                await session.refresh(current_task)
+            else:
+                await session.flush()
         return current_task
 
     selected_template = await get_default_outreach_template_for_identity(
@@ -410,13 +418,16 @@ async def ensure_workspace_task(
             "primary_material_id": task.primary_material_id,
         },
     )
-    await session.commit()
-    await session.refresh(task)
+    if commit:
+        await session.commit()
+        await session.refresh(task)
     return task
 
 async def _create_workspace_resume_task(
     session: AsyncSession,
     task: EmailTask,
+    *,
+    commit: bool = True,
 ) -> EmailTask:
     professor_id = task.professor_id
     identity_id = task.identity_id
@@ -450,8 +461,9 @@ async def _create_workspace_resume_task(
             "workspace_resume_reason": task.cancellation_reason,
         },
     )
-    await session.commit()
-    await session.refresh(resumed_task)
+    if commit:
+        await session.commit()
+        await session.refresh(resumed_task)
     return resumed_task
 
 

@@ -93,10 +93,19 @@ async def generate_test_compose_draft(
     body_text_template: str | None = None,
     body_html_template: str | None = None,
     template_content_explicit: bool = False,
+    commit: bool = True,
+    event_name: str | None = None,
+    actor: str | None = None,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
-    compose_session = await _get_or_create_test_compose_session(session, identity_id, llm_profile_id, identity)
+    compose_session = await _get_or_create_test_compose_session(
+        session,
+        identity_id,
+        llm_profile_id,
+        identity,
+        commit=commit,
+    )
     if template_selection_explicit:
         selected_template = (
             await get_outreach_template(
@@ -195,10 +204,16 @@ async def generate_test_compose_draft(
     await _record_test_compose_log(
         session,
         compose_session,
-        "test_compose.draft_generated",
-        metadata={"generation_mode": outreach_config.generation_mode},
+        event_name or "test_compose.draft_generated",
+        metadata={
+            "generation_mode": outreach_config.generation_mode,
+            **({"actor": actor} if actor is not None else {}),
+        },
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
     return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
@@ -210,10 +225,19 @@ async def send_test_compose_message(
     identity_id: int,
     llm_profile_id: int,
     payload: TestComposeMessageSendRequest,
+    commit: bool = True,
+    event_name: str | None = None,
+    actor: str | None = None,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
-    compose_session = await _get_or_create_test_compose_session(session, identity_id, llm_profile_id, identity)
+    compose_session = await _get_or_create_test_compose_session(
+        session,
+        identity_id,
+        llm_profile_id,
+        identity,
+        commit=commit,
+    )
     selected_material_ids = payload.selected_material_ids or []
 
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
@@ -292,22 +316,138 @@ async def send_test_compose_message(
         )
 
     session.add(message)
+    default_event_name = "test_compose.sent" if message.status == "sent" else "test_compose.send_failed"
+    message_event_name = (
+        f"{event_name}.sent"
+        if event_name is not None and message.status == "sent"
+        else f"{event_name}.send_failed"
+        if event_name is not None
+        else default_event_name
+    )
     await _record_test_compose_log(
         session,
         compose_session,
-        "test_compose.sent" if message.status == "sent" else "test_compose.send_failed",
+        message_event_name,
         level="info" if message.status == "sent" else "warning",
         message=message.failure_summary,
         metadata={
             "status": message.status,
             "message_id": message.rfc_message_id,
             "attachment_count": len(attachments),
+            **({"actor": actor} if actor is not None else {}),
         },
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
     return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
+
+
+async def prepare_test_compose_send_snapshot(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    llm_profile_id: int,
+    payload: TestComposeMessageSendRequest,
+) -> dict[str, object]:
+    """Build the exact safe-to-display state for an Agent-confirmed test send."""
+    identity = await _get_identity(session, identity_id)
+    llm_profile = await _get_llm_profile(session, llm_profile_id)
+    selected_material_ids = payload.selected_material_ids or []
+    await _validate_selected_material_ids(session, identity_id, selected_material_ids)
+
+    selected_template = None
+    if (
+        "outreach_template_id" in payload.model_fields_set
+        and payload.outreach_template_id is not None
+    ):
+        selected_template = await get_outreach_template(
+            session,
+            payload.outreach_template_id,
+            include_archived=True,
+        )
+    if not (
+        identity.smtp_host
+        and identity.smtp_username
+        and identity.smtp_password
+    ):
+        raise ValueError("发件身份尚未配置 SMTP")
+
+    context = build_test_compose_send_template_context(identity)
+    subject = render_template_with_context(payload.subject, context).strip()
+    rendered_body_text = render_template_with_context(payload.body_text, context)
+    rendered_body_html = render_template_with_context(payload.body_html, context)
+    rendered = (
+        normalize_email_html(rendered_body_html)
+        if rendered_body_html.strip()
+        else text_to_email_html(rendered_body_text)
+    )
+    if not subject or not rendered.text:
+        raise ValueError("测试邮件需要主题和正文")
+
+    materials_by_id = {material.id: material for material in identity.materials}
+    attachments = [
+        {
+            "id": material_id,
+            "name": materials_by_id[material_id].display_name,
+            "size_bytes": materials_by_id[material_id].size_bytes,
+        }
+        for material_id in selected_material_ids
+    ]
+    return {
+        "snapshot_version": "1",
+        "request": {
+            "identity_id": identity_id,
+            "llm_profile_id": llm_profile_id,
+            "payload": payload.model_dump(mode="json", exclude_unset=True),
+        },
+        "state": {
+            "identity": {
+                "id": identity.id,
+                "email_address": identity.email_address,
+                "sender_name": get_identity_sender_name(identity),
+            },
+            "llm_profile": {"id": llm_profile.id},
+            "template_id": selected_template.id if selected_template is not None else None,
+            "materials": [
+                {
+                    "id": material_id,
+                    "display_name": materials_by_id[material_id].display_name,
+                    "sha256": materials_by_id[material_id].sha256,
+                }
+                for material_id in selected_material_ids
+            ],
+        },
+        "summary": {
+            "recipient_count": 1,
+            "recipient": {
+                "name": TEST_RECIPIENT_NAME,
+                "email": identity.email_address,
+            },
+            "identity": {
+                "id": identity.id,
+                "name": identity.profile_name or identity.name,
+                "email_address": identity.email_address,
+            },
+            "llm_profile": {
+                "id": llm_profile.id,
+                "name": llm_profile.name,
+                "model_name": llm_profile.model_name,
+            },
+            "template": (
+                {"id": selected_template.id, "name": selected_template.name}
+                if selected_template is not None
+                else None
+            ),
+            "attachments": attachments,
+            "subject": subject,
+            "body_text": rendered.text,
+            "body_html": rendered.html,
+        },
+    }
 
 
 async def save_test_compose_draft(
@@ -316,10 +456,19 @@ async def save_test_compose_draft(
     identity_id: int,
     llm_profile_id: int,
     payload: TestComposeDraftUpdateRequest,
+    commit: bool = True,
+    event_name: str | None = None,
+    actor: str | None = None,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
-    compose_session = await _get_or_create_test_compose_session(session, identity_id, llm_profile_id, identity)
+    compose_session = await _get_or_create_test_compose_session(
+        session,
+        identity_id,
+        llm_profile_id,
+        identity,
+        commit=commit,
+    )
     selected_material_ids = payload.selected_material_ids or []
 
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
@@ -347,10 +496,16 @@ async def save_test_compose_draft(
     await _record_test_compose_log(
         session,
         compose_session,
-        "test_compose.draft_saved",
-        metadata={"selected_material_ids": selected_material_ids},
+        event_name or "test_compose.draft_saved",
+        metadata={
+            "selected_material_ids": selected_material_ids,
+            **({"actor": actor} if actor is not None else {}),
+        },
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
     return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
@@ -382,6 +537,8 @@ async def _get_or_create_test_compose_session(
     identity_id: int,
     llm_profile_id: int,
     identity: IdentityProfile,
+    *,
+    commit: bool = True,
 ) -> TestComposeSession:
     compose_session = await session.scalar(
         select(TestComposeSession)
@@ -413,8 +570,11 @@ async def _get_or_create_test_compose_session(
         selected_material_ids=[],
     )
     session.add(compose_session)
-    await session.commit()
-    await session.refresh(compose_session)
+    if commit:
+        await session.commit()
+        await session.refresh(compose_session)
+    else:
+        await session.flush()
     return compose_session
 
 

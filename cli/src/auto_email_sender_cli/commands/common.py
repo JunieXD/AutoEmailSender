@@ -30,10 +30,11 @@ def run_read_command(
     guide_topic: str = "overview",
     human_formatter: HumanFormatter | None = None,
     fetch_all: bool = False,
+    timeout: float = 30.0,
 ) -> Any:
     context = cli_context(ctx)
     try:
-        client = AgentApiClient()
+        client = AgentApiClient(timeout=timeout)
         data = (
             fetch_all_pages(client, path, params=params)
             if fetch_all
@@ -60,6 +61,7 @@ def run_write_command(
     command: str,
     path: str,
     method: str = "POST",
+    params: dict[str, object] | None = None,
     json_body: object | None = None,
     guide_topic: str = "overview",
     human_formatter: HumanFormatter | None = None,
@@ -72,6 +74,7 @@ def run_write_command(
         data = client.request(
             method,
             path,
+            params=_without_none(params),
             json_body=json_body,
             idempotency_key=(
                 f"cli_{secrets.token_urlsafe(24)}"

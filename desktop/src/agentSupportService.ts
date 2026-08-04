@@ -19,7 +19,8 @@ import { promisify } from "node:util";
 import type { AgentSupportStatus } from "./types.js";
 
 const execFileAsync = promisify(execFile);
-const MANIFEST_SCHEMA_VERSION = 2;
+const MANIFEST_SCHEMA_VERSION = 3;
+const PREVIOUS_MANIFEST_SCHEMA_VERSION = 2;
 const LEGACY_MANIFEST_SCHEMA_VERSION = 1;
 const ZSH_PATH_BLOCK_START = "# >>> Auto Email Sender Agent support >>>";
 const ZSH_PATH_BLOCK_END = "# <<< Auto Email Sender Agent support <<<";
@@ -29,7 +30,6 @@ type AgentSupportManifest = {
   enabled: boolean;
   prompt_dismissed: boolean;
   app_version: string | null;
-  desktop_executable: string;
   cli_source: string | null;
   cli_target: string;
   skill_target: string;
@@ -68,7 +68,6 @@ export type AgentSupportServiceOptions = {
   homePath: string;
   localAppDataPath?: string;
   appVersion: string;
-  desktopExecutablePath: string;
   environmentPath?: string;
   readWindowsUserPath?: () => Promise<string>;
   writeWindowsUserPath?: (value: string) => Promise<void>;
@@ -235,7 +234,6 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       enabled: false,
       prompt_dismissed: true,
       app_version: null,
-      desktop_executable: path.resolve(options.desktopExecutablePath),
       cli_source: path.resolve(paths.cliSource),
       cli_target: path.resolve(paths.cliTarget),
       skill_target: path.resolve(paths.skillTarget),
@@ -262,7 +260,6 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       enabled: current?.enabled ?? false,
       prompt_dismissed: true,
       app_version: current?.app_version ?? null,
-      desktop_executable: current?.desktop_executable ?? path.resolve(options.desktopExecutablePath),
       cli_source: current?.cli_source ?? path.resolve(paths.cliSource),
       cli_target: current?.cli_target ?? path.resolve(paths.cliTarget),
       skill_target: current?.skill_target ?? path.resolve(paths.skillTarget),
@@ -330,7 +327,6 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       enabled: true,
       prompt_dismissed: true,
       app_version: options.appVersion,
-      desktop_executable: path.resolve(options.desktopExecutablePath),
       cli_source: path.resolve(paths.cliSource),
       cli_target: path.resolve(paths.cliTarget),
       skill_target: path.resolve(paths.skillTarget),
@@ -417,8 +413,8 @@ async function isInstallationHealthy(input: {
   readWindowsPath: () => Promise<string>;
 }): Promise<boolean> {
   if (
+    input.manifest.schema_version !== MANIFEST_SCHEMA_VERSION ||
     input.manifest.app_version !== input.options.appVersion ||
-    input.manifest.desktop_executable !== path.resolve(input.options.desktopExecutablePath) ||
     input.manifest.cli_source !== path.resolve(input.paths.cliSource) ||
     input.manifest.cli_sha256 === null ||
     input.manifest.skill_sha256 === null ||
@@ -749,10 +745,10 @@ async function readManifest(manifestPath: string): Promise<AgentSupportManifest 
     const value = JSON.parse(await readFile(manifestPath, "utf8")) as Partial<AgentSupportManifest>;
     if (
       (value.schema_version !== MANIFEST_SCHEMA_VERSION
+        && value.schema_version !== PREVIOUS_MANIFEST_SCHEMA_VERSION
         && value.schema_version !== LEGACY_MANIFEST_SCHEMA_VERSION) ||
       typeof value.enabled !== "boolean" ||
       typeof value.prompt_dismissed !== "boolean" ||
-      typeof value.desktop_executable !== "string" ||
       typeof value.cli_target !== "string" ||
       typeof value.skill_target !== "string" ||
       typeof value.path_managed !== "boolean"
@@ -764,7 +760,6 @@ async function readManifest(manifestPath: string): Promise<AgentSupportManifest 
       enabled: value.enabled,
       prompt_dismissed: value.prompt_dismissed,
       app_version: typeof value.app_version === "string" ? value.app_version : null,
-      desktop_executable: value.desktop_executable,
       cli_source: typeof value.cli_source === "string" ? value.cli_source : null,
       cli_target: value.cli_target,
       skill_target: value.skill_target,

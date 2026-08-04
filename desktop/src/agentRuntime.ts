@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export const AGENT_RUNTIME_PROTOCOL_VERSION = "1";
+export const AGENT_RUNTIME_PROTOCOL_VERSION = "2";
 
 export type AgentRuntimeDescriptor = {
   protocol_version: string;
@@ -15,10 +15,6 @@ export type AgentRuntimeDescriptor = {
 
 export function getAgentRuntimeFilePath(userDataPath: string): string {
   return path.join(userDataPath, "agent", "runtime.json");
-}
-
-export function isAgentBackgroundLaunch(argv: readonly string[]): boolean {
-  return argv.includes("--agent-background");
 }
 
 export async function writeAgentRuntimeDescriptor(options: {

@@ -6,7 +6,6 @@ import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
   cleanupAgentRuntimeDescriptor,
   getAgentRuntimeFilePath,
-  isAgentBackgroundLaunch,
   writeAgentRuntimeDescriptor,
   type AgentRuntimeDescriptor,
 } from "../src/agentRuntime.js";
@@ -98,10 +97,5 @@ describe("Agent runtime descriptor", () => {
       cleanupAgentRuntimeDescriptor({ userDataPath, desktopPid: 1234, accessToken: "agent-token" }),
     ).resolves.toBe(false);
     await expect(readFile(runtimePath, "utf8")).resolves.toBe("not-json");
-  });
-
-  it("recognizes background launches without treating normal launches as background", () => {
-    expect(isAgentBackgroundLaunch(["Auto Email Sender", "--agent-background"])).toBe(true);
-    expect(isAgentBackgroundLaunch(["Auto Email Sender", "--dev"])).toBe(false);
   });
 });

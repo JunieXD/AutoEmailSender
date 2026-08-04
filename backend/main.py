@@ -12,12 +12,17 @@ from typing import Awaitable, Callable
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import API_ROUTERS
 from app.core.config import get_settings
 from app.core.api_auth import ApiAuthMiddleware
-from app.core.agent_api_errors import AgentApiError, agent_api_error_handler
+from app.core.agent_api_errors import (
+    AgentApiError,
+    agent_api_error_handler,
+    request_validation_error_handler,
+)
 from app.core.database import dispose_engine, get_session_factory
 from app.core.error_formatting import safe_exception_message
 from app.core.migrations import ensure_database_schema
@@ -248,6 +253,7 @@ def create_app() -> FastAPI:
     write_startup_phase_log("main.create_app.start")
     app = FastAPI(title="Auto Email Agent API", version="3.0", lifespan=lifespan)
     app.add_exception_handler(AgentApiError, agent_api_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 
     app.add_middleware(
         ApiAuthMiddleware,

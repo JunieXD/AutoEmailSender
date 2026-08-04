@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session, get_session_factory
-from app.core.time import utc_now
 from app.models import CrawlJob, CrawlJobKind, CrawlJobTriggerMode
 from app.schemas.professor_information_enrichment import (
     CreateProfessorInformationEnrichmentJobRequest,
@@ -19,15 +18,15 @@ from app.schemas.professor_information_enrichment import (
     ProfessorInformationEnrichmentJobActionRead,
     ProfessorInformationEnrichmentJobRead,
 )
-from app.services.operation_logs import record_operation_log
 from app.services.professor_information_enrichment import (
-    DELETABLE_JOB_STATUSES,
     create_professor_information_enrichment_job,
+    delete_professor_information_enrichment_job_record,
     get_active_professor_information_enrichment_job,
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
     list_professor_information_enrichment_jobs,
     request_professor_information_enrichment_cancel,
+    restore_professor_information_enrichment_job_record,
     retry_failed_professor_information_enrichment_job,
     serialize_professor_information_enrichment_job,
 )
@@ -204,24 +203,11 @@ async def delete_information_enrichment_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorInformationEnrichmentJobActionRead:
-    job = await _get_visible_job_or_404(session, job_id)
-    if job.status not in DELETABLE_JOB_STATUSES:
-        raise HTTPException(status_code=400, detail="请先取消任务后再删除")
-    previous_deleted_at = job.deleted_at
-    if job.deleted_at is None:
-        job.deleted_at = utc_now()
-        job.updated_at = utc_now()
-    await record_operation_log(
-        session,
-        category="professor_information_enrichment",
-        event_name="professor_information_enrichment.deleted",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "status": job.status,
-            "previous_deleted_at": previous_deleted_at.isoformat() if previous_deleted_at else None,
-        },
-    )
+    await _get_visible_job_or_404(session, job_id)
+    try:
+        await delete_professor_information_enrichment_job_record(session, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await session.commit()
     refreshed = await _get_visible_job_or_404(session, job_id)
     return ProfessorInformationEnrichmentJobActionRead(
@@ -238,22 +224,11 @@ async def restore_information_enrichment_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorInformationEnrichmentJobActionRead:
-    job = await _get_visible_job_or_404(session, job_id)
-    previous_deleted_at = job.deleted_at
-    if job.deleted_at is not None:
-        job.deleted_at = None
-        job.updated_at = utc_now()
-    await record_operation_log(
-        session,
-        category="professor_information_enrichment",
-        event_name="professor_information_enrichment.restored",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "status": job.status,
-            "previous_deleted_at": previous_deleted_at.isoformat() if previous_deleted_at else None,
-        },
-    )
+    await _get_visible_job_or_404(session, job_id)
+    try:
+        await restore_professor_information_enrichment_job_record(session, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await session.commit()
     refreshed = await _get_visible_job_or_404(session, job_id)
     return ProfessorInformationEnrichmentJobActionRead(

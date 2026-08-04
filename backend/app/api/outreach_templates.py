@@ -5,23 +5,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
-from app.core.time import utc_now
 from app.models import OutreachTemplate
 from app.schemas.outreach_template import (
     OutreachTemplateCreate,
     OutreachTemplateRead,
     OutreachTemplateUpdate,
 )
-from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (
-    clear_global_default_template,
-    get_outreach_template,
-    normalize_generation_mode,
-    normalize_nullable_template_text,
-    normalize_template_name,
     serialize_outreach_template,
-    sync_template_to_default_identities,
-    unlink_template_from_identities,
+)
+from app.services.outreach_template_mutations import (
+    OutreachTemplateMutationError,
+    archive_outreach_template_record,
+    create_outreach_template_record,
+    duplicate_outreach_template_record,
+    get_outreach_template_or_raise,
+    restore_outreach_template_record,
+    set_default_outreach_template_record,
+    update_outreach_template_record,
 )
 
 
@@ -61,26 +62,14 @@ async def create_outreach_template(
     session: AsyncSession = Depends(get_async_session),
 ) -> OutreachTemplateRead:
     try:
-        requested_default = payload.is_default
-        template = OutreachTemplate(
-            name=normalize_template_name(payload.name),
-            recommended_generation_mode=normalize_generation_mode(
-                payload.recommended_generation_mode,
-            ),
-            subject=normalize_nullable_template_text(payload.subject),
-            body_text=normalize_nullable_template_text(payload.body_text),
-            body_html=normalize_nullable_template_text(payload.body_html),
-            is_default=False,
+        template = await create_outreach_template_record(
+            session,
+            payload,
+            event_name="outreach_template.created",
+            actor="desktop_ui",
         )
-    except ValueError as exc:
+    except OutreachTemplateMutationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    session.add(template)
-    await session.flush()
-    if requested_default:
-        await clear_global_default_template(session)
-        await session.flush()
-        template.is_default = True
-    await _record_template_log(session, template, "outreach_template.created")
     await session.commit()
     await session.refresh(template)
     return serialize_outreach_template(template)
@@ -92,35 +81,16 @@ async def update_outreach_template(
     payload: OutreachTemplateUpdate,
     session: AsyncSession = Depends(get_async_session),
 ) -> OutreachTemplateRead:
-    template = await _get_template_or_404(session, template_id, include_archived=True)
-    fields = payload.model_fields_set
     try:
-        if "name" in fields:
-            template.name = normalize_template_name(payload.name)
-        if "recommended_generation_mode" in fields:
-            template.recommended_generation_mode = normalize_generation_mode(
-                payload.recommended_generation_mode,
-            )
-        if "subject" in fields:
-            template.subject = normalize_nullable_template_text(payload.subject)
-        if "body_text" in fields:
-            template.body_text = normalize_nullable_template_text(payload.body_text)
-        if "body_html" in fields:
-            template.body_html = normalize_nullable_template_text(payload.body_html)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if "is_default" in fields and payload.is_default is not None:
-        if payload.is_default:
-            if template.archived_at is not None:
-                raise HTTPException(status_code=400, detail="已删除模板不能设为默认模板")
-            await clear_global_default_template(session, exclude_id=template.id)
-            await session.flush()
-        template.is_default = payload.is_default
-
-    template.updated_at = utc_now()
-    await sync_template_to_default_identities(session, template)
-    await _record_template_log(session, template, "outreach_template.updated")
+        template = await update_outreach_template_record(
+            session,
+            template_id,
+            payload,
+            event_name="outreach_template.updated",
+            actor="desktop_ui",
+        )
+    except OutreachTemplateMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     await session.refresh(template)
     return serialize_outreach_template(template)
@@ -131,19 +101,15 @@ async def duplicate_outreach_template(
     template_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> OutreachTemplateRead:
-    source = await _get_template_or_404(session, template_id, include_archived=True)
-    duplicate_suffix = "（副本）"
-    duplicate = OutreachTemplate(
-        name=f"{source.name[: 120 - len(duplicate_suffix)]}{duplicate_suffix}",
-        recommended_generation_mode=source.recommended_generation_mode,
-        subject=source.subject,
-        body_text=source.body_text,
-        body_html=source.body_html,
-        is_default=False,
-    )
-    session.add(duplicate)
-    await session.flush()
-    await _record_template_log(session, duplicate, "outreach_template.duplicated")
+    try:
+        duplicate = await duplicate_outreach_template_record(
+            session,
+            template_id,
+            event_name="outreach_template.duplicated",
+            actor="desktop_ui",
+        )
+    except OutreachTemplateMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     await session.refresh(duplicate)
     return serialize_outreach_template(duplicate)
@@ -154,12 +120,15 @@ async def set_global_default_outreach_template(
     template_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> OutreachTemplateRead:
-    template = await _get_template_or_404(session, template_id)
-    await clear_global_default_template(session, exclude_id=template.id)
-    await session.flush()
-    template.is_default = True
-    template.updated_at = utc_now()
-    await _record_template_log(session, template, "outreach_template.default_set")
+    try:
+        template = await set_default_outreach_template_record(
+            session,
+            template_id,
+            event_name="outreach_template.default_set",
+            actor="desktop_ui",
+        )
+    except OutreachTemplateMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     await session.refresh(template)
     return serialize_outreach_template(template)
@@ -170,14 +139,17 @@ async def archive_outreach_template(
     template_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> OutreachTemplateRead:
-    template = await _get_template_or_404(session, template_id, include_archived=True)
-    if template.archived_at is None:
-        template.archived_at = utc_now()
-        template.is_default = False
-        await unlink_template_from_identities(session, template)
-        await _record_template_log(session, template, "outreach_template.archived")
-        await session.commit()
-        await session.refresh(template)
+    try:
+        template = await archive_outreach_template_record(
+            session,
+            template_id,
+            event_name="outreach_template.archived",
+            actor="desktop_ui",
+        )
+    except OutreachTemplateMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    await session.commit()
+    await session.refresh(template)
     return serialize_outreach_template(template)
 
 
@@ -186,10 +158,15 @@ async def restore_outreach_template(
     template_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> OutreachTemplateRead:
-    template = await _get_template_or_404(session, template_id, include_archived=True)
-    template.archived_at = None
-    template.updated_at = utc_now()
-    await _record_template_log(session, template, "outreach_template.restored")
+    try:
+        template = await restore_outreach_template_record(
+            session,
+            template_id,
+            event_name="outreach_template.restored",
+            actor="desktop_ui",
+        )
+    except OutreachTemplateMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     await session.refresh(template)
     return serialize_outreach_template(template)
@@ -202,30 +179,10 @@ async def _get_template_or_404(
     include_archived: bool = False,
 ) -> OutreachTemplate:
     try:
-        return await get_outreach_template(
+        return await get_outreach_template_or_raise(
             session,
             template_id,
             include_archived=include_archived,
         )
-    except ValueError as exc:
+    except OutreachTemplateMutationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-async def _record_template_log(
-    session: AsyncSession,
-    template: OutreachTemplate,
-    event_name: str,
-) -> None:
-    await record_operation_log(
-        session,
-        category="user_action",
-        event_name=event_name,
-        entity_type="outreach_template",
-        entity_id=str(template.id),
-        metadata={
-            "name": template.name,
-            "recommended_generation_mode": template.recommended_generation_mode,
-            "is_default": template.is_default,
-            "is_archived": template.archived_at is not None,
-        },
-    )

@@ -5,7 +5,11 @@ from typing import Any
 import httpx
 
 from auto_email_sender_cli.errors import CliError, RuntimeUnavailableError
-from auto_email_sender_cli.runtime import RuntimeDescriptor, ensure_runtime_descriptor
+from auto_email_sender_cli.runtime import (
+    RuntimeDescriptor,
+    ensure_runtime_descriptor,
+    ensure_runtime_protocol_compatible,
+)
 
 
 class AgentApiClient:
@@ -15,8 +19,10 @@ class AgentApiClient:
         *,
         timeout: float = 30.0,
     ) -> None:
-        self._auto_recover = descriptor is None
-        self.descriptor = descriptor or ensure_runtime_descriptor()
+        self._refresh_runtime_on_failure = descriptor is None
+        self.descriptor = ensure_runtime_protocol_compatible(
+            descriptor or ensure_runtime_descriptor(),
+        )
         self.timeout = timeout
 
     def request(
@@ -26,11 +32,59 @@ class AgentApiClient:
         *,
         params: dict[str, object] | None = None,
         json_body: object | None = None,
+        data: dict[str, object] | None = None,
+        files: Any | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
+        response = self._perform_request(
+            method,
+            path,
+            params=params,
+            json_body=json_body,
+            data=data,
+            files=files,
+            idempotency_key=idempotency_key,
+            accept="application/json",
+        )
+        if response.is_success:
+            if response.status_code == 204:
+                return None
+            return response.json()
+
+        _raise_api_error(response)
+
+    def download_bytes(
+        self,
+        path: str,
+        *,
+        params: dict[str, object] | None = None,
+    ) -> bytes:
+        response = self._perform_request(
+            "GET",
+            path,
+            params=params,
+            accept="application/octet-stream",
+        )
+        if response.is_success:
+            return response.content
+
+        _raise_api_error(response)
+
+    def _perform_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, object] | None = None,
+        json_body: object | None = None,
+        data: dict[str, object] | None = None,
+        files: Any | None = None,
+        idempotency_key: str | None = None,
+        accept: str,
+    ) -> httpx.Response:
         headers = {
             "Authorization": f"Bearer {self.descriptor.access_token}",
-            "Accept": "application/json",
+            "Accept": accept,
         }
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
@@ -44,22 +98,25 @@ class AgentApiClient:
                     f"{self.descriptor.base_url.rstrip('/')}/{path.lstrip('/')}",
                     params=params,
                     json=json_body,
+                    data=data,
+                    files=files,
                     headers=headers,
                     timeout=self.timeout,
                 )
             except httpx.HTTPError as exc:
                 last_network_error = exc
-                if attempt == 0 and self._auto_recover:
+                if attempt == 0 and self._refresh_runtime_on_failure:
                     self.descriptor = ensure_runtime_descriptor()
                     continue
                 raise RuntimeUnavailableError(
-                    f"无法连接 Auto Email Sender 本地服务：{exc}"
+                    f"无法连接 Auto Email Sender 本地服务：{exc}。"
+                    "请确认软件已手动打开并完成加载后重试。"
                 ) from exc
 
             if (
                 response.status_code in {401, 403}
                 and attempt == 0
-                and self._auto_recover
+                and self._refresh_runtime_on_failure
             ):
                 previous_runtime = _runtime_identity(self.descriptor)
                 refreshed = ensure_runtime_descriptor()
@@ -70,15 +127,10 @@ class AgentApiClient:
 
         if response is None:
             raise RuntimeUnavailableError(
-                f"无法连接 Auto Email Sender 本地服务：{last_network_error}"
+                f"无法连接 Auto Email Sender 本地服务：{last_network_error}。"
+                "请确认软件已手动打开并完成加载后重试。"
             )
-
-        if response.is_success:
-            if response.status_code == 204:
-                return None
-            return response.json()
-
-        _raise_api_error(response)
+        return response
 
 
 def _runtime_identity(descriptor: RuntimeDescriptor) -> tuple[str, str, int]:

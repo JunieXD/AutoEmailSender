@@ -1368,6 +1368,8 @@ async def import_community_records(
     dataset_version: str,
     comparisons: list[CommunityMentorComparisonRead],
     items: list[CommunityImportItemPayload],
+    event_name: str = "community_mentor.imported",
+    actor: str | None = None,
 ) -> CommunityImportSummary:
     comparisons_by_id = {item.record.id: item for item in comparisons}
     inserted_count = 0
@@ -1537,19 +1539,22 @@ async def import_community_records(
             ),
         )
 
+    metadata: dict[str, Any] = {
+        "dataset_version": dataset_version,
+        "record_ids": [item.community_record_id for item in items],
+        "inserted_count": inserted_count,
+        "updated_count": updated_count,
+        "linked_count": linked_count,
+        "skipped_count": skipped_count,
+    }
+    if actor is not None:
+        metadata["actor"] = actor
     await record_operation_log(
         session,
         category="user_action",
-        event_name="community_mentor.imported",
+        event_name=event_name,
         entity_type="professor",
-        metadata={
-            "dataset_version": dataset_version,
-            "record_ids": [item.community_record_id for item in items],
-            "inserted_count": inserted_count,
-            "updated_count": updated_count,
-            "linked_count": linked_count,
-            "skipped_count": skipped_count,
-        },
+        metadata=metadata,
     )
     return CommunityImportSummary(
         inserted_count=inserted_count,

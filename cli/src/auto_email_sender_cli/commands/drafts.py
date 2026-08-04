@@ -139,6 +139,35 @@ def regenerate_draft(
     )
 
 
+@drafts_app.command("rewrite")
+def rewrite_draft(
+    ctx: typer.Context,
+    task_id: Annotated[int, typer.Argument(min=1)],
+    body_text: Annotated[str, typer.Option("--body-text")] = "",
+    subject: Annotated[str | None, typer.Option("--subject")] = None,
+    body_html: Annotated[str | None, typer.Option("--body-html")] = None,
+    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    attachment_material_ids: Annotated[
+        list[int] | None,
+        typer.Option("--attachment-material-id", min=1),
+    ] = None,
+) -> None:
+    run_write_command(
+        ctx,
+        command="drafts.rewrite",
+        path=f"/api/agent/v1/drafts/{task_id}/rewrite",
+        json_body={
+            "subject": subject,
+            "body_text": body_text,
+            "body_html": body_html,
+            "llm_profile_id": llm_profile_id,
+            "attachment_material_ids": attachment_material_ids or [],
+        },
+        guide_topic="drafts",
+        human_formatter=format_detail,
+    )
+
+
 @drafts_app.command("prepare-send")
 def prepare_send(
     ctx: typer.Context,

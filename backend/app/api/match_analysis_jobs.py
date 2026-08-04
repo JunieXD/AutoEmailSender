@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-from app.core.time import utc_now
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +10,6 @@ from app.models import (
     EmailTask,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
-    MatchAnalysisJobStatus,
     Professor,
 )
 from app.schemas.match_analysis_job import (
@@ -25,14 +20,13 @@ from app.schemas.match_analysis_job import (
 )
 from app.services.match_analysis_job_runtime import (
     create_match_analysis_job,
+    delete_match_analysis_job_record,
     request_match_analysis_job_cancel,
+    restore_match_analysis_job_record,
     retry_failed_match_analysis_job,
     serialize_match_analysis_job,
     serialize_match_analysis_job_item,
 )
-from app.services.operation_logs import record_operation_log
-
-
 router = APIRouter(prefix="/api/match-analysis-jobs", tags=["match-analysis-jobs"])
 
 
@@ -141,33 +135,17 @@ async def retry_failed_match_analysis_job_api(job_id: int) -> MatchAnalysisJobRe
     return serialize_match_analysis_job(job)
 
 
-MATCH_ANALYSIS_JOB_DELETABLE_STATUSES = {
-    MatchAnalysisJobStatus.COMPLETED.value,
-    MatchAnalysisJobStatus.PARTIAL_FAILED.value,
-    MatchAnalysisJobStatus.FAILED.value,
-    MatchAnalysisJobStatus.CANCELED.value,
-}
-
-
 @router.post("/{job_id}/delete", response_model=MatchAnalysisJobActionResponse)
 async def delete_match_analysis_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> MatchAnalysisJobActionResponse:
-    job = await _get_match_analysis_job_or_404(session, job_id)
-    if job.status not in MATCH_ANALYSIS_JOB_DELETABLE_STATUSES:
-        raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
-    previous_deleted_at = job.deleted_at
-    if job.deleted_at is None:
-        now = utc_now()
-        job.deleted_at = now
-        job.updated_at = now
-    await _record_match_analysis_job_action(
-        session,
-        job,
-        "match_analysis_job.deleted",
-        previous_deleted_at=previous_deleted_at,
-    )
+    try:
+        job = await delete_match_analysis_job_record(session, job_id)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "不存在" in detail else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     await session.commit()
     await session.refresh(job)
     return MatchAnalysisJobActionResponse(ok=True, job=serialize_match_analysis_job(job))
@@ -178,49 +156,12 @@ async def restore_match_analysis_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> MatchAnalysisJobActionResponse:
-    job = await _get_match_analysis_job_or_404(session, job_id)
-    previous_deleted_at = job.deleted_at
-    if job.deleted_at is not None:
-        job.deleted_at = None
-        job.updated_at = utc_now()
-    await _record_match_analysis_job_action(
-        session,
-        job,
-        "match_analysis_job.restored",
-        previous_deleted_at=previous_deleted_at,
-    )
+    try:
+        job = await restore_match_analysis_job_record(session, job_id)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "不存在" in detail else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     await session.commit()
     await session.refresh(job)
     return MatchAnalysisJobActionResponse(ok=True, job=serialize_match_analysis_job(job))
-
-
-async def _get_match_analysis_job_or_404(
-    session: AsyncSession,
-    job_id: int,
-) -> MatchAnalysisJob:
-    job = await session.get(MatchAnalysisJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="匹配分析任务不存在")
-    return job
-
-
-async def _record_match_analysis_job_action(
-    session: AsyncSession,
-    job: MatchAnalysisJob,
-    event_name: str,
-    *,
-    previous_deleted_at: datetime | None,
-) -> None:
-    await record_operation_log(
-        session,
-        category="match_analysis",
-        event_name=event_name,
-        entity_type="match_analysis_job",
-        entity_id=str(job.id),
-        metadata={
-            "status": job.status,
-            "identity_id": job.identity_id,
-            "llm_profile_id": job.llm_profile_id,
-            "previous_deleted_at": previous_deleted_at.isoformat() if previous_deleted_at else None,
-        },
-    )

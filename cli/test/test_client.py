@@ -6,6 +6,7 @@ from unittest.mock import patch
 import httpx
 
 from auto_email_sender_cli.client import AgentApiClient
+from auto_email_sender_cli.errors import RuntimeProtocolMismatchError
 from auto_email_sender_cli.runtime import RuntimeDescriptor
 
 
@@ -71,10 +72,44 @@ class AgentApiClientTests(unittest.TestCase):
             "Bearer new-token",
         )
 
+    def test_download_bytes_uses_agent_token_and_binary_accept_header(self) -> None:
+        descriptor = _descriptor()
+        response = httpx.Response(
+            200,
+            content=b"resume content",
+            request=httpx.Request("GET", "http://127.0.0.1:48120/api/materials/8/download"),
+        )
+        with (
+            patch(
+                "auto_email_sender_cli.client.ensure_runtime_descriptor",
+                return_value=descriptor,
+            ),
+            patch(
+                "auto_email_sender_cli.client.httpx.request",
+                return_value=response,
+            ) as request,
+        ):
+            result = AgentApiClient().download_bytes("/api/agent/v1/materials/8/download")
+
+        self.assertEqual(result, b"resume content")
+        self.assertEqual(request.call_args.kwargs["headers"]["Authorization"], "Bearer agent-token")
+        self.assertEqual(
+            request.call_args.kwargs["headers"]["Accept"],
+            "application/octet-stream",
+        )
+
+    def test_direct_runtime_descriptor_with_old_protocol_is_rejected_before_request(self) -> None:
+        descriptor = _descriptor(protocol_version="1")
+        with patch("auto_email_sender_cli.client.httpx.request") as request:
+            with self.assertRaises(RuntimeProtocolMismatchError):
+                AgentApiClient(descriptor).request("GET", "/api/agent/v1/professors")
+
+        request.assert_not_called()
+
 
 def _descriptor(**overrides: object) -> RuntimeDescriptor:
     values: dict[str, object] = {
-        "protocol_version": "1",
+        "protocol_version": "2",
         "app_version": "2.4.1",
         "base_url": "http://127.0.0.1:48120",
         "access_token": "agent-token",

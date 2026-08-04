@@ -14,6 +14,7 @@ from auto_email_sender_cli.commands.common import (
     format_page,
     optional_bool,
     run_read_command,
+    run_write_command,
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
@@ -24,6 +25,22 @@ threads_app = typer.Typer(help="查询按身份和导师归并的通信线程。
 messages_app = typer.Typer(help="查询或导出邮件记录。", no_args_is_help=True)
 communications_app.add_typer(threads_app, name="threads")
 communications_app.add_typer(messages_app, name="messages")
+
+
+@communications_app.command("sync")
+def sync_communications(
+    ctx: typer.Context,
+    identity_id: Annotated[int, typer.Option("--identity-id", min=1, help="发件身份 ID。")],
+) -> None:
+    run_write_command(
+        ctx,
+        command="communications.sync",
+        path="/api/agent/v1/communications/sync",
+        json_body={"identity_id": identity_id},
+        guide_topic="communications",
+        human_formatter=format_detail,
+        use_idempotency_key=False,
+    )
 
 
 @threads_app.command("list")

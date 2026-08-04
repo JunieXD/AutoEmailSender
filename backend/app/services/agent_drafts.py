@@ -15,9 +15,10 @@ from app.models import (
 from app.schemas.agent import (
     AgentDraftGenerateRequest,
     AgentDraftRegenerateRequest,
+    AgentDraftRewriteRequest,
     AgentDraftSaveRequest,
 )
-from app.schemas.email_task import EmailTaskApprovalRequest
+from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (
@@ -130,6 +131,25 @@ async def regenerate_agent_draft(
         session_factory,
         task_id,
         llm_profile_id=payload.llm_profile_id,
+    )
+    return await load_agent_draft_task(session_factory, task_id)
+
+
+async def rewrite_agent_draft(
+    session_factory: async_sessionmaker[AsyncSession],
+    task_id: int,
+    payload: AgentDraftRewriteRequest,
+) -> EmailTask:
+    await rewrite_task_draft(
+        session_factory,
+        task_id,
+        EmailTaskRewriteDraftRequest(
+            subject=payload.subject,
+            body_text=payload.body_text,
+            body_html=payload.body_html,
+            selected_material_ids=payload.attachment_material_ids,
+            llm_profile_id=payload.llm_profile_id,
+        ),
     )
     return await load_agent_draft_task(session_factory, task_id)
 

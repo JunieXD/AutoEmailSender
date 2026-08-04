@@ -31,7 +31,6 @@ async function createFixture(
     homePath: path.join(root, "home"),
     localAppDataPath: path.join(root, "local-app-data"),
     appVersion: "2.4.1",
-    desktopExecutablePath: path.join(root, platform === "win32" ? "Auto Email Sender.exe" : "Auto Email Sender"),
     environmentPath: platform === "darwin" ? "/usr/bin:/bin" : undefined,
     now: () => new Date("2026-08-03T00:00:00.000Z"),
   };
@@ -40,8 +39,6 @@ async function createFixture(
   await writeFile(paths.cliSource, "cli-binary", "utf8");
   await mkdir(paths.skillSource, { recursive: true });
   await writeFile(path.join(paths.skillSource, "SKILL.md"), "---\nname: auto-email-sender\n---\n", "utf8");
-  await mkdir(path.dirname(options.desktopExecutablePath), { recursive: true });
-  await writeFile(options.desktopExecutablePath, "desktop", "utf8");
   return { root, options, paths };
 }
 
@@ -99,15 +96,15 @@ describe("Agent support installation", () => {
     );
     const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
     expect(manifest).toMatchObject({
-      schema_version: 2,
+      schema_version: 3,
       enabled: true,
       prompt_dismissed: true,
       app_version: "2.4.1",
-      desktop_executable: path.resolve(options.desktopExecutablePath),
       cli_source: path.resolve(paths.cliSource),
     });
     expect(manifest.cli_sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.skill_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest).not.toHaveProperty("desktop_executable");
 
     await expect(service.disable()).resolves.toMatchObject({ state: "not_enabled" });
     expect(await exists(paths.cliTarget)).toBe(false);
@@ -157,6 +154,22 @@ describe("Agent support installation", () => {
     await expect(updatedService.synchronize()).resolves.toMatchObject({ state: "enabled" });
     expect(await readFile(path.join(paths.skillTarget, "SKILL.md"), "utf8")).toBe("updated skill");
     expect(JSON.parse(await readFile(paths.manifestPath, "utf8")).app_version).toBe("2.5.0");
+  });
+
+  it("upgrades an older installation manifest without retaining a desktop launch path", async () => {
+    const { options, paths } = await createFixture("darwin");
+    const service = createAgentSupportService(options);
+    await service.enable();
+    const legacyManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    legacyManifest.schema_version = 2;
+    legacyManifest.desktop_executable = "/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender";
+    await writeFile(paths.manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, "utf8");
+
+    await expect(service.synchronize()).resolves.toMatchObject({ state: "enabled" });
+
+    const updatedManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    expect(updatedManifest.schema_version).toBe(3);
+    expect(updatedManifest).not.toHaveProperty("desktop_executable");
   });
 
   it("does not overwrite a user-modified Skill during automatic updates and backs it up before repair", async () => {

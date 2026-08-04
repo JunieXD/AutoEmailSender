@@ -5,7 +5,6 @@ import { getFrontendIndexPath, startBackend } from "./backend.js";
 import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
   cleanupAgentRuntimeDescriptor,
-  isAgentBackgroundLaunch,
   writeAgentRuntimeDescriptor,
 } from "./agentRuntime.js";
 import { createAgentSupportService } from "./agentSupportService.js";
@@ -57,7 +56,6 @@ const agentSupportService = createAgentSupportService({
   homePath: app.getPath("home"),
   localAppDataPath: process.env.LOCALAPPDATA,
   appVersion: app.getVersion(),
-  desktopExecutablePath: process.execPath,
   environmentPath: process.env.PATH,
 });
 const launchedAtStartup = isLaunchedAtStartup({
@@ -65,7 +63,6 @@ const launchedAtStartup = isLaunchedAtStartup({
   platform: process.platform,
   getLoginItemSettings: () => app.getLoginItemSettings(),
 });
-const launchedInAgentBackground = isAgentBackgroundLaunch(process.argv);
 app.setAppUserModelId("com.juniexd.autoemailsender");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -214,7 +211,7 @@ async function createWindow(): Promise<void> {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    show: !launchedAtStartup && !launchedInAgentBackground,
+    show: !launchedAtStartup,
     autoHideMenuBar: true,
     icon: getWindowIconPath({
       isPackaged: app.isPackaged,
@@ -492,10 +489,8 @@ registerMaterialOpenIpc({
 });
 
 if (hasSingleInstanceLock) {
-  app.on("second-instance", (_event, argv) => {
-    if (!isAgentBackgroundLaunch(argv)) {
-      showMainWindow();
-    }
+  app.on("second-instance", () => {
+    showMainWindow();
   });
 
   app.whenReady().then(() => {

@@ -7,14 +7,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from auto_email_sender_cli.errors import RuntimeUnavailableError
+from auto_email_sender_cli.errors import RuntimeProtocolMismatchError, RuntimeUnavailableError
 from auto_email_sender_cli.runtime import (
     RuntimeDescriptor,
     ensure_runtime_descriptor,
     get_runtime_file_path,
-    launch_desktop_app,
     load_runtime_descriptor,
-    locate_desktop_executable,
 )
 
 
@@ -65,7 +63,7 @@ class RuntimeTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "protocol_version": "1",
+                        "protocol_version": "2",
                         "app_version": "2.4.1",
                         "base_url": "http://127.0.0.1:48120",
                         "access_token": "token",
@@ -84,7 +82,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(descriptor.app_version, "2.4.1")
             self.assertEqual(descriptor.access_token, "token")
 
-    def test_missing_runtime_descriptor_returns_scoped_error(self) -> None:
+    def test_missing_runtime_descriptor_tells_user_to_open_the_desktop_app(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "missing.json"
             with patch.dict(
@@ -92,51 +90,72 @@ class RuntimeTests(unittest.TestCase):
                 {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
                 clear=False,
             ):
-                with self.assertRaises(RuntimeUnavailableError):
+                with self.assertRaises(RuntimeUnavailableError) as raised:
                     load_runtime_descriptor()
+        self.assertIn("手动打开软件", str(raised.exception))
 
-    def test_missing_runtime_launches_desktop_and_waits_for_ready_descriptor(self) -> None:
-        descriptor = _descriptor()
-        with (
-            patch(
-                "auto_email_sender_cli.runtime.load_runtime_descriptor",
-                side_effect=[RuntimeUnavailableError(), descriptor],
-            ),
-            patch("auto_email_sender_cli.runtime.launch_desktop_app") as launch,
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
-            patch("auto_email_sender_cli.runtime._runtime_is_ready", return_value=True),
-        ):
-            resolved = ensure_runtime_descriptor(
-                timeout_seconds=1,
-                poll_interval_seconds=0,
-            )
+    def test_missing_runtime_requires_manual_desktop_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "missing.json"
+            with patch.dict(
+                os.environ,
+                {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
+                clear=False,
+            ):
+                with self.assertRaises(RuntimeUnavailableError) as raised:
+                    ensure_runtime_descriptor()
 
-        self.assertEqual(resolved, descriptor)
-        launch.assert_called_once_with()
+        self.assertIn("当前未运行", str(raised.exception))
+        self.assertIn("手动打开软件", str(raised.exception))
 
-    def test_running_desktop_is_not_launched_again_while_backend_becomes_ready(self) -> None:
+    def test_running_desktop_requires_ready_local_service(self) -> None:
         descriptor = _descriptor()
         with (
             patch(
                 "auto_email_sender_cli.runtime.load_runtime_descriptor",
                 return_value=descriptor,
             ),
-            patch("auto_email_sender_cli.runtime.launch_desktop_app") as launch,
             patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
             patch(
                 "auto_email_sender_cli.runtime._runtime_is_ready",
-                side_effect=[False, True],
+                return_value=False,
             ),
         ):
-            resolved = ensure_runtime_descriptor(
-                timeout_seconds=1,
-                poll_interval_seconds=0,
-            )
+            with self.assertRaises(RuntimeUnavailableError) as raised:
+                ensure_runtime_descriptor()
+
+        self.assertIn("正在启动", str(raised.exception))
+
+    def test_ready_desktop_runtime_is_returned(self) -> None:
+        descriptor = _descriptor()
+        with (
+            patch(
+                "auto_email_sender_cli.runtime.load_runtime_descriptor",
+                return_value=descriptor,
+            ),
+            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch("auto_email_sender_cli.runtime._runtime_is_ready", return_value=True),
+        ):
+            resolved = ensure_runtime_descriptor()
 
         self.assertEqual(resolved, descriptor)
-        launch.assert_not_called()
 
-    def test_environment_runtime_does_not_launch_desktop(self) -> None:
+    def test_running_desktop_with_old_protocol_is_rejected_before_any_command_runs(self) -> None:
+        descriptor = _descriptor(protocol_version="1")
+        with (
+            patch(
+                "auto_email_sender_cli.runtime.load_runtime_descriptor",
+                return_value=descriptor,
+            ),
+            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch("auto_email_sender_cli.runtime._runtime_is_ready", return_value=True),
+        ):
+            with self.assertRaises(RuntimeProtocolMismatchError) as raised:
+                ensure_runtime_descriptor()
+
+        self.assertIn("协议 2", str(raised.exception))
+
+    def test_environment_runtime_does_not_require_desktop_process(self) -> None:
         with (
             patch.dict(
                 os.environ,
@@ -146,37 +165,16 @@ class RuntimeTests(unittest.TestCase):
                 },
                 clear=True,
             ),
-            patch("auto_email_sender_cli.runtime.launch_desktop_app") as launch,
         ):
-            descriptor = ensure_runtime_descriptor(timeout_seconds=0.01)
+            descriptor = ensure_runtime_descriptor()
 
         self.assertEqual(descriptor.base_url, "http://127.0.0.1:9999")
-        launch.assert_not_called()
-
-    def test_desktop_executable_override_is_used_for_background_launch(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            executable = Path(temp_dir) / "Auto Email Sender"
-            executable.write_text("test", encoding="utf-8")
-            with (
-                patch.dict(
-                    os.environ,
-                    {"AUTO_EMAIL_SENDER_DESKTOP_EXECUTABLE": executable.as_posix()},
-                    clear=True,
-                ),
-                patch("auto_email_sender_cli.runtime.sys.platform", "darwin"),
-                patch("auto_email_sender_cli.runtime.subprocess.Popen") as popen,
-            ):
-                self.assertEqual(locate_desktop_executable(), executable.resolve())
-                self.assertEqual(launch_desktop_app(), executable.resolve())
-
-            args, kwargs = popen.call_args
-            self.assertEqual(args[0], [str(executable.resolve()), "--agent-background"])
-            self.assertTrue(kwargs["start_new_session"])
+        self.assertEqual(descriptor.protocol_version, "2")
 
 
 def _descriptor(**overrides: object) -> RuntimeDescriptor:
     values: dict[str, object] = {
-        "protocol_version": "1",
+        "protocol_version": "2",
         "app_version": "2.4.1",
         "base_url": "http://127.0.0.1:48120",
         "access_token": "agent-token",
