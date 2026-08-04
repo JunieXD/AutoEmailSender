@@ -41,7 +41,15 @@ from app.services.template_draft_rewrite import (
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LLM_TEMPERATURE = 0.2
 DEFAULT_LLM_MAX_TOKENS = 6000
+STEPFUN_PROBE_MAX_TOKENS = 128
 STRUCTURED_OUTPUT_CONTROL_KEY = "__structured_output_control__"
+
+_STEPFUN_OPENAI_BASE_URLS = frozenset(
+    {
+        "https://api.stepfun.com/v1",
+        "https://api.stepfun.com/step_plan/v1",
+    }
+)
 SYSTEM_MATCH_ONLY_PROMPT = dedent(
     """
     你是研究生套磁助理。你必须只输出 JSON，不要输出任何解释、Markdown 代码块或多余文字。
@@ -1022,6 +1030,7 @@ async def probe_llm_profile(
     """
 
     base_url = resolve_base_url(profile.api_base_url)
+    requires_final_text = is_stepfun_profile(profile)
     payload = {
         "model": profile.model_name,
         "messages": [
@@ -1031,7 +1040,7 @@ async def probe_llm_profile(
             },
         ],
         "temperature": 0,
-        "max_tokens": min(profile.max_tokens or DEFAULT_LLM_MAX_TOKENS, 8),
+        "max_tokens": probe_max_tokens_for_profile(profile, fallback=8),
     }
 
     try:
@@ -1039,7 +1048,7 @@ async def probe_llm_profile(
             profile,
             payload,
             extra_body=thinking_extra_body,
-            allow_empty_content=True,
+            allow_empty_content=not requires_final_text,
             session=session,
             adaptation=adaptation,
         )
@@ -1317,7 +1326,7 @@ async def _request_completion_endpoint(
             content = "" if not isinstance(content, str) else content
         else:
             raise LLMRuntimeError(
-                "模型返回了空内容",
+                _empty_content_error_message(profile, data, endpoint_kind),
                 request_url=url,
                 endpoint_kind=endpoint_kind,
                 status_code=response.status_code,
@@ -1376,11 +1385,12 @@ async def ensure_llm_runtime_adaptation(
                     raise coordination.probe_error
                 else:
                     try:
+                        requires_final_text = is_stepfun_profile(profile)
                         probe_payload = {
                             "model": profile.model_name,
                             "messages": [{"role": "user", "content": "只回复 OK"}],
                             "temperature": 0,
-                            "max_tokens": min(profile.max_tokens or DEFAULT_LLM_MAX_TOKENS, 8),
+                            "max_tokens": probe_max_tokens_for_profile(profile, fallback=8),
                         }
                         last_protocol_error: LLMEndpointProtocolError | None = None
                         for candidate in endpoint_candidates(failed_endpoint_kind):
@@ -1389,7 +1399,7 @@ async def ensure_llm_runtime_adaptation(
                                     profile,
                                     probe_payload,
                                     endpoint_kind=candidate,
-                                    allow_empty_content=True,
+                                    allow_empty_content=not requires_final_text,
                                 )
                             except LLMEndpointProtocolError as exc:
                                 last_protocol_error = exc
@@ -2451,6 +2461,46 @@ def is_deepseek_profile(profile: LLMProfile) -> bool:
 
     base_url = resolve_base_url(profile.api_base_url).lower()
     return "deepseek" in base_url
+
+
+def is_stepfun_profile(profile: LLMProfile) -> bool:
+    """Return whether a profile targets one of StepFun's official OpenAI APIs."""
+
+    return resolve_base_url(profile.api_base_url).lower() in _STEPFUN_OPENAI_BASE_URLS
+
+
+def probe_max_tokens_for_profile(profile: LLMProfile, *, fallback: int) -> int:
+    """Keep generic probe budgets unchanged while giving StepFun room to reason."""
+
+    if not is_stepfun_profile(profile):
+        return fallback
+    configured_limit = profile.max_tokens or DEFAULT_LLM_MAX_TOKENS
+    return min(configured_limit, STEPFUN_PROBE_MAX_TOKENS)
+
+
+def _empty_content_error_message(
+    profile: LLMProfile,
+    data: dict[str, object],
+    endpoint_kind: str,
+) -> str:
+    """Describe StepFun reasoning-only replies without treating them as success."""
+
+    if endpoint_kind != "chat_completions" or not is_stepfun_profile(profile):
+        return "模型返回了空内容"
+
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return "模型返回了空内容"
+    choice = choices[0]
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        return "模型返回了空内容"
+    reasoning = message.get("reasoning") or message.get("reasoning_content")
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return "模型返回了空内容"
+    if choice.get("finish_reason") == "length":
+        return "StepFun 模型仅返回了推理内容，输出 Token 已耗尽，尚未返回最终文本"
+    return "StepFun 模型仅返回了推理内容，尚未返回最终文本"
 
 
 def build_endpoint_url(base_url: str, suffix: str) -> str:

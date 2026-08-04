@@ -257,6 +257,8 @@ def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
     """Build a 3-turn payload that triggers thinking-mode protocol errors on
     affected models, but is harmless on regular models (they just answer "7")."""
 
+    from app.services.llm_runtime import probe_max_tokens_for_profile
+
     return {
         "model": profile.model_name,
         "messages": [
@@ -265,7 +267,7 @@ def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
             {"role": "user", "content": "我让你记的数字是几？只回复数字。"},
         ],
         "temperature": 0,
-        "max_tokens": 16,
+        "max_tokens": probe_max_tokens_for_profile(profile, fallback=16),
     }
 
 

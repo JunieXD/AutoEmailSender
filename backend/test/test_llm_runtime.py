@@ -2888,6 +2888,81 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
         # 只发一次 HTTP，不做多轮探活
         self.assertEqual(len(calls), 1)
+        sent = calls[0][1]
+        assert sent is not None
+        self.assertEqual(sent["max_tokens"], 8)
+
+    async def test_probe_llm_profile_uses_stepfun_budget_for_official_base_urls(self) -> None:
+        base_urls = (
+            "https://api.stepfun.com/v1",
+            "https://api.stepfun.com/step_plan/v1/",
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "OK"}}]},
+            )
+            for _ in base_urls
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            for base_url in base_urls:
+                profile = LLMProfile(
+                    name="stepfun",
+                    provider="openai",
+                    api_base_url=base_url,
+                    api_key="test-key",
+                    model_name="step-3.7-flash",
+                    max_tokens=6000,
+                )
+                result = await probe_llm_profile(profile)
+                self.assertTrue(result.ok)
+
+        self.assertEqual(len(calls), len(base_urls))
+        for _, sent in calls:
+            assert sent is not None
+            self.assertEqual(sent["max_tokens"], 128)
+
+    async def test_probe_llm_profile_reports_stepfun_reasoning_only_response(self) -> None:
+        profile = LLMProfile(
+            name="stepfun",
+            provider="openai",
+            api_base_url="https://api.stepfun.com/step_plan/v1",
+            api_key="test-key",
+            model_name="step-3.7-flash",
+            max_tokens=6000,
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {"content": "", "reasoning": "先分析问题"},
+                            "finish_reason": "length",
+                        }
+                    ]
+                },
+            ),
+        ]
+
+        with patch(
+            "app.services.llm_runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            result = await probe_llm_profile(profile)
+
+        self.assertFalse(result.ok)
+        self.assertIn("仅返回了推理内容", result.message)
+        self.assertIn("Token 已耗尽", result.message)
+        sent = calls[0][1]
+        assert sent is not None
+        self.assertEqual(sent["max_tokens"], 128)
 
     async def test_probe_llm_profile_uses_provided_runtime_adaptation_with_session(self) -> None:
         profile = LLMProfile(

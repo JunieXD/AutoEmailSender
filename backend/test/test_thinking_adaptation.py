@@ -495,6 +495,27 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(hit)
         self.assertIsNone(value)
 
+    def test_stepfun_probe_payload_uses_larger_budget_only_for_official_base_urls(self) -> None:
+        from app.models import LLMProfile
+        from app.services.thinking_adaptation import _build_probe_payload
+
+        for base_url in (
+            "https://api.stepfun.com/v1",
+            "https://api.stepfun.com/step_plan/v1/",
+        ):
+            with self.subTest(base_url=base_url):
+                profile = LLMProfile(
+                    name="stepfun",
+                    provider="openai",
+                    api_base_url=base_url,
+                    api_key="sk-test",
+                    model_name="step-3.7-flash",
+                    max_tokens=6000,
+                )
+                self.assertEqual(_build_probe_payload(profile)["max_tokens"], 128)
+
+        self.assertEqual(_build_probe_payload(self._profile())["max_tokens"], 16)
+
     async def test_silent_thinking_model_selects_lower_token_candidate(self) -> None:
         from unittest.mock import patch
 
