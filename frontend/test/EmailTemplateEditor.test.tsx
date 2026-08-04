@@ -21,7 +21,8 @@ describe("EmailTemplateEditor", () => {
 
     const editor = screen.getByRole("textbox", { name: "默认模板正文" });
     expect(editor).toBeInTheDocument();
-    expect(editor).toHaveClass("max-h-[520px]", "overflow-y-auto", "overscroll-contain");
+    expect(editor).toHaveClass("max-h-[520px]", "overflow-y-auto", "overscroll-auto");
+    expect(editor).not.toHaveClass("overscroll-contain");
     expect(screen.getByRole("button", { name: "加粗" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "插入表格" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "HTML 预览" })).not.toBeInTheDocument();
