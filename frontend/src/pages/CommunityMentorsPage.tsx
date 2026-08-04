@@ -1590,9 +1590,12 @@ export const CommunityMentorsPage = () => {
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
-                  <label className="flex min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 shadow-sm md:col-span-2 xl:col-span-2 2xl:col-span-2">
-                    <span className="shrink-0 font-medium leading-5 text-stone-800">关键词</span>
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                  <div className="block min-w-0 md:col-span-2 xl:col-span-2 2xl:col-span-2">
+                    <div className="mb-2 text-sm font-medium text-stone-800">关键词</div>
+                    <div
+                      data-testid="community-mentor-keyword-control"
+                      className="ui-select-shell h-10 min-h-10 w-full py-0"
+                    >
                       <Search className="h-4 w-4 shrink-0 text-stone-400" />
                       <input
                         aria-label="搜索导师"
@@ -1614,13 +1617,14 @@ export const CommunityMentorsPage = () => {
                         label="搜索范围"
                         options={COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS}
                         selectedValues={recordSearchScopes}
+                        embedded
                         onChange={(nextValues) => {
                           setRecordSearchScopes(normalizeCommunityMentorSearchScopes(nextValues));
                           setRecordPage(1);
                         }}
                       />
-                    </span>
-                  </label>
+                    </div>
+                  </div>
                   <MultiSelectFilter
                     label="学校"
                     allLabel="全部学校"

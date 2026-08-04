@@ -12,6 +12,7 @@ type KeywordSearchScopeSelectProps<TValue extends string = string> = {
   options: ReadonlyArray<KeywordSearchScopeOption<TValue>>;
   selectedValues: TValue[];
   disabled?: boolean;
+  embedded?: boolean;
   onChange: (nextValues: TValue[]) => void;
 };
 
@@ -43,6 +44,7 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
   options,
   selectedValues,
   disabled = false,
+  embedded = false,
   onChange,
 }: KeywordSearchScopeSelectProps<TValue>) => {
   const [open, setOpen] = useState(false);
@@ -112,14 +114,17 @@ export const KeywordSearchScopeSelect = <TValue extends string = string>({
         aria-controls={listboxId}
         onClick={() => setOpen((previous) => !previous)}
         className={clsx(
-          "inline-flex h-8 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs font-medium text-stone-700 transition hover:border-primary/40 hover:text-primary",
+          embedded
+            ? "inline-flex h-8 items-center gap-1.5 border-l border-stone-200 pl-3 pr-0.5 text-xs font-medium text-stone-600 transition hover:text-primary"
+            : "inline-flex h-8 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs font-medium text-stone-700 transition hover:border-primary/40 hover:text-primary",
           disabled && "cursor-not-allowed opacity-60",
-          open &&
-            "border-primary/45 bg-white text-primary ring-2 ring-primary/10",
+          open && (embedded
+            ? "border-primary/35 text-primary"
+            : "border-primary/45 bg-white text-primary ring-2 ring-primary/10"),
         )}
       >
-        <Search className="h-3.5 w-3.5" />
-        <span>{summary}</span>
+        {!embedded ? <Search className="h-3.5 w-3.5" /> : null}
+        <span>{embedded ? summary.replace(/^选择字段：/, "") : summary}</span>
         <ChevronDown
           className={clsx(
             "h-3.5 w-3.5 transition",

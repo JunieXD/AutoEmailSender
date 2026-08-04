@@ -474,6 +474,10 @@ describe('CommunityMentorsPage', () => {
     expect(
       screen.getByRole('button', { name: /搜索范围：选择字段：全部字段/ }),
     ).toBeInTheDocument();
+    expect(screen.getByTestId('community-mentor-keyword-control')).toHaveClass(
+      'ui-select-shell',
+      'h-10',
+    );
     expect(container.querySelector('select')).toBeNull();
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
   });

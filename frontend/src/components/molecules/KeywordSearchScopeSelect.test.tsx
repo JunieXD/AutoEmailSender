@@ -24,6 +24,26 @@ describe("KeywordSearchScopeSelect", () => {
     ).toBeInTheDocument();
   });
 
+  it("can render as a flat control inside a search field", () => {
+    render(
+      <KeywordSearchScopeSelect
+        label="搜索范围"
+        options={options}
+        selectedValues={["name", "title", "school"]}
+        embedded
+        onChange={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", {
+      name: /搜索范围：选择字段：全部字段/,
+    });
+    expect(trigger).toHaveTextContent("全部字段");
+    expect(trigger).not.toHaveTextContent("选择字段：");
+    expect(trigger).toHaveClass("border-l");
+    expect(trigger).not.toHaveClass("rounded-xl");
+  });
+
   it("shows selected count and updates removable options", () => {
     const onToggle = vi.fn();
     render(
