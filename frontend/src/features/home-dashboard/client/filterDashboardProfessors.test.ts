@@ -307,8 +307,30 @@ describe("filterDashboardProfessors", () => {
     ).toEqual(["Carol"]);
   });
 
-  it("filters by minimum match score and excludes unscored professors when threshold is set", () => {
+  it("filters by a lower match score boundary and excludes unscored professors", () => {
     expect(namesFor(professors, { minMatchScore: "80" })).toEqual(["Alice"]);
+  });
+
+  it("filters by an upper match score boundary and excludes unscored professors", () => {
+    expect(namesFor(professors, { maxMatchScore: "80" })).toEqual(["Bob"]);
+  });
+
+  it("uses inclusive match score range boundaries", () => {
+    expect(
+      namesFor(professors, {
+        minMatchScore: "76",
+        maxMatchScore: "91",
+      }),
+    ).toEqual(["Alice", "Bob"]);
+  });
+
+  it("returns no scored professors when the match score range is invalid", () => {
+    expect(
+      namesFor(professors, {
+        minMatchScore: "90",
+        maxMatchScore: "80",
+      }),
+    ).toEqual([]);
   });
 
   it("filters nullable fields and unscored professors with the no-value options", () => {
@@ -349,8 +371,10 @@ describe("filterDashboardProfessors", () => {
     ).toEqual(["Missing"]);
   });
 
-  it("keeps unscored professors when minimum match score is empty", () => {
-    expect(namesFor(professors, { minMatchScore: "" })).toEqual([
+  it("keeps unscored professors when the match score range is empty", () => {
+    expect(
+      namesFor(professors, { minMatchScore: "", maxMatchScore: "" }),
+    ).toEqual([
       "Alice",
       "Bob",
       "Carol",
@@ -521,6 +545,7 @@ describe("filterDashboardProfessors", () => {
         universities: ["MIT"],
         titles: ["教授", "副教授"],
         minMatchScore: "80",
+        maxMatchScore: "90",
       }),
     ).toBe(3);
   });

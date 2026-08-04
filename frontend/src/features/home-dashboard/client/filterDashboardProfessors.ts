@@ -63,6 +63,7 @@ export type DashboardFilterState = {
   statuses: ProfessorDashboardFilterStatus[];
   tagIds: string[];
   minMatchScore: string;
+  maxMatchScore: string;
 };
 
 export type DashboardFilterOptions = {
@@ -83,6 +84,7 @@ export const createDefaultDashboardFilters = (): DashboardFilterState => ({
   statuses: [],
   tagIds: [],
   minMatchScore: "",
+  maxMatchScore: "",
 });
 
 const sortByChinese = (values: Iterable<string>): string[] =>
@@ -249,7 +251,7 @@ const matchesAnyTag = (
 const arraysEqual = (left: string[], right: string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
-const parseMinimumMatchScore = (value: string): number | null => {
+const parseMatchScoreBoundary = (value: string): number | null => {
   const trimmed = value.trim();
   if (!trimmed) {
     return null;
@@ -285,7 +287,7 @@ export const getActiveDashboardFilterCount = (
   Number(filters.titles.length > 0) +
   Number(filters.statuses.length > 0) +
   Number(filters.tagIds.length > 0) +
-  (filters.minMatchScore.trim() ? 1 : 0);
+  Number(Boolean(filters.minMatchScore.trim() || filters.maxMatchScore.trim()));
 
 export const filterDashboardProfessors = (
   professors: ProfessorDashboardItemDTO[],
@@ -295,7 +297,11 @@ export const filterDashboardProfessors = (
   const keywordSearchScopes = normalizeDashboardKeywordSearchScopes(
     filters.keywordSearchScopes,
   );
-  const minMatchScore = parseMinimumMatchScore(filters.minMatchScore);
+  const minMatchScore = parseMatchScoreBoundary(filters.minMatchScore);
+  const maxMatchScore = parseMatchScoreBoundary(filters.maxMatchScore);
+  const hasMatchScoreRange = minMatchScore !== null || maxMatchScore !== null;
+  const hasValidMatchScoreRange =
+    minMatchScore === null || maxMatchScore === null || minMatchScore <= maxMatchScore;
 
   return professors.filter((professor) => {
     const keywordMatched =
@@ -310,8 +316,11 @@ export const filterDashboardProfessors = (
     const matchScoreMatched =
       filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
         ? professor.match_score === null
-        : minMatchScore === null ||
-          (professor.match_score !== null && professor.match_score >= minMatchScore);
+        : !hasMatchScoreRange ||
+          (hasValidMatchScoreRange &&
+            professor.match_score !== null &&
+            (minMatchScore === null || professor.match_score >= minMatchScore) &&
+            (maxMatchScore === null || professor.match_score <= maxMatchScore));
 
     return (
       keywordMatched &&

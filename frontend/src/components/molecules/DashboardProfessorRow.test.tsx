@@ -30,6 +30,27 @@ const professor: ProfessorDashboardItemDTO = {
 };
 
 describe("DashboardProfessorRow", () => {
+  it("shows match scores as plain 0-to-100 numbers", () => {
+    render(
+      <DashboardProfessorRow
+        professor={{ ...professor, match_score: 86 }}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("匹配 86")).toBeInTheDocument();
+    expect(screen.queryByText("匹配 86%")).not.toBeInTheDocument();
+  });
+
   it("shows an active schedule alongside the relationship status", () => {
     render(
       <DashboardProfessorRow

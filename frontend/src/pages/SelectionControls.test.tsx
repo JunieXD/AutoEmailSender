@@ -579,6 +579,93 @@ describe("selection controls", () => {
     ]);
   });
 
+  it("filters dashboard professors by an inclusive match score range", async () => {
+    vi.mocked(listProfessors).mockResolvedValue([
+      {
+        ...createDashboardProfessor(361, "Strong Mentor"),
+        match_score: 92,
+      },
+      {
+        ...createDashboardProfessor(362, "Growing Mentor"),
+        match_score: 68,
+      },
+      createDashboardProfessor(363, "Unscored Mentor"),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Strong Mentor")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
+
+    const minimumInput = screen.getByRole("spinbutton", {
+      name: "最低匹配度",
+    });
+    const maximumInput = screen.getByRole("spinbutton", {
+      name: "最高匹配度",
+    });
+
+    fireEvent.change(minimumInput, { target: { value: "70" } });
+    fireEvent.change(maximumInput, { target: { value: "92" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Strong Mentor")).toBeInTheDocument();
+      expect(screen.queryByText("Growing Mentor")).not.toBeInTheDocument();
+      expect(screen.queryByText("Unscored Mentor")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "高级筛选 1" })).toBeInTheDocument();
+
+    fireEvent.change(minimumInput, { target: { value: "93" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "最低匹配度不能高于最高匹配度",
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "仅看无匹配度" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Unscored Mentor")).toBeInTheDocument();
+      expect(screen.queryByText("Strong Mentor")).not.toBeInTheDocument();
+    });
+    expect(minimumInput).toBeDisabled();
+    expect(maximumInput).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("restores the legacy minimum score filter as an open-ended range", async () => {
+    window.sessionStorage.setItem(
+      "home_dashboard_filters:1",
+      JSON.stringify({ minMatchScore: "80" }),
+    );
+    vi.mocked(listProfessors).mockResolvedValue([
+      {
+        ...createDashboardProfessor(371, "Strong Mentor"),
+        match_score: 92,
+      },
+      {
+        ...createDashboardProfessor(372, "Growing Mentor"),
+        match_score: 68,
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Strong Mentor")).toBeInTheDocument();
+    expect(screen.queryByText("Growing Mentor")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "高级筛选 1" }));
+    expect(screen.getByRole("spinbutton", { name: "最低匹配度" })).toHaveValue(80);
+    expect(screen.getByRole("spinbutton", { name: "最高匹配度" })).toHaveValue(
+      null,
+    );
+  });
+
   it("shows a stable management skeleton before the first professor list load resolves", async () => {
     vi.mocked(listProfessorsForManagement).mockImplementation(
       () => new Promise<ProfessorManagementItemDTO[]>(() => {}),

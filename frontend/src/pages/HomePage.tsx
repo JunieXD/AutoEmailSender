@@ -168,6 +168,10 @@ const readStoredDashboardFilters = (
         typeof parsedValue.minMatchScore === "string"
           ? parsedValue.minMatchScore
           : defaults.minMatchScore,
+      maxMatchScore:
+        typeof parsedValue.maxMatchScore === "string"
+          ? parsedValue.maxMatchScore
+          : defaults.maxMatchScore,
     };
   } catch {
     return defaults;
@@ -785,9 +789,12 @@ export const HomePage = () => {
     });
   };
 
-  const handleMinMatchScoreChange = (value: string) => {
+  const handleMatchScoreBoundaryChange = (
+    key: "minMatchScore" | "maxMatchScore",
+    value: string,
+  ) => {
     if (value === "") {
-      updateFilters({ minMatchScore: "" });
+      updateFilters({ [key]: "" });
       return;
     }
 
@@ -796,8 +803,14 @@ export const HomePage = () => {
       return;
     }
 
-    updateFilters({ minMatchScore: String(Math.min(100, Math.max(0, score))) });
+    updateFilters({ [key]: String(Math.min(100, Math.max(0, score))) });
   };
+
+  const hasInvalidMatchScoreRange =
+    filters.minMatchScore !== NO_MATCH_SCORE_FILTER_VALUE &&
+    filters.minMatchScore.trim() !== "" &&
+    filters.maxMatchScore.trim() !== "" &&
+    Number(filters.minMatchScore) > Number(filters.maxMatchScore);
 
   const clearAdvancedFilters = () => {
     setFilters((previous) => ({
@@ -809,6 +822,7 @@ export const HomePage = () => {
       statuses: [],
       tagIds: [],
       minMatchScore: "",
+      maxMatchScore: "",
     }));
   };
 
@@ -1008,7 +1022,7 @@ export const HomePage = () => {
     ) {
       const action = await choose({
         title: "该导师已有匹配分",
-        description: `${professor.name} 当前匹配分为 ${professor.match_score}%。请选择跳过本次分析，或重新计算匹配分。`,
+        description: `${professor.name} 当前匹配分为 ${professor.match_score}。请选择跳过本次分析，或重新计算匹配分。`,
         confirmLabel: "重算",
         secondaryLabel: "跳过",
         cancelLabel: "取消",
@@ -1395,26 +1409,76 @@ export const HomePage = () => {
                 />
                 <div className="block">
                   <div className="mb-2 text-sm font-medium text-stone-800">
-                    最低匹配度
+                    匹配度区间
                   </div>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={
-                      filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
-                        ? ""
-                        : filters.minMatchScore
-                    }
-                    onChange={(event) =>
-                      handleMinMatchScoreChange(event.target.value)
-                    }
-                    disabled={
-                      filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
-                    }
-                    placeholder="例如 80"
-                    className="ui-select-shell w-full"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      aria-label="最低匹配度"
+                      aria-invalid={hasInvalidMatchScoreRange}
+                      aria-describedby={
+                        hasInvalidMatchScoreRange
+                          ? "match-score-range-error"
+                          : undefined
+                      }
+                      value={
+                        filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
+                          ? ""
+                          : filters.minMatchScore
+                      }
+                      onChange={(event) =>
+                        handleMatchScoreBoundaryChange(
+                          "minMatchScore",
+                          event.target.value,
+                        )
+                      }
+                      disabled={
+                        filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
+                      }
+                      placeholder="最低 0"
+                      className="ui-select-shell min-w-0 flex-1"
+                    />
+                    <span aria-hidden="true" className="text-stone-400">
+                      —
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      aria-label="最高匹配度"
+                      aria-invalid={hasInvalidMatchScoreRange}
+                      aria-describedby={
+                        hasInvalidMatchScoreRange
+                          ? "match-score-range-error"
+                          : undefined
+                      }
+                      value={filters.maxMatchScore}
+                      onChange={(event) =>
+                        handleMatchScoreBoundaryChange(
+                          "maxMatchScore",
+                          event.target.value,
+                        )
+                      }
+                      disabled={
+                        filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
+                      }
+                      placeholder="最高 100"
+                      className="ui-select-shell min-w-0 flex-1"
+                    />
+                  </div>
+                  {hasInvalidMatchScoreRange ? (
+                    <div
+                      id="match-score-range-error"
+                      role="alert"
+                      className="mt-2 text-xs text-red-600"
+                    >
+                      最低匹配度不能高于最高匹配度
+                    </div>
+                  ) : null}
                   <label className="mt-2 flex items-center gap-2 text-sm text-stone-700">
                     <input
                       type="checkbox"
@@ -1426,10 +1490,11 @@ export const HomePage = () => {
                           minMatchScore: event.target.checked
                             ? NO_MATCH_SCORE_FILTER_VALUE
                             : "",
+                          maxMatchScore: "",
                         })
                       }
                     />
-                    无匹配度
+                    仅看无匹配度
                   </label>
                 </div>
               </div>

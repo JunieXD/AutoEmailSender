@@ -28,7 +28,7 @@ type DashboardProfessorRowProps = {
 };
 
 const formatMatchLabel = (score: number | null) =>
-  score === null ? "匹配 未计算" : `匹配 ${score}%`;
+  score === null ? "匹配 未计算" : `匹配 ${score}`;
 
 const formatSentLabel = (sentCount: number) =>
   sentCount === 0 ? "未发送" : `已发送 ${sentCount} 次`;

@@ -21,10 +21,10 @@ export interface MentorFilterState {
 
 export const MATCH_SCORE_RANGES = [
   { label: '全部', value: 'ALL' },
-  { label: '90%以上', value: '90' },
-  { label: '80%以上', value: '80' },
-  { label: '70%以上', value: '70' },
-  { label: '60%以上', value: '60' },
+  { label: '90以上', value: '90' },
+  { label: '80以上', value: '80' },
+  { label: '70以上', value: '70' },
+  { label: '60以上', value: '60' },
 ] as const;
 
 export interface MentorFilterOptions {

@@ -893,7 +893,7 @@ export const CreateTaskPage = () => {
                     {[professor.title, professor.university].filter(Boolean).join(' / ')}
                   </div>
                   <div className="mt-2 text-xs text-stone-500">
-                    匹配分数：{professor.match_score === null ? '未计算' : `${professor.match_score}%`}
+                    匹配分数：{professor.match_score === null ? '未计算' : professor.match_score}
                   </div>
                 </div>
               ))}

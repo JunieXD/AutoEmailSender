@@ -22,7 +22,7 @@ const MatchIndicator: React.FC<{ score: number }> = ({ score }) => {
       <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
         <Target className={`w-3.5 h-3.5 ${textColor}`} />
         <span className={textColor}>匹配度</span>
-        <span className="font-bold text-lg text-primary">{score}%</span>
+        <span className="font-bold text-lg text-primary">{score}</span>
       </div>
       <div className="w-24 h-1.5 bg-stone-100 rounded-full overflow-hidden shadow-inner border border-stone-100">
         <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${score}%` }} />

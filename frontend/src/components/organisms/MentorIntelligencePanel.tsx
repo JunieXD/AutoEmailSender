@@ -30,7 +30,7 @@ export const MentorIntelligencePanel: React.FC<MentorIntelligencePanelProps> = (
 
       <div className="p-5 bg-alt-bg rounded-2xl border border-stone-100 flex flex-col gap-1">
         <MentorContextItem label="职称" value={mentor.title} />
-        <MentorContextItem label="匹配度" value={<span className="font-bold text-lg text-primary">{mentor.matchScore}%</span>} />
+        <MentorContextItem label="匹配度" value={<span className="font-bold text-lg text-primary">{mentor.matchScore}</span>} />
         <MentorContextItem label="已发送信件" value={<span className="font-medium text-stone-600">{mentor.sentCount} 封</span>} />
       </div>
 
