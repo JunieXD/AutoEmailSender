@@ -408,7 +408,10 @@ class CommunityRecordSelectionPayload(BaseModel):
 
 
 class CommunityPreviewPayload(CommunityRecordSelectionPayload):
-    record_ids: list[str] = Field(min_length=1, max_length=500)
+    record_ids: list[str] = Field(
+        min_length=1,
+        max_length=MAX_COMMUNITY_LOADED_RECORDS,
+    )
 
     @field_validator("record_ids")
     @classmethod
@@ -476,7 +479,10 @@ class CommunityImportItemPayload(BaseModel):
 
 
 class CommunityImportPayload(CommunityRecordSelectionPayload):
-    items: list[CommunityImportItemPayload] = Field(min_length=1, max_length=500)
+    items: list[CommunityImportItemPayload] = Field(
+        min_length=1,
+        max_length=MAX_COMMUNITY_LOADED_RECORDS,
+    )
 
     @model_validator(mode="after")
     def _validate_unique_items(self) -> "CommunityImportPayload":

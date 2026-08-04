@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import clsx from 'clsx';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   Building2,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Database,
+  Eye,
   ExternalLink,
   FileSpreadsheet,
   FileWarning,
@@ -17,9 +24,14 @@ import {
   Mail,
   RefreshCcw,
   Search,
+  Square,
+  SquareCheck,
+  SquareMinus,
   Users,
   X,
 } from 'lucide-react';
+import { MultiSelectFilter } from '@/components/molecules/MultiSelectFilter';
+import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 import { useNotification } from '@/context/NotificationContext';
 import {
   importCommunityMentors,
@@ -32,6 +44,8 @@ import {
 } from '@/lib/communityMentorCatalogCache';
 import { buildCommunityReportUrl } from '@/lib/communityMentorLinks';
 import { openExternalHttpUrl } from '@/lib/externalUrls';
+import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
+import { useDocumentScrollLock } from '@/lib/useDocumentScrollLock';
 import {
   addVisibleRecordSelection,
   getVisibleRecordSelectionState,
@@ -40,6 +54,7 @@ import {
 } from '@/lib/communityMentorSelection';
 import type {
   CommunityCatalogDTO,
+  CommunityCatalogUnitDTO,
   CommunityComparisonCategoryDTO,
   CommunityFieldChoiceDTO,
   CommunityFieldComparisonDTO,
@@ -55,12 +70,41 @@ const MAX_SELECTED_UNITS = 20;
 const MAX_SELECTED_RECORDS = MAX_SELECTED_COMMUNITY_MENTORS;
 const MAX_LOADED_RECORDS = MAX_LOADED_COMMUNITY_MENTORS;
 const RECORDS_PER_PAGE = 100;
+const CATALOG_UNITS_PER_PAGE = 48;
+const PREVIEW_RECORDS_PER_PAGE = 25;
 
 const haveSamePaths = (left: string[], right: string[]) =>
   left.length === right.length && left.every((path) => right.includes(path));
 
 const isRecordSelectable = (item: CommunityMentorComparisonDTO) =>
   item.category !== 'retired_or_revoked' && !item.import_blocked;
+
+const sortedUniqueValues = (values: Array<string | null | undefined>) =>
+  Array.from(
+    new Set(values.map((value) => value?.trim() ?? '').filter(Boolean)),
+  ).sort((left, right) => left.localeCompare(right, 'zh-CN'));
+
+const matchesSelectedValues = (
+  selectedValues: string[],
+  candidateValues: Array<string | null | undefined>,
+) => {
+  if (selectedValues.length === 0) {
+    return true;
+  }
+  const candidateSet = new Set(
+    candidateValues.map((value) => value?.trim() ?? '').filter(Boolean),
+  );
+  return selectedValues.some((value) => candidateSet.has(value));
+};
+
+const githubProfileUrl = (login: string) =>
+  `https://github.com/${encodeURIComponent(login)}`;
+
+type CatalogUnitEntry = {
+  universityId: string;
+  universityName: string;
+  unit: CommunityCatalogUnitDTO;
+};
 
 const categoryMeta: Record<
   CommunityComparisonCategoryDTO,
@@ -108,6 +152,11 @@ const categoryMeta: Record<
   },
 };
 
+const categoryOptions = Object.keys(categoryMeta) as CommunityComparisonCategoryDTO[];
+const categoryOptionLabels = Object.fromEntries(
+  categoryOptions.map((category) => [category, categoryMeta[category].label]),
+);
+
 const fieldStateMeta: Record<CommunityFieldStateDTO, { label: string; className: string }> = {
   new: { label: '新字段', className: 'text-emerald-700' },
   same: { label: '一致', className: 'text-stone-500' },
@@ -137,6 +186,14 @@ const formatDate = (value: string | null | undefined) => {
   }
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString('zh-CN');
+};
+
+const formatShortDate = (value: string | null | undefined) => {
+  if (!value) {
+    return '未记录';
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString('zh-CN');
 };
 
 const formatFieldValue = (value: unknown) => {
@@ -178,6 +235,248 @@ const openFeedbackForm = (
   notifySuccess(
     '反馈页面已打开',
     '导师和当前信息已自动填写，请选择问题并补充正确内容和新的官网证据。',
+  );
+};
+
+const ExternalTextLink = ({
+  url,
+  children,
+  className,
+}: {
+  url: string;
+  children: ReactNode;
+  className?: string;
+}) => (
+  <a
+    href={url}
+    target="_blank"
+    rel="noopener noreferrer"
+    className={className}
+    onClick={(event) => {
+      event.preventDefault();
+      openExternalHttpUrl(url);
+    }}
+  >
+    {children}
+  </a>
+);
+
+const ContributorLinks = ({
+  contributors,
+}: {
+  contributors: CommunityMentorRecordDTO['contributors'];
+}) => {
+  if (contributors.length === 0) {
+    return <span>暂无</span>;
+  }
+  return (
+    <span className="inline-flex flex-wrap gap-x-1.5 gap-y-1">
+      {contributors.map((contributor) => (
+        <ExternalTextLink
+          key={contributor.github_user_id}
+          url={githubProfileUrl(contributor.github_login_at_submission)}
+          className="font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary"
+        >
+          @{contributor.github_login_at_submission}
+        </ExternalTextLink>
+      ))}
+    </span>
+  );
+};
+
+const DetailValue = ({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) => (
+  <div className={clsx('rounded-2xl border border-stone-200 bg-white px-4 py-3', className)}>
+    <div className="text-xs font-medium text-stone-500">{label}</div>
+    <div className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-stone-800">
+      {children}
+    </div>
+  </div>
+);
+
+const CommunityMentorDetailDialog = ({
+  item,
+  onClose,
+  onReport,
+}: {
+  item: CommunityMentorComparisonDTO | null;
+  onClose: () => void;
+  onReport: (record: CommunityMentorRecordDTO) => void;
+}) => {
+  const open = item !== null;
+  useDocumentScrollLock(open);
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } = useDismissableLayerClick(onClose);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, open]);
+
+  if (!item) {
+    return null;
+  }
+
+  const { record } = item;
+  const meta = categoryMeta[item.category];
+  const organization = [record.university, record.school, record.department]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`导师详情：${record.name}`}
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm"
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
+    >
+      <div
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[30px] border border-white/70 bg-stone-50 shadow-2xl"
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-white px-6 py-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold text-stone-950">{record.name}</h2>
+              {record.title ? <span className="text-sm text-stone-500">{record.title}</span> : null}
+              <span className={clsx('rounded-full border px-2 py-0.5 text-xs font-medium', meta.className)}>
+                {meta.label}
+              </span>
+              <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-600">
+                {lifecycleLabels[record.status]}
+              </span>
+            </div>
+            <p className="mt-1 truncate text-sm text-stone-500">{organization || '暂无任职信息'}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-2 text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+            aria-label="关闭导师详情"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 md:p-6">
+          <section>
+            <h3 className="text-sm font-semibold text-stone-900">基本信息</h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <DetailValue label="主要邮箱">{record.email || '暂无'}</DetailValue>
+              <DetailValue label="职称">{record.title || '暂无'}</DetailValue>
+              <DetailValue label="任职机构" className="md:col-span-2">
+                {organization || '暂无'}
+              </DetailValue>
+              <DetailValue label="研究方向" className="md:col-span-2">
+                {record.research_direction || '暂无'}
+              </DetailValue>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-sm font-semibold text-stone-900">近期或代表论文</h3>
+            <div className="mt-3 rounded-2xl border border-stone-200 bg-white px-4 py-3">
+              {record.recent_papers.length > 0 ? (
+                <ol className="list-decimal space-y-2 pl-5 text-sm leading-6 text-stone-700">
+                  {record.recent_papers.map((paper, index) => (
+                    <li key={`${paper}-${index}`}>{paper}</li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="text-sm text-stone-500">暂无</p>
+              )}
+            </div>
+          </section>
+
+          <section className="grid gap-5 lg:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-semibold text-stone-900">全部邮箱</h3>
+              <div className="mt-3 space-y-2">
+                {record.contacts.length > 0 ? record.contacts.map((contact) => (
+                  <div key={contact.email} className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="break-all font-medium text-stone-800">{contact.email}</span>
+                      {contact.is_primary ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">主要</span> : null}
+                    </div>
+                    <ExternalTextLink url={contact.source_url} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                      查看来源 <ExternalLink className="h-3 w-3" />
+                    </ExternalTextLink>
+                  </div>
+                )) : <p className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-500">暂无</p>}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-stone-900">全部当前任职</h3>
+              <div className="mt-3 space-y-2">
+                {record.affiliations.length > 0 ? record.affiliations.map((affiliation) => (
+                  <div key={affiliation.id} className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-stone-800">
+                        {[affiliation.university, affiliation.school, affiliation.department].filter(Boolean).join(' · ') || '暂无'}
+                      </span>
+                      {affiliation.is_primary ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">主要</span> : null}
+                    </div>
+                    <p className="mt-1 text-xs text-stone-500">{affiliation.title || '暂无职称'}</p>
+                    <ExternalTextLink url={affiliation.source_url} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                      查看来源 <ExternalLink className="h-3 w-3" />
+                    </ExternalTextLink>
+                  </div>
+                )) : <p className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-500">暂无</p>}
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-sm font-semibold text-stone-900">来源与核验</h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <DetailValue label="导师主页">
+                {record.profile_url ? (
+                  <ExternalTextLink url={record.profile_url} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                    打开导师主页 <ExternalLink className="h-3.5 w-3.5" />
+                  </ExternalTextLink>
+                ) : '暂无'}
+              </DetailValue>
+              <DetailValue label="官方证据">
+                <ExternalTextLink url={record.source_url} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                  打开官方来源 <ExternalLink className="h-3.5 w-3.5" />
+                </ExternalTextLink>
+              </DetailValue>
+              <DetailValue label="最后核验">{formatDate(record.last_verified_at)}</DetailValue>
+              <DetailValue label="贡献者"><ContributorLinks contributors={record.contributors} /></DetailValue>
+            </div>
+          </section>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-6 py-4">
+          <button type="button" className="ui-btn-secondary" onClick={() => onReport(record)}>
+            反馈错误 <ExternalLink className="h-3.5 w-3.5" />
+          </button>
+          <button type="button" className="ui-btn-primary" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -255,23 +554,31 @@ export const CommunityMentorsPage = () => {
   );
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [catalogKeyword, setCatalogKeyword] = useState('');
+  const [catalogUniversityFilters, setCatalogUniversityFilters] = useState<string[]>([]);
+  const [catalogUnitFilters, setCatalogUnitFilters] = useState<string[]>([]);
+  const [catalogUnitPage, setCatalogUnitPage] = useState(1);
   const [selectedUnitPaths, setSelectedUnitPaths] = useState<string[]>([]);
   const [loadedUnitPaths, setLoadedUnitPaths] = useState<string[] | null>(null);
   const [recordsPayload, setRecordsPayload] = useState<CommunityRecordsDTO | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordKeyword, setRecordKeyword] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<CommunityComparisonCategoryDTO | 'all'>('all');
+  const [recordUniversityFilters, setRecordUniversityFilters] = useState<string[]>([]);
+  const [recordSchoolFilters, setRecordSchoolFilters] = useState<string[]>([]);
+  const [recordDepartmentFilters, setRecordDepartmentFilters] = useState<string[]>([]);
+  const [recordTitleFilters, setRecordTitleFilters] = useState<string[]>([]);
+  const [categoryFilters, setCategoryFilters] = useState<CommunityComparisonCategoryDTO[]>([]);
   const [recordPage, setRecordPage] = useState(1);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [detailRecord, setDetailRecord] = useState<CommunityMentorComparisonDTO | null>(null);
   const [previewPayload, setPreviewPayload] = useState<CommunityRecordsDTO | null>(null);
+  const [previewPage, setPreviewPage] = useState(1);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [fieldChoices, setFieldChoices] = useState<
     Record<string, Record<string, CommunityFieldChoiceDTO>>
   >({});
   const [identityConfirmations, setIdentityConfirmations] = useState<Record<string, boolean>>({});
-  const selectVisibleCheckboxRef = useRef<HTMLInputElement>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadCatalog = useCallback(
     async (refresh: boolean, announceResult = refresh) => {
@@ -286,11 +593,21 @@ export const CommunityMentorsPage = () => {
         const nextCatalog = await requestCommunityMentorCatalog(refresh);
         setCatalog((previous) => {
           if (previous && previous.dataset_version !== nextCatalog.dataset_version) {
+            setCatalogUniversityFilters([]);
+            setCatalogUnitFilters([]);
+            setCatalogUnitPage(1);
             setSelectedUnitPaths([]);
             setLoadedUnitPaths(null);
             setRecordsPayload(null);
+            setRecordKeyword('');
+            setRecordUniversityFilters([]);
+            setRecordSchoolFilters([]);
+            setRecordDepartmentFilters([]);
+            setRecordTitleFilters([]);
+            setCategoryFilters([]);
             setSelectedRecordIds([]);
             setPreviewPayload(null);
+            setPreviewPage(1);
             setRecordPage(1);
           }
           return nextCatalog;
@@ -333,25 +650,84 @@ export const CommunityMentorsPage = () => {
     void bootstrapCatalog();
   }, [loadCatalog]);
 
-  const filteredUniversities = useMemo(() => {
-    if (!catalog) {
-      return [];
-    }
-    const keyword = catalogKeyword.trim().toLocaleLowerCase();
-    if (!keyword) {
-      return catalog.universities;
-    }
-    return catalog.universities
-      .map((university) => ({
-        ...university,
-        units: university.units.filter(
-          (unit) =>
-            university.name.toLocaleLowerCase().includes(keyword) ||
-            unit.name.toLocaleLowerCase().includes(keyword),
-        ),
-      }))
-      .filter((university) => university.units.length > 0);
-  }, [catalog, catalogKeyword]);
+  const catalogUnitEntries = useMemo<CatalogUnitEntry[]>(
+    () => (catalog?.universities ?? [])
+      .flatMap((university) => university.units.map((unit) => ({
+        universityId: university.id,
+        universityName: university.name,
+        unit,
+      })))
+      .sort((left, right) => {
+        const universityOrder = left.universityName.localeCompare(
+          right.universityName,
+          'zh-CN',
+        );
+        return universityOrder || left.unit.name.localeCompare(right.unit.name, 'zh-CN');
+      }),
+    [catalog],
+  );
+  const catalogUniversityOptions = useMemo(
+    () => [...(catalog?.universities ?? [])]
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+      .map((university) => university.id),
+    [catalog],
+  );
+  const catalogUniversityOptionLabels = useMemo(
+    () => Object.fromEntries(
+      (catalog?.universities ?? []).map((university) => [
+        university.id,
+        university.name,
+      ]),
+    ),
+    [catalog],
+  );
+  const catalogUnitOptions = useMemo(
+    () => catalogUnitEntries
+      .filter((entry) => (
+        catalogUniversityFilters.length === 0 ||
+        catalogUniversityFilters.includes(entry.universityId)
+      ))
+      .map((entry) => entry.unit.path),
+    [catalogUnitEntries, catalogUniversityFilters],
+  );
+  const catalogUnitOptionLabels = useMemo(
+    () => Object.fromEntries(catalogUnitEntries.map((entry) => [
+      entry.unit.path,
+      `${entry.universityName} · ${entry.unit.name}`,
+    ])),
+    [catalogUnitEntries],
+  );
+  const filteredCatalogUnits = useMemo(
+    () => catalogUnitEntries.filter((entry) => (
+      (catalogUniversityFilters.length === 0 ||
+        catalogUniversityFilters.includes(entry.universityId)) &&
+      (catalogUnitFilters.length === 0 || catalogUnitFilters.includes(entry.unit.path))
+    )),
+    [catalogUnitEntries, catalogUnitFilters, catalogUniversityFilters],
+  );
+  const totalCatalogUnitPages = Math.max(
+    1,
+    Math.ceil(filteredCatalogUnits.length / CATALOG_UNITS_PER_PAGE),
+  );
+  const currentCatalogUnitPage = Math.min(catalogUnitPage, totalCatalogUnitPages);
+  const paginatedCatalogUnits = filteredCatalogUnits.slice(
+    (currentCatalogUnitPage - 1) * CATALOG_UNITS_PER_PAGE,
+    currentCatalogUnitPage * CATALOG_UNITS_PER_PAGE,
+  );
+
+  const updateCatalogUniversityFilters = (nextValues: string[]) => {
+    const allowedUniversityIds = new Set(
+      nextValues.length > 0 ? nextValues : catalogUniversityOptions,
+    );
+    const allowedUnitPaths = new Set(
+      catalogUnitEntries
+        .filter((entry) => allowedUniversityIds.has(entry.universityId))
+        .map((entry) => entry.unit.path),
+    );
+    setCatalogUniversityFilters(nextValues);
+    setCatalogUnitFilters((current) => current.filter((path) => allowedUnitPaths.has(path)));
+    setCatalogUnitPage(1);
+  };
 
   const catalogUnitsByPath = useMemo(
     () => new Map(
@@ -390,8 +766,15 @@ export const CommunityMentorsPage = () => {
       });
       setRecordsPayload(result);
       setLoadedUnitPaths(requestedUnitPaths);
+      setRecordKeyword('');
+      setRecordUniversityFilters([]);
+      setRecordSchoolFilters([]);
+      setRecordDepartmentFilters([]);
+      setRecordTitleFilters([]);
+      setCategoryFilters([]);
       setSelectedRecordIds([]);
       setPreviewPayload(null);
+      setPreviewPage(1);
       setRecordPage(1);
       if (result.warning) {
         notifyWarning('学院数据来自缓存', result.warning);
@@ -429,15 +812,81 @@ export const CommunityMentorsPage = () => {
     });
   };
 
+  const recordUniversityOptions = useMemo(
+    () => sortedUniqueValues((recordsPayload?.records ?? []).flatMap((item) => [
+      item.record.university,
+      ...item.record.affiliations.map((affiliation) => affiliation.university),
+    ])),
+    [recordsPayload],
+  );
+  const recordSchoolOptions = useMemo(
+    () => sortedUniqueValues((recordsPayload?.records ?? []).flatMap((item) => [
+      item.record.school,
+      ...item.record.affiliations.map((affiliation) => affiliation.school),
+    ])),
+    [recordsPayload],
+  );
+  const recordDepartmentOptions = useMemo(
+    () => sortedUniqueValues((recordsPayload?.records ?? []).flatMap((item) => [
+      item.record.department,
+      ...item.record.affiliations.map((affiliation) => affiliation.department),
+    ])),
+    [recordsPayload],
+  );
+  const recordTitleOptions = useMemo(
+    () => sortedUniqueValues((recordsPayload?.records ?? []).flatMap((item) => [
+      item.record.title,
+      ...item.record.affiliations.map((affiliation) => affiliation.title),
+    ])),
+    [recordsPayload],
+  );
+  const recordSearchTextById = useMemo(
+    () => new Map(
+      (recordsPayload?.records ?? []).map((item) => [
+        item.record.id,
+        recordSearchText(item),
+      ]),
+    ),
+    [recordsPayload],
+  );
+
   const visibleRecords = useMemo(() => {
     const keyword = recordKeyword.trim().toLocaleLowerCase();
     return (recordsPayload?.records ?? []).filter((item) => {
-      if (categoryFilter !== 'all' && item.category !== categoryFilter) {
+      if (categoryFilters.length > 0 && !categoryFilters.includes(item.category)) {
         return false;
       }
-      return !keyword || recordSearchText(item).includes(keyword);
+      const affiliations = item.record.affiliations;
+      return (
+        matchesSelectedValues(recordUniversityFilters, [
+          item.record.university,
+          ...affiliations.map((affiliation) => affiliation.university),
+        ]) &&
+        matchesSelectedValues(recordSchoolFilters, [
+          item.record.school,
+          ...affiliations.map((affiliation) => affiliation.school),
+        ]) &&
+        matchesSelectedValues(recordDepartmentFilters, [
+          item.record.department,
+          ...affiliations.map((affiliation) => affiliation.department),
+        ]) &&
+        matchesSelectedValues(recordTitleFilters, [
+          item.record.title,
+          ...affiliations.map((affiliation) => affiliation.title),
+        ]) &&
+        (!keyword || (recordSearchTextById.get(item.record.id) ?? '').includes(keyword))
+      );
     });
-  }, [categoryFilter, recordKeyword, recordsPayload]);
+  }, [
+    categoryFilters,
+    recordDepartmentFilters,
+    recordKeyword,
+    recordSchoolFilters,
+    recordTitleFilters,
+    recordUniversityFilters,
+    recordSearchTextById,
+    recordsPayload,
+  ]);
 
   const selectableVisibleRecords = useMemo(
     () => visibleRecords.filter(isRecordSelectable),
@@ -470,12 +919,23 @@ export const CommunityMentorsPage = () => {
       loadedUnitPaths &&
       !haveSamePaths(selectedUnitPaths, loadedUnitPaths),
   );
+  const totalPreviewPages = Math.max(
+    1,
+    Math.ceil((previewPayload?.records.length ?? 0) / PREVIEW_RECORDS_PER_PAGE),
+  );
+  const currentPreviewPage = Math.min(previewPage, totalPreviewPages);
+  const paginatedPreviewRecords = (previewPayload?.records ?? []).slice(
+    (currentPreviewPage - 1) * PREVIEW_RECORDS_PER_PAGE,
+    currentPreviewPage * PREVIEW_RECORDS_PER_PAGE,
+  );
 
   useEffect(() => {
-    if (selectVisibleCheckboxRef.current) {
-      selectVisibleCheckboxRef.current.indeterminate = partiallyVisibleSelected;
-    }
-  }, [partiallyVisibleSelected, selectableVisibleIds, selectedRecordIds]);
+    setCatalogUnitPage((current) => Math.min(current, totalCatalogUnitPages));
+  }, [totalCatalogUnitPages]);
+
+  useEffect(() => {
+    setRecordPage((current) => Math.min(current, totalRecordPages));
+  }, [totalRecordPages]);
 
   const toggleRecord = (recordId: string) => {
     setSelectedRecordIds((current) => {
@@ -496,7 +956,8 @@ export const CommunityMentorsPage = () => {
   const toggleVisibleRecords = () => {
     setSelectedRecordIds((current) => {
       if (allVisibleSelected) {
-        return current.filter((id) => !selectableVisibleIds.includes(id));
+        const visibleIdSet = new Set(selectableVisibleIds);
+        return current.filter((id) => !visibleIdSet.has(id));
       }
       const { recordIds, omittedCount } = addVisibleRecordSelection(
         current,
@@ -504,7 +965,7 @@ export const CommunityMentorsPage = () => {
       );
       if (omittedCount > 0) {
         notifyWarning(
-          '已选择前 500 位导师',
+          `已选择前 ${MAX_SELECTED_RECORDS} 位导师`,
           `还有 ${omittedCount} 位未选中；一次最多导入 ${MAX_SELECTED_RECORDS} 位，请分批处理。`,
         );
       }
@@ -571,6 +1032,7 @@ export const CommunityMentorsPage = () => {
       });
       setFieldChoices(nextChoices);
       setIdentityConfirmations(nextConfirmations);
+      setPreviewPage(1);
       setPreviewPayload(result);
     } catch (error) {
       notifyError('生成导入预览失败', getErrorMessage(error, '无法生成导入预览'));
@@ -595,10 +1057,13 @@ export const CommunityMentorsPage = () => {
       );
       return;
     }
-    const unconfirmed = previewPayload.records.find(
+    const unconfirmedIndex = previewPayload.records.findIndex(
       (item) => item.identity_conflict && !identityConfirmations[item.record.id],
     );
-    if (unconfirmed) {
+    if (unconfirmedIndex >= 0) {
+      const unconfirmed = previewPayload.records[unconfirmedIndex];
+      setPreviewPage(Math.floor(unconfirmedIndex / PREVIEW_RECORDS_PER_PAGE) + 1);
+      previewScrollRef.current?.scrollTo?.({ top: 0 });
       notifyWarning('请确认导师身份', `“${unconfirmed.record.name}”存在姓名或学校冲突。`);
       return;
     }
@@ -746,31 +1211,85 @@ export const CommunityMentorsPage = () => {
               </div>
               <Building2 className="h-5 w-5 text-primary" />
             </div>
-            <div className="relative mt-4">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-              <input value={catalogKeyword} onChange={(event) => setCatalogKeyword(event.target.value)} className="w-full rounded-xl border border-stone-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary" placeholder="搜索学校或学院" />
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <MultiSelectFilter
+                label="学校"
+                allLabel="全部学校"
+                selectedValues={catalogUniversityFilters}
+                options={catalogUniversityOptions}
+                optionLabels={catalogUniversityOptionLabels}
+                onChange={updateCatalogUniversityFilters}
+              />
+              <MultiSelectFilter
+                label="学院"
+                allLabel="全部学院"
+                selectedValues={catalogUnitFilters}
+                options={catalogUnitOptions}
+                optionLabels={catalogUnitOptionLabels}
+                onChange={(nextValues) => {
+                  setCatalogUnitFilters(nextValues);
+                  setCatalogUnitPage(1);
+                }}
+              />
             </div>
-            <div className="mt-4 grid max-h-[30rem] gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
-              {filteredUniversities.map((university) => (
-                <div key={university.id} className="rounded-2xl border border-stone-200 p-3">
-                  <div className="flex items-center justify-between gap-2 text-sm font-semibold text-stone-900">
-                    <span>{university.name}</span>
-                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500">{university.record_count}</span>
-                  </div>
-                  <div className="mt-2 space-y-1.5">
-                    {university.units.map((unit) => (
-                      <label key={unit.path} className="flex cursor-pointer items-start gap-2 rounded-xl px-2 py-2 text-sm text-stone-700 transition hover:bg-orange-50">
-                        <input type="checkbox" className="mt-0.5 h-4 w-4 accent-orange-600" checked={selectedUnitPaths.includes(unit.path)} onChange={() => toggleUnit(unit.path)} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block break-words">{unit.name}</span>
-                          <span className="text-xs text-stone-400">{unit.record_count} 位</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {paginatedCatalogUnits.length === 0 ? (
+                <div className="col-span-full rounded-2xl border border-dashed border-stone-200 p-8 text-center text-sm text-stone-500">
+                  没有匹配的学院。
                 </div>
-              ))}
+              ) : paginatedCatalogUnits.map((entry) => {
+                const selected = selectedUnitPaths.includes(entry.unit.path);
+                return (
+                  <article
+                    key={entry.unit.path}
+                    className={clsx(
+                      'flex min-h-[72px] items-center gap-3 rounded-2xl border px-3 py-2.5 transition',
+                      selected
+                        ? 'border-primary/35 bg-primary/[0.035]'
+                        : 'border-stone-200 hover:border-orange-200 hover:bg-orange-50/40',
+                    )}
+                  >
+                    <SelectionToggleButton
+                      label={`${selected ? '取消选择' : '选择'} ${entry.universityName} ${entry.unit.name}`}
+                      selected={selected}
+                      onToggle={() => toggleUnit(entry.unit.path)}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs text-stone-500">{entry.universityName}</div>
+                      <div className="mt-0.5 truncate text-sm font-semibold text-stone-900">{entry.unit.name}</div>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500">
+                      {entry.unit.record_count} 位
+                    </span>
+                  </article>
+                );
+              })}
             </div>
+            {filteredCatalogUnits.length > CATALOG_UNITS_PER_PAGE ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
+                <span className="text-xs text-stone-500">
+                  第 {currentCatalogUnitPage}/{totalCatalogUnitPages} 页 · 共 {filteredCatalogUnits.length} 个学院
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={currentCatalogUnitPage <= 1}
+                    onClick={() => setCatalogUnitPage((current) => Math.max(1, current - 1))}
+                    className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" /> 上一页
+                  </button>
+                  <button
+                    type="button"
+                    disabled={currentCatalogUnitPage >= totalCatalogUnitPages}
+                    onClick={() => setCatalogUnitPage((current) => Math.min(totalCatalogUnitPages, current + 1))}
+                    className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    下一页 <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-5 flex justify-end">
               <button type="button" disabled={recordsLoading || selectedUnitPaths.length === 0} onClick={() => void loadRecordsForPaths(selectedUnitPaths)} className="ui-btn-primary w-full justify-center disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
                 {recordsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
@@ -793,17 +1312,96 @@ export const CommunityMentorsPage = () => {
                     <h2 className="text-xl font-semibold text-stone-900">导师列表</h2>
                     <p className="mt-1 text-sm text-stone-500">已加载 {recordsPayload.records.length} 位，已选择 {selectedRecordIds.length}/{MAX_SELECTED_RECORDS}</p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <div className="relative min-w-56 flex-1">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-                      <input value={recordKeyword} onChange={(event) => { setRecordKeyword(event.target.value); setRecordPage(1); }} className="w-full rounded-xl border border-stone-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary" placeholder="姓名、全部邮箱、任职、方向" />
-                    </div>
-                    <select value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value as CommunityComparisonCategoryDTO | 'all'); setRecordPage(1); }} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none focus:border-primary">
-                      <option value="all">全部状态</option>
-                      {Object.entries(categoryMeta).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}
-                    </select>
-                  </div>
                 </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+                  <label className="block md:col-span-2 xl:col-span-2 2xl:col-span-2">
+                    <span className="mb-2 block text-sm font-medium text-stone-800">搜索导师</span>
+                    <span className="relative block">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                      <input
+                        value={recordKeyword}
+                        onChange={(event) => {
+                          setRecordKeyword(event.target.value);
+                          setRecordPage(1);
+                        }}
+                        className="ui-select-shell w-full py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
+                        placeholder="姓名、邮箱、任职或方向"
+                      />
+                    </span>
+                  </label>
+                  <MultiSelectFilter
+                    label="学校"
+                    allLabel="全部学校"
+                    selectedValues={recordUniversityFilters}
+                    options={recordUniversityOptions}
+                    onChange={(nextValues) => {
+                      setRecordUniversityFilters(nextValues);
+                      setRecordPage(1);
+                    }}
+                  />
+                  <MultiSelectFilter
+                    label="学院"
+                    allLabel="全部学院"
+                    selectedValues={recordSchoolFilters}
+                    options={recordSchoolOptions}
+                    onChange={(nextValues) => {
+                      setRecordSchoolFilters(nextValues);
+                      setRecordPage(1);
+                    }}
+                  />
+                  <MultiSelectFilter
+                    label="系所"
+                    allLabel="全部系所"
+                    selectedValues={recordDepartmentFilters}
+                    options={recordDepartmentOptions}
+                    onChange={(nextValues) => {
+                      setRecordDepartmentFilters(nextValues);
+                      setRecordPage(1);
+                    }}
+                  />
+                  <MultiSelectFilter
+                    label="职称"
+                    allLabel="全部职称"
+                    selectedValues={recordTitleFilters}
+                    options={recordTitleOptions}
+                    onChange={(nextValues) => {
+                      setRecordTitleFilters(nextValues);
+                      setRecordPage(1);
+                    }}
+                  />
+                  <MultiSelectFilter
+                    label="导入状态"
+                    allLabel="全部状态"
+                    selectedValues={categoryFilters}
+                    options={categoryOptions}
+                    optionLabels={categoryOptionLabels}
+                    onChange={(nextValues) => {
+                      setCategoryFilters(nextValues as CommunityComparisonCategoryDTO[]);
+                      setRecordPage(1);
+                    }}
+                  />
+                </div>
+                {recordKeyword || recordUniversityFilters.length > 0 ||
+                recordSchoolFilters.length > 0 || recordDepartmentFilters.length > 0 ||
+                recordTitleFilters.length > 0 || categoryFilters.length > 0 ? (
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-stone-500 underline decoration-stone-300 underline-offset-2 hover:text-stone-800"
+                      onClick={() => {
+                        setRecordKeyword('');
+                        setRecordUniversityFilters([]);
+                        setRecordSchoolFilters([]);
+                        setRecordDepartmentFilters([]);
+                        setRecordTitleFilters([]);
+                        setCategoryFilters([]);
+                        setRecordPage(1);
+                      }}
+                    >
+                      清除全部筛选
+                    </button>
+                  </div>
+                ) : null}
                 {recordsSelectionStale ? (
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                     <span className="inline-flex items-center gap-2">
@@ -822,20 +1420,26 @@ export const CommunityMentorsPage = () => {
                 ) : null}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-stone-50 px-4 py-3">
                   <div className="flex flex-wrap items-center gap-3">
-                    <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-stone-700">
-                      <input
-                        ref={selectVisibleCheckboxRef}
-                        type="checkbox"
-                        aria-label="选择当前筛选结果"
-                        className="h-4 w-4 accent-orange-600"
-                        checked={allVisibleSelected}
-                        onChange={toggleVisibleRecords}
-                      />
+                    <button
+                      type="button"
+                      aria-label="选择当前筛选结果"
+                      aria-pressed={allVisibleSelected}
+                      disabled={selectableVisibleIds.length === 0}
+                      onClick={toggleVisibleRecords}
+                      className="inline-flex items-center gap-2 text-sm text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {allVisibleSelected ? (
+                        <SquareCheck className="h-5 w-5 shrink-0 text-primary" />
+                      ) : partiallyVisibleSelected ? (
+                        <SquareMinus className="h-5 w-5 shrink-0 text-primary" />
+                      ) : (
+                        <Square className="h-5 w-5 shrink-0 text-stone-400" />
+                      )}
                       <span>
                         选择当前筛选结果
                         {selectedVisibleCount > 0 ? `（已选 ${selectedVisibleCount}/${selectableVisibleIds.length}）` : ''}
                       </span>
-                    </label>
+                    </button>
                     {selectedVisibleCount > 0 ? (
                       <button
                         type="button"
@@ -857,43 +1461,71 @@ export const CommunityMentorsPage = () => {
                   ) : paginatedVisibleRecords.map((item) => {
                     const meta = categoryMeta[item.category];
                     const selectable = isRecordSelectable(item);
+                    const selected = selectedRecordIdSet.has(item.record.id);
+                    const organization = [
+                      item.record.university,
+                      item.record.school,
+                      item.record.department,
+                    ].filter(Boolean).join(' · ');
                     return (
-                      <article key={item.record.id} className="rounded-2xl border border-stone-200 p-4 transition hover:border-orange-200 hover:shadow-sm">
-                        <div className="flex items-start gap-3">
-                          <input type="checkbox" aria-label={`选择 ${item.record.name}`} disabled={!selectable} checked={selectedRecordIdSet.has(item.record.id)} onChange={() => toggleRecord(item.record.id)} className="mt-1 h-4 w-4 shrink-0 accent-orange-600 disabled:opacity-40" />
+                      <article key={item.record.id} className="rounded-2xl border border-stone-200 px-3 py-2.5 transition hover:border-orange-200 hover:shadow-sm">
+                        <div className="flex items-stretch gap-3">
+                          <div className="flex shrink-0 items-center">
+                            <SelectionToggleButton
+                              label={`选择 ${item.record.name}`}
+                              disabled={!selectable}
+                              selected={selected}
+                              onToggle={() => toggleRecord(item.record.id)}
+                            />
+                          </div>
                           <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="font-semibold text-stone-950">{item.record.name}</h3>
-                              {item.record.title ? <span className="text-sm text-stone-500">{item.record.title}</span> : null}
-                              <span title={meta.description} className={clsx('rounded-full border px-2 py-0.5 text-xs font-medium', meta.className)}>{meta.label}</span>
-                              {item.record.contacts.length > 1 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{item.record.contacts.length} 个邮箱</span> : null}
-                              {item.record.affiliations.length > 1 ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-700">{item.record.affiliations.length} 个任职</span> : null}
+                            <div className="grid min-w-0 gap-x-5 gap-y-2 lg:grid-cols-[minmax(13rem,0.95fr)_minmax(16rem,1.15fr)_7.5rem] lg:items-center">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <h3 className="font-semibold text-stone-950">{item.record.name}</h3>
+                                  {item.record.title ? <span className="text-sm text-stone-500">{item.record.title}</span> : null}
+                                  <span title={meta.description} className={clsx('rounded-full border px-2 py-0.5 text-[11px] font-medium', meta.className)}>{meta.label}</span>
+                                  {item.record.contacts.length > 1 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">{item.record.contacts.length} 个邮箱</span> : null}
+                                  {item.record.affiliations.length > 1 ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{item.record.affiliations.length} 个任职</span> : null}
+                                </div>
+                                <p className="mt-1 truncate text-xs text-stone-500" title={organization}>{organization || '暂无任职信息'}</p>
+                              </div>
+                              <div className="min-w-0 text-xs text-stone-500">
+                                <div className="flex min-w-0 items-center gap-1 text-sm text-stone-700">
+                                  <Mail className="h-3.5 w-3.5 shrink-0 text-stone-400" />
+                                  <span className="truncate" title={item.record.email}>{item.record.email}</span>
+                                </div>
+                                <p className="mt-1 truncate" title={item.record.research_direction ?? ''}>
+                                  {item.record.research_direction || '研究方向暂无'}
+                                </p>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  <span>核验：{formatShortDate(item.record.last_verified_at)}</span>
+                                  <span className="inline-flex flex-wrap items-center gap-1">
+                                    贡献者：<ContributorLinks contributors={item.record.contributors} />
+                                  </span>
+                                  <button type="button" className="inline-flex items-center gap-1 font-medium text-primary hover:underline" onClick={() => openExternalHttpUrl(item.record.source_url)}>
+                                    官方来源 <ExternalLink className="h-3 w-3" />
+                                  </button>
+                                  <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => openFeedbackForm(item.record, notifySuccess)}>
+                                    反馈错误 <ExternalLink className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex items-center lg:justify-end">
+                                <button type="button" className="ui-btn-secondary min-h-8 justify-center px-2.5 py-1 text-xs" onClick={() => setDetailRecord(item)}>
+                                  <Eye className="h-3.5 w-3.5" /> 查看详情
+                                </button>
+                              </div>
                             </div>
-                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-stone-600">
-                              <span className="inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{item.record.email}</span>
-                              <span>{[item.record.university, item.record.school, item.record.department].filter(Boolean).join(' · ')}</span>
-                            </div>
-                            {item.record.research_direction ? <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">{item.record.research_direction}</p> : null}
                             {item.import_blocked ? (
-                              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-800">
+                              <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs leading-5 text-red-800">
                                 <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
                                 <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
                               </div>
-                            ) : item.identity_conflict ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800"><AlertTriangle className="mr-1 inline h-3.5 w-3.5" />{item.match_reason}</div> : null}
-                            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-stone-500">
-                              <span>核验：{formatDate(item.record.last_verified_at)}</span>
-                              <span>贡献者：{item.record.contributors.map((contributor) => `@${contributor.github_login_at_submission}`).join('、') || '未记录'}</span>
-                              <button type="button" className="inline-flex items-center gap-1 font-medium text-primary hover:underline" onClick={() => openExternalHttpUrl(item.record.source_url)}>官方来源 <ExternalLink className="h-3 w-3" /></button>
-                              <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => openFeedbackForm(item.record, notifySuccess)}>反馈错误 <ExternalLink className="h-3 w-3" /></button>
-                            </div>
-                            {(item.record.contacts.length > 1 || item.record.affiliations.length > 1) ? (
-                              <details className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
-                                <summary className="cursor-pointer list-none font-medium text-stone-700"><ChevronDown className="mr-1 inline h-3.5 w-3.5" />查看全部邮箱和任职</summary>
-                                <div className="mt-2 grid gap-2 md:grid-cols-2">
-                                  <div>{item.record.contacts.map((contact) => <div key={contact.email}>{contact.is_primary ? '主要：' : ''}{contact.email}</div>)}</div>
-                                  <div>{item.record.affiliations.map((affiliation) => <div key={affiliation.id}>{affiliation.is_primary ? '主要：' : ''}{[affiliation.university, affiliation.school, affiliation.department].filter(Boolean).join(' · ')}</div>)}</div>
-                                </div>
-                              </details>
+                            ) : item.identity_conflict ? (
+                              <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs leading-5 text-amber-800">
+                                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />{item.match_reason}
+                              </div>
                             ) : null}
                           </div>
                         </div>
@@ -936,6 +1568,12 @@ export const CommunityMentorsPage = () => {
         </div>
       ) : null}
 
+      <CommunityMentorDetailDialog
+        item={detailRecord}
+        onClose={() => setDetailRecord(null)}
+        onReport={(record) => openFeedbackForm(record, notifySuccess)}
+      />
+
       {previewPayload ? (
         <div role="dialog" aria-modal="true" aria-label="社区导师导入预览" className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm">
           <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[30px] border border-white/60 bg-stone-50 shadow-2xl">
@@ -946,8 +1584,8 @@ export const CommunityMentorsPage = () => {
               </div>
               <button type="button" disabled={importing} onClick={() => setPreviewPayload(null)} className="rounded-xl p-2 text-stone-500 hover:bg-stone-100" aria-label="关闭预览"><X className="h-5 w-5" /></button>
             </div>
-            <div className="flex-1 space-y-5 overflow-y-auto p-5 md:p-6">
-              {previewPayload.records.map((item) => {
+            <div ref={previewScrollRef} className="flex-1 space-y-5 overflow-y-auto p-5 md:p-6">
+              {paginatedPreviewRecords.map((item) => {
                 const visibleFields = item.fields.filter((field) => item.category === 'new' || field.state !== 'same');
                 const allowLocalChoice = item.local_professor_id !== null;
                 return (
@@ -965,10 +1603,17 @@ export const CommunityMentorsPage = () => {
                         <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
                       </div>
                     ) : item.identity_conflict ? (
-                      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                        <input type="checkbox" className="mt-0.5 h-4 w-4 accent-amber-600" checked={identityConfirmations[item.record.id] ?? false} onChange={(event) => setIdentityConfirmations((current) => ({ ...current, [item.record.id]: event.target.checked }))} />
+                      <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                        <SelectionToggleButton
+                          label={`确认 ${item.record.name} 是同一位导师`}
+                          selected={identityConfirmations[item.record.id] ?? false}
+                          onToggle={() => setIdentityConfirmations((current) => ({
+                            ...current,
+                            [item.record.id]: !(current[item.record.id] ?? false),
+                          }))}
+                        />
                         <span><strong>人工确认同一导师：</strong>{item.match_reason}</span>
-                      </label>
+                      </div>
                     ) : null}
                     {visibleFields.length > 0 ? (
                       <div className="mt-4 grid gap-3">
@@ -981,6 +1626,41 @@ export const CommunityMentorsPage = () => {
                 );
               })}
             </div>
+            {previewPayload.records.length > PREVIEW_RECORDS_PER_PAGE ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50 px-6 py-3">
+                <span className="text-xs text-stone-500">
+                  第 {currentPreviewPage}/{totalPreviewPages} 页 · 当前显示第{' '}
+                  {(currentPreviewPage - 1) * PREVIEW_RECORDS_PER_PAGE + 1}–
+                  {Math.min(currentPreviewPage * PREVIEW_RECORDS_PER_PAGE, previewPayload.records.length)} 位，共 {previewPayload.records.length} 位
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    aria-label="上一页导入预览"
+                    disabled={currentPreviewPage <= 1}
+                    onClick={() => {
+                      setPreviewPage((current) => Math.max(1, current - 1));
+                      previewScrollRef.current?.scrollTo?.({ top: 0 });
+                    }}
+                    className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" /> 上一页
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="下一页导入预览"
+                    disabled={currentPreviewPage >= totalPreviewPages}
+                    onClick={() => {
+                      setPreviewPage((current) => Math.min(totalPreviewPages, current + 1));
+                      previewScrollRef.current?.scrollTo?.({ top: 0 });
+                    }}
+                    className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    下一页 <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-6 py-4">
               <p className="text-xs text-stone-500">不会导入标签、个人备注、任务、发送记录或匹配结果。</p>
               <div className="flex gap-3">

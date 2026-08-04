@@ -1,5 +1,5 @@
-export const MAX_SELECTED_COMMUNITY_MENTORS = 500;
 export const MAX_LOADED_COMMUNITY_MENTORS = 2_000;
+export const MAX_SELECTED_COMMUNITY_MENTORS = MAX_LOADED_COMMUNITY_MENTORS;
 
 export const getVisibleRecordSelectionState = (
   selectedRecordIds: string[],

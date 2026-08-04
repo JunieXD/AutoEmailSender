@@ -66,9 +66,7 @@ import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import { downloadCommunitySharePackage } from "@/lib/api/communityMentorsApi";
 import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
-  COMMUNITY_CONTRIBUTION_URL,
-  buildCommunityContributionClipboard,
-  copyCommunityText,
+  buildCommunityContributionUrl,
 } from "@/lib/communityMentorLinks";
 import {
   createProfessorInformationEnrichmentJob,
@@ -1263,61 +1261,37 @@ export const ProfessorsPage = () => {
     }
   };
 
-  const handleContributeProfessor = () => {
+  const handleContributeProfessor = async () => {
     if (!editingProfessor) {
       return;
     }
     const payload = toProfessorPayload(formState);
-    const copyPromise = copyCommunityText(
-      buildCommunityContributionClipboard(payload),
+    const requiredFields = [
+      ["姓名", payload.name],
+      ["工作邮箱", payload.email],
+      ["学校", payload.university],
+      ["学院或研究院", payload.school],
+      ["高校官网证据", payload.source_url],
+    ] as const;
+    const missingLabels = requiredFields
+      .filter(([, value]) => !value?.trim())
+      .map(([label]) => label);
+    const confirmed = await confirm({
+      title: `贡献“${payload.name || "这位导师"}”到社区？`,
+      description: missingLabels.length > 0
+        ? `软件会把当前已有信息直接填入 GitHub 表单，无需复制粘贴。提交前还需补全：${missingLabels.join("、")}。`
+        : "软件会把当前信息直接填入 GitHub 表单，无需复制粘贴。打开后核对内容、勾选投稿确认并提交即可。",
+      confirmLabel: "打开已预填的投稿表",
+      cancelLabel: "暂不投稿",
+    });
+    if (!confirmed) {
+      return;
+    }
+    openExternalHttpUrl(buildCommunityContributionUrl(payload));
+    notifySuccess(
+      "已打开预填投稿表",
+      "现有导师信息已经填好，请在 GitHub 中核对、补全空项并提交。",
     );
-    openExternalHttpUrl(COMMUNITY_CONTRIBUTION_URL);
-    void copyPromise
-      .then(() => {
-        notifySuccess(
-          "导师信息已复制",
-          "GitHub 投稿表已在系统浏览器中打开，粘贴后核对并提交即可。",
-        );
-      })
-      .catch(() => {
-        notifyWarning(
-          "GitHub 投稿表已打开",
-          "剪贴板写入失败，请在投稿表中手动填写导师信息。",
-        );
-      });
-  };
-
-  const handleExportCommunitySharePackage = async () => {
-    if (!editingProfessor) {
-      return;
-    }
-    if (!editingProfessor.email || !editingProfessor.source_url) {
-      notifyWarning(
-        "暂时无法导出",
-        "社区共享包必须包含已保存的公开工作邮箱和官方来源链接，请先补全并保存导师。",
-      );
-      return;
-    }
-    setExportingCommunitySharePackage(true);
-    try {
-      const blob = await downloadCommunitySharePackage([editingProfessor.id]);
-      const saveStatus = await saveCommunitySharePackageBlob(blob);
-      if (saveStatus === "canceled") {
-        notifyWarning("已取消保存", "社区共享包未保存。");
-        return;
-      }
-      notifySuccess(
-        "社区共享包已保存",
-        "得到 XLSX 后可直接拖入 GitHub 的“批量贡献导师”表单。",
-      );
-    } catch (error) {
-      notifyError(
-        "社区共享包导出失败",
-        getActionErrorMessage(error, "请稍后重试。"),
-      );
-    } finally {
-      setExportingCommunitySharePackage(false);
-    }
   };
 
   const handleBulkExportCommunitySharePackage = async () => {
@@ -2973,32 +2947,15 @@ export const ProfessorsPage = () => {
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-3">
             {editingProfessor ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleContributeProfessor}
-                  className="ui-btn-secondary"
-                >
-                  <Share2 className="h-4 w-4" />
-                  贡献到社区
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleExportCommunitySharePackage()}
-                  disabled={exportingCommunitySharePackage}
-                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {exportingCommunitySharePackage ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileSpreadsheet className="h-4 w-4" />
-                  )}
-                  {exportingCommunitySharePackage
-                    ? "正在生成共享包…"
-                    : "导出社区共享包"}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => void handleContributeProfessor()}
+                className="ui-btn-secondary"
+              >
+                <Share2 className="h-4 w-4" />
+                贡献到社区
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-3">

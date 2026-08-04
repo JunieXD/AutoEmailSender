@@ -21,9 +21,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.migrations import get_alembic_config
 from app.models import Base, Professor, ProfessorCommunityLink
 from app.schemas.community_mentor import (
+    CommunityImportPayload,
     CommunityImportItemPayload,
     CommunityMentorComparisonRead,
     CommunityMentorRecord,
+    CommunityPreviewPayload,
     CommunityRevocationRecord,
 )
 from app.services.community_mentor_data import (
@@ -213,6 +215,51 @@ def _import_item(
     }
     payload.update(overrides)
     return CommunityImportItemPayload.model_validate(payload)
+
+
+class CommunitySelectionLimitTests(unittest.TestCase):
+    def test_preview_and_import_accept_2000_items_but_reject_2001(self) -> None:
+        record_ids = [f"mentor_limit{i:08d}" for i in range(2_001)]
+        selection = {
+            "dataset_version": DATASET_VERSION,
+            "unit_paths": [SHARD_PATH],
+        }
+
+        preview = CommunityPreviewPayload.model_validate(
+            {**selection, "record_ids": record_ids[:2_000]}
+        )
+        imported = CommunityImportPayload.model_validate(
+            {
+                **selection,
+                "items": [
+                    {
+                        "community_record_id": record_id,
+                        "comparison_token": "a" * 64,
+                    }
+                    for record_id in record_ids[:2_000]
+                ],
+            }
+        )
+
+        self.assertEqual(len(preview.record_ids), 2_000)
+        self.assertEqual(len(imported.items), 2_000)
+        with self.assertRaises(ValueError):
+            CommunityPreviewPayload.model_validate(
+                {**selection, "record_ids": record_ids}
+            )
+        with self.assertRaises(ValueError):
+            CommunityImportPayload.model_validate(
+                {
+                    **selection,
+                    "items": [
+                        {
+                            "community_record_id": record_id,
+                            "comparison_token": "a" * 64,
+                        }
+                        for record_id in record_ids
+                    ],
+                }
+            )
 
 
 class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):

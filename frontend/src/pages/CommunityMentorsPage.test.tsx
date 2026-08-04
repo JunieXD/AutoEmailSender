@@ -1,5 +1,5 @@
 import { MemoryRouter } from 'react-router-dom';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addVisibleRecordSelection,
@@ -311,10 +311,10 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
 
-    const unitCheckbox = await screen.findByLabelText(/计算机学院/);
-    fireEvent.click(unitCheckbox);
+    const unitToggle = await screen.findByLabelText(/计算机学院/);
+    fireEvent.click(unitToggle);
 
-    expect(unitCheckbox).not.toBeChecked();
+    expect(unitToggle).toHaveAttribute('aria-pressed', 'false');
     expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
       '所选导师太多',
       expect.stringContaining('一次最多加载 2000 位'),
@@ -405,6 +405,56 @@ describe('CommunityMentorsPage', () => {
     );
   });
 
+  it('uses searchable custom filters and renders no native select controls', async () => {
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(recordsPayload);
+
+    const { container } = renderPage();
+
+    const catalogSchoolFilter = await screen.findByLabelText('学校：全部学校');
+    expect(screen.getByLabelText('学院：全部学院')).toBeInTheDocument();
+    fireEvent.click(catalogSchoolFilter);
+    const catalogSearch = screen.getByLabelText('搜索学校选项');
+    fireEvent.change(catalogSearch, { target: { value: '示例' } });
+    expect(screen.getByRole('option', { name: '示例大学' })).toBeInTheDocument();
+    fireEvent.click(catalogSchoolFilter);
+
+    fireEvent.click(screen.getByLabelText(/选择 示例大学 计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('zhang@example.edu');
+
+    expect(screen.getAllByLabelText('学校：全部学校')).toHaveLength(2);
+    expect(screen.getAllByLabelText('学院：全部学院')).toHaveLength(2);
+    expect(screen.getByLabelText('系所：全部系所')).toBeInTheDocument();
+    expect(screen.getByLabelText('职称：全部职称')).toBeInTheDocument();
+    expect(screen.getByLabelText('导入状态：全部状态')).toBeInTheDocument();
+    expect(container.querySelector('select')).toBeNull();
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it('opens a read-only detail dialog and links contributors to GitHub', async () => {
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(recordsPayload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/选择 示例大学 计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('zhang@example.edu');
+
+    expect(screen.getByRole('link', { name: '@example-user' })).toHaveAttribute(
+      'href',
+      'https://github.com/example-user',
+    );
+    fireEvent.click(screen.getByRole('button', { name: /查看详情/ }));
+
+    const detail = await screen.findByRole('dialog', { name: '导师详情：张老师' });
+    expect(detail).toHaveTextContent('Example Paper');
+    expect(detail).toHaveTextContent('近期或代表论文');
+    expect(detail).not.toHaveTextContent('保存');
+    fireEvent.click(screen.getByRole('button', { name: '关闭导师详情' }));
+    expect(screen.queryByRole('dialog', { name: '导师详情：张老师' })).not.toBeInTheDocument();
+  });
+
   it('finds mentors by alternate email and secondary affiliation', async () => {
     const searchableComparison: CommunityMentorComparisonDTO = {
       ...comparison,
@@ -447,7 +497,7 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
     fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
     await screen.findByText('张老师');
-    const searchInput = screen.getByPlaceholderText('姓名、全部邮箱、任职、方向');
+    const searchInput = screen.getByPlaceholderText('姓名、邮箱、任职或方向');
 
     fireEvent.change(searchInput, { target: { value: '不存在的关键词' } });
     expect(screen.queryByText('张老师')).not.toBeInTheDocument();
@@ -457,7 +507,7 @@ describe('CommunityMentorsPage', () => {
     expect(screen.getByText('张老师')).toBeInTheDocument();
   });
 
-  it('paginates large results and keeps 500 of 501 as a partial selection', async () => {
+  it('paginates large results and can select all 501 within the 2000-record limit', async () => {
     const comparisons = Array.from({ length: 501 }, (_, index) => buildComparison(index));
     apiMocks.getCatalog.mockResolvedValue({
       ...populatedCatalog,
@@ -485,23 +535,57 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
     expect(await screen.findByText('导师0101')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
     await waitFor(() => {
-      const selectAll = screen.getByRole('checkbox', { name: '选择当前筛选结果' });
-      expect(selectAll).not.toBeChecked();
-      expect((selectAll as HTMLInputElement).indeterminate).toBe(true);
+      const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
+      expect(selectAll).toHaveAttribute('aria-pressed', 'true');
     });
-    expect(screen.getByText(/已选 500\/501/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择当前筛选结果' }));
+    expect(screen.getByText(/已选 501\/501/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
     await waitFor(() => {
-      const selectAll = screen.getByRole('checkbox', { name: '选择当前筛选结果' });
-      expect(selectAll).not.toBeChecked();
-      expect((selectAll as HTMLInputElement).indeterminate).toBe(true);
+      const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
+      expect(selectAll).toHaveAttribute('aria-pressed', 'false');
     });
-    expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
-      '已选择前 500 位导师',
-      expect.stringContaining('还有 1 位未选中'),
+    expect(notificationMocks.notifyWarning).not.toHaveBeenCalledWith(
+      expect.stringContaining('已选择前'),
+      expect.anything(),
     );
+  });
+
+  it('paginates large import previews instead of rendering every selected mentor', async () => {
+    const comparisons = Array.from({ length: 30 }, (_, index) => buildComparison(index));
+    const largePayload = { ...recordsPayload, records: comparisons };
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: comparisons.length,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: comparisons.length,
+        units: university.units.map((unit) => ({
+          ...unit,
+          record_count: comparisons.length,
+        })),
+      })),
+    });
+    apiMocks.listRecords.mockResolvedValue(largePayload);
+    apiMocks.preview.mockResolvedValue(largePayload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('导师0001');
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 30/ }));
+
+    const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
+    expect(within(preview).getByText('导师0001')).toBeInTheDocument();
+    expect(within(preview).queryByText('导师0026')).not.toBeInTheDocument();
+    expect(within(preview).getByText(/当前显示第 1–25 位/)).toBeInTheDocument();
+
+    fireEvent.click(within(preview).getByRole('button', { name: '下一页导入预览' }));
+    expect(within(preview).queryByText('导师0001')).not.toBeInTheDocument();
+    expect(within(preview).getByText('导师0026')).toBeInTheDocument();
+    expect(within(preview).getByText(/当前显示第 26–30 位/)).toBeInTheDocument();
   });
 
   it('does not offer a community empty value that would clear local data', async () => {
@@ -542,21 +626,21 @@ describe('CommunityMentorsPage', () => {
     expect(screen.getByText(/不能用空值清掉本地资料/)).toBeInTheDocument();
   });
 
-  it('selects at most 500 mentors from the current filter and reports the remainder', () => {
+  it('selects at most 2000 mentors from the current filter and reports the remainder', () => {
     const visibleRecordIds = Array.from(
-      { length: 501 },
+      { length: 2001 },
       (_, index) => `mentor_example${String(index).padStart(4, '0')}`,
     );
 
     const result = addVisibleRecordSelection([], visibleRecordIds);
 
-    expect(result.recordIds).toHaveLength(500);
-    expect(result.recordIds).toEqual(visibleRecordIds.slice(0, 500));
+    expect(result.recordIds).toHaveLength(2000);
+    expect(result.recordIds).toEqual(visibleRecordIds.slice(0, 2000));
     expect(result.omittedCount).toBe(1);
     expect(
       getVisibleRecordSelectionState(result.recordIds, visibleRecordIds),
     ).toEqual({
-      selectedVisibleCount: 500,
+      selectedVisibleCount: 2000,
       allVisibleSelected: false,
       partiallyVisibleSelected: true,
     });
@@ -594,7 +678,7 @@ describe('CommunityMentorsPage', () => {
     expect(
       await screen.findByText(/当前列表来自上一次加载/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/已选择 1\/500/)).toBeInTheDocument();
+    expect(screen.getByText(/已选择 1\/2000/)).toBeInTheDocument();
     const previewButton = screen.getByRole('button', { name: /预览并导入 1/ });
     expect(previewButton).toBeDisabled();
     fireEvent.click(previewButton);

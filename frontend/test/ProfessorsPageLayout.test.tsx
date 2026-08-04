@@ -579,6 +579,61 @@ describe("ProfessorsPage layout", () => {
     expect(document.documentElement.style.overflow).toBe("");
   });
 
+  it("confirms before opening a fully prefilled single-mentor contribution form", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardWrite },
+    });
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      saveCommunitySharePackage: vi.fn(),
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      installUpdate: vi.fn(),
+      getUpdateStatus: vi.fn(),
+      onUpdateStatus: vi.fn(() => () => undefined),
+    };
+    listProfessorsForManagement.mockResolvedValue([
+      { ...professor, source_url: "https://example.edu/li" },
+    ]);
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    const editDialog = screen.getByRole("dialog", { name: "编辑导师：李教授" });
+    expect(within(editDialog).queryByText("导出社区共享包")).not.toBeInTheDocument();
+
+    fireEvent.click(within(editDialog).getByRole("button", { name: /贡献到社区/ }));
+
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    const confirmation = await screen.findByRole("dialog", {
+      name: "贡献“李教授”到社区？",
+    });
+    expect(confirmation).toHaveTextContent("无需复制粘贴");
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "打开已预填的投稿表" }),
+    );
+
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledTimes(1));
+    const url = new URL(openExternalUrl.mock.calls[0][0] as string);
+    expect(url.searchParams.get("template")).toBe("contribute-mentor.yml");
+    expect(url.searchParams.get("title")).toBe("[导师投稿] 测试大学李教授老师");
+    expect(url.searchParams.get("name")).toBe("李教授");
+    expect(url.searchParams.get("email")).toBe("li@example.edu");
+    expect(url.searchParams.get("university")).toBe("测试大学");
+    expect(url.searchParams.get("school")).toBe("计算机学院");
+    expect(url.searchParams.get("department")).toBe("人工智能系");
+    expect(url.searchParams.get("academic_title")).toBe("Associate Professor");
+    expect(url.searchParams.get("recent_papers")).toBe("Paper A");
+    expect(url.searchParams.get("source_url")).toBe("https://example.edu/li");
+    expect(clipboardWrite).not.toHaveBeenCalled();
+  });
+
   it("starts single information enrichment from the edit dialog and disables the button", async () => {
     renderPage();
 

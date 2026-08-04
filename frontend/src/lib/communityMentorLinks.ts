@@ -27,20 +27,33 @@ type ShareableMentor = Pick<
 
 const valueOrEmpty = (value: string | null | undefined) => value?.trim() ?? '';
 
-export const buildCommunityContributionClipboard = (mentor: ShareableMentor) =>
-  [
-    '请将以下内容粘贴到 GitHub 投稿表对应字段：',
-    `导师姓名：${mentor.name}`,
-    `公开工作邮箱：${valueOrEmpty(mentor.email)}`,
-    `学校正式名称：${valueOrEmpty(mentor.university)}`,
-    `学院或研究院正式名称：${valueOrEmpty(mentor.school)}`,
-    `系所或中心：${valueOrEmpty(mentor.department)}`,
-    `职称：${valueOrEmpty(mentor.title) || '未知或不填写'}`,
-    `研究方向：${valueOrEmpty(mentor.research_direction)}`,
-    `近期或代表论文：\n${mentor.recent_papers.join('\n')}`,
-    `官方个人主页：${valueOrEmpty(mentor.profile_url)}`,
-    `官方证据页面：${valueOrEmpty(mentor.source_url)}`,
-  ].join('\n');
+export const buildCommunityContributionUrl = (mentor: ShareableMentor) => {
+  const url = new URL(COMMUNITY_CONTRIBUTION_URL);
+  const mentorName = mentor.name.trim();
+  const titledMentorName = mentorName.endsWith('老师') ? mentorName : `${mentorName}老师`;
+  url.searchParams.set(
+    'title',
+    `[导师投稿] ${valueOrEmpty(mentor.university)}${titledMentorName}`,
+  );
+  const fields: Record<string, string> = {
+    name: mentorName,
+    email: valueOrEmpty(mentor.email),
+    university: valueOrEmpty(mentor.university),
+    school: valueOrEmpty(mentor.school),
+    department: valueOrEmpty(mentor.department),
+    academic_title: valueOrEmpty(mentor.title),
+    research_direction: valueOrEmpty(mentor.research_direction),
+    recent_papers: mentor.recent_papers.join('\n'),
+    profile_url: valueOrEmpty(mentor.profile_url),
+    source_url: valueOrEmpty(mentor.source_url),
+  };
+  Object.entries(fields).forEach(([field, value]) => {
+    if (value) {
+      url.searchParams.set(field, value);
+    }
+  });
+  return url.toString();
+};
 
 const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
   [
@@ -63,23 +76,4 @@ export const buildCommunityReportUrl = (record: CommunityMentorRecordDTO) => {
   url.searchParams.set('record_id', record.id);
   url.searchParams.set('current_value', buildCommunityReportCurrentValue(record));
   return url.toString();
-};
-
-export const copyCommunityText = async (text: string): Promise<void> => {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textArea = document.createElement('textarea');
-  textArea.value = text;
-  textArea.setAttribute('readonly', '');
-  textArea.style.position = 'fixed';
-  textArea.style.opacity = '0';
-  document.body.appendChild(textArea);
-  textArea.select();
-  const copied = document.execCommand('copy');
-  textArea.remove();
-  if (!copied) {
-    throw new Error('无法写入剪贴板');
-  }
 };
