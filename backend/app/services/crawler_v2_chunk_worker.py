@@ -93,6 +93,7 @@ def build_v2_chunk_prompt(*, university: str, school: str, source_url: str, chun
         "缺少 email 且缺少 profile_url 的候选不可提交；但有姓名 + profile_url 的候选即使缺少 email 也可提交。\n"
         "no_candidates 只允许在当前 chunk 内没有任何姓名+邮箱、姓名+profile_url、教师卡片或教师表格行时使用。\n"
         "当前 chunk 中 Markdown 链接形如 [导师名](URL) 且与候选姓名匹配时，必须把 URL 写入该候选 profile_url。\n"
+        "同一条人员卡片或表格行内的 [无文字链接](URL) 可以作为该人员的 profile_url；不得跨卡片或跨表格行配对，也不得把导航或装饰链接当作个人页。\n"
         "导师个人主页链接只属于候选 profile_url；当前 Worker 不发现、不选择、也不访问任何后续页面。\n"
         f"{CANDIDATE_WIRE_PROMPT_CONTRACT}\n"
         "输出示例（正常保存）：\n"

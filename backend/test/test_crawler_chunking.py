@@ -56,6 +56,62 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertNotIn("AES_BLOCK_BOUNDARY", structured)
         self.assertLessEqual(estimate_tokens(structured), estimate_tokens(flat) + 2)
 
+    def test_link_enriched_text_keeps_description_items_as_record_boundaries(self) -> None:
+        html = """
+        <dl class="faculty-list">
+          <dd><a href="/zhang.htm">张三 教授</a><p>研究方向：数据库</p></dd>
+          <dd><a href="/li.htm">李四 教授</a><p>研究方向：人工智能</p></dd>
+          <dd><a href="/wang.htm">王五 教授</a><p>研究方向：软件工程</p></dd>
+        </dl>
+        """
+
+        structured = html_to_link_enriched_text("https://cs.example.edu/list", html, "")
+
+        self.assertIn("研究方向：数据库\n\n[李四 教授]", structured)
+        self.assertIn("研究方向：人工智能\n\n[王五 教授]", structured)
+        self.assertNotIn("AES_BLOCK_BOUNDARY", structured)
+
+    def test_link_enriched_text_keeps_unlabeled_url_inside_linkless_record(self) -> None:
+        cards = "".join(
+            "<div class='grid-item'><div class='person-card'>"
+            f"<p>教师{index} 教授</p><p>研究方向：人工智能</p>"
+            f"<a class='card-link' href='/teacher/{index}.htm'></a>"
+            "</div></div>"
+            for index in range(3)
+        )
+        html = (
+            "<header><a href='/logo'></a></header>"
+            "<nav><ul><li><span>首页</span><a href='/home'></a></li></ul></nav>"
+            f"<main><div class='row'>{cards}</div></main>"
+        )
+
+        structured = html_to_link_enriched_text("https://cs.example.edu/list", html, "")
+
+        for index in range(3):
+            self.assertIn(
+                f"[无文字链接](https://cs.example.edu/teacher/{index}.htm)",
+                structured,
+            )
+        self.assertNotIn("https://cs.example.edu/logo", structured)
+        self.assertNotIn("https://cs.example.edu/home", structured)
+
+    def test_link_enriched_text_does_not_add_empty_links_when_record_has_labeled_link(self) -> None:
+        html = """
+        <dl>
+          <dd>
+            <a href="/zhang.htm"></a>
+            <a href="/zhang.htm">张三 教授</a>
+            <a href="/unrelated.htm"></a>
+          </dd>
+        </dl>
+        """
+
+        structured = html_to_link_enriched_text("https://cs.example.edu/list", html, "")
+
+        self.assertIn("[张三 教授](https://cs.example.edu/zhang.htm)", structured)
+        self.assertNotIn("无文字链接", structured)
+        self.assertNotIn("unrelated.htm", structured)
+
     def test_recursive_dense_split_prefers_dom_blocks_without_dropping_overlap_fallback(self) -> None:
         rows = "".join(
             "<tr><td><a href='/teacher/{index}.htm'>教师{index}</a></td>"
@@ -95,6 +151,54 @@ class CrawlerChunkingTests(unittest.TestCase):
                 f"row {index} was split across child chunks",
             )
         self.assertTrue(any(child.overlap_prefix for child in children[1:]))
+
+    def test_recursive_dense_split_preserves_description_item_records(self) -> None:
+        items = "".join(
+            "<dd>"
+            f"<a href='/teacher/{index}.htm'>教师{index} 教授</a>"
+            f"<p>研究方向：人工智能与软件工程，记录标记{index}</p>"
+            f"<a href='/teacher/{index}.htm'>个人主页</a>"
+            "</dd>"
+            for index in range(16)
+        )
+        parent = build_page_chunks(
+            source_url="https://cs.example.edu/faculty/list.htm",
+            html=f"<dl>{items}</dl>",
+            text="",
+            config=ChunkingConfig(
+                target_tokens=5000,
+                soft_max_tokens=5500,
+                hard_max_tokens=6000,
+                single_chunk_max_tokens=6000,
+                min_balanced_target_tokens=4000,
+                max_balanced_target_tokens=5000,
+            ),
+        )[0]
+
+        children = split_chunk_content(
+            source_url=parent.source_url,
+            content=parent.content,
+            parent_chunk_id=parent.chunk_id,
+            page_fingerprint=parent.page_fingerprint,
+            split_depth=1,
+            split_reason="candidate_count_exceeded",
+            config=ChunkingConfig(retry_split_target_tokens=100),
+        )
+
+        profile_pattern = re.compile(r"https://cs\.example\.edu/teacher/(\d+)\.htm")
+        self.assertLessEqual(
+            max(len(set(profile_pattern.findall(child.content))) for child in children),
+            10,
+        )
+        for index in range(16):
+            self.assertTrue(
+                any(
+                    f"[教师{index} 教授](https://cs.example.edu/teacher/{index}.htm)" in child.content
+                    and f"记录标记{index}" in child.content
+                    for child in children
+                ),
+                f"description item {index} was split across child chunks",
+            )
 
     def test_build_page_chunks_exposes_iframe_source_as_a_link(self) -> None:
         chunks = build_page_chunks(
@@ -248,6 +352,42 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertTrue(all(draft.split_depth == 1 for draft in drafts))
         self.assertGreaterEqual(min(draft.token_estimate for draft in drafts), 150)
         self.assertLessEqual(max(draft.token_estimate for draft in drafts), 500)
+
+    def test_dense_retry_splits_dominant_multiline_record_group(self) -> None:
+        navigation = "\n\n".join(f"导航栏目{index}" for index in range(6))
+        records = "\n".join(
+            "\n".join(
+                (
+                    f"[教师{index}](https://cs.example.edu/teacher/{index}.htm)",
+                    "职称：教授",
+                    "研究方向：人工智能、计算机视觉、软件工程与数据治理",
+                    f"[个人主页](https://cs.example.edu/teacher/{index}.htm)",
+                )
+            )
+            for index in range(16)
+        )
+        content = f"{navigation}\n\n{records}"
+
+        drafts = split_chunk_content(
+            source_url="https://cs.example.edu/faculty",
+            content=content,
+            parent_chunk_id="c1",
+            page_fingerprint="p",
+            split_depth=1,
+            split_reason="candidate_count_exceeded",
+            config=ChunkingConfig(),
+        )
+
+        profile_pattern = re.compile(r"https://cs\.example\.edu/teacher/(\d+)\.htm")
+        per_child_counts = [len(set(profile_pattern.findall(draft.content))) for draft in drafts]
+        all_profiles = {
+            profile
+            for draft in drafts
+            for profile in profile_pattern.findall(draft.content)
+        }
+        self.assertEqual(all_profiles, {str(index) for index in range(16)})
+        self.assertLessEqual(max(per_child_counts), 10)
+        self.assertLess(max(draft.token_estimate for draft in drafts), estimate_tokens(content))
 
     def test_split_chunk_content_caps_retry_overlap_at_fifteen_tokens(self) -> None:
         from app.services.crawler_chunking import split_chunk_content

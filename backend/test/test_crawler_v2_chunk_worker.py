@@ -63,6 +63,8 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("职称、岗位或介绍", prompt)
         self.assertIn("这些内容不能写进 name", prompt)
         self.assertIn("禁止浮点数、字符串和布尔值", prompt)
+        self.assertIn("[无文字链接](URL)", prompt)
+        self.assertIn("不得跨卡片或跨表格行配对", prompt)
         self.assertIn('"candidates": []', prompt)
         self.assertNotIn('"discovered_urls"', prompt)
     def test_chunk_prompt_treats_markdown_profile_links_as_candidates(self) -> None:

@@ -5,12 +5,13 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from math import ceil
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 
 _STRUCTURE_BOUNDARY_SENTINEL = "\u241eAES_BLOCK_BOUNDARY\u241e"
+_UNLABELED_RECORD_LINK_TEXT = "无文字链接"
 
 
 @dataclass(frozen=True)
@@ -194,8 +195,10 @@ def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) 
         if _is_eligible_structure_block(tag, max_tokens=max_tokens, max_links=max_links):
             candidates.append((2, tag))
 
-    for tag in soup.find_all("li"):
-        if tag.find("li") is None and _is_eligible_structure_block(
+    for tag in soup.find_all(["li", "dd"]):
+        if tag.name == "li" and tag.find("li") is not None:
+            continue
+        if _is_eligible_structure_block(
             tag,
             max_tokens=max_tokens,
             max_links=max_links,
@@ -209,10 +212,62 @@ def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) 
         selected.append(tag)
 
     for tag in selected:
+        if _can_expose_unlabeled_record_links(tag):
+            _label_unlabeled_record_links(tag)
         boundary = f"\n{_STRUCTURE_BOUNDARY_SENTINEL}\n"
         tag.insert_before(NavigableString(boundary))
         tag.insert_after(NavigableString(boundary))
     return str(soup)
+
+
+def _can_expose_unlabeled_record_links(tag: Tag) -> bool:
+    return tag.name in {"tr", "dd", "article"} or _is_repeated_card(tag)
+
+
+def _label_unlabeled_record_links(tag: Tag) -> None:
+    navigable_anchors = [
+        anchor
+        for anchor in tag.find_all("a", href=True)
+        if _is_navigable_record_href(anchor.get("href"))
+    ]
+    if not navigable_anchors:
+        return
+    if any(_normalize_space(anchor.get_text(" ", strip=True)) for anchor in navigable_anchors):
+        return
+
+    seen_hrefs: set[str] = set()
+    for anchor in navigable_anchors:
+        raw_href = str(anchor.get("href") or "").strip()
+        if raw_href in seen_hrefs:
+            continue
+        seen_hrefs.add(raw_href)
+        anchor.append(NavigableString(_unlabeled_record_link_text(anchor)))
+
+
+def _is_navigable_record_href(value: object) -> bool:
+    raw_href = str(value or "").strip()
+    if not raw_href or raw_href.startswith("#"):
+        return False
+    scheme = urlsplit(raw_href).scheme.lower()
+    return not scheme or scheme in {"http", "https"}
+
+
+def _unlabeled_record_link_text(anchor: Tag) -> str:
+    image = anchor.find("img")
+    values = [anchor.get("aria-label"), anchor.get("title")]
+    if image is not None:
+        values.extend(
+            [
+                image.get("alt"),
+                image.get("aria-label"),
+                image.get("title"),
+            ]
+        )
+    for value in values:
+        label = _normalize_space(str(value or ""))
+        if label:
+            return label
+    return _UNLABELED_RECORD_LINK_TEXT
 
 
 def _is_eligible_structure_block(tag: Tag, *, max_tokens: int, max_links: int) -> bool:
@@ -440,6 +495,11 @@ def _split_binary_lines(lines: list[str], content: str, config: ChunkingConfig) 
 def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:
     content_tokens = estimate_tokens(content)
     target_tokens = max(config.min_split_tokens, config.retry_split_target_tokens)
+    lines = _expand_dominant_dense_split_units(
+        lines,
+        content_tokens=content_tokens,
+        target_tokens=target_tokens,
+    )
     part_count = min(
         max(2, config.retry_split_max_parts),
         max(2, ceil(content_tokens / target_tokens)),
@@ -462,6 +522,27 @@ def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: C
         if child_lines:
             groups.append(child_lines)
     return groups
+
+
+def _expand_dominant_dense_split_units(
+    units: list[str],
+    *,
+    content_tokens: int,
+    target_tokens: int,
+) -> list[str]:
+    dominant_threshold = max(target_tokens, ceil(content_tokens / 2))
+    expanded: list[str] = []
+    for unit in units:
+        if estimate_tokens(unit) < dominant_threshold:
+            expanded.append(unit)
+            continue
+        inner_lines = [_normalize_lines(line) for line in unit.splitlines()]
+        inner_lines = [line for line in inner_lines if line]
+        if len(inner_lines) <= 1:
+            expanded.append(unit)
+            continue
+        expanded.extend(inner_lines)
+    return expanded
 
 def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
     content_tokens = estimate_tokens(content)
