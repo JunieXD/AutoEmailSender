@@ -1795,6 +1795,92 @@ describe("TasksPage batch draft review", () => {
     ).toHaveAttribute("href", "https://example.edu/mentor");
   });
 
+  it("keeps the current draft visible until the next professor is ready", async () => {
+    const task = buildBatchTask({
+      name: "无感切换批量任务",
+      review_required_count: 2,
+      approved_count: 0,
+    });
+    const firstItem = buildBatchItem({
+      id: 11,
+      professor_id: 21,
+      professor_name: "第一位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const secondItem = buildBatchItem({
+      id: 12,
+      professor_id: 22,
+      professor_name: "第二位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const firstThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        id: 21,
+        name: "第一位导师",
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: 11,
+        batch_task_id: task.id,
+        generated_subject: "第一封主题",
+        generated_content_text: "第一封正文",
+        generated_content_html: "<p>第一封正文</p>",
+      },
+    });
+    const secondThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        id: 22,
+        name: "第二位导师",
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: 12,
+        batch_task_id: task.id,
+        generated_subject: "第二封主题",
+        generated_content_text: "第二封正文",
+        generated_content_html: "<p>第二封正文</p>",
+      },
+    });
+    let finishSecondLoad: (thread: WorkspaceThreadDTO) => void;
+    const secondLoad = new Promise<WorkspaceThreadDTO>((resolve) => {
+      finishSecondLoad = resolve;
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([firstItem, secondItem]);
+    apiMocks.getBatchTaskItemThread
+      .mockResolvedValueOnce(firstThread)
+      .mockReturnValueOnce(secondLoad);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
+    expect(await screen.findByLabelText("邮件主题")).toHaveValue("第一封主题");
+
+    fireEvent.click(screen.getByRole("button", { name: /第二位导师/ }));
+    await waitFor(() => {
+      expect(apiMocks.getBatchTaskItemThread).toHaveBeenLastCalledWith(task.id, 12);
+    });
+    expect(screen.queryByText("正在加载草稿...")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("邮件主题")).toHaveValue("第一封主题");
+    expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>第一封正文</p>");
+    expect(screen.getByText(`${task.name} · 第一位导师`)).toBeInTheDocument();
+
+    finishSecondLoad!(secondThread);
+    expect(await screen.findByDisplayValue("第二封主题")).toBeInTheDocument();
+    expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>第二封正文</p>");
+    expect(screen.getByText(`${task.name} · 第二位导师`)).toBeInTheDocument();
+  });
+
   it("regenerates and deletes batch review drafts from the review panel", async () => {
     const task = buildBatchTask({
       name: "AI 改写批量任务",
