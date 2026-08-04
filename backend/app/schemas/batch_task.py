@@ -81,6 +81,7 @@ class BatchTaskItemRead(ApiSchema):
     is_replied: bool
     updated_at: datetime
     next_action: str | None
+    selected_attachment_size_bytes: int = 0
 
 
 class BatchTaskActionResponse(ApiSchema):

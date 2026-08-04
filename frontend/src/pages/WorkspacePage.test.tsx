@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -816,6 +816,48 @@ describe("WorkspacePage draft saving", () => {
       expect.any(String),
     );
     expect(screen.getByRole("button", { name: "立即发送" })).toBeInTheDocument();
+  });
+
+  it("shows attachment sizes and requires an explicit oversized send confirmation", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        material_options: [
+          {
+            id: 7,
+            display_name: "large-resume.pdf",
+            original_filename: "large-resume.pdf",
+            mime_type: "application/pdf",
+            size_bytes: 1024 * 1024 + 1,
+            material_type: "resume",
+            is_primary: false,
+            created_at: "2026-06-01T00:00:00",
+          },
+        ],
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          selected_material_ids: [7],
+        },
+      }),
+    );
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: /写信|编辑草稿/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^附件/ }));
+    expect(screen.getAllByText(/large-resume\.pdf/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/已选 1 个附件，共 1\.00 MB/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "立即发送" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "附件超过 1 MB，仍要发送吗？",
+    });
+    expect(
+      within(dialog).getByText(
+        /建议不超过 1 MB，以减少被邮箱提供商限流的概率。/,
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/云盘/)).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "返回调整" }));
+    expect(apiMocks.approveAndSend).not.toHaveBeenCalled();
   });
 
   it("allows saving a dirty draft even when the body is not sendable", async () => {

@@ -17,8 +17,13 @@ import {
   TimerReset,
 } from 'lucide-react';
 import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor';
+import { AttachmentSizeSummary } from '@/components/molecules/AttachmentSizeSummary';
 import { NativeSelectField } from '@/components/atoms/NativeSelectField';
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
+import {
+  formatFileSize,
+  getSelectedAttachmentTotalBytes,
+} from '@/features/attachments/attachmentSize';
 import { formatApiDateTime } from '@/lib/dateTime';
 type RichEmailValue = { html: string; text: string };
 import {
@@ -271,6 +276,14 @@ export const WorkspaceComposerDock = ({
   const selectedAttachmentNames = selectedMaterialIds
     .map((materialId) => attachmentNameMap.get(materialId))
     .filter((item): item is string => Boolean(item));
+  const selectedAttachmentTotalBytes = useMemo(
+    () =>
+      getSelectedAttachmentTotalBytes(
+        thread.material_options,
+        selectedMaterialIds,
+      ),
+    [selectedMaterialIds, thread.material_options],
+  );
 
   const hasProfessorResearchDirection = Boolean(thread.professor.research_direction?.trim());
   const scheduledSummary = formatScheduleSummary(scheduledAt);
@@ -501,49 +514,56 @@ export const WorkspaceComposerDock = ({
                       thread.material_options.length === 0 ? (
                         <div className="text-sm text-stone-500">暂无可发送材料。</div>
                       ) : (
-                        <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
-                          {thread.material_options.map((material) => {
-                            const checked = selectedMaterialIds.includes(material.id);
-                            return (
-                              <label
-                                key={material.id}
-                                className={clsx(
-                                  'flex items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-sm transition',
-                                  checked
-                                    ? 'border-primary/25 bg-primary/8 text-primary'
-                                    : 'border-stone-200 bg-white text-stone-700 hover:border-primary/25 hover:bg-primary/5',
-                                )}
-                              >
-                                <span className="flex min-w-0 items-center gap-3">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    disabled={editorDisabled}
-                                    onChange={() => {
-                                      if (editorDisabled) {
-                                        return;
-                                      }
-                                      onSelectedMaterialIdsChange(
-                                        checked
-                                          ? selectedMaterialIds.filter((item) => item !== material.id)
-                                          : [...selectedMaterialIds, material.id],
-                                      );
-                                    }}
-                                  />
-                                  <span className="min-w-0">
-                                    <span className="block truncate font-medium">
-                                      {material.display_name}
-                                    </span>
-                                    <span className="mt-1 block text-xs text-stone-500">
-                                      {MATERIAL_TYPE_LABELS[material.material_type]}
+                        <>
+                          <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                            {thread.material_options.map((material) => {
+                              const checked = selectedMaterialIds.includes(material.id);
+                              return (
+                                <label
+                                  key={material.id}
+                                  className={clsx(
+                                    'flex items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-sm transition',
+                                    checked
+                                      ? 'border-primary/25 bg-primary/8 text-primary'
+                                      : 'border-stone-200 bg-white text-stone-700 hover:border-primary/25 hover:bg-primary/5',
+                                  )}
+                                >
+                                  <span className="flex min-w-0 items-center gap-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={editorDisabled}
+                                      onChange={() => {
+                                        if (editorDisabled) {
+                                          return;
+                                        }
+                                        onSelectedMaterialIdsChange(
+                                          checked
+                                            ? selectedMaterialIds.filter((item) => item !== material.id)
+                                            : [...selectedMaterialIds, material.id],
+                                        );
+                                      }}
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="block truncate font-medium">
+                                        {material.display_name}
+                                      </span>
+                                      <span className="mt-1 block text-xs text-stone-500">
+                                        {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
+                                      </span>
                                     </span>
                                   </span>
-                                </span>
-                                {checked ? <Check className="h-4 w-4 shrink-0" /> : null}
-                              </label>
-                            );
-                          })}
-                        </div>
+                                  {checked ? <Check className="h-4 w-4 shrink-0" /> : null}
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <AttachmentSizeSummary
+                            selectedCount={selectedMaterialIds.length}
+                            totalSizeBytes={selectedAttachmentTotalBytes}
+                            className="mt-3"
+                          />
+                        </>
                       )
                     ) : null}
 
@@ -552,7 +572,7 @@ export const WorkspaceComposerDock = ({
                         <SummaryLine label="草稿">{draftSourceLabel}</SummaryLine>
                         <SummaryLine label="附件">
                           {selectedAttachmentNames.length > 0
-                            ? `${selectedAttachmentNames.length} 份`
+                            ? `${selectedAttachmentNames.length} 份 · ${formatFileSize(selectedAttachmentTotalBytes)}`
                             : '未选择'}
                         </SummaryLine>
                         <SummaryLine label="定时">{scheduledSummary}</SummaryLine>
@@ -606,6 +626,7 @@ export const WorkspaceComposerDock = ({
                     <div className="truncate">
                       附件：{selectedAttachmentNames.length > 0 ? selectedAttachmentNames.join('、') : '未选择'}
                     </div>
+                    <div>附件总大小：{formatFileSize(selectedAttachmentTotalBytes)}</div>
                     <div>定时：{scheduledSummary}</div>
                   </div>
                 </div>
@@ -698,7 +719,9 @@ export const WorkspaceComposerDock = ({
                 </span>
                 <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs text-stone-600">
                   <Paperclip className="mr-1 inline h-3.5 w-3.5" />
-                  {selectedAttachmentNames.length > 0 ? `${selectedAttachmentNames.length} 份附件` : '未选附件'}
+                  {selectedAttachmentNames.length > 0
+                    ? `${selectedAttachmentNames.length} 份 · ${formatFileSize(selectedAttachmentTotalBytes)}`
+                    : '未选附件'}
                 </span>
                 {scheduledAt ? (
                   <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs text-stone-600">

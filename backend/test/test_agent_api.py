@@ -339,6 +339,56 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(expired.status_code, 409, msg=expired.text)
         self.assertEqual(expired.json()["error"]["code"], "PLAN_EXPIRED")
 
+    def test_send_plan_warns_only_above_the_attachment_recommendation(self) -> None:
+        draft = self._create_template_draft()
+        task_id = draft["task_id"]
+        material_id = draft["attachment_material_ids"][0]
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE identity_materials SET size_bytes = ? WHERE id = ?",
+                (1024 * 1024, material_id),
+            )
+            connection.commit()
+        at_limit = self.client.post(
+            f"/api/agent/v1/drafts/{task_id}/prepare-send",
+            headers=self._agent_headers(),
+            json={"delivery": "immediate"},
+        )
+        self.assertEqual(at_limit.status_code, 201, msg=at_limit.text)
+        self.assertEqual(at_limit.json()["warnings"], [])
+        self.assertEqual(
+            at_limit.json()["summary"]["attachment_total_size_bytes"],
+            1024 * 1024,
+        )
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE identity_materials SET size_bytes = ? WHERE id = ?",
+                (1024 * 1024 + 1, material_id),
+            )
+            connection.commit()
+        over_limit = self.client.post(
+            f"/api/agent/v1/drafts/{task_id}/prepare-send",
+            headers=self._agent_headers(),
+            json={"delivery": "immediate"},
+        )
+        self.assertEqual(over_limit.status_code, 201, msg=over_limit.text)
+        plan = over_limit.json()
+        self.assertEqual(
+            plan["summary"]["attachments"][0]["size_bytes"],
+            1024 * 1024 + 1,
+        )
+        self.assertEqual(
+            plan["summary"]["attachment_total_size_bytes"],
+            1024 * 1024 + 1,
+        )
+        self.assertEqual(len(plan["warnings"]), 1)
+        self.assertIn("建议不超过 1 MB", plan["warnings"][0])
+        self.assertIn("减少被邮箱提供商限流的概率", plan["warnings"][0])
+        self.assertIn(plan["warnings"][0], plan["confirmation_message"])
+        self.assertNotIn("云盘", plan["confirmation_message"])
+
     def test_confirmed_send_plan_executes_once_and_replays_original_result(self) -> None:
         draft = self._create_template_draft()
         task_id = draft["task_id"]

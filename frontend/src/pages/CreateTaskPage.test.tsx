@@ -388,6 +388,43 @@ describe("CreateTaskPage", () => {
     );
   });
 
+  it("shows attachment sizes and warns before creating an oversized batch task", async () => {
+    const previousSize = selectedIdentity.materials[0].size_bytes;
+    selectedIdentity.materials[0].size_bytes = 1024 * 1024 + 1;
+
+    try {
+      render(
+        <MemoryRouter>
+          <CreateTaskPage />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+      expect(screen.getByText(/Portfolio\.pdf/)).toBeInTheDocument();
+      expect(screen.getByText(/1\.00 MB/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("checkbox"));
+      expect(screen.getByText(/已选 1 个附件，共 1\.00 MB/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+      await waitFor(() => {
+        expect(confirmMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "附件超过 1 MB，仍要创建批量任务吗？",
+            description: expect.stringContaining(
+              "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",
+            ),
+            confirmLabel: "仍然创建",
+            cancelLabel: "返回调整",
+          }),
+        );
+      });
+      expect(confirmMock.mock.calls[0][0].description).not.toContain("云盘");
+      expect(createBatchTaskMock).toHaveBeenCalledTimes(1);
+    } finally {
+      selectedIdentity.materials[0].size_bytes = previousSize;
+    }
+  });
+
   it("prefills resend context without carrying old schedule or llm profile", async () => {
     window.sessionStorage.setItem("selected_professor_ids", JSON.stringify([selectedProfessor.id]));
     window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({

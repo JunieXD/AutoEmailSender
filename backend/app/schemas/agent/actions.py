@@ -83,6 +83,10 @@ class AgentPlanIdentityRead(AgentPlanNamedObjectRead):
     email_address: str
 
 
+class AgentPlanAttachmentRead(AgentPlanNamedObjectRead):
+    size_bytes: int = 0
+
+
 class AgentPlanSummaryRead(ApiSchema):
     recipient_count: int = 1
     recipient: AgentPlanRecipientRead
@@ -90,7 +94,8 @@ class AgentPlanSummaryRead(ApiSchema):
     generation_mode: AgentDraftGenerationMode
     template: AgentPlanNamedObjectRead | None = None
     reference_material: AgentPlanNamedObjectRead | None = None
-    attachments: list[AgentPlanNamedObjectRead] = Field(default_factory=list)
+    attachments: list[AgentPlanAttachmentRead] = Field(default_factory=list)
+    attachment_total_size_bytes: int = 0
     delivery: AgentPlanDelivery
     scheduled_at: datetime | None = None
     subject: str

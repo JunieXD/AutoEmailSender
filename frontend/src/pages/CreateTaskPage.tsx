@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { NativeSelectField } from '@/components/atoms/NativeSelectField';
+import { AttachmentSizeSummary } from '@/components/molecules/AttachmentSizeSummary';
 import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor';
 import { Pagination } from '@/components/molecules/Pagination';
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
@@ -22,6 +23,12 @@ import { usePaginationState } from '@/lib/usePaginationState';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import { buildBatchCreateConfirmDescription } from '@/features/create-task/client/batchCreateConfirmDescription';
+import {
+  buildLargeAttachmentWarning,
+  formatFileSize,
+  getSelectedAttachmentTotalBytes,
+  isAttachmentTotalOverRecommendedLimit,
+} from '@/features/attachments/attachmentSize';
 import {
   hasFutureScheduleWindow,
   normalizeScheduledDates,
@@ -351,6 +358,14 @@ export const CreateTaskPage = () => {
     () => (selectedIdentity ? selectedIdentity.materials.filter(isPrimaryMaterialCandidate) : []),
     [selectedIdentity],
   );
+  const selectedAttachmentTotalBytes = useMemo(
+    () =>
+      getSelectedAttachmentTotalBytes(
+        selectedIdentity?.materials ?? [],
+        selectedMaterialIds,
+      ),
+    [selectedIdentity, selectedMaterialIds],
+  );
   const targetMentorsTotalPages = getTotalPages(
     professors.length,
     targetMentorsPageSize,
@@ -440,17 +455,30 @@ export const CreateTaskPage = () => {
     const confirmTemplateName =
       selectedOutreachTemplate?.name ??
       (selectedOutreachTemplateId !== null ? '当前已选模板' : null);
-    const confirmDescription = buildBatchCreateConfirmDescription(
+    const baseConfirmDescription = buildBatchCreateConfirmDescription(
       taskMode,
       scheduleType,
       confirmTemplateName,
     );
+    const attachmentWarning = buildLargeAttachmentWarning(
+      selectedAttachmentTotalBytes,
+      { repeatedPerMessage: true },
+    );
+    const attachmentOverRecommendedLimit =
+      isAttachmentTotalOverRecommendedLimit(selectedAttachmentTotalBytes);
+    const confirmDescription = [baseConfirmDescription, attachmentWarning]
+      .filter(Boolean)
+      .join('\n');
 
     const confirmed = await confirm({
-      title: scheduleType === 'scheduled' ? '确认创建定时批量发送任务？' : '确认创建真实发送任务？',
+      title: attachmentOverRecommendedLimit
+        ? '附件超过 1 MB，仍要创建批量任务吗？'
+        : scheduleType === 'scheduled'
+          ? '确认创建定时批量发送任务？'
+          : '确认创建真实发送任务？',
       description: confirmDescription,
-      confirmLabel: '继续创建',
-      cancelLabel: '再检查一下',
+      confirmLabel: attachmentOverRecommendedLimit ? '仍然创建' : '继续创建',
+      cancelLabel: attachmentOverRecommendedLimit ? '返回调整' : '再检查一下',
       tone: 'danger',
     });
     if (!confirmed) {
@@ -809,7 +837,7 @@ export const CreateTaskPage = () => {
                             <span>{material.display_name}</span>
                           </span>
                           <span className="text-xs text-stone-500">
-                            {MATERIAL_TYPE_LABELS[material.material_type]}
+                            {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
                           </span>
                         </label>
                       ))}
@@ -847,13 +875,18 @@ export const CreateTaskPage = () => {
                             <span>{material.display_name}</span>
                           </span>
                           <span className="text-xs text-stone-500">
-                            {MATERIAL_TYPE_LABELS[material.material_type]}
+                            {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
                           </span>
                         </label>
                       );
                     })}
                   </div>
                 )}
+                <AttachmentSizeSummary
+                  selectedCount={selectedMaterialIds.length}
+                  totalSizeBytes={selectedAttachmentTotalBytes}
+                  className="mt-3"
+                />
               </div>
 
               <div className="flex flex-wrap gap-3">

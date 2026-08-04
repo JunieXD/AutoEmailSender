@@ -506,8 +506,10 @@ async def list_batch_task_items(
     task_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> list[BatchTaskItemRead]:
-    exists = await session.scalar(select(BatchTask.id).where(BatchTask.id == task_id))
-    if exists is None:
+    identity_id = await session.scalar(
+        select(BatchTask.identity_id).where(BatchTask.id == task_id),
+    )
+    if identity_id is None:
         raise HTTPException(status_code=404, detail="未找到批量任务")
 
     statement = (
@@ -518,6 +520,7 @@ async def list_batch_task_items(
                 EmailTask.batch_task_id,
                 EmailTask.professor_id,
                 EmailTask.primary_material_id,
+                EmailTask.selected_material_ids,
                 EmailTask.status,
                 EmailTask.cancellation_reason,
                 EmailTask.batch_send_canceled_at,
@@ -561,7 +564,29 @@ async def list_batch_task_items(
         .order_by(EmailTask.created_at.asc(), EmailTask.id.asc())
     )
     email_tasks = list((await session.execute(statement)).scalars().unique())
-    return [_serialize_batch_task_item(email_task) for email_task in email_tasks]
+    selected_material_ids = {
+        material_id
+        for email_task in email_tasks
+        for material_id in (email_task.selected_material_ids or [])
+    }
+    material_sizes: dict[int, int] = {}
+    if selected_material_ids:
+        rows = (
+            await session.execute(
+                select(IdentityMaterial.id, IdentityMaterial.size_bytes).where(
+                    IdentityMaterial.identity_id == identity_id,
+                    IdentityMaterial.id.in_(selected_material_ids),
+                ),
+            )
+        ).all()
+        material_sizes = {
+            material_id: max(0, size_bytes)
+            for material_id, size_bytes in rows
+        }
+    return [
+        _serialize_batch_task_item(email_task, material_sizes=material_sizes)
+        for email_task in email_tasks
+    ]
 
 
 @router.get("/{task_id}/items/{item_id}/thread", response_model=WorkspaceThreadRead)
@@ -1237,9 +1262,18 @@ def _cancel_running_batch_drafts(request: Request, task_id: int) -> None:
         runtime_manager.cancel_batch_draft_generation(task_id)
 
 
-def _serialize_batch_task_item(email_task: EmailTask) -> BatchTaskItemRead:
+def _serialize_batch_task_item(
+    email_task: EmailTask,
+    *,
+    material_sizes: dict[int, int] | None = None,
+) -> BatchTaskItemRead:
     professor = email_task.professor
     now = utc_now()
+    selected_material_ids = dict.fromkeys(email_task.selected_material_ids or [])
+    selected_attachment_size_bytes = sum(
+        (material_sizes or {}).get(material_id, 0)
+        for material_id in selected_material_ids
+    )
     return BatchTaskItemRead(
         id=email_task.id,
         professor_id=professor.id,
@@ -1269,6 +1303,7 @@ def _serialize_batch_task_item(email_task: EmailTask) -> BatchTaskItemRead:
             if email_task.batch_send_canceled_at is not None
             else resolve_batch_task_item_next_action(email_task)
         ),
+        selected_attachment_size_bytes=selected_attachment_size_bytes,
     )
 
 

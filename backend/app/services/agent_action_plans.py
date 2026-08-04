@@ -31,6 +31,7 @@ PLAN_STATUS_EXECUTING = "executing"
 PLAN_STATUS_EXECUTED = "executed"
 PLAN_STATUS_CANCELED = "canceled"
 PLAN_STATUS_EXPIRED = "expired"
+RECOMMENDED_ATTACHMENT_TOTAL_BYTES = 1024 * 1024
 
 
 async def create_email_action_plan(
@@ -429,6 +430,10 @@ def _build_task_snapshot(
         if scheduled_at is not None
         else None
     )
+    attachment_total_size_bytes = sum(
+        max(0, material_by_id[material_id].size_bytes)
+        for material_id in attachment_ids
+    )
     summary = {
         "recipient_count": 1,
         "recipient": {
@@ -456,9 +461,11 @@ def _build_task_snapshot(
             {
                 "id": material_id,
                 "name": material_by_id[material_id].display_name,
+                "size_bytes": max(0, material_by_id[material_id].size_bytes),
             }
             for material_id in attachment_ids
         ],
+        "attachment_total_size_bytes": attachment_total_size_bytes,
         "delivery": delivery,
         "scheduled_at": schedule_iso,
         "subject": subject,
@@ -493,6 +500,10 @@ def _serialize_plan(
             code="INVALID_PLAN_SNAPSHOT",
             message="发送计划快照无效，请重新生成计划。",
         )
+    summary = AgentPlanSummaryRead.model_validate(raw_summary)
+    attachment_warning = _build_large_attachment_warning(
+        summary.attachment_total_size_bytes,
+    )
     return AgentActionPlanRead(
         plan_id=plan.id,
         action=plan.action,  # type: ignore[arg-type]
@@ -503,12 +514,20 @@ def _serialize_plan(
         confirmed_at=plan.confirmed_at,
         executed_at=plan.executed_at,
         canceled_at=plan.canceled_at,
-        summary=AgentPlanSummaryRead.model_validate(raw_summary),
-        warnings=[],
+        summary=summary,
+        warnings=[attachment_warning] if attachment_warning else [],
         result=plan.result,
         idempotent_replay=idempotent_replay,
         confirmation_message=(
-            "尚未发送。请把以上收件人、正文、身份、参考材料和附件展示给用户，得到明确确认后再执行。"
+            "\n".join(
+                filter(
+                    None,
+                    [
+                        "尚未发送。请把以上收件人、正文、身份、参考材料和附件展示给用户，得到明确确认后再执行。",
+                        attachment_warning,
+                    ],
+                ),
+            )
             if plan.status == PLAN_STATUS_AWAITING
             else None
         ),
@@ -629,6 +648,24 @@ def _changed_snapshot_fields(
         if expected.get(key) != current.get(key):
             fields.append(key)
     return fields or ["content"]
+
+
+def _build_large_attachment_warning(total_size_bytes: int) -> str | None:
+    if total_size_bytes <= RECOMMENDED_ATTACHMENT_TOTAL_BYTES:
+        return None
+    return (
+        f"附件总大小为 {_format_file_size(total_size_bytes)}，建议不超过 1 MB，"
+        "以减少被邮箱提供商限流的概率。"
+    )
+
+
+def _format_file_size(size_bytes: int) -> str:
+    normalized_bytes = max(0, size_bytes)
+    if normalized_bytes < 1024:
+        return f"{normalized_bytes} B"
+    if normalized_bytes < 1024 * 1024:
+        return f"{normalized_bytes / 1024:.1f} KB"
+    return f"{normalized_bytes / (1024 * 1024):.2f} MB"
 
 
 def _snapshot_scheduled_at(snapshot: dict[str, object]):

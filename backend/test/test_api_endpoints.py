@@ -9411,6 +9411,13 @@ class ApiEndpointTests(unittest.TestCase):
     def test_batch_task_items_show_professor_delivery_progress(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
+        attachment_content = b"attachment-size-test"
+        attachment_id = self._upload_material(
+            identity_id,
+            filename="attachment.txt",
+            content=attachment_content,
+            material_type="other",
+        )
         self.client.post("/api/professors/import-sample")
         professors = self.client.get("/api/professors").json()[:2]
 
@@ -9428,7 +9435,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "primary_material_id": None,
                 "email_subject": "申请与{{name}}老师交流",
                 "email_body": "老师您好，我是{{sender_name}}。",
-                "selected_material_ids": None,
+                "selected_material_ids": [attachment_id],
             },
         )
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
@@ -9475,10 +9482,10 @@ class ApiEndpointTests(unittest.TestCase):
         unloaded_task_columns: list[set[str]] = []
         unloaded_professor_columns: list[set[str]] = []
 
-        def capture_batch_item_projection(email_task):
+        def capture_batch_item_projection(email_task, **kwargs):
             unloaded_task_columns.append(inspect(email_task).unloaded)
             unloaded_professor_columns.append(inspect(email_task.professor).unloaded)
-            return _serialize_batch_task_item(email_task)
+            return _serialize_batch_task_item(email_task, **kwargs)
 
         with patch(
             "app.api.batch_tasks._serialize_batch_task_item",
@@ -9492,6 +9499,14 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(payload[0]["professor_name"], professors[0]["name"])
         self.assertEqual(payload[0]["status"], "sent")
         self.assertIsNotNone(payload[0]["sent_at"])
+        self.assertEqual(
+            payload[0]["selected_attachment_size_bytes"],
+            len(attachment_content),
+        )
+        self.assertEqual(
+            payload[1]["selected_attachment_size_bytes"],
+            len(attachment_content),
+        )
         self.assertEqual(payload[1]["status"], "send_failed")
         self.assertEqual(
             payload[1]["last_error"],

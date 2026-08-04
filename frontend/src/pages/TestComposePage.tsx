@@ -4,9 +4,16 @@ import { useNavigate } from "react-router-dom";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { AttachmentSizeSummary } from "@/components/molecules/AttachmentSizeSummary";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
+import {
+  buildLargeAttachmentWarning,
+  formatFileSize,
+  getSelectedAttachmentTotalBytes,
+  isAttachmentTotalOverRecommendedLimit,
+} from "@/features/attachments/attachmentSize";
 import {
   generateTestComposeDraft,
   getTestComposeThread,
@@ -15,6 +22,7 @@ import {
 } from "@/lib/api/testComposeApi";
 import { listOutreachTemplates } from "@/lib/api/outreachTemplates";
 import { textToEmailHtml } from "@/lib/richEmail";
+import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import {
   MATERIAL_TYPE_LABELS,
   type OutreachTemplateDTO,
@@ -31,6 +39,7 @@ export const TestComposePage = () => {
   const navigate = useNavigate();
   const { selectedIdentityId, selectedLlmProfileId } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [thread, setThread] = useState<TestComposeThreadDTO | null>(null);
   const [subject, setSubject] = useState("");
   const [bodyText, setBodyText] = useState("");
@@ -160,6 +169,14 @@ export const TestComposePage = () => {
   );
 
   const selectedMaterialSet = useMemo(() => new Set(selectedMaterialIds), [selectedMaterialIds]);
+  const selectedAttachmentTotalBytes = useMemo(
+    () =>
+      getSelectedAttachmentTotalBytes(
+        thread?.material_options ?? [],
+        selectedMaterialIds,
+      ),
+    [selectedMaterialIds, thread?.material_options],
+  );
 
   const identityProfileName = thread?.identity.profile_name || thread?.identity.name || "";
   const identitySenderName = thread?.identity.sender_name || identityProfileName;
@@ -226,8 +243,21 @@ export const TestComposePage = () => {
       { successTitle: "已保存测试草稿" },
     );
 
-  const sendMessage = () =>
-    runAction(
+  const sendMessage = async () => {
+    if (isAttachmentTotalOverRecommendedLimit(selectedAttachmentTotalBytes)) {
+      const confirmed = await confirm({
+        title: "附件超过 1 MB，仍要发送测试邮件吗？",
+        description:
+          buildLargeAttachmentWarning(selectedAttachmentTotalBytes) ?? undefined,
+        confirmLabel: "仍然发送",
+        cancelLabel: "返回调整",
+      });
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await runAction(
       () =>
         sendTestComposeMessage(selectedIdentityId, selectedLlmProfileId, {
           outreach_template_id: selectedOutreachTemplateId,
@@ -248,9 +278,11 @@ export const TestComposePage = () => {
         },
       },
     );
+  };
 
   return (
-    <main className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-7xl flex-col px-6 py-8">
+    <>
+      <main className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-7xl flex-col px-6 py-8">
       {loading || !thread ? (
         <div className="flex flex-1 items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -399,9 +431,7 @@ export const TestComposePage = () => {
               <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-base font-semibold text-stone-900">随信附件</h2>
-                  <span className="text-xs text-stone-500">
-                    已选 {selectedMaterialIds.length} 个
-                  </span>
+                  <span className="text-xs text-stone-500">随邮件发送</span>
                 </div>
                 <div className="mt-4 space-y-2">
                   {thread.material_options.length === 0 ? (
@@ -419,7 +449,7 @@ export const TestComposePage = () => {
                           <span>
                             <span className="block font-medium">{material.display_name}</span>
                             <span className="mt-1 block text-xs text-stone-500">
-                              {MATERIAL_TYPE_LABELS[material.material_type]}
+                              {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
                             </span>
                           </span>
                           <input
@@ -438,6 +468,11 @@ export const TestComposePage = () => {
                     })
                   )}
                 </div>
+                <AttachmentSizeSummary
+                  selectedCount={selectedMaterialIds.length}
+                  totalSizeBytes={selectedAttachmentTotalBytes}
+                  className="mt-3"
+                />
               </section>
 
               <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
@@ -508,6 +543,8 @@ export const TestComposePage = () => {
           </section>
         </>
       )}
-    </main>
+      </main>
+      {confirmDialog}
+    </>
   );
 };

@@ -1491,6 +1491,7 @@ describe("TasksPage batch draft review", () => {
       can_cancel_send: false,
       can_restore_send: true,
       next_action: null,
+      selected_attachment_size_bytes: 1024 * 1024 + 1,
     };
     let currentItems = [firstItem, secondItem];
 
@@ -1553,7 +1554,17 @@ describe("TasksPage batch draft review", () => {
     await waitFor(() => {
       expect(apiMocks.restoreBatchTaskItemSend).toHaveBeenCalledWith(task.id, firstItem.id);
     });
-    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(confirmMock).toHaveBeenCalledTimes(2);
+    expect(confirmMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        title: "附件超过 1 MB，仍要恢复发送吗？",
+        description: expect.stringContaining(
+          "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",
+        ),
+        confirmLabel: "仍然恢复",
+        cancelLabel: "保持取消",
+      }),
+    );
     expect(
       within(await within(dialog).findByTestId("batch-task-item-11")).getByRole(
         "button",
@@ -1947,12 +1958,14 @@ describe("TasksPage batch draft review", () => {
       professor_name: "第一位待审核导师",
       status: "review_required",
       next_action: "review_draft",
+      selected_attachment_size_bytes: 1024 * 1024 + 1,
     });
     const secondItem = buildBatchItem({
       id: 42,
       professor_name: "第二位待审核导师",
       status: "review_required",
       next_action: "review_draft",
+      selected_attachment_size_bytes: 1024 * 1024 + 1,
     });
     const generatingItem = buildBatchItem({
       id: 43,
@@ -1995,7 +2008,7 @@ describe("TasksPage batch draft review", () => {
         expect.objectContaining({
           title: "确认全部通过这 2 封 AI 改写草稿？",
           description: expect.stringContaining("确认后会立即进入发送队列"),
-          confirmLabel: "确认全部通过",
+          confirmLabel: "仍然全部通过",
           cancelLabel: "继续逐封审核",
           tone: "danger",
         }),
@@ -2003,6 +2016,9 @@ describe("TasksPage batch draft review", () => {
     });
     expect(confirmMock.mock.calls[0][0].description).toContain(
       "生成中或生成失败的邮件不会被处理",
+    );
+    expect(confirmMock.mock.calls[0][0].description).toContain(
+      "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",
     );
     await waitFor(() => {
       expect(apiMocks.approveAllBatchTaskDrafts).toHaveBeenCalledWith(

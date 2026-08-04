@@ -29,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
+import { AttachmentSizeSummary } from "@/components/molecules/AttachmentSizeSummary";
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
 import { Pagination } from "@/components/molecules/Pagination";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
@@ -65,6 +66,13 @@ import {
 } from "@/features/batch-tasks/client/batchTaskResendPrefill";
 import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
 import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
+import {
+  buildBulkLargeAttachmentWarning,
+  buildLargeAttachmentWarning,
+  formatFileSize,
+  getSelectedAttachmentTotalBytes,
+  isAttachmentTotalOverRecommendedLimit,
+} from "@/features/attachments/attachmentSize";
 import {
   cancelMatchAnalysisJob,
   deleteMatchAnalysisJob,
@@ -2812,6 +2820,10 @@ export const TasksPage = () => {
     body_html: batchReviewContentHtml || null,
     selected_material_ids: batchReviewSelectedMaterialIds,
   });
+  const batchReviewAttachmentTotalBytes = getSelectedAttachmentTotalBytes(
+    batchReviewThread?.material_options ?? [],
+    batchReviewSelectedMaterialIds,
+  );
 
   const setBatchReviewItemAction = (
     itemId: number,
@@ -2875,6 +2887,20 @@ export const TasksPage = () => {
     if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
       return;
     }
+    const attachmentWarning = buildLargeAttachmentWarning(
+      batchReviewAttachmentTotalBytes,
+    );
+    if (attachmentWarning) {
+      const confirmed = await confirm({
+        title: "附件超过 1 MB，仍要通过审核吗？",
+        description: attachmentWarning,
+        confirmLabel: "仍然通过",
+        cancelLabel: "返回调整",
+      });
+      if (!confirmed) {
+        return;
+      }
+    }
     const nextItem =
       reviewRequiredBatchTaskItems.find((item) => item.id !== activeBatchReviewItem.id) ??
       null;
@@ -2925,6 +2951,11 @@ export const TasksPage = () => {
     const taskId = selectedBatchTask.id;
     const itemIds = reviewRequiredBatchTaskItems.map((item) => item.id);
     const approvedCount = itemIds.length;
+    const attachmentWarning = buildBulkLargeAttachmentWarning(
+      reviewRequiredBatchTaskItems.map(
+        (item) => item.selected_attachment_size_bytes ?? 0,
+      ),
+    );
     const deliveryDescription =
       selectedBatchTask.status === "paused"
         ? selectedBatchTask.schedule_type === "scheduled"
@@ -2942,12 +2973,13 @@ export const TasksPage = () => {
       title: `确认全部通过这 ${approvedCount} 封 AI 改写草稿？`,
       description: [
         "系统将直接采用每封邮件当前的 AI 主题、正文和附件设置，不再逐封检查。",
+        attachmentWarning,
         deliveryDescription,
         ignoredDraftDescription,
       ]
         .filter(Boolean)
         .join("\n"),
-      confirmLabel: "确认全部通过",
+      confirmLabel: attachmentWarning ? "仍然全部通过" : "确认全部通过",
       cancelLabel: "继续逐封审核",
       tone: "danger",
     });
@@ -3044,13 +3076,25 @@ export const TasksPage = () => {
     if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
       return;
     }
+    const attachmentWarning = buildLargeAttachmentWarning(
+      batchReviewAttachmentTotalBytes,
+    );
+    const attachmentOverRecommendedLimit =
+      isAttachmentTotalOverRecommendedLimit(batchReviewAttachmentTotalBytes);
     const confirmed = await confirm({
-      title: "确认立即发送这封真实邮件？",
-      description: `将真实发给 ${
-        batchReviewThread?.professor.email ?? "当前导师邮箱"
-      }，并附带 ${batchReviewSelectedMaterialIds.length} 份附件。`,
-      confirmLabel: "确认发送",
-      cancelLabel: "再检查一下",
+      title: attachmentOverRecommendedLimit
+        ? "附件超过 1 MB，仍要发送吗？"
+        : "确认立即发送这封真实邮件？",
+      description: [
+        `将真实发给 ${
+          batchReviewThread?.professor.email ?? "当前导师邮箱"
+        }，并附带 ${batchReviewSelectedMaterialIds.length} 份附件，共 ${formatFileSize(batchReviewAttachmentTotalBytes)}。`,
+        attachmentWarning,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      confirmLabel: attachmentOverRecommendedLimit ? "仍然发送" : "确认发送",
+      cancelLabel: attachmentOverRecommendedLimit ? "返回调整" : "再检查一下",
       tone: "danger",
     });
     if (!confirmed) {
@@ -3159,6 +3203,23 @@ export const TasksPage = () => {
   const handleRestoreBatchItemSend = async (item: BatchTaskItemDTO) => {
     if (!selectedBatchTask) {
       return;
+    }
+    const attachmentWarning = buildLargeAttachmentWarning(
+      item.selected_attachment_size_bytes ?? 0,
+    );
+    if (attachmentWarning) {
+      const confirmed = await confirm({
+        title: "附件超过 1 MB，仍要恢复发送吗？",
+        description: [
+          attachmentWarning,
+          `恢复后仍将按原计划于 ${formatDisplayTime(item.scheduled_at)} 发送。`,
+        ].join("\n"),
+        confirmLabel: "仍然恢复",
+        cancelLabel: "保持取消",
+      });
+      if (!confirmed) {
+        return;
+      }
     }
     if (!isBatchItemScheduledInFuture(item, batchSendActionNowMs)) {
       notifyError("无法恢复发送", "原定发送时间已过，无法恢复发送");
@@ -4541,7 +4602,7 @@ export const TasksPage = () => {
                                           {material.display_name}
                                         </span>
                                         <span className="mt-0.5 block text-xs text-stone-500">
-                                          {MATERIAL_TYPE_LABELS[material.material_type]}
+                                          {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
                                         </span>
                                       </span>
                                     </label>
@@ -4553,6 +4614,11 @@ export const TasksPage = () => {
                                 </p>
                               )}
                             </div>
+                            <AttachmentSizeSummary
+                              selectedCount={batchReviewSelectedMaterialIds.length}
+                              totalSizeBytes={batchReviewAttachmentTotalBytes}
+                              className="mt-3"
+                            />
                           </div>
 
                           <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">

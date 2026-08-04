@@ -6,6 +6,7 @@ import { fileURLToPath, URL } from "node:url";
 import { getApiProxyTarget } from "./vite.proxy";
 
 const nodeTestFiles = [
+  "src/features/attachments/*.test.ts",
   "src/features/crawl-review/client/reviewCandidates.test.ts",
   "src/features/create-task/client/scheduleDates.test.ts",
   "src/features/home-dashboard/client/*.test.ts",

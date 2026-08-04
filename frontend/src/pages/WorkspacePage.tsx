@@ -8,6 +8,12 @@ import { WorkspaceSidebar } from '@/components/organisms/WorkspaceSidebar';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { useWorkspaceDraftGuard } from '@/context/useWorkspaceDraftGuard';
+import {
+  buildLargeAttachmentWarning,
+  formatFileSize,
+  getSelectedAttachmentTotalBytes,
+  isAttachmentTotalOverRecommendedLimit,
+} from '@/features/attachments/attachmentSize';
 import { getEmailSendFailureMessage } from '@/features/email/client/getEmailSendFailureMessage';
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
 import { bootstrapWorkspaceThread } from '@/features/workspace/client/openWorkspaceThread';
@@ -297,6 +303,7 @@ const ScheduleSendDialog = ({
   open,
   professorEmail,
   selectedMaterialCount,
+  selectedAttachmentTotalBytes,
   value,
   acting,
   onChange,
@@ -306,12 +313,14 @@ const ScheduleSendDialog = ({
   open: boolean;
   professorEmail: string | null | undefined;
   selectedMaterialCount: number;
+  selectedAttachmentTotalBytes: number;
   value: string;
   acting: boolean;
   onChange: (value: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) => {
+  const attachmentWarning = buildLargeAttachmentWarning(selectedAttachmentTotalBytes);
   const {
     onBackdropClick,
     onBackdropMouseDown,
@@ -362,8 +371,13 @@ const ScheduleSendDialog = ({
                   选择定时发送时间
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-stone-600">
-                  将真实发给 {professorEmail ?? '当前导师邮箱'}，并附带 {selectedMaterialCount} 份附件。
+                  将真实发给 {professorEmail ?? '当前导师邮箱'}，并附带 {selectedMaterialCount} 份附件，共 {formatFileSize(selectedAttachmentTotalBytes)}。
                 </p>
+                {attachmentWarning ? (
+                  <p className="mt-3 whitespace-pre-line text-sm leading-6 text-amber-800">
+                    {attachmentWarning}
+                  </p>
+                ) : null}
               </div>
             </div>
             <button
@@ -465,6 +479,14 @@ export const WorkspacePage = () => {
       : null;
   const currentTask = getCurrentTaskOrNull(thread);
   const currentTaskId = currentTask?.id ?? null;
+  const selectedAttachmentTotalBytes = useMemo(
+    () =>
+      getSelectedAttachmentTotalBytes(
+        thread?.material_options ?? [],
+        selectedMaterialIds,
+      ),
+    [selectedMaterialIds, thread?.material_options],
+  );
   const taskGeneratingDraft = currentTask?.status === 'generating_draft';
   const isRewriting = taskGeneratingDraft || draftRewriting;
 
@@ -1020,11 +1042,21 @@ export const WorkspacePage = () => {
     }
 
     void (async () => {
+      const attachmentWarning = buildLargeAttachmentWarning(selectedAttachmentTotalBytes);
+      const attachmentOverRecommendedLimit =
+        isAttachmentTotalOverRecommendedLimit(selectedAttachmentTotalBytes);
       const confirmed = await confirm({
-        title: '确认立即发送这封真实邮件？',
-        description: `将真实发给 ${thread?.professor.email ?? '当前导师邮箱'}，并附带 ${selectedMaterialIds.length} 份附件。`,
-        confirmLabel: '确认发送',
-        cancelLabel: '再检查一下',
+        title: attachmentOverRecommendedLimit
+          ? '附件超过 1 MB，仍要发送吗？'
+          : '确认立即发送这封真实邮件？',
+        description: [
+          `将真实发给 ${thread?.professor.email ?? '当前导师邮箱'}，并附带 ${selectedMaterialIds.length} 份附件，共 ${formatFileSize(selectedAttachmentTotalBytes)}。`,
+          attachmentWarning,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        confirmLabel: attachmentOverRecommendedLimit ? '仍然发送' : '确认发送',
+        cancelLabel: attachmentOverRecommendedLimit ? '返回调整' : '再检查一下',
         tone: 'danger',
       });
       if (!confirmed) {
@@ -1057,6 +1089,7 @@ export const WorkspacePage = () => {
     notifyError,
     notifySuccess,
     runAction,
+    selectedAttachmentTotalBytes,
     selectedMaterialIds,
     thread?.professor.email,
   ]);
@@ -1505,6 +1538,7 @@ export const WorkspacePage = () => {
         open={scheduleDialogOpen}
         professorEmail={thread?.professor.email}
         selectedMaterialCount={selectedMaterialIds.length}
+        selectedAttachmentTotalBytes={selectedAttachmentTotalBytes}
         value={pendingScheduledAt}
         acting={acting}
         onChange={setPendingScheduledAt}

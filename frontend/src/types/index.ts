@@ -992,6 +992,7 @@ export interface BatchTaskItemDTO {
   last_send_attempt_at: string | null;
   last_error: string | null;
   possible_cause?: string | null;
+  selected_attachment_size_bytes?: number;
   is_replied: boolean;
   updated_at: string;
   next_action: BatchTaskItemNextAction | null;
