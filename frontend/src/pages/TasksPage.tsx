@@ -4558,12 +4558,14 @@ export const TasksPage = () => {
                           </div>
                           <div className="space-y-4">
                             <SubjectTemplateInput
+                              key={`batch-review-subject-${batchReviewThread.current_task.id}`}
                               label="邮件主题"
                               value={batchReviewSubject}
                               onChange={setBatchReviewSubject}
                               placeholder="给老师的邮件主题"
                             />
                             <EmailTemplateEditor
+                              key={`batch-review-body-${batchReviewThread.current_task.id}`}
                               label="邮件正文"
                               html={batchReviewEditorHtml}
                               onChange={handleBatchReviewContentChange}
