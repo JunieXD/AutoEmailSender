@@ -59,6 +59,7 @@ from app.services.crawl_job_runs import (
 )
 from app.services.operation_logs import record_operation_log
 from app.services.professor_management import is_valid_professor_email, normalize_professor_email
+from app.services.professor_field_normalization import normalize_recent_papers
 from app.services.crawl_job_runtime import enrich_selected_crawl_candidates
 from app.services.crawler_v2_url_utils import normalize_url
 from app.services.crawler_v2_profile_text_cache import profile_text_cache
@@ -350,7 +351,7 @@ async def approve_crawl_candidates(
         professor.school = candidate.school
         professor.department = candidate.department
         professor.research_direction = candidate.research_direction
-        professor.recent_papers = candidate.recent_papers or []
+        professor.recent_papers = normalize_recent_papers(candidate.recent_papers)
         professor.profile_url = candidate.profile_url
         professor.source_url = candidate.source_url
         professor.archived_at = None

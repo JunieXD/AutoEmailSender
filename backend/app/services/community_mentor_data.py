@@ -45,6 +45,7 @@ from app.schemas.community_mentor import (
     CommunityShardDocument,
 )
 from app.services.operation_logs import record_operation_log
+from app.services.professor_field_normalization import normalize_recent_papers
 
 
 DEFAULT_COMMUNITY_DATA_BASE_URL = "https://juniexd.github.io/AutoEmailSender-MentorData/"
@@ -957,7 +958,7 @@ def community_record_values(record: CommunityMentorRecord) -> dict[str, Any]:
         "school": record.school,
         "department": record.department,
         "research_direction": record.research_direction,
-        "recent_papers": list(record.recent_papers),
+        "recent_papers": normalize_recent_papers(record.recent_papers),
         "profile_url": record.profile_url,
         "source_url": record.source_url,
     }
@@ -972,7 +973,7 @@ def professor_values(professor: Professor) -> dict[str, Any]:
         "school": professor.school,
         "department": professor.department,
         "research_direction": professor.research_direction,
-        "recent_papers": list(professor.recent_papers or []),
+        "recent_papers": normalize_recent_papers(professor.recent_papers),
         "profile_url": professor.profile_url,
         "source_url": professor.source_url,
     }
@@ -1592,7 +1593,9 @@ def build_community_share_package(professors: list[Professor]) -> bytes:
         if not professor.source_url:
             raise ValueError(f"导师“{professor.name}”缺少官方来源链接，无法导出社区共享包")
         values = professor_values(professor)
-        values["recent_papers"] = "\n".join(professor.recent_papers or [])
+        values["recent_papers"] = "\n".join(
+            normalize_recent_papers(professor.recent_papers)
+        )
         row: list[str] = []
         for field in SAFE_SHARE_COLUMNS:
             raw_value = values.get(field)

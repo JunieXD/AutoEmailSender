@@ -634,6 +634,7 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("最可能属于该导师", prompt)
         self.assertIn("[@]", prompt)
         self.assertIn("recent_papers 必须是 JSON 数组", prompt)
+        self.assertIn("最多返回 8 篇", prompt)
         self.assertIn("输出示例", prompt)
         self.assertIn('"field_confidence"', prompt)
         self.assertIn('"recent_papers": []', prompt)
@@ -647,6 +648,13 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIsNone(payload.department)
         self.assertIsNone(payload.research_direction)
         self.assertEqual(payload.recent_papers, [])
+
+    def test_candidate_enrichment_payload_caps_recent_papers_to_first_8(self) -> None:
+        papers = [f"Paper {index}" for index in range(1, 13)]
+
+        payload = CandidateEnrichmentPayload.model_validate({"recent_papers": papers})
+
+        self.assertEqual(payload.recent_papers, papers[:8])
 
     def test_normalize_obfuscated_email_tokens(self) -> None:
         self.assertEqual(

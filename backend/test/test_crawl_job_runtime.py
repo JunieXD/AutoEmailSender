@@ -2134,7 +2134,13 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             page_text: str,
         ) -> CandidateEnrichmentPayload:
             _ = ctx, llm_profile, candidate, page_text
-            return CandidateEnrichmentPayload(email="selected@example.edu")
+            return CandidateEnrichmentPayload.model_construct(
+                email="selected@example.edu",
+                title=None,
+                department=None,
+                research_direction=None,
+                recent_papers=[f"Paper {index}" for index in range(1, 13)],
+            )
 
         with patch(
             "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
@@ -2159,6 +2165,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             assert selected is not None
             assert unselected is not None
             self.assertEqual(selected.email, "selected@example.edu")
+            self.assertEqual(
+                selected.recent_papers,
+                [f"Paper {index}" for index in range(1, 9)],
+            )
             self.assertIsNone(unselected.email)
 
     async def test_enrich_selected_crawl_candidates_passes_runtime_adaptation_to_context(self) -> None:

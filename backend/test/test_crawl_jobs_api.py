@@ -1109,6 +1109,49 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_approve_caps_legacy_candidate_recent_papers_to_first_8(self) -> None:
+        import json
+        import sqlite3
+
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        papers = [f"Paper {index}" for index in range(1, 13)]
+        self._seed_candidate_with_fields(
+            job_id,
+            name="超限论文导师",
+            email="papers@example.edu",
+            title="教授",
+            department="计算机系",
+            research_direction="人工智能",
+            recent_papers=papers,
+            profile_url="https://example.edu/papers",
+        )
+        self._set_job_status(job_id, "needs_review")
+        candidate_id = self._latest_candidate_id(job_id)
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/approve",
+            json={"candidate_ids": [candidate_id]},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        with sqlite3.connect(self.db_path) as connection:
+            stored = connection.execute(
+                "SELECT recent_papers FROM professors WHERE email = ?",
+                ("papers@example.edu",),
+            ).fetchone()
+        self.assertIsNotNone(stored)
+        self.assertEqual(json.loads(stored[0]), papers[:8])
+
     def test_approve_allows_canceled_job_and_preserves_canceled_status(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",

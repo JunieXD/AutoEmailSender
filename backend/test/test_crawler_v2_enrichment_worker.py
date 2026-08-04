@@ -93,7 +93,14 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_enrichment_updates_missing_fields(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
-        payload = CandidateEnrichmentPayload(email="zhang@example.edu", title="教授", department="计算机系", research_direction="AI", recent_papers=["P1"], confidence=0.8, field_confidence={})
+        papers = [f"P{index}" for index in range(1, 13)]
+        payload = CandidateEnrichmentPayload.model_construct(
+            email="zhang@example.edu",
+            title="教授",
+            department="计算机系",
+            research_direction="AI",
+            recent_papers=papers,
+        )
 
         with patch("app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage", new=AsyncMock(return_value=(payload, None))):
             processed = await run_crawler_v2_enrichment_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
@@ -106,6 +113,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate.email, "zhang@example.edu")
         self.assertEqual(candidate.title, "教授")
         self.assertEqual(candidate.department, "计算机系")
+        self.assertEqual(candidate.recent_papers, papers[:8])
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value)
         async with self.session_factory() as session:
             job = await session.get(CrawlJob, task.job_id)

@@ -60,6 +60,7 @@ from app.services.crawler_tools import (
     ensure_crawl_job_can_continue,
     save_candidates,
 )
+from app.services.professor_field_normalization import normalize_recent_papers
 
 
 NO_LLM_PROFILE_ERROR = "请先配置可用的 LLM Profile"
@@ -1357,7 +1358,7 @@ async def _apply_candidate_enrichment(
 
         recent_papers = update_payload.get("recent_papers") or []
         if recent_papers and not (candidate.recent_papers or []):
-            candidate.recent_papers = recent_papers
+            candidate.recent_papers = normalize_recent_papers(recent_papers)
             changed = True
 
         if not changed:

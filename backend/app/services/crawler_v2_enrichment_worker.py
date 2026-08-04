@@ -45,6 +45,7 @@ from app.services.crawler_structured_output import (
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.services.professor_information_enrichment import apply_enrichment_to_professor
+from app.services.professor_field_normalization import normalize_recent_papers
 
 
 _PROFILE_TEXT_CACHE = profile_text_cache
@@ -621,4 +622,4 @@ def _apply_enrichment(candidate: CrawlCandidate, payload: CandidateEnrichmentPay
     if payload.research_direction and not candidate.research_direction:
         candidate.research_direction = payload.research_direction.strip()
     if payload.recent_papers and not candidate.recent_papers:
-        candidate.recent_papers = payload.recent_papers
+        candidate.recent_papers = normalize_recent_papers(payload.recent_papers)

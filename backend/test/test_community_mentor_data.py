@@ -684,6 +684,24 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(states["research_direction"], "remote_modified")
         self.assertEqual(comparison.category, "conflict")
 
+    async def test_recent_papers_comparison_ignores_legacy_items_after_first_8(self) -> None:
+        papers = [f"Paper {index}" for index in range(1, 9)]
+        record = CommunityMentorRecord.model_validate(
+            _record_payload(recent_papers=papers)
+        )
+        async with self.session_factory() as session:
+            professor = Professor(**community_record_values(record))
+            professor.recent_papers = [*papers, "Legacy Paper 9", "Legacy Paper 10"]
+            session.add(professor)
+            await session.flush()
+
+            comparison = (await build_community_comparisons(session, [record]))[0]
+
+        recent_papers = next(
+            field for field in comparison.fields if field.field == "recent_papers"
+        )
+        self.assertEqual(recent_papers.state, "same")
+
     async def test_old_preview_cannot_overwrite_a_new_local_edit(self) -> None:
         record = CommunityMentorRecord.model_validate(_record_payload())
         async with self.session_factory() as session:
@@ -973,7 +991,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             school="计算机学院",
             department="人工智能系",
             research_direction="智能体",
-            recent_papers=["Example Paper"],
+            recent_papers=[f"Paper {index}" for index in range(1, 13)],
             profile_url="https://example.edu/profile",
             source_url="https://example.edu/source",
             personal_note="绝不能导出",
@@ -1003,6 +1021,10 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertNotIn("绝不能导出", json.dumps(rows, ensure_ascii=False))
+        self.assertEqual(
+            rows[1][7],
+            "\n".join(f"Paper {index}" for index in range(1, 9)),
+        )
 
 
 class CommunityMigrationTests(unittest.TestCase):
