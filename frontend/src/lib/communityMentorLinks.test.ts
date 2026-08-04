@@ -3,7 +3,6 @@ import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
   COMMUNITY_CONTRIBUTION_URL,
   buildCommunityContributionClipboard,
-  buildCommunityReportClipboard,
   buildCommunityReportUrl,
 } from '@/lib/communityMentorLinks';
 import type { CommunityMentorRecordDTO, ProfessorManagementItemDTO } from '@/types';
@@ -58,13 +57,20 @@ describe('community mentor GitHub helpers', () => {
     expect(text).not.toContain('不得复制');
   });
 
-  it('builds a report template URL and clipboard context with stable record id', () => {
+  it('prefills the report title, stable record id, and current community values', () => {
     const url = new URL(buildCommunityReportUrl(record));
-    const text = buildCommunityReportClipboard(record);
 
     expect(url.searchParams.get('template')).toBe('report-error.yml');
-    expect(url.searchParams.get('title')).toContain('mentor_example0001');
-    expect(text).toContain('社区导师 ID：mentor_example0001');
+    expect(url.searchParams.get('title')).toBe('[信息反馈] 示例大学张老师');
+    expect(url.searchParams.get('record_id')).toBe('mentor_example0001');
+    expect(url.searchParams.get('current_value')).toContain('邮箱：zhang@example.edu');
+    expect(url.searchParams.get('current_value')).toContain('当前证据：https://example.edu/source');
+    expect(url.searchParams.get('evidence_url')).toBeNull();
+
+    const titleWithoutTeacherSuffix = new URL(
+      buildCommunityReportUrl({ ...record, name: '张伟' }),
+    ).searchParams.get('title');
+    expect(titleWithoutTeacherSuffix).toBe('[信息反馈] 示例大学张伟老师');
   });
 
   it('keeps contribution entry points on the dedicated community repository', () => {

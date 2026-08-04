@@ -42,12 +42,8 @@ export const buildCommunityContributionClipboard = (mentor: ShareableMentor) =>
     `官方证据页面：${valueOrEmpty(mentor.source_url)}`,
   ].join('\n');
 
-export const buildCommunityReportClipboard = (record: CommunityMentorRecordDTO) =>
+const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
   [
-    '请将以下内容粘贴到 GitHub 反馈表对应字段，并补充新的官方证据：',
-    `社区导师 ID：${record.id}`,
-    '涉及字段：请填写需要纠正的字段',
-    '当前社区值：',
     `姓名：${record.name}`,
     `邮箱：${record.email}`,
     `职称：${valueOrEmpty(record.title)}`,
@@ -61,7 +57,11 @@ export const buildCommunityReportClipboard = (record: CommunityMentorRecordDTO) 
 
 export const buildCommunityReportUrl = (record: CommunityMentorRecordDTO) => {
   const url = new URL(COMMUNITY_REPORT_URL);
-  url.searchParams.set('title', `[信息反馈] ${record.name}（${record.id}）`);
+  const mentorName = record.name.trim();
+  const titledMentorName = mentorName.endsWith('老师') ? mentorName : `${mentorName}老师`;
+  url.searchParams.set('title', `[信息反馈] ${record.university.trim()}${titledMentorName}`);
+  url.searchParams.set('record_id', record.id);
+  url.searchParams.set('current_value', buildCommunityReportCurrentValue(record));
   return url.toString();
 };
 

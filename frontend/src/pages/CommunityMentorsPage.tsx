@@ -31,11 +31,7 @@ import {
   requestCommunityMentorCatalog,
   shouldAutomaticallyRefreshCommunityMentorCatalog,
 } from '@/lib/communityMentorCatalogCache';
-import {
-  buildCommunityReportClipboard,
-  buildCommunityReportUrl,
-  copyCommunityText,
-} from '@/lib/communityMentorLinks';
+import { buildCommunityReportUrl } from '@/lib/communityMentorLinks';
 import { openExternalHttpUrl } from '@/lib/externalUrls';
 import {
   addVisibleRecordSelection,
@@ -178,17 +174,12 @@ const recordSearchText = (item: CommunityMentorComparisonDTO) =>
 const openFeedbackForm = (
   record: CommunityMentorRecordDTO,
   notifySuccess: (title: string, description?: string) => unknown,
-  notifyWarning: (title: string, description?: string) => unknown,
 ) => {
-  const copyPromise = copyCommunityText(buildCommunityReportClipboard(record));
   openExternalHttpUrl(buildCommunityReportUrl(record));
-  void copyPromise
-    .then(() => {
-      notifySuccess('反馈内容已复制', 'GitHub 已在系统浏览器中打开，粘贴后补充新证据即可。');
-    })
-    .catch(() => {
-      notifyWarning('GitHub 已打开', '剪贴板写入失败，请在反馈表中手动填写社区导师 ID。');
-    });
+  notifySuccess(
+    '反馈页面已打开',
+    '导师和当前信息已自动填写，请选择问题并补充正确内容和新的官网证据。',
+  );
 };
 
 const DifferenceField = ({
@@ -882,7 +873,7 @@ export const CommunityMentorsPage = () => {
                               <span>核验：{formatDate(item.record.last_verified_at)}</span>
                               <span>贡献者：{item.record.contributors.map((contributor) => `@${contributor.github_login_at_submission}`).join('、') || '未记录'}</span>
                               <button type="button" className="inline-flex items-center gap-1 font-medium text-primary hover:underline" onClick={() => openExternalHttpUrl(item.record.source_url)}>官方来源 <ExternalLink className="h-3 w-3" /></button>
-                              <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => openFeedbackForm(item.record, notifySuccess, notifyWarning)}>反馈错误 <ExternalLink className="h-3 w-3" /></button>
+                              <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => openFeedbackForm(item.record, notifySuccess)}>反馈错误 <ExternalLink className="h-3 w-3" /></button>
                             </div>
                             {(item.record.contacts.length > 1 || item.record.affiliations.length > 1) ? (
                               <details className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">

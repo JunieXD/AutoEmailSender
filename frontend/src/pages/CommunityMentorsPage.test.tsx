@@ -365,7 +365,7 @@ describe('CommunityMentorsPage', () => {
     );
   });
 
-  it('opens GitHub only for explicit error feedback and copies the stable id', async () => {
+  it('opens GitHub only for explicit error feedback and prefills community data', async () => {
     apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
     apiMocks.listRecords.mockResolvedValue(recordsPayload);
 
@@ -375,13 +375,18 @@ describe('CommunityMentorsPage', () => {
     await screen.findByText('zhang@example.edu');
     fireEvent.click(screen.getByRole('button', { name: /反馈错误/ }));
 
-    expect(openExternalHttpUrl).toHaveBeenCalledWith(
-      expect.stringContaining('template=report-error.yml'),
+    expect(openExternalHttpUrl).toHaveBeenCalledTimes(1);
+    const openedUrl = new URL(openExternalHttpUrl.mock.calls[0][0] as string);
+    expect(openedUrl.searchParams.get('template')).toBe('report-error.yml');
+    expect(openedUrl.searchParams.get('title')).toBe('[信息反馈] 示例大学张老师');
+    expect(openedUrl.searchParams.get('record_id')).toBe('mentor_example0001');
+    expect(openedUrl.searchParams.get('current_value')).toContain(
+      '邮箱：zhang@example.edu',
     );
-    await waitFor(() =>
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        expect.stringContaining('社区导师 ID：mentor_example0001'),
-      ),
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
+      '反馈页面已打开',
+      '导师和当前信息已自动填写，请选择问题并补充正确内容和新的官网证据。',
     );
   });
 
