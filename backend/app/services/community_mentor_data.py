@@ -1463,17 +1463,6 @@ async def import_community_records(
                 )
                 for field in COMMUNITY_IMPORT_FIELDS
             }
-            for field, choice in resolved_choices.items():
-                if choice != "community":
-                    continue
-                next_value = remote_values[field]
-                current_value = getattr(professor, field)
-                if _is_empty(field, next_value) and not _is_empty(field, current_value):
-                    raise CommunityDataError(
-                        f"导师 {comparison.record.name} 的社区{FIELD_LABELS[field]}为空，"
-                        "不能清空本地已有内容；请选择保留本地后重试",
-                        code="COMMUNITY_DATA_FIELD_CHOICE_INVALID",
-                    )
             for field in COMMUNITY_IMPORT_FIELDS:
                 choice = resolved_choices[field]
                 if choice != "community":

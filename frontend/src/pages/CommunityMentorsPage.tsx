@@ -30,6 +30,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { KeywordSearchScopeSelect } from '@/components/molecules/KeywordSearchScopeSelect';
 import { MultiSelectFilter } from '@/components/molecules/MultiSelectFilter';
 import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 import { useNotification } from '@/context/NotificationContext';
@@ -42,6 +43,11 @@ import {
   getCommunityMentorCatalogSessionSnapshot,
   requestCommunityMentorCatalog,
 } from '@/lib/communityMentorCatalogCache';
+import {
+  getCommunityMentorPageSessionSnapshot,
+  setCommunityMentorPageSessionSnapshot,
+  type CommunityMentorSearchScope,
+} from '@/lib/communityMentorPageState';
 import { buildCommunityReportUrl } from '@/lib/communityMentorLinks';
 import { openExternalHttpUrl } from '@/lib/externalUrls';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
@@ -74,6 +80,33 @@ const MAX_LOADED_RECORDS = MAX_LOADED_COMMUNITY_MENTORS;
 const RECORDS_PER_PAGE = 100;
 const CATALOG_UNITS_PER_PAGE = 48;
 const PREVIEW_RECORDS_PER_PAGE = 25;
+
+const COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS: ReadonlyArray<{
+  value: CommunityMentorSearchScope;
+  label: string;
+}> = [
+  { value: 'name', label: '姓名' },
+  { value: 'email', label: '邮箱' },
+  { value: 'organization', label: '学校与任职' },
+  { value: 'title', label: '职称' },
+  { value: 'research_direction', label: '研究方向' },
+];
+const DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES =
+  COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS.map((option) => option.value);
+const COMMUNITY_MENTOR_SEARCH_SCOPE_SET = new Set<CommunityMentorSearchScope>(
+  DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES,
+);
+
+const normalizeCommunityMentorSearchScopes = (
+  values: CommunityMentorSearchScope[] | null | undefined,
+) => {
+  const normalized = (values ?? []).filter((value) =>
+    COMMUNITY_MENTOR_SEARCH_SCOPE_SET.has(value),
+  );
+  return normalized.length > 0
+    ? normalized
+    : [...DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES];
+};
 
 const haveSamePaths = (left: string[], right: string[]) =>
   left.length === right.length && left.every((path) => right.includes(path));
@@ -113,34 +146,34 @@ const categoryMeta: Record<
   { label: string; className: string; description: string }
 > = {
   new: {
-    label: '可新增',
+    label: '本地没有',
     className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    description: '本地尚无匹配导师，可直接新增。',
+    description: '本地还没有这位导师，导入后会新增。',
   },
   linked_unchanged: {
-    label: '已同步',
+    label: '内容一致',
     className: 'border-stone-200 bg-stone-50 text-stone-600',
-    description: '本地与社区当前值一致。',
+    description: '本地和社区资料相同。',
   },
   fill_available: {
-    label: '可补全',
+    label: '可补充资料',
     className: 'border-sky-200 bg-sky-50 text-sky-700',
-    description: '社区可以补全本地空字段。',
+    description: '社区有资料可以补充到本地空白处。',
   },
   local_modified: {
-    label: '本地已修改',
+    label: '本地有修改',
     className: 'border-violet-200 bg-violet-50 text-violet-700',
-    description: '本地保留了自己的修改，默认不会覆盖。',
+    description: '你修改过本地资料，默认保留本地内容。',
   },
   remote_modified: {
     label: '社区有更新',
     className: 'border-blue-200 bg-blue-50 text-blue-700',
-    description: '社区值在上次导入后发生变化。',
+    description: '社区资料在上次导入后更新过。',
   },
   conflict: {
-    label: '需要选择',
+    label: '内容不同',
     className: 'border-amber-200 bg-amber-50 text-amber-800',
-    description: '本地与社区值不同，请在预览中逐项决定。',
+    description: '本地与社区资料不同，可在预览中选择。',
   },
   archived_local: {
     label: '本地已归档',
@@ -148,9 +181,9 @@ const categoryMeta: Record<
     description: '导入不会自动恢复本地回收站记录。',
   },
   retired_or_revoked: {
-    label: '已退出或撤销',
+    label: '社区已停用',
     className: 'border-red-200 bg-red-50 text-red-700',
-    description: '只提供生命周期提醒，不会静默删除本地记录。',
+    description: '社区已标记为退休、离职或撤销，不会自动改动本地记录。',
   },
 };
 
@@ -160,13 +193,13 @@ const categoryOptionLabels = Object.fromEntries(
 );
 
 const fieldStateMeta: Record<CommunityFieldStateDTO, { label: string; className: string }> = {
-  new: { label: '新字段', className: 'text-emerald-700' },
-  same: { label: '一致', className: 'text-stone-500' },
-  fill_available: { label: '可补全', className: 'text-sky-700' },
-  local_only: { label: '仅本地', className: 'text-violet-700' },
-  local_modified: { label: '本地已改', className: 'text-violet-700' },
-  remote_modified: { label: '社区已改', className: 'text-blue-700' },
-  conflict: { label: '冲突', className: 'text-amber-700' },
+  new: { label: '将新增', className: 'text-emerald-700' },
+  same: { label: '内容一致', className: 'text-stone-500' },
+  fill_available: { label: '本地为空', className: 'text-sky-700' },
+  local_only: { label: '社区为空', className: 'text-violet-700' },
+  local_modified: { label: '本地有修改', className: 'text-violet-700' },
+  remote_modified: { label: '社区有更新', className: 'text-blue-700' },
+  conflict: { label: '内容不同', className: 'text-amber-700' },
 };
 
 const lifecycleLabels: Record<CommunityMentorStatusDTO, string> = {
@@ -208,26 +241,33 @@ const formatFieldValue = (value: unknown) => {
   return String(value);
 };
 
-const recordSearchText = (item: CommunityMentorComparisonDTO) =>
-  [
-    item.record.name,
+const normalizeSearchValues = (values: Array<string | null | undefined>) =>
+  values.filter(Boolean).join('\n').toLocaleLowerCase();
+
+const buildRecordSearchIndex = (
+  item: CommunityMentorComparisonDTO,
+): Record<CommunityMentorSearchScope, string> => ({
+  name: normalizeSearchValues([item.record.name]),
+  email: normalizeSearchValues([
     item.record.email,
-    item.record.title,
+    ...item.record.contacts.map((contact) => contact.email),
+  ]),
+  organization: normalizeSearchValues([
     item.record.university,
     item.record.school,
     item.record.department,
-    item.record.research_direction,
-    ...item.record.contacts.map((contact) => contact.email),
     ...item.record.affiliations.flatMap((affiliation) => [
-      affiliation.title,
       affiliation.university,
       affiliation.school,
       affiliation.department,
     ]),
-  ]
-    .filter(Boolean)
-    .join('\n')
-    .toLocaleLowerCase();
+  ]),
+  title: normalizeSearchValues([
+    item.record.title,
+    ...item.record.affiliations.map((affiliation) => affiliation.title),
+  ]),
+  research_direction: normalizeSearchValues([item.record.research_direction]),
+});
 
 const openFeedbackForm = (
   record: CommunityMentorRecordDTO,
@@ -493,61 +533,81 @@ const DifferenceField = ({
   allowLocalChoice: boolean;
   onChange: (choice: CommunityFieldChoiceDTO) => void;
 }) => {
-  const allowCommunityChoice = field.state !== 'local_only';
+  const communityIsEmpty =
+    field.community_value === null ||
+    field.community_value === undefined ||
+    field.community_value === '' ||
+    (Array.isArray(field.community_value) && field.community_value.length === 0);
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="grid gap-2 rounded-xl border border-stone-200 bg-white p-2.5 md:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)] md:items-stretch">
+      <div className="flex items-center justify-between gap-2 px-1 md:flex-col md:items-start md:justify-center">
         <div className="text-sm font-semibold text-stone-900">{field.label}</div>
         <div className={clsx('text-xs font-medium', fieldStateMeta[field.state].className)}>
           {fieldStateMeta[field.state].label}
         </div>
       </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <button
-          type="button"
-          disabled={!allowLocalChoice}
-          onClick={() => onChange('local')}
+      <button
+        type="button"
+        aria-pressed={choice === 'local'}
+        disabled={!allowLocalChoice}
+        onClick={() => onChange('local')}
+        className={clsx(
+          'min-w-0 rounded-lg border px-2.5 py-2 text-left transition',
+          choice === 'local'
+            ? 'border-violet-300 bg-violet-50 ring-2 ring-violet-100'
+            : 'border-stone-200 bg-stone-50',
+          !allowLocalChoice && 'cursor-not-allowed opacity-50',
+        )}
+      >
+        <span className="text-[11px] font-semibold text-stone-500">
+          {allowLocalChoice ? '保留本地' : '本地无记录'}
+        </span>
+        <span className="mt-0.5 block max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-stone-800">
+          {formatFieldValue(field.local_value)}
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label={`采用社区${field.label}`}
+        aria-pressed={choice === 'community'}
+        onClick={() => onChange('community')}
+        className={clsx(
+          'min-w-0 rounded-lg border px-2.5 py-2 text-left transition',
+          choice === 'community'
+            ? 'border-primary/40 bg-primary/5 ring-2 ring-primary/10'
+            : 'border-stone-200 bg-stone-50',
+        )}
+      >
+        <span className="text-[11px] font-semibold text-primary">采用社区</span>
+        <span
           className={clsx(
-            'rounded-xl border p-3 text-left transition',
-            choice === 'local'
-              ? 'border-violet-300 bg-violet-50 ring-2 ring-violet-100'
-              : 'border-stone-200 bg-stone-50',
-            !allowLocalChoice && 'cursor-not-allowed opacity-50',
+            'mt-0.5 block max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5',
+            communityIsEmpty ? 'font-medium text-amber-700' : 'text-stone-800',
           )}
         >
-          <span className="text-xs font-semibold text-stone-500">保留本地</span>
-          <span className="mt-1 block whitespace-pre-wrap break-words text-sm text-stone-800">
-            {formatFieldValue(field.local_value)}
-          </span>
-        </button>
-        <button
-          type="button"
-          aria-label={`采用社区${field.label}`}
-          disabled={!allowCommunityChoice}
-          onClick={() => onChange('community')}
-          className={clsx(
-            'rounded-xl border p-3 text-left transition',
-            choice === 'community'
-              ? 'border-primary/40 bg-primary/5 ring-2 ring-primary/10'
-              : 'border-stone-200 bg-stone-50',
-            !allowCommunityChoice && 'cursor-not-allowed opacity-50',
-          )}
-        >
-          <span className="text-xs font-semibold text-primary">采用社区</span>
-          <span className="mt-1 block whitespace-pre-wrap break-words text-sm text-stone-800">
-            {formatFieldValue(field.community_value)}
-          </span>
-          {!allowCommunityChoice ? (
-            <span className="mt-2 block text-xs text-stone-500">社区没有内容，不能用空值清掉本地资料。</span>
-          ) : null}
-        </button>
-      </div>
+          {communityIsEmpty
+            ? '空值（将清空本地内容）'
+            : formatFieldValue(field.community_value)}
+        </span>
+      </button>
     </div>
   );
 };
 
 export const CommunityMentorsPage = () => {
   const { notifyError, notifySuccess, notifyWarning } = useNotification();
+  const [initialPageSnapshot] = useState(() => {
+    const snapshot = getCommunityMentorPageSessionSnapshot();
+    const cachedCatalog = getCommunityMentorCatalogSessionSnapshot();
+    if (
+      snapshot?.datasetVersion &&
+      cachedCatalog &&
+      snapshot.datasetVersion !== cachedCatalog.dataset_version
+    ) {
+      return null;
+    }
+    return snapshot;
+  });
   const [catalog, setCatalog] = useState<CommunityCatalogDTO | null>(
     getCommunityMentorCatalogSessionSnapshot,
   );
@@ -556,31 +616,119 @@ export const CommunityMentorsPage = () => {
   );
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [catalogUniversityFilters, setCatalogUniversityFilters] = useState<string[]>([]);
-  const [catalogUnitFilters, setCatalogUnitFilters] = useState<string[]>([]);
-  const [catalogUnitPage, setCatalogUnitPage] = useState(1);
-  const [selectedUnitPaths, setSelectedUnitPaths] = useState<string[]>([]);
-  const [loadedUnitPaths, setLoadedUnitPaths] = useState<string[] | null>(null);
-  const [recordsPayload, setRecordsPayload] = useState<CommunityRecordsDTO | null>(null);
+  const [catalogUniversityFilters, setCatalogUniversityFilters] = useState<string[]>(
+    () => initialPageSnapshot?.catalogUniversityFilters ?? [],
+  );
+  const [catalogUnitFilters, setCatalogUnitFilters] = useState<string[]>(
+    () => initialPageSnapshot?.catalogUnitFilters ?? [],
+  );
+  const [catalogUnitPage, setCatalogUnitPage] = useState(
+    () => initialPageSnapshot?.catalogUnitPage ?? 1,
+  );
+  const [selectedUnitPaths, setSelectedUnitPaths] = useState<string[]>(
+    () => initialPageSnapshot?.selectedUnitPaths ?? [],
+  );
+  const [loadedUnitPaths, setLoadedUnitPaths] = useState<string[] | null>(
+    () => initialPageSnapshot?.loadedUnitPaths ?? null,
+  );
+  const [recordsPayload, setRecordsPayload] = useState<CommunityRecordsDTO | null>(
+    () => initialPageSnapshot?.recordsPayload ?? null,
+  );
   const [recordsLoading, setRecordsLoading] = useState(false);
-  const [recordKeyword, setRecordKeyword] = useState('');
-  const [recordUniversityFilters, setRecordUniversityFilters] = useState<string[]>([]);
-  const [recordSchoolFilters, setRecordSchoolFilters] = useState<string[]>([]);
-  const [recordDepartmentFilters, setRecordDepartmentFilters] = useState<string[]>([]);
-  const [recordTitleFilters, setRecordTitleFilters] = useState<string[]>([]);
-  const [categoryFilters, setCategoryFilters] = useState<CommunityComparisonCategoryDTO[]>([]);
-  const [recordPage, setRecordPage] = useState(1);
-  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [recordKeyword, setRecordKeyword] = useState(
+    () => initialPageSnapshot?.recordKeyword ?? '',
+  );
+  const [recordSearchScopes, setRecordSearchScopes] = useState<
+    CommunityMentorSearchScope[]
+  >(() => normalizeCommunityMentorSearchScopes(initialPageSnapshot?.recordSearchScopes));
+  const [recordUniversityFilters, setRecordUniversityFilters] = useState<string[]>(
+    () => initialPageSnapshot?.recordUniversityFilters ?? [],
+  );
+  const [recordSchoolFilters, setRecordSchoolFilters] = useState<string[]>(
+    () => initialPageSnapshot?.recordSchoolFilters ?? [],
+  );
+  const [recordDepartmentFilters, setRecordDepartmentFilters] = useState<string[]>(
+    () => initialPageSnapshot?.recordDepartmentFilters ?? [],
+  );
+  const [recordTitleFilters, setRecordTitleFilters] = useState<string[]>(
+    () => initialPageSnapshot?.recordTitleFilters ?? [],
+  );
+  const [categoryFilters, setCategoryFilters] = useState<
+    CommunityComparisonCategoryDTO[]
+  >(() => initialPageSnapshot?.categoryFilters ?? []);
+  const [recordPage, setRecordPage] = useState(
+    () => initialPageSnapshot?.recordPage ?? 1,
+  );
+  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>(
+    () => initialPageSnapshot?.selectedRecordIds ?? [],
+  );
   const [detailRecord, setDetailRecord] = useState<CommunityMentorComparisonDTO | null>(null);
-  const [previewPayload, setPreviewPayload] = useState<CommunityRecordsDTO | null>(null);
-  const [previewPage, setPreviewPage] = useState(1);
+  const [previewPayload, setPreviewPayload] = useState<CommunityRecordsDTO | null>(
+    () => initialPageSnapshot?.previewPayload ?? null,
+  );
+  const [previewPage, setPreviewPage] = useState(
+    () => initialPageSnapshot?.previewPage ?? 1,
+  );
   const [previewLoading, setPreviewLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [fieldChoices, setFieldChoices] = useState<
     Record<string, Record<string, CommunityFieldChoiceDTO>>
-  >({});
-  const [identityConfirmations, setIdentityConfirmations] = useState<Record<string, boolean>>({});
+  >(() => initialPageSnapshot?.fieldChoices ?? {});
+  const [identityConfirmations, setIdentityConfirmations] = useState<Record<string, boolean>>(
+    () => initialPageSnapshot?.identityConfirmations ?? {},
+  );
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  useDocumentScrollLock(previewPayload !== null);
+
+  useEffect(() => {
+    setCommunityMentorPageSessionSnapshot({
+      datasetVersion:
+        catalog?.dataset_version ??
+        recordsPayload?.dataset_version ??
+        previewPayload?.dataset_version ??
+        null,
+      catalogUniversityFilters,
+      catalogUnitFilters,
+      catalogUnitPage,
+      selectedUnitPaths,
+      loadedUnitPaths,
+      recordsPayload,
+      recordKeyword,
+      recordSearchScopes,
+      recordUniversityFilters,
+      recordSchoolFilters,
+      recordDepartmentFilters,
+      recordTitleFilters,
+      categoryFilters,
+      recordPage,
+      selectedRecordIds,
+      previewPayload,
+      previewPage,
+      fieldChoices,
+      identityConfirmations,
+    });
+  }, [
+    catalog?.dataset_version,
+    catalogUnitFilters,
+    catalogUnitPage,
+    catalogUniversityFilters,
+    categoryFilters,
+    fieldChoices,
+    identityConfirmations,
+    loadedUnitPaths,
+    previewPage,
+    previewPayload,
+    recordDepartmentFilters,
+    recordKeyword,
+    recordPage,
+    recordSchoolFilters,
+    recordSearchScopes,
+    recordTitleFilters,
+    recordUniversityFilters,
+    recordsPayload,
+    selectedRecordIds,
+    selectedUnitPaths,
+  ]);
 
   const loadCatalog = useCallback(
     async (refresh: boolean, announceResult = refresh) => {
@@ -594,7 +742,13 @@ export const CommunityMentorsPage = () => {
       try {
         const nextCatalog = await requestCommunityMentorCatalog(refresh);
         setCatalog((previous) => {
-          if (previous && previous.dataset_version !== nextCatalog.dataset_version) {
+          const currentPageDatasetVersion =
+            previous?.dataset_version ??
+            getCommunityMentorPageSessionSnapshot()?.datasetVersion;
+          if (
+            currentPageDatasetVersion &&
+            currentPageDatasetVersion !== nextCatalog.dataset_version
+          ) {
             setCatalogUniversityFilters([]);
             setCatalogUnitFilters([]);
             setCatalogUnitPage(1);
@@ -602,6 +756,7 @@ export const CommunityMentorsPage = () => {
             setLoadedUnitPaths(null);
             setRecordsPayload(null);
             setRecordKeyword('');
+            setRecordSearchScopes([...DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES]);
             setRecordUniversityFilters([]);
             setRecordSchoolFilters([]);
             setRecordDepartmentFilters([]);
@@ -610,6 +765,8 @@ export const CommunityMentorsPage = () => {
             setSelectedRecordIds([]);
             setPreviewPayload(null);
             setPreviewPage(1);
+            setFieldChoices({});
+            setIdentityConfirmations({});
             setRecordPage(1);
           }
           return nextCatalog;
@@ -786,6 +943,8 @@ export const CommunityMentorsPage = () => {
       setSelectedRecordIds([]);
       setPreviewPayload(null);
       setPreviewPage(1);
+      setFieldChoices({});
+      setIdentityConfirmations({});
       setRecordPage(1);
       if (result.warning) {
         notifyWarning('学院数据来自缓存', result.warning);
@@ -887,11 +1046,11 @@ export const CommunityMentorsPage = () => {
     ])),
     [recordsPayload],
   );
-  const recordSearchTextById = useMemo(
+  const recordSearchIndexById = useMemo(
     () => new Map(
       (recordsPayload?.records ?? []).map((item) => [
         item.record.id,
-        recordSearchText(item),
+        buildRecordSearchIndex(item),
       ]),
     ),
     [recordsPayload],
@@ -921,17 +1080,23 @@ export const CommunityMentorsPage = () => {
           item.record.title,
           ...affiliations.map((affiliation) => affiliation.title),
         ]) &&
-        (!keyword || (recordSearchTextById.get(item.record.id) ?? '').includes(keyword))
+        (
+          !keyword ||
+          recordSearchScopes.some((scope) =>
+            (recordSearchIndexById.get(item.record.id)?.[scope] ?? '').includes(keyword),
+          )
+        )
       );
     });
   }, [
     categoryFilters,
     recordDepartmentFilters,
     recordKeyword,
+    recordSearchScopes,
     recordSchoolFilters,
     recordTitleFilters,
     recordUniversityFilters,
-    recordSearchTextById,
+    recordSearchIndexById,
     recordsPayload,
   ]);
 
@@ -1088,6 +1253,32 @@ export const CommunityMentorsPage = () => {
     }
   };
 
+  const closePreview = () => {
+    setPreviewPayload(null);
+    setPreviewPage(1);
+    setFieldChoices({});
+    setIdentityConfirmations({});
+  };
+
+  const applyChoiceToAllPreviewFields = (choice: CommunityFieldChoiceDTO) => {
+    if (!previewPayload) {
+      return;
+    }
+    setFieldChoices(Object.fromEntries(
+      previewPayload.records.map((item) => [
+        item.record.id,
+        Object.fromEntries(
+          item.fields.map((field) => [
+            field.field,
+            choice === 'local' && item.local_professor_id === null
+              ? 'community'
+              : choice,
+          ]),
+        ),
+      ]),
+    ));
+  };
+
   const submitImport = async () => {
     if (!catalog || !previewPayload || !loadedUnitPaths) {
       return;
@@ -1127,7 +1318,7 @@ export const CommunityMentorsPage = () => {
         })),
       });
       notifySuccess('社区导师已导入', result.message);
-      setPreviewPayload(null);
+      closePreview();
       setSelectedRecordIds([]);
       await loadRecordsForPaths(loadedUnitPaths);
     } catch (error) {
@@ -1399,18 +1590,34 @@ export const CommunityMentorsPage = () => {
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
-                  <label className="block md:col-span-2 xl:col-span-2 2xl:col-span-2">
-                    <span className="mb-2 block text-sm font-medium text-stone-800">搜索导师</span>
-                    <span className="relative block">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+                  <label className="flex min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 shadow-sm md:col-span-2 xl:col-span-2 2xl:col-span-2">
+                    <span className="shrink-0 font-medium leading-5 text-stone-800">关键词</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <Search className="h-4 w-4 shrink-0 text-stone-400" />
                       <input
+                        aria-label="搜索导师"
                         value={recordKeyword}
                         onChange={(event) => {
                           setRecordKeyword(event.target.value);
                           setRecordPage(1);
                         }}
-                        className="ui-select-shell w-full py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
-                        placeholder="姓名、邮箱、任职或方向"
+                        className="w-full min-w-0 bg-transparent leading-5 outline-none placeholder:text-stone-400"
+                        placeholder={
+                          recordSearchScopes.length === 1
+                            ? `搜索${COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS.find(
+                                (option) => option.value === recordSearchScopes[0],
+                              )?.label ?? '所选字段'}`
+                            : '搜索所选字段'
+                        }
+                      />
+                      <KeywordSearchScopeSelect
+                        label="搜索范围"
+                        options={COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS}
+                        selectedValues={recordSearchScopes}
+                        onChange={(nextValues) => {
+                          setRecordSearchScopes(normalizeCommunityMentorSearchScopes(nextValues));
+                          setRecordPage(1);
+                        }}
                       />
                     </span>
                   </label>
@@ -1455,8 +1662,8 @@ export const CommunityMentorsPage = () => {
                     }}
                   />
                   <MultiSelectFilter
-                    label="导入状态"
-                    allLabel="全部状态"
+                    label="与本地的关系"
+                    allLabel="全部情况"
                     selectedValues={categoryFilters}
                     options={categoryOptions}
                     optionLabels={categoryOptionLabels}
@@ -1661,34 +1868,56 @@ export const CommunityMentorsPage = () => {
 
       {previewPayload ? (
         <div role="dialog" aria-modal="true" aria-label="社区导师导入预览" className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[30px] border border-white/60 bg-stone-50 shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-white px-6 py-5">
-              <div>
+          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[26px] border border-white/60 bg-stone-50 shadow-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 bg-white px-5 py-4">
+              <div className="min-w-0">
                 <h2 className="text-xl font-semibold text-stone-950">导入预览与字段选择</h2>
-                <p className="mt-1 text-sm text-stone-500">默认只补全空字段；本地修改和冲突默认保留本地。</p>
+                <p className="mt-1 text-xs text-stone-500">默认只补全本地空白；本地修改和不同内容会保留。</p>
               </div>
-              <button type="button" disabled={importing} onClick={() => setPreviewPayload(null)} className="rounded-xl p-2 text-stone-500 hover:bg-stone-100" aria-label="关闭预览"><X className="h-5 w-5" /></button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={importing}
+                  onClick={() => applyChoiceToAllPreviewFields('local')}
+                  className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  title="已有导师全部保留本地；本地没有的导师仍采用社区资料"
+                >
+                  全部保留本地
+                </button>
+                <button
+                  type="button"
+                  disabled={importing}
+                  onClick={() => applyChoiceToAllPreviewFields('community')}
+                  className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  title="包括社区空值；空值会清空对应的本地内容"
+                >
+                  全部采用社区
+                </button>
+                <button type="button" disabled={importing} onClick={closePreview} className="rounded-xl p-2 text-stone-500 hover:bg-stone-100" aria-label="关闭预览"><X className="h-5 w-5" /></button>
+              </div>
             </div>
-            <div ref={previewScrollRef} className="flex-1 space-y-5 overflow-y-auto p-5 md:p-6">
+            <div ref={previewScrollRef} className="flex-1 space-y-3 overflow-y-auto p-3 md:p-4">
               {paginatedPreviewRecords.map((item) => {
-                const visibleFields = item.fields.filter((field) => item.category === 'new' || field.state !== 'same');
+                const visibleFields = item.category === 'new'
+                  ? []
+                  : item.fields.filter((field) => field.state !== 'same');
                 const allowLocalChoice = item.local_professor_id !== null;
                 return (
-                  <section key={item.record.id} className="rounded-[24px] border border-stone-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">{item.record.name}</h3><span className={clsx('rounded-full border px-2 py-0.5 text-xs font-medium', categoryMeta[item.category].className)}>{categoryMeta[item.category].label}</span></div>
-                        <p className="mt-1 text-sm text-stone-500">{item.record.email} · {[item.record.university, item.record.school].filter(Boolean).join(' · ')}</p>
+                  <section key={item.record.id} className="rounded-2xl border border-stone-200 bg-white p-3 shadow-sm md:p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5"><h3 className="font-semibold text-stone-950">{item.record.name}</h3><span className={clsx('rounded-full border px-2 py-0.5 text-[11px] font-medium', categoryMeta[item.category].className)}>{categoryMeta[item.category].label}</span></div>
+                        <p className="mt-0.5 truncate text-xs text-stone-500">{item.record.email} · {[item.record.university, item.record.school].filter(Boolean).join(' · ')}</p>
                       </div>
                       {item.local_professor_id ? <Link to={`/professors?keyword=${encodeURIComponent(item.local_professor_name ?? item.record.name)}`} className="text-xs font-medium text-primary hover:underline">查看本地导师</Link> : null}
                     </div>
-                    {item.local_archived ? <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">这位导师在本地回收站中。导入可以补全字段，但不会自动恢复。</div> : null}
+                    {item.local_archived ? <div className="mt-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs text-orange-800">这位导师在本地回收站中；导入不会自动恢复。</div> : null}
                     {item.import_blocked ? (
-                      <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
                         <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
                       </div>
                     ) : item.identity_conflict ? (
-                      <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                         <SelectionToggleButton
                           label={`确认 ${item.record.name} 是同一位导师`}
                           selected={identityConfirmations[item.record.id] ?? false}
@@ -1701,12 +1930,18 @@ export const CommunityMentorsPage = () => {
                       </div>
                     ) : null}
                     {visibleFields.length > 0 ? (
-                      <div className="mt-4 grid gap-3">
+                      <div className="mt-2.5 grid gap-2 xl:grid-cols-2">
                         {visibleFields.map((field) => (
                           <DifferenceField key={field.field} field={field} choice={fieldChoices[item.record.id]?.[field.field] ?? field.suggested_choice} allowLocalChoice={allowLocalChoice} onChange={(choice) => setFieldChoices((current) => ({ ...current, [item.record.id]: { ...(current[item.record.id] ?? {}), [field.field]: choice } }))} />
                         ))}
                       </div>
-                    ) : <div className="mt-4 rounded-xl bg-stone-50 px-3 py-3 text-sm text-stone-600">当前字段均一致；导入只会建立或刷新稳定社区关联。</div>}
+                    ) : (
+                      <div className="mt-2 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">
+                        {item.category === 'new'
+                          ? '本地没有这位导师，将按社区资料新增。'
+                          : '资料一致，导入只会更新社区关联。'}
+                      </div>
+                    )}
                   </section>
                 );
               })}
@@ -1749,7 +1984,7 @@ export const CommunityMentorsPage = () => {
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-6 py-4">
               <p className="text-xs text-stone-500">不会导入标签、个人备注、任务、发送记录或匹配结果。</p>
               <div className="flex gap-3">
-                <button type="button" disabled={importing} onClick={() => setPreviewPayload(null)} className="ui-btn-secondary">取消</button>
+                <button type="button" disabled={importing} onClick={closePreview} className="ui-btn-secondary">取消</button>
                 <button type="button" disabled={importing || recordsSelectionStale || previewPayload.records.some((item) => !isRecordSelectable(item))} onClick={() => void submitImport()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60">{importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}确认导入 {previewPayload.records.length} 位</button>
               </div>
             </div>

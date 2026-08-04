@@ -709,7 +709,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.code, "COMMUNITY_DATA_PREVIEW_STALE")
         self.assertIn("重新预览", str(raised.exception))
 
-    async def test_community_empty_value_cannot_clear_local_field(self) -> None:
+    async def test_community_empty_value_keeps_local_field_by_default(self) -> None:
         raw_record = _record_payload(department=None)
         primary_affiliation = dict(raw_record["affiliations"][0])  # type: ignore[index]
         primary_affiliation["department"] = None
@@ -727,23 +727,46 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(department.state, "local_only")
 
-            with self.assertRaises(CommunityDataError) as raised:
-                await import_community_records(
-                    session,
-                    dataset_version=DATASET_VERSION,
-                    comparisons=[comparison],
-                    items=[
-                        _import_item(
-                            comparison,
-                            field_choices={"department": "community"},
-                        ),
-                    ],
-                )
+            await import_community_records(
+                session,
+                dataset_version=DATASET_VERSION,
+                comparisons=[comparison],
+                items=[_import_item(comparison)],
+            )
+            await session.commit()
+            await session.refresh(professor)
 
             self.assertEqual(professor.department, "本地保留的系所")
 
-        self.assertEqual(raised.exception.code, "COMMUNITY_DATA_FIELD_CHOICE_INVALID")
-        self.assertIn("不能清空本地已有内容", str(raised.exception))
+    async def test_explicit_community_empty_value_can_clear_local_field(self) -> None:
+        raw_record = _record_payload(department=None)
+        primary_affiliation = dict(raw_record["affiliations"][0])  # type: ignore[index]
+        primary_affiliation["department"] = None
+        raw_record["affiliations"] = [primary_affiliation]
+        record = CommunityMentorRecord.model_validate(raw_record)
+        async with self.session_factory() as session:
+            local_values = community_record_values(record)
+            local_values["department"] = "需要清空的本地系所"
+            professor = Professor(**local_values)
+            session.add(professor)
+            await session.flush()
+            comparison = (await build_community_comparisons(session, [record]))[0]
+
+            await import_community_records(
+                session,
+                dataset_version=DATASET_VERSION,
+                comparisons=[comparison],
+                items=[
+                    _import_item(
+                        comparison,
+                        field_choices={"department": "community"},
+                    ),
+                ],
+            )
+            await session.commit()
+            await session.refresh(professor)
+
+            self.assertIsNone(professor.department)
 
     async def test_url_comparison_preserves_path_case(self) -> None:
         record = CommunityMentorRecord.model_validate(

@@ -7,6 +7,7 @@ import {
   getVisibleRecordSelectionState,
 } from '@/lib/communityMentorSelection';
 import { resetCommunityMentorCatalogSessionCacheForTests } from '@/lib/communityMentorCatalogCache';
+import { resetCommunityMentorPageSessionSnapshotForTests } from '@/lib/communityMentorPageState';
 import { CommunityMentorsPage } from '@/pages/CommunityMentorsPage';
 import type {
   CommunityCatalogDTO,
@@ -198,6 +199,9 @@ describe('CommunityMentorsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetCommunityMentorCatalogSessionCacheForTests();
+    resetCommunityMentorPageSessionSnapshotForTests();
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -257,6 +261,42 @@ describe('CommunityMentorsPage', () => {
     expect(screen.queryByText('正在加载社区导师库…')).not.toBeInTheDocument();
     await waitFor(() => expect(apiMocks.getCatalog).toHaveBeenCalledTimes(2));
     expect(apiMocks.getCatalog).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it('restores the loaded list, filters, selection, and open preview after returning', async () => {
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(recordsPayload);
+    apiMocks.preview.mockResolvedValue(recordsPayload);
+
+    const firstRender = renderPage();
+    fireEvent.click(await screen.findByLabelText(/选择 示例大学 计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('zhang@example.edu');
+    fireEvent.change(screen.getByLabelText('搜索导师'), {
+      target: { value: '张老师' },
+    });
+    fireEvent.click(screen.getByLabelText('选择 张老师'));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
+    expect(
+      await screen.findByRole('dialog', { name: '社区导师导入预览' }),
+    ).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    firstRender.unmount();
+    expect(document.body.style.overflow).toBe('');
+    renderPage();
+
+    expect(
+      screen.getByRole('dialog', { name: '社区导师导入预览' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('搜索导师')).toHaveValue('张老师');
+    expect(screen.getByText(/已加载 1 位，已选择 1\/2000/)).toBeInTheDocument();
+    expect(apiMocks.listRecords).toHaveBeenCalledTimes(1);
+    expect(apiMocks.preview).toHaveBeenCalledTimes(1);
+    expect(document.body.style.overflow).toBe('hidden');
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(document.body.style.overflow).toBe(''));
   });
 
   it('uses a stable vertical layout and points to the selector above', async () => {
@@ -351,6 +391,8 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
     expect(await screen.findByRole('dialog', { name: '社区导师导入预览' })).toBeInTheDocument();
+    expect(screen.getByText('本地没有这位导师，将按社区资料新增。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '采用社区姓名' })).not.toBeInTheDocument();
     expect(apiMocks.preview).toHaveBeenCalledWith({
       dataset_version: populatedCatalog.dataset_version,
       unit_paths: ['data/org_example_university/org_example_school.json'],
@@ -428,7 +470,10 @@ describe('CommunityMentorsPage', () => {
     expect(screen.getAllByLabelText('学院：全部学院')).toHaveLength(2);
     expect(screen.getByLabelText('系所：全部系所')).toBeInTheDocument();
     expect(screen.getByLabelText('职称：全部职称')).toBeInTheDocument();
-    expect(screen.getByLabelText('导入状态：全部状态')).toBeInTheDocument();
+    expect(screen.getByLabelText('与本地的关系：全部情况')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /搜索范围：选择字段：全部字段/ }),
+    ).toBeInTheDocument();
     expect(container.querySelector('select')).toBeNull();
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
   });
@@ -533,13 +578,24 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
     fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
     await screen.findByText('张老师');
-    const searchInput = screen.getByPlaceholderText('姓名、邮箱、任职或方向');
+    const searchInput = screen.getByLabelText('搜索导师');
 
     fireEvent.change(searchInput, { target: { value: '不存在的关键词' } });
     expect(screen.queryByText('张老师')).not.toBeInTheDocument();
     fireEvent.change(searchInput, { target: { value: 'alternate@example.edu' } });
     expect(screen.getByText('张老师')).toBeInTheDocument();
     fireEvent.change(searchInput, { target: { value: '访问教授' } });
+    expect(screen.getByText('张老师')).toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: 'alternate@example.edu' } });
+    fireEvent.click(
+      screen.getByRole('button', { name: /搜索范围：选择字段：全部字段/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '全部取消' }));
+    fireEvent.click(screen.getByRole('option', { name: '姓名' }));
+    expect(screen.queryByText('张老师')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('option', { name: '邮箱' }));
     expect(screen.getByText('张老师')).toBeInTheDocument();
   });
 
@@ -624,7 +680,7 @@ describe('CommunityMentorsPage', () => {
     expect(within(preview).getByText(/当前显示第 26–30 位/)).toBeInTheDocument();
   });
 
-  it('does not offer a community empty value that would clear local data', async () => {
+  it('allows an explicit community empty value while keeping it local by default', async () => {
     const localOnlyComparison: CommunityMentorComparisonDTO = {
       ...comparison,
       category: 'conflict',
@@ -650,6 +706,14 @@ describe('CommunityMentorsPage', () => {
     apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
     apiMocks.listRecords.mockResolvedValue(localOnlyPayload);
     apiMocks.preview.mockResolvedValue(localOnlyPayload);
+    apiMocks.importRecords.mockResolvedValue({
+      inserted_count: 0,
+      updated_count: 1,
+      linked_count: 0,
+      skipped_count: 0,
+      message: '社区导入完成',
+      professors: [],
+    });
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
@@ -658,8 +722,31 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
 
-    expect(await screen.findByRole('button', { name: '采用社区系所' })).toBeDisabled();
-    expect(screen.getByText(/不能用空值清掉本地资料/)).toBeInTheDocument();
+    const communityChoice = await screen.findByRole('button', { name: '采用社区系所' });
+    const localChoice = screen.getByRole('button', { name: /^保留本地/ });
+    expect(communityChoice).toBeEnabled();
+    expect(communityChoice).toHaveAttribute('aria-pressed', 'false');
+    expect(localChoice).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('空值（将清空本地内容）')).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    fireEvent.click(screen.getByRole('button', { name: '全部采用社区' }));
+    expect(communityChoice).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: '全部保留本地' }));
+    expect(localChoice).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: '全部采用社区' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认导入 1 位' }));
+
+    await waitFor(() => expect(apiMocks.importRecords).toHaveBeenCalledTimes(1));
+    expect(apiMocks.importRecords.mock.calls[0][0]).toMatchObject({
+      items: [
+        {
+          community_record_id: localOnlyComparison.record.id,
+          field_choices: { department: 'community' },
+        },
+      ],
+    });
+    await waitFor(() => expect(document.body.style.overflow).toBe(''));
   });
 
   it('selects at most 2000 mentors from the current filter and reports the remainder', () => {
