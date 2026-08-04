@@ -175,7 +175,7 @@ def _diagnostic_filters(
         filters["limit"] = limit
     if offset is not None:
         filters["offset"] = offset
-    return filters
+    return {key: value for key, value in filters.items() if value is not None}
 
 
 def _write_json_export(output: Path, data: object, *, force: bool) -> Path:

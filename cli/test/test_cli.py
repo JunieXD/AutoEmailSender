@@ -2432,8 +2432,18 @@ class CliTests(unittest.TestCase):
                 },
             ),
         )
-        self.assertEqual(export_client.calls[1][0:2], ("GET", "/api/agent/v1/diagnostics/export"))
-        self.assertEqual(export_client.calls[1][2]["category"], "diagnostics")
+        self.assertEqual(
+            export_client.calls[0],
+            ("GET", "/api/agent/v1/diagnostics/export", {}),
+        )
+        self.assertEqual(
+            export_client.calls[1],
+            (
+                "GET",
+                "/api/agent/v1/diagnostics/export",
+                {"category": "diagnostics"},
+            ),
+        )
         self.assertEqual(
             export_client.download_calls,
             ["/api/agent/v1/diagnostics/crawler-debug/52/export"],
