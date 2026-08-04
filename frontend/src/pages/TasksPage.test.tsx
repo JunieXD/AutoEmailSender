@@ -1795,6 +1795,131 @@ describe("TasksPage batch draft review", () => {
     ).toHaveAttribute("href", "https://example.edu/mentor");
   });
 
+  it("keeps the current draft visible until the next professor is ready", async () => {
+    const task = buildBatchTask({
+      name: "无感切换批量任务",
+      review_required_count: 2,
+      approved_count: 0,
+    });
+    const firstItem = buildBatchItem({
+      id: 11,
+      professor_id: 21,
+      professor_name: "第一位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const secondItem = buildBatchItem({
+      id: 12,
+      professor_id: 22,
+      professor_name: "第二位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const firstThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        id: 21,
+        name: "第一位导师",
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: 11,
+        batch_task_id: task.id,
+        generated_subject: "第一封主题",
+        generated_content_text: "第一封正文",
+        generated_content_html: "<p>第一封正文</p>",
+      },
+    });
+    const secondThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        id: 22,
+        name: "第二位导师",
+        university: "Second University",
+        school: "Second School",
+        department: "Second Department",
+        research_direction: "Second Research Direction",
+        profile_url: "https://example.edu/second-mentor",
+      },
+      material_options: [
+        {
+          ...buildWorkspaceThread().material_options[0],
+          id: 8,
+          display_name: "第二位导师附件.pdf",
+          original_filename: "第二位导师附件.pdf",
+        },
+      ],
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: 12,
+        batch_task_id: task.id,
+        match_score: 77,
+        match_reason: "第二位导师匹配摘要",
+        generated_subject: "第二封主题",
+        generated_content_text: "第二封正文",
+        generated_content_html: "<p>第二封正文</p>",
+        selected_material_ids: [8],
+      },
+    });
+    let finishSecondLoad: (thread: WorkspaceThreadDTO) => void;
+    const secondLoad = new Promise<WorkspaceThreadDTO>((resolve) => {
+      finishSecondLoad = resolve;
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([firstItem, secondItem]);
+    apiMocks.getBatchTaskItemThread
+      .mockResolvedValueOnce(firstThread)
+      .mockReturnValueOnce(secondLoad);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
+    expect(await screen.findByLabelText("邮件主题")).toHaveValue("第一封主题");
+
+    fireEvent.click(screen.getByRole("button", { name: /第二位导师/ }));
+    await waitFor(() => {
+      expect(apiMocks.getBatchTaskItemThread).toHaveBeenLastCalledWith(task.id, 12);
+    });
+    expect(screen.queryByText("正在加载草稿...")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("邮件主题")).toHaveValue("第一封主题");
+    expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>第一封正文</p>");
+    expect(screen.getByText(`${task.name} · 第一位导师`)).toBeInTheDocument();
+    const firstSubjectEditor = screen.getByLabelText("邮件主题");
+    const firstBodyEditor = screen.getByLabelText("邮件正文");
+
+    finishSecondLoad!(secondThread);
+    expect(await screen.findByDisplayValue("第二封主题")).toBeInTheDocument();
+    expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>第二封正文</p>");
+    expect(screen.getByLabelText("邮件主题")).not.toBe(firstSubjectEditor);
+    expect(screen.getByLabelText("邮件正文")).not.toBe(firstBodyEditor);
+    expect(screen.getByText(`${task.name} · 第二位导师`)).toBeInTheDocument();
+
+    const attachmentCard = screen.getByRole("region", { name: "随信附件" });
+    expect(within(attachmentCard).getByText("第二位导师附件.pdf")).toBeInTheDocument();
+    expect(within(attachmentCard).getByRole("checkbox")).toBeChecked();
+
+    const professorCard = screen.getByRole("region", { name: "老师详情" });
+    expect(within(professorCard).getByText("Second University")).toBeInTheDocument();
+    expect(within(professorCard).getByText("Second School")).toBeInTheDocument();
+    expect(within(professorCard).getByText("Second Department")).toBeInTheDocument();
+    expect(within(professorCard).getByText("Second Research Direction")).toBeInTheDocument();
+    expect(
+      within(professorCard).getByRole("link", {
+        name: "https://example.edu/second-mentor",
+      }),
+    ).toBeInTheDocument();
+
+    const matchCard = screen.getByRole("region", { name: "匹配摘要" });
+    expect(within(matchCard).getByText("匹配分 77")).toBeInTheDocument();
+    expect(within(matchCard).getByText("第二位导师匹配摘要")).toBeInTheDocument();
+  });
+
   it("regenerates and deletes batch review drafts from the review panel", async () => {
     const task = buildBatchTask({
       name: "AI 改写批量任务",

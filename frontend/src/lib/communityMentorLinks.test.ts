@@ -152,4 +152,19 @@ describe('community mentor GitHub helpers', () => {
     expect(url.searchParams.get('profile_url')).toBe('https://example.edu/profile');
     expect(url.searchParams.get('source_url')).toBe('https://example.edu/source');
   });
+
+  it('omits an oversized optional research direction from report URLs', () => {
+    const value = buildCommunityReportUrl({
+      ...record,
+      research_direction: '研'.repeat(10_000),
+    });
+    const url = new URL(value);
+    const currentValue = url.searchParams.get('current_value') ?? '';
+
+    expect(value.length).toBeLessThanOrEqual(COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH);
+    expect(currentValue).not.toContain('研究方向：');
+    expect(currentValue).toContain('邮箱：zhang@example.edu');
+    expect(currentValue).toContain('高校官网详情页：https://example.edu/profile');
+    expect(url.searchParams.get('record_id')).toBe('mentor_example0001');
+  });
 });

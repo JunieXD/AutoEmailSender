@@ -2778,11 +2778,23 @@ export const TasksPage = () => {
     if (!selectedBatchTask) {
       return;
     }
+    if (
+      batchReviewThread?.current_task.id === item.id &&
+      batchReviewItemId === item.id
+    ) {
+      if (batchReviewLoading) {
+        latestBatchReviewRequestIdRef.current += 1;
+        setBatchReviewLoading(false);
+      }
+      return;
+    }
 
+    const isSwitchingItem = batchReviewThread !== null;
     const requestId = latestBatchReviewRequestIdRef.current + 1;
     latestBatchReviewRequestIdRef.current = requestId;
-    setBatchReviewItemId(item.id);
-    setBatchReviewThread(null);
+    if (!isSwitchingItem) {
+      setBatchReviewItemId(item.id);
+    }
     setBatchReviewLoading(true);
     try {
       const thread = await getBatchTaskItemThread(selectedBatchTask.id, item.id);
@@ -2790,6 +2802,7 @@ export const TasksPage = () => {
         return;
       }
       ensureBatchReviewThreadMatchesItem(thread, item, selectedBatchTask);
+      setBatchReviewItemId(item.id);
       syncBatchDraftReview(thread);
     } catch (actionError) {
       if (latestBatchReviewRequestIdRef.current !== requestId) {
@@ -2798,8 +2811,10 @@ export const TasksPage = () => {
       const message =
         actionError instanceof Error ? actionError.message : "加载草稿失败";
       notifyError("加载草稿失败", message);
-      setBatchReviewItemId(null);
-      setBatchReviewThread(null);
+      if (!isSwitchingItem) {
+        setBatchReviewItemId(null);
+        setBatchReviewThread(null);
+      }
     } finally {
       if (latestBatchReviewRequestIdRef.current === requestId) {
         setBatchReviewLoading(false);
@@ -4449,7 +4464,7 @@ export const TasksPage = () => {
                           {batchReviewQueueItems.length} 封草稿等待处理
                         </p>
                       </div>
-                      {batchReviewLoading ? (
+                      {batchReviewLoading && !batchReviewThread ? (
                         <Loader2 className="h-4 w-4 animate-spin text-stone-400" />
                       ) : null}
                     </div>
@@ -4543,12 +4558,14 @@ export const TasksPage = () => {
                           </div>
                           <div className="space-y-4">
                             <SubjectTemplateInput
+                              key={`batch-review-subject-${batchReviewThread.current_task.id}`}
                               label="邮件主题"
                               value={batchReviewSubject}
                               onChange={setBatchReviewSubject}
                               placeholder="给老师的邮件主题"
                             />
                             <EmailTemplateEditor
+                              key={`batch-review-body-${batchReviewThread.current_task.id}`}
                               label="邮件正文"
                               html={batchReviewEditorHtml}
                               onChange={handleBatchReviewContentChange}

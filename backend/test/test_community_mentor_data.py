@@ -1071,6 +1071,17 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(f"Paper {index}" for index in range(1, 9)),
         )
 
+    def test_share_package_rejects_payload_above_community_upload_limit(self) -> None:
+        professor = Professor(
+            name="张老师",
+            email="zhang@example.edu",
+            source_url="https://example.edu/source",
+        )
+
+        with patch("app.services.community_mentor_data.COMMUNITY_SHARE_MAX_BYTES", 1):
+            with self.assertRaisesRegex(ValueError, "超过 5 MiB"):
+                build_community_share_package([professor])
+
 
 class CommunityMigrationTests(unittest.TestCase):
     def test_community_link_migration_upgrades_and_downgrades(self) -> None:
