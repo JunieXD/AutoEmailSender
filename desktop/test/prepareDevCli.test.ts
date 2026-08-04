@@ -6,6 +6,7 @@ import {
   getDevelopmentCliBuildCommands,
   prepareDevelopmentCli,
   resolveDevelopmentCliExecutable,
+  runDevelopmentCliBuild,
   type DevelopmentCliBuildInput,
 } from "../src/prepareDevCli.js";
 
@@ -87,5 +88,18 @@ describe("development CLI preparation", () => {
       runBuild,
     })).resolves.toEqual({ state: "unsupported", executablePath: null });
     expect(runBuild).not.toHaveBeenCalled();
+  });
+
+  it("captures CLI build output and shows it only when the build fails", async () => {
+    const repoRoot = await createRepositoryFixture();
+
+    await expect(runDevelopmentCliBuild({
+      repoRoot,
+      executablePath: path.join(repoRoot, "cli", "dist", "auto-email-sender"),
+      commands: [{
+        command: process.execPath,
+        args: ["-e", "console.log('build stdout'); console.error('build stderr'); process.exit(7)"],
+      }],
+    })).rejects.toThrow(/build stdout[\s\S]*build stderr/);
   });
 });

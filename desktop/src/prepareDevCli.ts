@@ -165,11 +165,12 @@ async function collectInputFiles(directoryPath: string): Promise<string[]> {
   return files;
 }
 
-async function runDevelopmentCliBuild(input: DevelopmentCliBuildInput): Promise<void> {
+export async function runDevelopmentCliBuild(input: DevelopmentCliBuildInput): Promise<void> {
   for (const buildCommand of input.commands) {
     const result = spawnSync(buildCommand.command, buildCommand.args, {
       cwd: input.repoRoot,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
       shell: false,
     });
     const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
@@ -182,8 +183,13 @@ async function runDevelopmentCliBuild(input: DevelopmentCliBuildInput): Promise<
     if (result.status === 0) {
       return;
     }
+    const output = [result.stdout, result.stderr]
+      .map((value) => (value === null ? "" : String(value).trim()))
+      .filter(Boolean)
+      .join("\n");
     throw new Error(
-      `${buildCommand.command} 构建 CLI 失败（退出码 ${result.status ?? "未知"}）。`,
+      `${buildCommand.command} 构建 CLI 失败（退出码 ${result.status ?? "未知"}）。`
+        + (output ? `\n${output}` : ""),
     );
   }
   throw new Error("找不到可用的 CLI 构建命令。Windows 请安装 PowerShell，macOS 请确认 bash 可用。");
