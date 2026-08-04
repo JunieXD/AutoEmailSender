@@ -459,7 +459,7 @@ export interface CommunityLifecycleWarningDTO {
 }
 
 export interface CommunityCatalogDTO {
-  schema_version: 1;
+  schema_version: 2;
   dataset_version: string;
   generated_at: string;
   record_count: number;
