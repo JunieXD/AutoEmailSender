@@ -10,6 +10,7 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
+import { ConfirmDialog } from "@/components/atoms/ConfirmDialog";
 import type {
   DesktopAgentIntegrationStatus,
   DesktopAgentSupportState,
@@ -73,6 +74,7 @@ export function AgentSupportCard() {
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<MainAction | AgentAction | null>(null);
   const [agentQuery, setAgentQuery] = useState("");
+  const [disableConfirmationOpen, setDisableConfirmationOpen] = useState(false);
   const api = window.autoEmailSender;
 
   useEffect(() => {
@@ -146,12 +148,6 @@ export function AgentSupportCard() {
 
   const runAction = async (nextAction: MainAction) => {
     if (!api) {
-      return;
-    }
-    if (
-      nextAction === "disable"
-      && !window.confirm("确认关闭命令行，并卸载全部已安装的 Agent 使用说明？已打开的 Agent 对话可能需要重启。")
-    ) {
       return;
     }
     const operation = {
@@ -377,7 +373,12 @@ export function AgentSupportCard() {
                 </button>
               ) : null}
               {displayStatus.state === "enabled" || displayStatus.state === "needs_repair" ? (
-                <button type="button" className="ui-btn-danger" disabled={busy} onClick={() => void runAction("disable")}>
+                <button
+                  type="button"
+                  className="ui-btn-danger"
+                  disabled={busy}
+                  onClick={() => setDisableConfirmationOpen(true)}
+                >
                   关闭支持
                 </button>
               ) : null}
@@ -385,6 +386,18 @@ export function AgentSupportCard() {
           </div>
         </div>
       ) : null}
+      <ConfirmDialog
+        open={disableConfirmationOpen}
+        title="关闭命令行与 Agent 支持？"
+        description="这会移除命令行工具，并卸载全部已安装的官方 Agent 使用说明。已打开的 Agent 对话可能需要新建或重启后才会停止使用它。"
+        confirmLabel="确认关闭"
+        tone="danger"
+        onCancel={() => setDisableConfirmationOpen(false)}
+        onConfirm={() => {
+          setDisableConfirmationOpen(false);
+          void runAction("disable");
+        }}
+      />
     </section>
   );
 }

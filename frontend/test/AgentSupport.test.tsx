@@ -114,6 +114,27 @@ describe("Agent support UI", () => {
     });
   });
 
+  it("uses the custom confirmation dialog before disabling Agent support", async () => {
+    installDesktopApi({
+      getAgentSupportStatus: vi.fn(async () => enabledStatus),
+    });
+    render(<AgentSupportCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /命令行与 Agent/ }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭支持" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "关闭命令行与 Agent 支持？" }),
+    ).toBeInTheDocument();
+    expect(window.autoEmailSender?.disableAgentSupport).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认关闭" }));
+
+    await waitFor(() => {
+      expect(window.autoEmailSender?.disableAgentSupport).toHaveBeenCalledOnce();
+    });
+  });
+
   it("keeps the card body mounted until the collapse transition finishes", async () => {
     render(<AgentSupportCard />);
 
