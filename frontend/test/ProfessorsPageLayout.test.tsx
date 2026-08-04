@@ -317,6 +317,10 @@ describe("ProfessorsPage layout", () => {
         expect.stringContaining("template=batch-contribution.yml"),
       );
     });
+    const contributionUrl = new URL(openExternalUrl.mock.calls[0][0]);
+    expect(contributionUrl.searchParams.get("title")).toBe(
+      "[批量投稿] 测试大学计算机学院",
+    );
     expect(window.location.href).toBe(locationBeforeContribution);
   });
 

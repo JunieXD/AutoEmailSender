@@ -36,6 +36,11 @@ type ShareableMentor = Pick<
   | 'source_url'
 >;
 
+type BatchShareableMentor = Pick<
+  ProfessorManagementItemDTO,
+  'university' | 'school'
+>;
+
 const valueOrEmpty = (value: string | null | undefined) => value?.trim() ?? '';
 
 const setSearchParam = (url: URL, field: string, value: string) => {
@@ -97,6 +102,45 @@ export const buildCommunityContributionPrefill = (
 
 export const buildCommunityContributionUrl = (mentor: ShareableMentor) =>
   buildCommunityContributionPrefill(mentor).url;
+
+export const buildCommunityBatchContributionUrl = (
+  mentors: BatchShareableMentor[],
+) => {
+  const url = new URL(COMMUNITY_BATCH_CONTRIBUTION_URL);
+  const groups = new Map<
+    string,
+    { university: string; school: string; count: number }
+  >();
+
+  mentors.forEach((mentor) => {
+    const university = valueOrEmpty(mentor.university);
+    const school = valueOrEmpty(mentor.school);
+    const key = `${university}\u0000${school}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+    groups.set(key, { university, school, count: 1 });
+  });
+
+  const primaryGroup = Array.from(groups.values()).reduce<
+    { university: string; school: string; count: number } | null
+  >(
+    (current, group) => (!current || group.count > current.count ? group : current),
+    null,
+  );
+
+  const institution = primaryGroup
+    ? `${primaryGroup.university}${primaryGroup.school}`
+    : '';
+  const suffix = groups.size > 1 ? '等' : '';
+  url.searchParams.set(
+    'title',
+    `[批量投稿] ${institution ? `${institution}${suffix}` : '导师信息'}`,
+  );
+  return url.toString();
+};
 
 const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
   [

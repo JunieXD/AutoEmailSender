@@ -3,6 +3,7 @@ import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
   COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH,
   COMMUNITY_CONTRIBUTION_URL,
+  buildCommunityBatchContributionUrl,
   buildCommunityContributionPrefill,
   buildCommunityContributionUrl,
   buildCommunityReportUrl,
@@ -92,6 +93,33 @@ describe('community mentor GitHub helpers', () => {
     expect(COMMUNITY_BATCH_CONTRIBUTION_URL).toContain(
       'template=batch-contribution.yml',
     );
+  });
+
+  it('prefills a batch title with the shared university and school', () => {
+    const url = new URL(buildCommunityBatchContributionUrl([
+      professor,
+      { ...professor, id: 2, name: '王老师', email: 'wang@example.edu' },
+    ]));
+
+    expect(url.searchParams.get('template')).toBe('batch-contribution.yml');
+    expect(url.searchParams.get('title')).toBe('[批量投稿] 示例大学计算机学院');
+  });
+
+  it('uses the largest institution group and appends 等 for a mixed batch', () => {
+    const url = new URL(buildCommunityBatchContributionUrl([
+      professor,
+      { ...professor, id: 2, name: '王老师', email: 'wang@example.edu' },
+      {
+        ...professor,
+        id: 3,
+        name: '李老师',
+        email: 'li@example.edu',
+        university: '另一大学',
+        school: '生命科学学院',
+      },
+    ]));
+
+    expect(url.searchParams.get('title')).toBe('[批量投稿] 示例大学计算机学院等');
   });
 
   it('keeps GitHub prefill URLs below the verified safe budget without silently truncating text', () => {

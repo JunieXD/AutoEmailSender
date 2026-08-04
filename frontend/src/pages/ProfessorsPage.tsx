@@ -66,6 +66,7 @@ import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import { downloadCommunitySharePackage } from "@/lib/api/communityMentorsApi";
 import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
+  buildCommunityBatchContributionUrl,
   buildCommunityContributionPrefill,
 } from "@/lib/communityMentorLinks";
 import {
@@ -1345,7 +1346,7 @@ export const ProfessorsPage = () => {
         );
         return;
       }
-      openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL);
+      openExternalHttpUrl(buildCommunityBatchContributionUrl(selectedProfessors));
       notifySuccess(
         "共享包已保存，批量投稿表已打开",
         `把刚保存的、包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
