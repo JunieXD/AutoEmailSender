@@ -2290,7 +2290,14 @@ export const ProfilePage = () => {
     setupLlmProfile,
     testComposeSetupStatus,
   ]);
-  const hasCompletedProfileSetup = setupItems.every((item) => item.completed);
+  const hasResolvedTestComposeSetup =
+    selectedIdentityId === null ||
+    testComposeSetupStatus === "completed" ||
+    testComposeSetupStatus === "pending";
+  const shouldShowProfileSetupRecommendations =
+    !loadingOutreachTemplates &&
+    hasResolvedTestComposeSetup &&
+    setupItems.some((item) => !item.completed);
 
   useEffect(() => {
     if (!selectedIdentityId) {
@@ -3183,7 +3190,7 @@ export const ProfilePage = () => {
         </div>
       ) : (
         <div className="mt-6 space-y-6">
-          {!hasCompletedProfileSetup ? (
+          {shouldShowProfileSetupRecommendations ? (
             <section className="rounded-3xl border border-stone-200 bg-[linear-gradient(135deg,rgba(248,244,236,0.95),rgba(255,255,255,0.98))] p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>

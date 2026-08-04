@@ -161,6 +161,22 @@ const selectedIdentity: IdentityDTO = {
   updated_at: "2026-04-22T00:00:00Z",
 };
 
+const selectedIdentityWithMaterial: IdentityDTO = {
+  ...selectedIdentity,
+  materials: [
+    {
+      id: 7,
+      display_name: "简历.pdf",
+      original_filename: "resume.pdf",
+      mime_type: "application/pdf",
+      size_bytes: 1024,
+      material_type: "resume",
+      is_primary: true,
+      created_at: "2026-04-22T00:00:00Z",
+    },
+  ],
+};
+
 const selectedLlmProfile: LLMProfileDTO = {
   id: 1,
   name: "测试模型",
@@ -294,28 +310,51 @@ describe("ProfilePage onboarding", () => {
     );
   });
 
-  it("hides setup recommendations after all four stages are completed", async () => {
-    const completedIdentity: IdentityDTO = {
-      ...selectedIdentity,
-      materials: [
-        {
-          id: 7,
-          display_name: "简历.pdf",
-          original_filename: "resume.pdf",
-          mime_type: "application/pdf",
-          size_bytes: 1024,
-          material_type: "resume",
-          is_primary: true,
-          created_at: "2026-04-22T00:00:00Z",
-        },
-      ],
-    };
+  it("keeps setup recommendations hidden until incomplete setup is confirmed", async () => {
+    let resolveTestComposeStatus!: (value: { completed: boolean }) => void;
     mockedUseSelectionContext.mockReturnValue({
-      identities: [completedIdentity],
+      identities: [selectedIdentityWithMaterial],
       llmProfiles: [selectedLlmProfile],
-      selectedIdentityId: completedIdentity.id,
+      selectedIdentityId: selectedIdentityWithMaterial.id,
       selectedLlmProfileId: selectedLlmProfile.id,
-      selectedIdentity: completedIdentity,
+      selectedIdentity: selectedIdentityWithMaterial,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    });
+    mockedGetTestComposeStatus.mockReturnValueOnce(
+      new Promise<{ completed: boolean }>((resolve) => {
+        resolveTestComposeStatus = resolve;
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockedGetTestComposeStatus).toHaveBeenCalledWith(
+        selectedIdentityWithMaterial.id,
+      );
+    });
+    expect(
+      screen.queryByRole("heading", { name: "首次配置建议" }),
+    ).not.toBeInTheDocument();
+
+    resolveTestComposeStatus({ completed: false });
+
+    expect(
+      await screen.findByRole("heading", { name: "首次配置建议" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides setup recommendations after all four stages are completed", async () => {
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentityWithMaterial],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: selectedIdentityWithMaterial.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity: selectedIdentityWithMaterial,
       selectedLlmProfile,
       setSelectedIdentityId: vi.fn(),
       setSelectedLlmProfileId: vi.fn(),
@@ -428,7 +467,9 @@ describe("ProfilePage onboarding", () => {
     );
     expect(screen.queryByLabelText("配置名称")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /1\. 发件身份/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /1\. 发件身份/ }),
+    );
 
     expect(screen.getByRole("button", { name: /^发件身份/ })).toHaveAttribute(
       "aria-expanded",
