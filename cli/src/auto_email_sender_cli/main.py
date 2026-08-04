@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 from typing import Annotated
 
 import httpx
 import typer
 
-from auto_email_sender_cli.capabilities import list_capabilities
+from auto_email_sender_cli.capabilities import (
+    list_capabilities,
+    normalize_capability_command,
+    suggest_capabilities,
+)
+from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
 from auto_email_sender_cli.commands import (
     campaigns_app,
     communications_app,
@@ -31,6 +35,7 @@ from auto_email_sender_cli.commands import (
     workspaces_app,
 )
 from auto_email_sender_cli.errors import CliError
+from auto_email_sender_cli.describe import describe_command
 from auto_email_sender_cli.guide import GUIDE_TOPICS, get_guide
 from auto_email_sender_cli.output import (
     CliContext,
@@ -39,7 +44,6 @@ from auto_email_sender_cli.output import (
     emit_success,
 )
 from auto_email_sender_cli.runtime import (
-    ensure_runtime_descriptor,
     get_runtime_file_path,
     load_runtime_descriptor,
     process_is_running,
@@ -51,7 +55,7 @@ app = typer.Typer(
     name="auto-email-sender",
     help=(
         "让本地 Agent 安全查询和操作 Auto Email Sender。\n"
-        "多步骤或写入操作前，请运行 guide；使用 capabilities 查看当前支持能力。"
+        "多步骤或写入操作前，请运行 guide；使用 capabilities 查看能力，使用 describe 查看命令参数。"
     ),
     no_args_is_help=True,
     add_completion=False,
@@ -151,14 +155,18 @@ def capabilities_command(
 ) -> None:
     context = _context(ctx)
     try:
-        descriptor = ensure_runtime_descriptor()
         items = list_capabilities(command)
         if command and not items:
+            normalized = normalize_capability_command(command)
             error = CliError(
                 code="CAPABILITY_NOT_FOUND",
                 message=f"没有找到能力：{command}",
                 exit_code=4,
-                details={"command": command},
+                details={
+                    "command": command,
+                    "normalized_command": normalized,
+                    "suggestions": suggest_capabilities(normalized),
+                },
             )
             emit_error(context, command="capabilities", error=error)
             raise typer.Exit(error.exit_code)
@@ -185,7 +193,38 @@ def capabilities_command(
         command="capabilities",
         data=data,
         human_text="\n".join(human_lines),
-        app_version=descriptor.app_version,
+    )
+
+
+@app.command("describe")
+def describe_command_handler(
+    ctx: typer.Context,
+    command: Annotated[
+        str,
+        typer.Option("--command", help="要查看的命令，可使用空格或点号。"),
+    ],
+) -> None:
+    context = _context(ctx)
+    description = describe_command(app, command)
+    if description is None:
+        normalized = normalize_capability_command(command)
+        error = CliError(
+            code="COMMAND_NOT_FOUND",
+            message=f"没有找到命令：{command}",
+            exit_code=4,
+            details={
+                "command": command,
+                "normalized_command": normalized,
+                "suggestions": suggest_capabilities(normalized),
+            },
+        )
+        emit_error(context, command="describe", error=error)
+        raise typer.Exit(error.exit_code)
+    emit_success(
+        context,
+        command="describe",
+        data=description,
+        human_text=_format_description_human(description),
     )
 
 
@@ -263,8 +302,8 @@ def status_command(ctx: typer.Context) -> None:
 def doctor_command(ctx: typer.Context) -> None:
     context = _context(ctx)
     command_path = shutil.which("auto-email-sender")
-    skill_path = Path.home() / ".agents" / "skills" / "auto-email-sender" / "SKILL.md"
     runtime_path = get_runtime_file_path()
+    agent_skill_installation = inspect_agent_skill_installation()
     checks: list[dict[str, object]] = [
         {
             "id": "cli_command",
@@ -272,9 +311,10 @@ def doctor_command(ctx: typer.Context) -> None:
             "message": command_path or "全局命令尚未注册；开发环境可继续使用 uv run。",
         },
         {
-            "id": "agent_skill",
-            "ok": skill_path.is_file(),
-            "message": skill_path.as_posix(),
+            "id": "agent_skills",
+            "ok": bool(agent_skill_installation["ok"]),
+            "message": str(agent_skill_installation["message"]),
+            "details": agent_skill_installation,
         },
         {
             "id": "runtime_descriptor",
@@ -315,15 +355,14 @@ def doctor_command(ctx: typer.Context) -> None:
                 },
             )
     healthy = all(bool(check["ok"]) for check in checks)
-    recommended_action = (
-        "请先手动打开 Auto Email Sender，等待加载完成后再执行需要本地服务的命令。"
-        if manual_open_required
-        else (
-            None
-            if healthy
-            else "请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
-        )
-    )
+    skill_needs_update = not bool(agent_skill_installation["ok"])
+    recommended_action = None
+    if manual_open_required:
+        recommended_action = "请先手动打开 Auto Email Sender，等待加载完成后再执行需要本地服务的命令。"
+        if skill_needs_update:
+            recommended_action += "此外，请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
+    elif not healthy:
+        recommended_action = "请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
     data = {
         "healthy": healthy,
         "checks": checks,
@@ -366,6 +405,25 @@ def _format_guide_human(guide: dict[str, object]) -> str:
     topics = guide.get("topics")
     if isinstance(topics, list):
         lines.append(f"\n可用主题：{', '.join(str(item) for item in topics)}")
+    return "\n".join(lines)
+
+
+def _format_description_human(description: dict[str, object]) -> str:
+    lines = [str(description["command"]), str(description["summary"]), "", str(description["usage"])]
+    parameters = description.get("parameters")
+    if isinstance(parameters, list) and parameters:
+        lines.append("\n参数：")
+        for parameter in parameters:
+            if not isinstance(parameter, dict):
+                continue
+            flags = parameter.get("flags")
+            label = " / ".join(str(flag) for flag in flags) if isinstance(flags, list) else str(parameter.get("name"))
+            required = "必填" if parameter.get("required") else "可选"
+            lines.append(f"- {label}（{required}）")
+    next_steps = description.get("next_steps")
+    if isinstance(next_steps, list) and next_steps:
+        lines.append("\n下一步：")
+        lines.extend(f"- {step}" for step in next_steps)
     return "\n".join(lines)
 
 

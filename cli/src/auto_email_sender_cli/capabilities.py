@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Final, Literal
 
@@ -31,6 +32,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("doctor", "检查 CLI、Skill、运行文件和本地服务", "L0", "available"),
     Capability("guide", "读取 Agent 使用说明", "L0", "available"),
     Capability("capabilities", "读取当前命令能力和风险信息", "L0", "available"),
+    Capability("describe", "读取某个命令的机器可读操作说明", "L0", "available"),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
     Capability("professors.get", "按 ID 读取导师完整档案", "L0", "available"),
     Capability("professors.tags.list", "读取导师标签", "L0", "available"),
@@ -1009,10 +1011,35 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
 def list_capabilities(command: str | None = None) -> list[dict[str, object]]:
     items = CAPABILITIES
     if command:
-        normalized = command.strip().lower()
+        normalized = normalize_capability_command(command)
         items = tuple(
             item
             for item in CAPABILITIES
             if item.command == normalized or item.command.startswith(f"{normalized}.")
         )
     return [item.to_dict() for item in items]
+
+
+def normalize_capability_command(command: str) -> str:
+    """Accept both CLI-style spaces and capability-style dotted identifiers."""
+
+    return re.sub(r"\.+", ".", re.sub(r"\s+", ".", command.strip().lower())).strip(".")
+
+
+def get_capability(command: str) -> Capability | None:
+    normalized = normalize_capability_command(command)
+    return next((item for item in CAPABILITIES if item.command == normalized), None)
+
+
+def suggest_capabilities(command: str, limit: int = 5) -> list[str]:
+    normalized = normalize_capability_command(command)
+    if not normalized:
+        return [item.command for item in CAPABILITIES[:limit]]
+    tokens = set(normalized.replace("-", ".").split("."))
+    matches = [
+        item.command
+        for item in CAPABILITIES
+        if normalized in item.command
+        or any(token and token in item.command.replace("-", ".") for token in tokens)
+    ]
+    return matches[:limit]

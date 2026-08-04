@@ -15,37 +15,24 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
     [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
-function Get-TextSha256([string]$Value) {
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Value)
-        return ([System.BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-    }
-}
-
 function Write-Manifest(
     [string]$Path,
     [string]$CliTarget,
-    [string]$SkillTarget,
-    [object]$CliSha256,
-    [object]$SkillSha256
+    [object]$Agents,
+    [bool]$Enabled = $true
 ) {
     $manifest = [ordered]@{
-        schema_version = 2
-        enabled = $true
+        schema_version = 4
+        enabled = $Enabled
         prompt_dismissed = $true
         app_version = "2.4.1"
-        desktop_executable = "C:\Program Files\Auto Email Sender\Auto Email Sender.exe"
         cli_source = "C:\Program Files\Auto Email Sender\resources\cli\auto-email-sender.exe"
+        skill_source = "C:\Program Files\Auto Email Sender\resources\agent-support\skills\auto-email-sender"
         cli_target = $CliTarget
-        skill_target = $SkillTarget
-        cli_sha256 = $CliSha256
-        skill_sha256 = $SkillSha256
+        cli_sha256 = ("a" * 64)
         path_managed = $false
-        last_backup_directory = $null
-        updated_at = "2026-08-03T00:00:00.000Z"
+        agents = $Agents
+        updated_at = "2026-08-04T00:00:00.000Z"
     }
     Write-Utf8NoBom $Path (($manifest | ConvertTo-Json -Depth 10) + "`n")
 }
@@ -55,78 +42,76 @@ $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("auto-email-sender-unin
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
 try {
-    $modifiedRoot = Join-Path $testRoot "modified"
-    $modifiedCli = Join-Path $modifiedRoot "bin\auto-email-sender.exe"
-    $modifiedSkill = Join-Path $modifiedRoot "skills\auto-email-sender"
-    $modifiedManifest = Join-Path $modifiedRoot "user-data\agent\installation.json"
-    $modifiedBackups = Join-Path $modifiedRoot "backups"
-    Write-Utf8NoBom $modifiedCli "user changed cli"
-    Write-Utf8NoBom (Join-Path $modifiedSkill "SKILL.md") "user changed skill"
-    Write-Manifest $modifiedManifest $modifiedCli $modifiedSkill $null $null
-
-    & $cleanupScript `
-        -ManifestPath $modifiedManifest `
-        -CliTarget $modifiedCli `
-        -SkillTarget $modifiedSkill `
-        -CommandDirectory (Split-Path -Parent $modifiedCli) `
-        -BackupRoot $modifiedBackups `
-        -SkipPathCleanup
-
-    Assert-True (-not (Test-Path -LiteralPath $modifiedCli)) "Modified managed CLI was not removed."
-    Assert-True (-not (Test-Path -LiteralPath $modifiedSkill)) "Modified managed Skill was not removed."
-    $backupDirectories = @(Get-ChildItem -LiteralPath $modifiedBackups -Directory)
-    Assert-True ($backupDirectories.Count -eq 1) "Expected exactly one backup directory."
-    Assert-True ((Get-Content -LiteralPath (Join-Path $backupDirectories[0].FullName "auto-email-sender.exe") -Raw) -eq "user changed cli") "CLI backup content changed."
-    Assert-True ((Get-Content -LiteralPath (Join-Path $backupDirectories[0].FullName "auto-email-sender-skill\SKILL.md") -Raw) -eq "user changed skill") "Skill backup content changed."
-    $updatedManifest = Get-Content -LiteralPath $modifiedManifest -Raw -Encoding UTF8 | ConvertFrom-Json
-    Assert-True (-not [string]::IsNullOrWhiteSpace($updatedManifest.last_backup_directory)) "Backup path was not recorded."
-
     $managedRoot = Join-Path $testRoot "managed"
+    $profile = Join-Path $managedRoot "profile"
     $managedCli = Join-Path $managedRoot "bin\auto-email-sender.exe"
-    $managedSkill = Join-Path $managedRoot "skills\auto-email-sender"
-    $managedSkillFile = Join-Path $managedSkill "SKILL.md"
-    $managedAgentFile = Join-Path $managedSkill "agents\openai.yaml"
     $managedManifest = Join-Path $managedRoot "user-data\agent\installation.json"
-    $managedBackups = Join-Path $managedRoot "backups"
+    $codexSkill = Join-Path $profile ".agents\skills\auto-email-sender"
+    $claudeSkill = Join-Path $profile ".claude\skills\auto-email-sender"
     Write-Utf8NoBom $managedCli "managed cli"
-    Write-Utf8NoBom $managedSkillFile "managed skill"
-    Write-Utf8NoBom $managedAgentFile "interface: cli"
-    $managedCliSha = (Get-FileHash -LiteralPath $managedCli -Algorithm SHA256).Hash.ToLowerInvariant()
-    $managedSkillFileSha = (Get-FileHash -LiteralPath $managedSkillFile -Algorithm SHA256).Hash.ToLowerInvariant()
-    $managedAgentFileSha = (Get-FileHash -LiteralPath $managedAgentFile -Algorithm SHA256).Hash.ToLowerInvariant()
-    $managedSkillSha = Get-TextSha256 (
-        "F`tSKILL.md`t$managedSkillFileSha`n" +
-        "D`tagents`n" +
-        "F`tagents/openai.yaml`t$managedAgentFileSha`n"
-    )
-    Write-Manifest $managedManifest $managedCli $managedSkill $managedCliSha $managedSkillSha
+    Write-Utf8NoBom (Join-Path $codexSkill "SKILL.md") "managed codex skill"
+    Write-Utf8NoBom (Join-Path $claudeSkill "SKILL.md") "managed claude skill"
+    Write-Manifest $managedManifest $managedCli ([ordered]@{
+        codex = @{ skill_target = $codexSkill; skill_sha256 = ("b" * 64) }
+        claude_code = @{ skill_target = $claudeSkill; skill_sha256 = ("b" * 64) }
+    })
 
     & $cleanupScript `
         -ManifestPath $managedManifest `
         -CliTarget $managedCli `
-        -SkillTarget $managedSkill `
         -CommandDirectory (Split-Path -Parent $managedCli) `
-        -BackupRoot $managedBackups `
+        -UserProfilePath $profile `
         -SkipPathCleanup
 
-    Assert-True (-not (Test-Path -LiteralPath $managedCli)) "Unmodified managed CLI was not removed."
-    Assert-True (-not (Test-Path -LiteralPath $managedSkill)) "Unmodified managed Skill was not removed."
-    Assert-True (-not (Test-Path -LiteralPath $managedBackups)) "Unmodified content should not create a backup."
+    Assert-True (-not (Test-Path -LiteralPath $managedCli)) "Managed CLI was not removed."
+    Assert-True (-not (Test-Path -LiteralPath $codexSkill)) "Managed Codex Skill was not removed."
+    Assert-True (-not (Test-Path -LiteralPath $claudeSkill)) "Managed Claude Code Skill was not removed."
+
+    $legacyRoot = Join-Path $testRoot "legacy"
+    $legacyProfile = Join-Path $legacyRoot "profile"
+    $legacyCli = Join-Path $legacyRoot "bin\auto-email-sender.exe"
+    $legacySkill = Join-Path $legacyProfile ".agents\skills\auto-email-sender"
+    $legacyManifest = Join-Path $legacyRoot "user-data\agent\installation.json"
+    Write-Utf8NoBom $legacyCli "legacy cli"
+    Write-Utf8NoBom (Join-Path $legacySkill "SKILL.md") "legacy skill"
+    $legacy = [ordered]@{
+        schema_version = 3
+        enabled = $true
+        prompt_dismissed = $true
+        app_version = "2.4.1"
+        cli_target = $legacyCli
+        skill_target = $legacySkill
+        cli_sha256 = ("a" * 64)
+        skill_sha256 = ("b" * 64)
+        path_managed = $false
+        updated_at = "2026-08-04T00:00:00.000Z"
+    }
+    Write-Utf8NoBom $legacyManifest (($legacy | ConvertTo-Json -Depth 10) + "`n")
+
+    & $cleanupScript `
+        -ManifestPath $legacyManifest `
+        -CliTarget $legacyCli `
+        -CommandDirectory (Split-Path -Parent $legacyCli) `
+        -UserProfilePath $legacyProfile `
+        -SkipPathCleanup
+
+    Assert-True (-not (Test-Path -LiteralPath $legacyCli)) "Legacy managed CLI was not removed."
+    Assert-True (-not (Test-Path -LiteralPath $legacySkill)) "Legacy managed Skill was not removed."
 
     $unmanagedRoot = Join-Path $testRoot "unmanaged"
+    $unmanagedProfile = Join-Path $unmanagedRoot "profile"
     $unmanagedCli = Join-Path $unmanagedRoot "bin\auto-email-sender.exe"
-    $unmanagedSkill = Join-Path $unmanagedRoot "skills\auto-email-sender"
+    $unmanagedSkill = Join-Path $unmanagedProfile ".cursor\skills\auto-email-sender"
     $unmanagedManifest = Join-Path $unmanagedRoot "user-data\agent\installation.json"
     Write-Utf8NoBom $unmanagedCli "user cli"
     Write-Utf8NoBom (Join-Path $unmanagedSkill "SKILL.md") "user skill"
-    Write-Manifest $unmanagedManifest "C:\SomeoneElse\auto-email-sender.exe" "C:\SomeoneElse\skill" $null $null
+    Write-Manifest $unmanagedManifest "C:\SomeoneElse\auto-email-sender.exe" @{}
 
     & $cleanupScript `
         -ManifestPath $unmanagedManifest `
         -CliTarget $unmanagedCli `
-        -SkillTarget $unmanagedSkill `
         -CommandDirectory (Split-Path -Parent $unmanagedCli) `
-        -BackupRoot (Join-Path $unmanagedRoot "backups") `
+        -UserProfilePath $unmanagedProfile `
         -SkipPathCleanup
 
     Assert-True (Test-Path -LiteralPath $unmanagedCli) "Unmanaged CLI was deleted."

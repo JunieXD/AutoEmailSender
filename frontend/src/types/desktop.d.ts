@@ -105,6 +105,28 @@ export type DesktopAgentSupportState =
   | "updating"
   | "unsupported";
 
+export type DesktopAgentIntegrationId =
+  | "codex"
+  | "claude_code"
+  | "cursor"
+  | "copilot_cli";
+
+export type DesktopAgentIntegrationState =
+  | "not_installed"
+  | "installed"
+  | "needs_update"
+  | "conflict"
+  | "available_via_shared";
+
+export type DesktopAgentIntegrationStatus = {
+  id: DesktopAgentIntegrationId;
+  name: string;
+  state: DesktopAgentIntegrationState;
+  skillPath: string;
+  message: string;
+  sharedBy?: DesktopAgentIntegrationId;
+};
+
 export type DesktopAgentSupportStatus = {
   supported: boolean;
   state: DesktopAgentSupportState;
@@ -113,6 +135,7 @@ export type DesktopAgentSupportStatus = {
   cliCommand: string;
   cliPath: string;
   skillPath: string;
+  agents: DesktopAgentIntegrationStatus[];
   appVersion: string;
   requiresAgentRestart: boolean;
 };
@@ -127,6 +150,8 @@ declare global {
       enableAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
       repairAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
       disableAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
+      installAgentSkill?: (agentId: DesktopAgentIntegrationId) => Promise<DesktopAgentSupportStatus>;
+      uninstallAgentSkill?: (agentId: DesktopAgentIntegrationId) => Promise<DesktopAgentSupportStatus>;
       dismissAgentSupportOnboarding?: () => Promise<DesktopAgentSupportStatus>;
       getVersion: () => Promise<string>;
       quitApp?: () => Promise<void>;

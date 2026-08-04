@@ -79,7 +79,7 @@ export function AgentSupportOnboarding() {
           启用后，Codex、Claude Code、Cursor 等本地 Agent 可以按照你的要求查询数据、生成草稿并操作 Auto Email Sender。真实发送仍必须先展示计划并得到你的明确确认。
         </p>
         <p className="mt-3 text-sm leading-6 text-stone-500">
-          软件会安装一个命令和一份 Agent 使用说明。以后升级软件时，这两项会一起更新。你也可以随时在个人中心关闭或修复。
+          软件会先安装命令行。随后可在个人中心选择要接入的 Agent；已安装的官方使用说明会随软件升级自动更新。
         </p>
         {error ? (
           <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -92,7 +92,7 @@ export function AgentSupportOnboarding() {
           </button>
           <button type="button" className="ui-btn-primary" disabled={working} onClick={() => void enable()}>
             {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-            启用
+            启用命令行
           </button>
         </div>
       </div>

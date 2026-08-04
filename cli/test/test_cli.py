@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,8 +11,10 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from auto_email_sender_cli.errors import RuntimeProtocolMismatchError
 from auto_email_sender_cli.main import app
+from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
+from auto_email_sender_cli.capabilities import CAPABILITIES
+from auto_email_sender_cli.describe import describe_command
 
 
 class CliTests(unittest.TestCase):
@@ -47,14 +51,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "INVALID_GUIDE_TOPIC")
 
     def test_capabilities_report_available_and_planned_commands_honestly(self) -> None:
-        with patch(
-            "auto_email_sender_cli.main.ensure_runtime_descriptor",
-            return_value=SimpleNamespace(app_version="2.4.1"),
-        ):
-            result = self.runner.invoke(
-                app,
-                ["--format", "json", "capabilities", "--command", "communications"],
-            )
+        result = self.runner.invoke(
+            app,
+            ["--format", "json", "capabilities", "--command", "communications"],
+        )
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
@@ -63,14 +63,10 @@ class CliTests(unittest.TestCase):
         self.assertTrue(any(item["availability"] == "available" for item in payload["data"]["items"]))
 
     def test_capabilities_mark_desktop_only_areas_as_unavailable(self) -> None:
-        with patch(
-            "auto_email_sender_cli.main.ensure_runtime_descriptor",
-            return_value=SimpleNamespace(app_version="2.4.1"),
-        ):
-            result = self.runner.invoke(
-                app,
-                ["--format", "json", "capabilities"],
-            )
+        result = self.runner.invoke(
+            app,
+            ["--format", "json", "capabilities"],
+        )
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         items = json.loads(result.stdout)["data"]["items"]
@@ -155,18 +151,124 @@ class CliTests(unittest.TestCase):
         self.assertEqual(by_command["test-email.prepare-send"]["risk_level"], "L3")
         self.assertTrue(by_command["test-email.prepare-send"]["requires_plan"])
 
-    def test_capabilities_rejects_an_incompatible_desktop_before_listing_commands(self) -> None:
-        mismatch = RuntimeProtocolMismatchError(expected="2", actual="1")
-        with patch(
-            "auto_email_sender_cli.main.ensure_runtime_descriptor",
-            side_effect=mismatch,
-        ):
-            result = self.runner.invoke(app, ["--format", "json", "capabilities"])
+    def test_capabilities_are_available_without_a_running_desktop_app(self) -> None:
+        result = self.runner.invoke(app, ["--format", "json", "capabilities"])
 
-        self.assertEqual(result.exit_code, 7, msg=result.output)
+        self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
-        self.assertFalse(payload["ok"])
-        self.assertEqual(payload["error"]["code"], "RUNTIME_PROTOCOL_MISMATCH")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["data"]["items"])
+
+    def test_capabilities_accept_spaced_command_names_and_suggest_unknown_commands(self) -> None:
+        result = self.runner.invoke(
+            app,
+            ["--format", "json", "capabilities", "--command", "drafts generate"],
+        )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["items"][0]["command"], "drafts.generate")
+
+        missing = self.runner.invoke(
+            app,
+            ["--format", "json", "capabilities", "--command", "drafts missing"],
+        )
+        self.assertEqual(missing.exit_code, 4, msg=missing.output)
+        missing_payload = json.loads(missing.stdout)
+        self.assertIn("drafts.generate", missing_payload["error"]["details"]["suggestions"])
+
+    def test_describe_returns_machine_readable_command_contract_without_runtime(self) -> None:
+        result = self.runner.invoke(
+            app,
+            ["--format", "json", "describe", "--command", "drafts generate"],
+        )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(payload["command"], "drafts.generate")
+        self.assertEqual(payload["risk"]["level"], "L1")
+        self.assertTrue(payload["preconditions"]["manual_app_open_required"])
+        parameters = {parameter["name"]: parameter for parameter in payload["parameters"]}
+        self.assertTrue(parameters["professor_id"]["required"])
+        self.assertEqual(parameters["professor_id"]["type"]["kind"], "integer")
+        self.assertEqual(parameters["generation_mode"]["type"]["values"], ["template", "ai_rewrite", "manual"])
+        self.assertIn("guide --topic drafts", " ".join(payload["next_steps"]))
+
+    def test_every_available_capability_has_a_describe_contract(self) -> None:
+        missing = [
+            capability.command
+            for capability in CAPABILITIES
+            if capability.availability == "available" and describe_command(app, capability.command) is None
+        ]
+
+        self.assertEqual(missing, [])
+
+    def test_guide_routing_and_doctor_explain_outdated_skills(self) -> None:
+        routing = self.runner.invoke(app, ["--format", "json", "guide", "--topic", "routing"])
+        self.assertEqual(routing.exit_code, 0, msg=routing.output)
+        self.assertIn("describe", " ".join(json.loads(routing.stdout)["data"]["rules"]))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path = Path(temp_dir) / "runtime.json"
+            with (
+                patch("auto_email_sender_cli.main.get_runtime_file_path", return_value=runtime_path),
+                patch(
+                    "auto_email_sender_cli.main.inspect_agent_skill_installation",
+                    return_value={
+                        "ok": False,
+                        "state": "needs_update",
+                        "message": "Agent 使用说明已过期或被修改，需要更新。",
+                        "items": [{"id": "codex", "state": "needs_update"}],
+                    },
+                ),
+            ):
+                doctor = self.runner.invoke(app, ["--format", "json", "doctor"])
+
+        self.assertEqual(doctor.exit_code, 0, msg=doctor.output)
+        doctor_payload = json.loads(doctor.stdout)["data"]
+        skill_check = next(check for check in doctor_payload["checks"] if check["id"] == "agent_skills")
+        self.assertFalse(skill_check["ok"])
+        self.assertIn("重新安装", doctor_payload["recommended_action"])
+
+    def test_skill_inspection_detects_modified_or_outdated_official_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source-skill"
+            target = root / "codex-skill"
+            source.mkdir()
+            target.mkdir()
+            source_file = source / "SKILL.md"
+            target_file = target / "SKILL.md"
+            source_file.write_text("official skill", encoding="utf-8")
+            target_file.write_text("official skill", encoding="utf-8")
+            file_hash = hashlib.sha256(b"official skill").hexdigest()
+            skill_hash = hashlib.sha256(f"F\tSKILL.md\t{file_hash}\n".encode("utf-8")).hexdigest()
+            manifest_path = root / "installation.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 4,
+                        "enabled": True,
+                        "skill_source": source.as_posix(),
+                        "agents": {
+                            "codex": {
+                                "skill_target": target.as_posix(),
+                                "skill_sha256": skill_hash,
+                            },
+                        },
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE": manifest_path.as_posix()}):
+                healthy = inspect_agent_skill_installation()
+                target_file.write_text("modified skill", encoding="utf-8")
+                outdated = inspect_agent_skill_installation()
+
+        self.assertTrue(healthy["ok"])
+        self.assertEqual(healthy["items"][0]["state"], "installed")
+        self.assertFalse(outdated["ok"])
+        self.assertEqual(outdated["items"][0]["state"], "needs_update")
 
     def test_status_tells_user_to_manually_open_a_stopped_desktop_app(self) -> None:
         descriptor = SimpleNamespace(
@@ -203,11 +305,7 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(payload["data"]["repair_command"])
 
     def test_jsonl_has_meta_item_and_summary_records(self) -> None:
-        with patch(
-            "auto_email_sender_cli.main.ensure_runtime_descriptor",
-            return_value=SimpleNamespace(app_version="2.4.1"),
-        ):
-            result = self.runner.invoke(app, ["--format", "jsonl", "capabilities"])
+        result = self.runner.invoke(app, ["--format", "jsonl", "capabilities"])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         rows = [json.loads(line) for line in result.stdout.splitlines()]

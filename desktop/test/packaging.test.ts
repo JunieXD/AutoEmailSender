@@ -137,7 +137,9 @@ describe("windows installer packaging", () => {
     expect(installerScript).toContain("resources\\agent-support\\windows-uninstall.ps1");
     expect(installerScript).toContain("nsExec::ExecToLog");
     expect(cleanupScript).toContain("Test-SamePath ([string]$manifestCliTarget) $CliTarget");
-    expect(cleanupScript).toContain("last_backup_directory");
+    expect(cleanupScript).toContain("$expectedAgentTargets");
+    expect(cleanupScript).toContain("claude_code");
+    expect(cleanupScript).toContain("copilot_cli");
     expect(cleanupScript).toContain("Remove-ManagedUserPathEntry");
     expect(workflow).toContain("scripts/windows-agent-support-cleanup.test.ps1");
   });

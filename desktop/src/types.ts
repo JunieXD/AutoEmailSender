@@ -160,6 +160,28 @@ export type AgentSupportState =
   | "updating"
   | "unsupported";
 
+export type AgentIntegrationId =
+  | "codex"
+  | "claude_code"
+  | "cursor"
+  | "copilot_cli";
+
+export type AgentIntegrationState =
+  | "not_installed"
+  | "installed"
+  | "needs_update"
+  | "conflict"
+  | "available_via_shared";
+
+export type AgentIntegrationStatus = {
+  id: AgentIntegrationId;
+  name: string;
+  state: AgentIntegrationState;
+  skillPath: string;
+  message: string;
+  sharedBy?: AgentIntegrationId;
+};
+
 export type AgentSupportStatus = {
   supported: boolean;
   state: AgentSupportState;
@@ -168,6 +190,7 @@ export type AgentSupportStatus = {
   cliCommand: string;
   cliPath: string;
   skillPath: string;
+  agents: AgentIntegrationStatus[];
   appVersion: string;
   requiresAgentRestart: boolean;
 };

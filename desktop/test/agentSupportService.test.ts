@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -32,13 +32,13 @@ async function createFixture(
     localAppDataPath: path.join(root, "local-app-data"),
     appVersion: "2.4.1",
     environmentPath: platform === "darwin" ? "/usr/bin:/bin" : undefined,
-    now: () => new Date("2026-08-03T00:00:00.000Z"),
+    now: () => new Date("2026-08-04T00:00:00.000Z"),
   };
   const paths = resolveAgentSupportPaths(options);
   await mkdir(path.dirname(paths.cliSource), { recursive: true });
   await writeFile(paths.cliSource, "cli-binary", "utf8");
   await mkdir(paths.skillSource, { recursive: true });
-  await writeFile(path.join(paths.skillSource, "SKILL.md"), "---\nname: auto-email-sender\n---\n", "utf8");
+  await writeFile(paths.skillSource + "/SKILL.md", "---\nname: auto-email-sender\n---\n", "utf8");
   return { root, options, paths };
 }
 
@@ -53,9 +53,7 @@ async function exists(targetPath: string): Promise<boolean> {
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -75,7 +73,7 @@ describe("Agent support installation", () => {
     await expect(service.enable()).rejects.toThrow("开发版命令行尚未构建");
   });
 
-  it("enables and disables a managed macOS CLI, Skill, and PATH block", async () => {
+  it("enables a managed macOS CLI without selecting an Agent automatically", async () => {
     const { options, paths } = await createFixture("darwin");
     await mkdir(options.homePath, { recursive: true });
     await writeFile(path.join(options.homePath, ".zshrc"), "export EDITOR=vim\n", "utf8");
@@ -88,31 +86,47 @@ describe("Agent support installation", () => {
     await expect(service.enable()).resolves.toMatchObject({ state: "enabled" });
 
     expect(await readlink(paths.cliTarget)).toBe(path.resolve(paths.cliSource));
-    expect(await readFile(path.join(paths.skillTarget, "SKILL.md"), "utf8")).toContain(
-      "auto-email-sender",
-    );
-    expect(await readFile(paths.shellProfilePath!, "utf8")).toContain(
-      "Auto Email Sender Agent support",
-    );
+    expect(await exists(paths.skillTarget)).toBe(false);
+    expect(await readFile(paths.shellProfilePath!, "utf8")).toContain("Auto Email Sender Agent support");
     const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
     expect(manifest).toMatchObject({
-      schema_version: 3,
+      schema_version: 4,
       enabled: true,
       prompt_dismissed: true,
       app_version: "2.4.1",
       cli_source: path.resolve(paths.cliSource),
+      skill_source: path.resolve(paths.skillSource),
+      agents: {},
     });
     expect(manifest.cli_sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(manifest.skill_sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(manifest).not.toHaveProperty("desktop_executable");
-
-    await expect(service.disable()).resolves.toMatchObject({ state: "not_enabled" });
-    expect(await exists(paths.cliTarget)).toBe(false);
-    expect(await exists(paths.skillTarget)).toBe(false);
-    expect(await readFile(paths.shellProfilePath!, "utf8")).toBe("export EDITOR=vim\n");
   });
 
-  it("never overwrites an unmanaged command", async () => {
+  it("installs each Agent Skill independently and reports shared discovery honestly", async () => {
+    const { options, paths } = await createFixture("darwin");
+    const service = createAgentSupportService(options);
+    await service.enable();
+
+    await expect(service.installAgentSkill("codex")).resolves.toMatchObject({ state: "enabled" });
+    const afterCodex = await service.getStatus();
+    expect(afterCodex.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "codex", state: "installed" }),
+      expect.objectContaining({ id: "cursor", state: "available_via_shared", sharedBy: "codex" }),
+      expect.objectContaining({ id: "copilot_cli", state: "available_via_shared", sharedBy: "codex" }),
+      expect.objectContaining({ id: "claude_code", state: "not_installed" }),
+    ]));
+    expect(await readFile(path.join(paths.agentSkillTargets.codex, "SKILL.md"), "utf8")).toContain(
+      "auto-email-sender",
+    );
+
+    await service.installAgentSkill("cursor");
+    await expect(service.getStatus()).resolves.toMatchObject({
+      agents: expect.arrayContaining([expect.objectContaining({ id: "cursor", state: "installed" })]),
+    });
+    await service.uninstallAgentSkill("cursor");
+    expect(await exists(paths.agentSkillTargets.cursor)).toBe(false);
+  });
+
+  it("never overwrites an unmanaged command or Agent Skill", async () => {
     const { options, paths } = await createFixture("darwin");
     await mkdir(path.dirname(paths.cliTarget), { recursive: true });
     await writeFile(paths.cliTarget, "user-owned-command", "utf8");
@@ -121,6 +135,17 @@ describe("Agent support installation", () => {
     await expect(service.getStatus()).resolves.toMatchObject({ state: "needs_repair" });
     await expect(service.enable()).rejects.toThrow("为避免覆盖你的文件");
     expect(await readFile(paths.cliTarget, "utf8")).toBe("user-owned-command");
+
+    await rm(paths.cliTarget, { force: true });
+    await service.enable();
+    await mkdir(paths.agentSkillTargets.claude_code, { recursive: true });
+    await writeFile(path.join(paths.agentSkillTargets.claude_code, "SKILL.md"), "other skill", "utf8");
+    await expect(service.getStatus()).resolves.toMatchObject({
+      state: "enabled",
+      agents: expect.arrayContaining([expect.objectContaining({ id: "claude_code", state: "conflict" })]),
+    });
+    await expect(service.installAgentSkill("claude_code")).rejects.toThrow("不属于本软件");
+    expect(await readFile(path.join(paths.agentSkillTargets.claude_code, "SKILL.md"), "utf8")).toBe("other skill");
   });
 
   it("copies Windows CLI files and manages only its own user PATH entry", async () => {
@@ -143,87 +168,60 @@ describe("Agent support installation", () => {
     expect(await exists(paths.cliTarget)).toBe(false);
   });
 
-  it("refreshes product-managed files automatically after an app update", async () => {
+  it("silently overwrites product-managed CLI and Skills after an app update", async () => {
     const { options, paths } = await createFixture("darwin");
     const firstService = createAgentSupportService(options);
     await firstService.enable();
+    await firstService.installAgentSkill("codex");
+    await firstService.installAgentSkill("claude_code");
+    await writeFile(path.join(paths.agentSkillTargets.codex, "SKILL.md"), "modified", "utf8");
     await writeFile(path.join(paths.skillSource, "SKILL.md"), "updated skill", "utf8");
 
     const updatedService = createAgentSupportService({ ...options, appVersion: "2.5.0" });
     await expect(updatedService.getStatus()).resolves.toMatchObject({ state: "needs_repair" });
     await expect(updatedService.synchronize()).resolves.toMatchObject({ state: "enabled" });
-    expect(await readFile(path.join(paths.skillTarget, "SKILL.md"), "utf8")).toBe("updated skill");
-    expect(JSON.parse(await readFile(paths.manifestPath, "utf8")).app_version).toBe("2.5.0");
+    expect(await readFile(path.join(paths.agentSkillTargets.codex, "SKILL.md"), "utf8")).toBe("updated skill");
+    expect(await readFile(path.join(paths.agentSkillTargets.claude_code, "SKILL.md"), "utf8")).toBe("updated skill");
+    const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    expect(manifest).toMatchObject({ schema_version: 4, app_version: "2.5.0" });
+    expect(manifest).not.toHaveProperty("last_backup_directory");
   });
 
-  it("upgrades an older installation manifest without retaining a desktop launch path", async () => {
+  it("migrates the legacy shared Skill installation to the Codex integration", async () => {
     const { options, paths } = await createFixture("darwin");
     const service = createAgentSupportService(options);
     await service.enable();
-    const legacyManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
-    legacyManifest.schema_version = 2;
-    legacyManifest.desktop_executable = "/Applications/Auto Email Sender.app/Contents/MacOS/Auto Email Sender";
-    await writeFile(paths.manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, "utf8");
+    await service.installAgentSkill("codex");
+    const currentManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    await writeFile(paths.manifestPath, `${JSON.stringify({
+      ...currentManifest,
+      schema_version: 3,
+      skill_target: paths.skillTarget,
+      skill_sha256: currentManifest.agents.codex.skill_sha256,
+      agents: undefined,
+      skill_source: undefined,
+    }, null, 2)}\n`, "utf8");
 
     await expect(service.synchronize()).resolves.toMatchObject({ state: "enabled" });
-
-    const updatedManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
-    expect(updatedManifest.schema_version).toBe(3);
-    expect(updatedManifest).not.toHaveProperty("desktop_executable");
+    const migratedManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    expect(migratedManifest.schema_version).toBe(4);
+    expect(migratedManifest.agents.codex).toMatchObject({ skill_target: path.resolve(paths.skillTarget) });
   });
 
-  it("does not overwrite a user-modified Skill during automatic updates and backs it up before repair", async () => {
-    const { options, paths } = await createFixture("darwin");
-    const firstService = createAgentSupportService(options);
-    await firstService.enable();
-    await writeFile(path.join(paths.skillTarget, "SKILL.md"), "user customized skill", "utf8");
-    await writeFile(path.join(paths.skillSource, "SKILL.md"), "product skill update", "utf8");
-
-    const updatedService = createAgentSupportService({ ...options, appVersion: "2.5.0" });
-    await expect(updatedService.getStatus()).resolves.toMatchObject({
-      state: "needs_repair",
-      message: expect.stringContaining("自动更新不会覆盖"),
-    });
-    await expect(updatedService.synchronize()).resolves.toMatchObject({ state: "needs_repair" });
-    expect(await readFile(path.join(paths.skillTarget, "SKILL.md"), "utf8")).toBe(
-      "user customized skill",
-    );
-
-    await expect(updatedService.repair()).resolves.toMatchObject({
-      state: "enabled",
-      message: expect.stringContaining("已备份"),
-    });
-    expect(await readFile(path.join(paths.skillTarget, "SKILL.md"), "utf8")).toBe(
-      "product skill update",
-    );
-    const backupEntries = await readdir(paths.backupDirectory);
-    expect(backupEntries).toHaveLength(1);
-    expect(
-      await readFile(
-        path.join(paths.backupDirectory, backupEntries[0], "auto-email-sender-skill", "SKILL.md"),
-        "utf8",
-      ),
-    ).toBe("user customized skill");
-  });
-
-  it("backs up a modified managed Skill before disabling support", async () => {
+  it("removes every product-managed Agent Skill without backups when support is disabled", async () => {
     const { options, paths } = await createFixture("darwin");
     const service = createAgentSupportService(options);
     await service.enable();
-    await writeFile(path.join(paths.skillTarget, "SKILL.md"), "keep my customization", "utf8");
+    await service.installAgentSkill("codex");
+    await service.installAgentSkill("claude_code");
 
-    await expect(service.disable()).resolves.toMatchObject({
-      state: "not_enabled",
-      message: expect.stringContaining("已备份"),
-    });
-    expect(await exists(paths.skillTarget)).toBe(false);
-    const backupEntries = await readdir(paths.backupDirectory);
-    expect(
-      await readFile(
-        path.join(paths.backupDirectory, backupEntries[0], "auto-email-sender-skill", "SKILL.md"),
-        "utf8",
-      ),
-    ).toBe("keep my customization");
+    await expect(service.disable()).resolves.toMatchObject({ state: "not_enabled" });
+    expect(await exists(paths.cliTarget)).toBe(false);
+    expect(await exists(paths.agentSkillTargets.codex)).toBe(false);
+    expect(await exists(paths.agentSkillTargets.claude_code)).toBe(false);
+    const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    expect(manifest).toMatchObject({ schema_version: 4, enabled: false, agents: {} });
+    expect(manifest).not.toHaveProperty("last_backup_directory");
   });
 
   it("preserves a pre-existing Windows PATH entry when support is disabled", async () => {
@@ -242,57 +240,6 @@ describe("Agent support installation", () => {
     expect(JSON.parse(await readFile(paths.manifestPath, "utf8")).path_managed).toBe(false);
     await expect(service.disable()).resolves.toMatchObject({ state: "not_enabled" });
     expect(userPath).toBe(originalPath);
-  });
-
-  it("preserves and backs up a modified Windows CLI before manual repair", async () => {
-    const { options, paths } = await createFixture("win32");
-    let userPath = "C:\\Windows\\System32";
-    const service = createAgentSupportService({
-      ...options,
-      readWindowsUserPath: async () => userPath,
-      writeWindowsUserPath: async (value) => {
-        userPath = value;
-      },
-    });
-    await service.enable();
-    await writeFile(paths.cliTarget, "user customized cli", "utf8");
-
-    await expect(service.synchronize()).resolves.toMatchObject({
-      state: "needs_repair",
-      message: expect.stringContaining("自动更新不会覆盖"),
-    });
-    expect(await readFile(paths.cliTarget, "utf8")).toBe("user customized cli");
-
-    await expect(service.repair()).resolves.toMatchObject({ state: "enabled" });
-    expect(await readFile(paths.cliTarget, "utf8")).toBe("cli-binary");
-    const backupEntries = await readdir(paths.backupDirectory);
-    expect(
-      await readFile(
-        path.join(paths.backupDirectory, backupEntries[0], "auto-email-sender.exe"),
-        "utf8",
-      ),
-    ).toBe("user customized cli");
-  });
-
-  it("treats a legacy manifest without fingerprints conservatively", async () => {
-    const { options, paths } = await createFixture("darwin");
-    const service = createAgentSupportService(options);
-    await service.enable();
-    const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
-    manifest.schema_version = 1;
-    delete manifest.cli_source;
-    delete manifest.cli_sha256;
-    delete manifest.skill_sha256;
-    delete manifest.last_backup_directory;
-    await writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-
-    await expect(service.synchronize()).resolves.toMatchObject({
-      state: "needs_repair",
-      message: expect.stringContaining("无法确认"),
-    });
-    expect(await readFile(path.join(paths.skillTarget, "SKILL.md"), "utf8")).toContain(
-      "auto-email-sender",
-    );
   });
 });
 

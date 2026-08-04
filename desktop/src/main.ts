@@ -28,6 +28,7 @@ import type {
   BackendController,
   BackendExit,
   BackendStatus,
+  AgentIntegrationId,
   AgentSupportStatus,
   StartupAtLoginStatus,
 } from "./types.js";
@@ -46,6 +47,9 @@ const windowCreationState = { pendingCreation: null as Promise<void> | null };
 
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
+const agentSupportHomePath = !app.isPackaged && process.env.AUTO_EMAIL_SENDER_AGENT_HOME?.trim()
+  ? path.resolve(process.env.AUTO_EMAIL_SENDER_AGENT_HOME)
+  : app.getPath("home");
 const agentSupportService = createAgentSupportService({
   platform: process.platform,
   arch: process.arch,
@@ -53,7 +57,7 @@ const agentSupportService = createAgentSupportService({
   resourcesPath: process.resourcesPath,
   repoRoot,
   userDataPath: app.getPath("userData"),
-  homePath: app.getPath("home"),
+  homePath: agentSupportHomePath,
   localAppDataPath: process.env.LOCALAPPDATA,
   appVersion: app.getVersion(),
   environmentPath: process.env.PATH,
@@ -258,7 +262,9 @@ async function createWindow(): Promise<void> {
   publishBackendReady(backend);
 
   if (!app.isPackaged && process.argv.includes("--dev")) {
-    await mainWindow.loadURL("http://127.0.0.1:5173");
+    const developmentServerUrl = process.env.AUTO_EMAIL_SENDER_DEV_SERVER_URL?.trim()
+      || "http://127.0.0.1:5173";
+    await mainWindow.loadURL(developmentServerUrl);
     if (process.env.AUTO_EMAIL_SENDER_OPEN_DEVTOOLS === "true") {
       mainWindow.webContents.openDevTools({ mode: "detach" });
     }
@@ -397,12 +403,13 @@ function publishAgentSupportStatus(status: AgentSupportStatus): AgentSupportStat
 async function runAgentSupportAction(
   state: "installing" | "updating",
   action: () => Promise<AgentSupportStatus>,
+  message?: string,
 ): Promise<AgentSupportStatus> {
   const current = currentAgentSupportStatus ?? await agentSupportService.getStatus();
   publishAgentSupportStatus({
     ...current,
     state,
-    message: state === "installing" ? "正在安装命令行与 Agent 使用说明…" : "正在更新命令行与 Agent 使用说明…",
+    message: message ?? (state === "installing" ? "正在安装命令行与 Agent 使用说明…" : "正在更新命令行与 Agent 使用说明…"),
   });
   try {
     return publishAgentSupportStatus(await action());
@@ -445,6 +452,13 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isAgentIntegrationId(value: unknown): value is AgentIntegrationId {
+  return value === "codex"
+    || value === "claude_code"
+    || value === "cursor"
+    || value === "copilot_cli";
+}
+
 ipcMain.handle("app:get-version", () => app.getVersion());
 ipcMain.handle("app:quit", () => {
   quitFromTray();
@@ -475,6 +489,26 @@ ipcMain.handle("agent-support:repair", async () =>
 ipcMain.handle("agent-support:disable", async () =>
   runAgentSupportAction("updating", agentSupportService.disable),
 );
+ipcMain.handle("agent-support:install-skill", async (_event, agentId: unknown) => {
+  if (!isAgentIntegrationId(agentId)) {
+    throw new Error("不支持的 Agent。");
+  }
+  return runAgentSupportAction(
+    "installing",
+    () => agentSupportService.installAgentSkill(agentId),
+    "正在安装 Agent 使用说明…",
+  );
+});
+ipcMain.handle("agent-support:uninstall-skill", async (_event, agentId: unknown) => {
+  if (!isAgentIntegrationId(agentId)) {
+    throw new Error("不支持的 Agent。");
+  }
+  return runAgentSupportAction(
+    "updating",
+    () => agentSupportService.uninstallAgentSkill(agentId),
+    "正在卸载 Agent 使用说明…",
+  );
+});
 ipcMain.handle("agent-support:dismiss-onboarding", async () =>
   publishAgentSupportStatus(await agentSupportService.dismissOnboarding()),
 );

@@ -12,6 +12,29 @@ const notEnabledStatus: DesktopAgentSupportStatus = {
   cliCommand: "auto-email-sender",
   cliPath: "/Users/alice/.local/bin/auto-email-sender",
   skillPath: "/Users/alice/.agents/skills/auto-email-sender",
+  agents: [
+    {
+      id: "codex",
+      name: "Codex",
+      state: "not_installed",
+      skillPath: "/Users/alice/.agents/skills/auto-email-sender",
+      message: "可单独安装",
+    },
+    {
+      id: "claude_code",
+      name: "Claude Code",
+      state: "not_installed",
+      skillPath: "/Users/alice/.claude/skills/auto-email-sender",
+      message: "可单独安装",
+    },
+    {
+      id: "cursor",
+      name: "Cursor",
+      state: "not_installed",
+      skillPath: "/Users/alice/.cursor/skills/auto-email-sender",
+      message: "可单独安装",
+    },
+  ],
   appVersion: "2.4.1",
   requiresAgentRestart: false,
 };
@@ -36,6 +59,8 @@ function installDesktopApi(overrides: Record<string, unknown> = {}) {
     enableAgentSupport: vi.fn(async () => enabledStatus),
     repairAgentSupport: vi.fn(async () => enabledStatus),
     disableAgentSupport: vi.fn(async () => ({ ...notEnabledStatus, onboardingPending: false })),
+    installAgentSkill: vi.fn(async () => enabledStatus),
+    uninstallAgentSkill: vi.fn(async () => enabledStatus),
     dismissAgentSupportOnboarding: vi.fn(async () => ({ ...notEnabledStatus, onboardingPending: false })),
     onAgentSupportStatus: () => () => undefined,
     ...overrides,
@@ -56,13 +81,37 @@ describe("Agent support UI", () => {
     expect(screen.getByText(/找出回信中表示没名额的导师/)).toBeInTheDocument();
     expect(screen.getByText("Agent 可以根据当前 CLI 提供的能力操控软件。")).toBeInTheDocument();
     expect(screen.queryByText(/每次 CLI 响应/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "启用" }));
+    fireEvent.click(screen.getByRole("button", { name: "启用命令行" }));
 
     await waitFor(() => {
       expect(window.autoEmailSender?.enableAgentSupport).toHaveBeenCalledOnce();
       expect(screen.getByText("已启用")).toBeInTheDocument();
     });
     expect(screen.getByText(/新建一个 Agent 对话/)).toBeInTheDocument();
+  });
+
+  it("filters Agent rows and installs a selected Agent without stretching the card", async () => {
+    installDesktopApi({
+      getAgentSupportStatus: vi.fn(async () => enabledStatus),
+      installAgentSkill: vi.fn(async () => ({
+        ...enabledStatus,
+        agents: enabledStatus.agents.map((agent) =>
+          agent.id === "claude_code" ? { ...agent, state: "installed" as const, message: "已安装官方 Skill" } : agent,
+        ),
+      })),
+    });
+    render(<AgentSupportCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /命令行与 Agent/ }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 Agent" }), { target: { value: "Claude" } });
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "安装" }));
+
+    await waitFor(() => {
+      expect(window.autoEmailSender?.installAgentSkill).toHaveBeenCalledWith("claude_code");
+      expect(screen.getByText("已安装")).toBeInTheDocument();
+    });
   });
 
   it("keeps the card body mounted until the collapse transition finishes", async () => {

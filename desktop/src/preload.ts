@@ -63,6 +63,10 @@ contextBridge.exposeInMainWorld("autoEmailSender", {
     ipcRenderer.invoke("agent-support:repair") as Promise<AgentSupportStatus>,
   disableAgentSupport: () =>
     ipcRenderer.invoke("agent-support:disable") as Promise<AgentSupportStatus>,
+  installAgentSkill: (agentId: AgentSupportStatus["agents"][number]["id"]) =>
+    ipcRenderer.invoke("agent-support:install-skill", agentId) as Promise<AgentSupportStatus>,
+  uninstallAgentSkill: (agentId: AgentSupportStatus["agents"][number]["id"]) =>
+    ipcRenderer.invoke("agent-support:uninstall-skill", agentId) as Promise<AgentSupportStatus>,
   dismissAgentSupportOnboarding: () =>
     ipcRenderer.invoke("agent-support:dismiss-onboarding") as Promise<AgentSupportStatus>,
   getVersion: () => ipcRenderer.invoke("app:get-version") as Promise<string>,

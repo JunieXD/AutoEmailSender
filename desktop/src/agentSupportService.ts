@@ -16,14 +16,63 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { AgentSupportStatus } from "./types.js";
+import type {
+  AgentIntegrationId,
+  AgentIntegrationStatus,
+  AgentSupportStatus,
+} from "./types.js";
 
 const execFileAsync = promisify(execFile);
-const MANIFEST_SCHEMA_VERSION = 3;
-const PREVIOUS_MANIFEST_SCHEMA_VERSION = 2;
+const MANIFEST_SCHEMA_VERSION = 4;
+const PREVIOUS_MANIFEST_SCHEMA_VERSION = 3;
+const OLDER_MANIFEST_SCHEMA_VERSION = 2;
 const LEGACY_MANIFEST_SCHEMA_VERSION = 1;
 const ZSH_PATH_BLOCK_START = "# >>> Auto Email Sender Agent support >>>";
 const ZSH_PATH_BLOCK_END = "# <<< Auto Email Sender Agent support <<<";
+
+export const AGENT_INTEGRATION_IDS = [
+  "codex",
+  "claude_code",
+  "cursor",
+  "copilot_cli",
+] as const satisfies readonly AgentIntegrationId[];
+
+type AgentDefinition = {
+  id: AgentIntegrationId;
+  name: string;
+  relativeSkillPath: readonly string[];
+  sharedSkillFrom?: AgentIntegrationId;
+};
+
+const AGENT_INTEGRATIONS: readonly AgentDefinition[] = [
+  {
+    id: "codex",
+    name: "Codex",
+    relativeSkillPath: [".agents", "skills", "auto-email-sender"],
+  },
+  {
+    id: "claude_code",
+    name: "Claude Code",
+    relativeSkillPath: [".claude", "skills", "auto-email-sender"],
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    relativeSkillPath: [".cursor", "skills", "auto-email-sender"],
+    sharedSkillFrom: "codex",
+  },
+  {
+    id: "copilot_cli",
+    name: "GitHub Copilot CLI",
+    relativeSkillPath: [".copilot", "skills", "auto-email-sender"],
+    sharedSkillFrom: "codex",
+  },
+];
+
+type ManagedAgentSkill = {
+  skill_target: string;
+  skill_sha256: string | null;
+};
 
 type AgentSupportManifest = {
   schema_version: number;
@@ -31,31 +80,24 @@ type AgentSupportManifest = {
   prompt_dismissed: boolean;
   app_version: string | null;
   cli_source: string | null;
+  skill_source: string | null;
   cli_target: string;
-  skill_target: string;
   cli_sha256: string | null;
-  skill_sha256: string | null;
   path_managed: boolean;
-  last_backup_directory: string | null;
+  agents: Partial<Record<AgentIntegrationId, ManagedAgentSkill>>;
   updated_at: string;
-};
-
-type ManagedContentKind = "cli" | "skill";
-
-type ManagedModification = {
-  kind: ManagedContentKind;
-  reason: "content_changed" | "ownership_unknown" | "unexpected_type";
 };
 
 export type AgentSupportPaths = {
   cliSource: string;
   cliTarget: string;
   skillSource: string;
+  /** Legacy alias for the Codex-compatible shared Agent Skills directory. */
   skillTarget: string;
+  agentSkillTargets: Record<AgentIntegrationId, string>;
   manifestPath: string;
   shellProfilePath: string | null;
   commandDirectory: string;
-  backupDirectory: string;
 };
 
 export type AgentSupportServiceOptions = {
@@ -82,23 +124,29 @@ export function resolveAgentSupportPaths(options: AgentSupportServiceOptions): A
   const skillSource = options.isPackaged
     ? path.join(options.resourcesPath, "agent-support", "skills", "auto-email-sender")
     : path.join(options.repoRoot, "agent-support", "skills", "auto-email-sender");
-  const commandDirectory =
-    options.platform === "win32"
-      ? path.join(
-          options.localAppDataPath ?? path.join(options.homePath, "AppData", "Local"),
-          "AutoEmailSender",
-          "bin",
-        )
-      : path.join(options.homePath, ".local", "bin");
+  const commandDirectory = options.platform === "win32"
+    ? path.join(
+        options.localAppDataPath ?? path.join(options.homePath, "AppData", "Local"),
+        "AutoEmailSender",
+        "bin",
+      )
+    : path.join(options.homePath, ".local", "bin");
+  const agentSkillTargets = Object.fromEntries(
+    AGENT_INTEGRATIONS.map((agent) => [
+      agent.id,
+      path.join(options.homePath, ...agent.relativeSkillPath),
+    ]),
+  ) as Record<AgentIntegrationId, string>;
+
   return {
     cliSource,
     cliTarget: path.join(commandDirectory, executableName),
     skillSource,
-    skillTarget: path.join(options.homePath, ".agents", "skills", "auto-email-sender"),
+    skillTarget: agentSkillTargets.codex,
+    agentSkillTargets,
     manifestPath: path.join(options.userDataPath, "agent", "installation.json"),
     shellProfilePath: options.platform === "darwin" ? path.join(options.homePath, ".zshrc") : null,
     commandDirectory,
-    backupDirectory: path.join(options.userDataPath, "agent", "backups"),
   };
 }
 
@@ -109,42 +157,32 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
   const writeWindowsPath = options.writeWindowsUserPath ?? writeWindowsUserPath;
 
   const getStatus = async (): Promise<AgentSupportStatus> => {
+    const manifest = await readManifest(paths.manifestPath);
+    const agents = await getAgentStatuses(paths, manifest);
     const unsupportedReason = getUnsupportedReason(options);
     if (unsupportedReason !== null) {
-      return buildStatus("unsupported", unsupportedReason, false);
+      return buildStatus("unsupported", unsupportedReason, false, agents);
     }
-    if (!(await pathExists(paths.cliSource)) || !(await pathExists(path.join(paths.skillSource, "SKILL.md")))) {
-      return buildStatus(
-        "unsupported",
-        getMissingAgentSupportFilesMessage(options),
-        false,
-      );
+    if (!(await hasRequiredSourceFiles(paths))) {
+      return buildStatus("unsupported", getMissingAgentSupportFilesMessage(options), false, agents);
     }
 
-    const manifest = await readManifest(paths.manifestPath);
     const onboardingPending = manifest === null || !manifest.prompt_dismissed;
-    const conflicts = await findUnmanagedConflicts(paths, manifest);
-    if (conflicts.length > 0) {
+    const cliConflict = await findUnmanagedCliConflict(paths, manifest);
+    if (cliConflict !== null) {
       return buildStatus(
         "needs_repair",
-        `发现不是本软件管理的同名文件：${conflicts.join("、")}。为避免覆盖你的文件，尚未修改。`,
+        `发现不是本软件管理的同名命令：${cliConflict}。为避免覆盖你的文件，尚未修改。`,
         onboardingPending,
+        agents,
       );
     }
     if (!manifest?.enabled) {
       return buildStatus(
         "not_enabled",
-        "启用后，本地 Agent 可以通过命令行按你的要求操作软件。",
+        "启用后可使用命令行，并选择要接入的本地 Agent。",
         onboardingPending,
-      );
-    }
-
-    const modifications = await findManagedModifications(options, paths, manifest);
-    if (modifications.length > 0) {
-      return buildStatus(
-        "needs_repair",
-        buildModifiedContentMessage(modifications),
-        false,
+        agents,
       );
     }
 
@@ -154,70 +192,96 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       manifest,
       readWindowsPath,
     });
-    return installationHealthy
-      ? buildStatus(
-          "enabled",
-          "命令行与 Agent 使用说明已安装。新开的 Agent 对话可直接使用。",
-          false,
-        )
-      : buildStatus(
-          "needs_repair",
-          "部分安装文件、版本或 PATH 配置不完整，请点击“修复”。",
-          false,
-        );
+    if (!installationHealthy) {
+      const hasSkillUpdate = agents.some((agent) => agent.state === "needs_update");
+      return buildStatus(
+        "needs_repair",
+        hasSkillUpdate
+          ? "部分 Agent 使用说明需要更新。重新安装会恢复官方版本；软件启动时也会自动更新。"
+          : "部分命令行文件、版本或 PATH 配置不完整，请点击“重新安装”。",
+        false,
+        agents,
+      );
+    }
+
+    const hasInstalledAgent = agents.some((agent) => agent.state === "installed");
+    return buildStatus(
+      "enabled",
+      hasInstalledAgent
+        ? "命令行已启用，已安装的 Agent 使用说明会随软件更新自动更新。"
+        : "命令行已启用。请从下方选择要接入的 Agent。",
+      false,
+      agents,
+    );
   };
 
   const enable = async (): Promise<AgentSupportStatus> => {
     const previousManifest = await readManifest(paths.manifestPath);
     if (previousManifest?.enabled) {
-      throw new Error("命令行与 Agent 支持已经启用；如需重新安装，请使用“修复”。");
+      throw new Error("命令行已启用；如需重新安装，请使用“重新安装”。");
     }
-    return installManagedSupport(previousManifest, false);
+    return installCliSupport(previousManifest);
   };
 
   const repair = async (): Promise<AgentSupportStatus> => {
     const previousManifest = await readManifest(paths.manifestPath);
     if (!previousManifest?.enabled) {
-      const conflicts = await findUnmanagedConflicts(paths, previousManifest);
-      if (conflicts.length > 0) {
-        throw new Error(`为避免覆盖你的文件，无法修复：${conflicts.join("、")}`);
-      }
-      return installManagedSupport(previousManifest, false);
+      return installCliSupport(previousManifest);
+    }
+    return installManagedSupport(previousManifest);
+  };
+
+  const installAgentSkill = async (agentId: AgentIntegrationId): Promise<AgentSupportStatus> => {
+    const agent = getAgentDefinition(agentId);
+    const previousManifest = await readManifest(paths.manifestPath);
+    if (!previousManifest?.enabled) {
+      throw new Error("请先启用命令行，再安装 Agent 使用说明。");
+    }
+    await ensureSupportedAndSourceAvailable();
+
+    const target = paths.agentSkillTargets[agent.id];
+    const existing = previousManifest.agents[agent.id];
+    const isManaged = isManagedAgentSkillTarget(existing, target);
+    if (await pathExists(target) && !isManaged) {
+      throw new Error(`Skill 目标已存在且不属于本软件：${target}`);
     }
 
-    const modifications = await findManagedModifications(options, paths, previousManifest);
-    const backupDirectory = modifications.length > 0
-      ? await backupManagedModifications(paths, modifications, now())
-      : null;
-    const status = await installManagedSupport(previousManifest, true, backupDirectory);
-    if (backupDirectory === null) {
-      return status;
+    await installSkill(paths.skillSource, target, isManaged);
+    const agentIds = new Set(getManagedAgentIds(paths, previousManifest));
+    agentIds.add(agent.id);
+    await writeEnabledManifest(previousManifest, previousManifest.path_managed, [...agentIds]);
+    return getStatus();
+  };
+
+  const uninstallAgentSkill = async (agentId: AgentIntegrationId): Promise<AgentSupportStatus> => {
+    const agent = getAgentDefinition(agentId);
+    const previousManifest = await readManifest(paths.manifestPath);
+    if (!previousManifest?.enabled) {
+      throw new Error("命令行尚未启用。");
     }
-    return {
-      ...status,
-      message: `已修复；原有修改内容已备份到 ${backupDirectory}。`,
-    };
+
+    const target = paths.agentSkillTargets[agent.id];
+    if (!isManagedAgentSkillTarget(previousManifest.agents[agent.id], target)) {
+      throw new Error("该 Agent 的 Skill 不是本软件安装的，无法卸载。");
+    }
+    await rm(target, { recursive: true, force: true });
+    const agentIds = getManagedAgentIds(paths, previousManifest)
+      .filter((managedAgentId) => managedAgentId !== agent.id);
+    await writeEnabledManifest(previousManifest, previousManifest.path_managed, agentIds);
+    return getStatus();
   };
 
   const disable = async (): Promise<AgentSupportStatus> => {
     const manifest = await readManifest(paths.manifestPath);
-    const ownsTargets = manifest?.enabled
-      && manifest.cli_target === path.resolve(paths.cliTarget)
-      && manifest.skill_target === path.resolve(paths.skillTarget);
-    const modifications = ownsTargets
-      ? await findManagedModifications(options, paths, manifest)
-      : [];
-    const backupDirectory = modifications.length > 0
-      ? await backupManagedModifications(paths, modifications, now())
-      : null;
-
-    if (ownsTargets && manifest.cli_target === path.resolve(paths.cliTarget)) {
-      await rm(paths.cliTarget, { force: true });
+    if (manifest?.enabled && isManagedCliTarget(manifest, paths)) {
+      await rm(paths.cliTarget, { recursive: true, force: true });
     }
-    if (ownsTargets && manifest.skill_target === path.resolve(paths.skillTarget)) {
-      await rm(paths.skillTarget, { recursive: true, force: true });
+    if (manifest?.enabled) {
+      for (const agentId of getManagedAgentIds(paths, manifest)) {
+        await rm(paths.agentSkillTargets[agentId], { recursive: true, force: true });
+      }
     }
-    if (ownsTargets && manifest.path_managed) {
+    if (manifest?.enabled && manifest.path_managed) {
       if (options.platform === "darwin" && paths.shellProfilePath !== null) {
         await removeMacPathBlock(paths.shellProfilePath);
       } else if (options.platform === "win32") {
@@ -229,46 +293,17 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       }
     }
 
-    await writeJsonAtomic(paths.manifestPath, {
-      schema_version: MANIFEST_SCHEMA_VERSION,
-      enabled: false,
-      prompt_dismissed: true,
-      app_version: null,
-      cli_source: path.resolve(paths.cliSource),
-      cli_target: path.resolve(paths.cliTarget),
-      skill_target: path.resolve(paths.skillTarget),
-      cli_sha256: null,
-      skill_sha256: null,
-      path_managed: false,
-      last_backup_directory: backupDirectory ?? manifest?.last_backup_directory ?? null,
-      updated_at: now().toISOString(),
-    } satisfies AgentSupportManifest);
-    const status = await getStatus();
-    if (backupDirectory === null || status.state !== "not_enabled") {
-      return status;
-    }
-    return {
-      ...status,
-      message: `已关闭；原有修改内容已备份到 ${backupDirectory}。`,
-    };
+    await writeDisabledManifest(manifest, true);
+    return getStatus();
   };
 
   const dismissOnboarding = async (): Promise<AgentSupportStatus> => {
     const current = await readManifest(paths.manifestPath);
-    await writeJsonAtomic(paths.manifestPath, {
-      schema_version: MANIFEST_SCHEMA_VERSION,
-      enabled: current?.enabled ?? false,
-      prompt_dismissed: true,
-      app_version: current?.app_version ?? null,
-      cli_source: current?.cli_source ?? path.resolve(paths.cliSource),
-      cli_target: current?.cli_target ?? path.resolve(paths.cliTarget),
-      skill_target: current?.skill_target ?? path.resolve(paths.skillTarget),
-      cli_sha256: current?.cli_sha256 ?? null,
-      skill_sha256: current?.skill_sha256 ?? null,
-      path_managed: current?.path_managed ?? false,
-      last_backup_directory: current?.last_backup_directory ?? null,
-      updated_at: now().toISOString(),
-    } satisfies AgentSupportManifest);
+    if (current?.enabled) {
+      await writeEnabledManifest(current, current.path_managed, getManagedAgentIds(paths, current));
+    } else {
+      await writeDisabledManifest(current, true);
+    }
     return getStatus();
   };
 
@@ -277,73 +312,132 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     if (!manifest?.enabled) {
       return getStatus();
     }
-    const conflicts = await findUnmanagedConflicts(paths, manifest);
-    if (conflicts.length > 0) {
+    if (await findUnmanagedCliConflict(paths, manifest)) {
       return getStatus();
     }
-    const modifications = await findManagedModifications(options, paths, manifest);
-    if (modifications.length > 0) {
-      return buildStatus("needs_repair", buildModifiedContentMessage(modifications), false);
+    if (!(await hasRequiredSourceFiles(paths))) {
+      return getStatus();
     }
     if (await isInstallationHealthy({ options, paths, manifest, readWindowsPath })) {
       return getStatus();
     }
-    return installManagedSupport(manifest, true);
+
+    // All managed files are official product files. Restore them silently on startup/update.
+    return installManagedSupport(manifest);
   };
 
-  async function installManagedSupport(
-    previousManifest: AgentSupportManifest | null,
-    allowManagedReplacement: boolean,
-    backupDirectory: string | null = null,
-  ): Promise<AgentSupportStatus> {
+  async function ensureSupportedAndSourceAvailable(): Promise<void> {
     const unsupportedReason = getUnsupportedReason(options);
     if (unsupportedReason !== null) {
-      return buildStatus("unsupported", unsupportedReason, false);
+      throw new Error(unsupportedReason);
     }
-    if (!(await pathExists(paths.cliSource)) || !(await pathExists(path.join(paths.skillSource, "SKILL.md")))) {
+    if (!(await hasRequiredSourceFiles(paths))) {
       throw new Error(getMissingAgentSupportFilesMessage(options));
     }
+  }
 
-    const conflicts = await findUnmanagedConflicts(paths, previousManifest);
-    if (conflicts.length > 0) {
-      throw new Error(`为避免覆盖你的文件，无法安装：${conflicts.join("、")}`);
+  async function installCliSupport(previousManifest: AgentSupportManifest | null): Promise<AgentSupportStatus> {
+    await ensureSupportedAndSourceAvailable();
+    const cliConflict = await findUnmanagedCliConflict(paths, previousManifest);
+    if (cliConflict !== null) {
+      throw new Error(`为避免覆盖你的文件，无法安装：${cliConflict}`);
     }
 
-    await installCli(paths, options.platform, allowManagedReplacement ? previousManifest : null);
-    await installSkill(paths, allowManagedReplacement ? previousManifest : null);
+    await installCli(
+      paths,
+      options.platform,
+      isManagedCliTarget(previousManifest, paths),
+    );
     const pathManaged = options.platform === "darwin"
-      ? await ensureMacPath(
-          paths,
-          options.environmentPath ?? process.env.PATH ?? "",
-        )
+      ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
       : await ensureWindowsPath(
           paths.commandDirectory,
-          previousManifest?.enabled ? previousManifest.path_managed : false,
+          Boolean(previousManifest?.enabled && previousManifest.path_managed),
           readWindowsPath,
           writeWindowsPath,
         );
-    const manifest: AgentSupportManifest = {
+    await writeEnabledManifest(previousManifest, pathManaged, []);
+    return getStatus();
+  }
+
+  async function installManagedSupport(previousManifest: AgentSupportManifest): Promise<AgentSupportStatus> {
+    await ensureSupportedAndSourceAvailable();
+    const cliConflict = await findUnmanagedCliConflict(paths, previousManifest);
+    if (cliConflict !== null) {
+      throw new Error(`为避免覆盖你的文件，无法更新：${cliConflict}`);
+    }
+
+    await installCli(paths, options.platform, true);
+    const agentIds = getManagedAgentIds(paths, previousManifest);
+    for (const agentId of agentIds) {
+      await installSkill(paths.skillSource, paths.agentSkillTargets[agentId], true);
+    }
+    const pathManaged = options.platform === "darwin"
+      ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
+      : await ensureWindowsPath(
+          paths.commandDirectory,
+          previousManifest.path_managed,
+          readWindowsPath,
+          writeWindowsPath,
+        );
+    await writeEnabledManifest(previousManifest, pathManaged, agentIds);
+    return getStatus();
+  }
+
+  async function writeEnabledManifest(
+    previousManifest: AgentSupportManifest | null,
+    pathManaged: boolean,
+    agentIds: AgentIntegrationId[],
+  ): Promise<void> {
+    const skillSha256 = await sha256Directory(paths.skillSource);
+    const agents = Object.fromEntries(
+      agentIds.map((agentId) => [
+        agentId,
+        {
+          skill_target: path.resolve(paths.agentSkillTargets[agentId]),
+          skill_sha256: skillSha256,
+        } satisfies ManagedAgentSkill,
+      ]),
+    ) as AgentSupportManifest["agents"];
+    await writeJsonAtomic(paths.manifestPath, {
       schema_version: MANIFEST_SCHEMA_VERSION,
       enabled: true,
       prompt_dismissed: true,
       app_version: options.appVersion,
       cli_source: path.resolve(paths.cliSource),
+      skill_source: path.resolve(paths.skillSource),
       cli_target: path.resolve(paths.cliTarget),
-      skill_target: path.resolve(paths.skillTarget),
-      cli_sha256: await sha256File(paths.cliTarget),
-      skill_sha256: await sha256Directory(paths.skillTarget),
+      cli_sha256: await sha256File(paths.cliSource),
       path_managed: pathManaged,
-      last_backup_directory: backupDirectory ?? previousManifest?.last_backup_directory ?? null,
+      agents,
       updated_at: now().toISOString(),
-    };
-    await writeJsonAtomic(paths.manifestPath, manifest);
-    return getStatus();
+    } satisfies AgentSupportManifest);
+  }
+
+  async function writeDisabledManifest(
+    previousManifest: AgentSupportManifest | null,
+    promptDismissed: boolean,
+  ): Promise<void> {
+    await writeJsonAtomic(paths.manifestPath, {
+      schema_version: MANIFEST_SCHEMA_VERSION,
+      enabled: false,
+      prompt_dismissed: promptDismissed,
+      app_version: null,
+      cli_source: path.resolve(paths.cliSource),
+      skill_source: path.resolve(paths.skillSource),
+      cli_target: path.resolve(paths.cliTarget),
+      cli_sha256: null,
+      path_managed: false,
+      agents: {},
+      updated_at: now().toISOString(),
+    } satisfies AgentSupportManifest);
   }
 
   function buildStatus(
     state: AgentSupportStatus["state"],
     message: string,
     onboardingPending: boolean,
+    agents: AgentIntegrationStatus[],
   ): AgentSupportStatus {
     return {
       supported: state !== "unsupported",
@@ -353,25 +447,40 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       cliCommand: "auto-email-sender",
       cliPath: paths.cliTarget,
       skillPath: paths.skillTarget,
+      agents,
       appVersion: options.appVersion,
       requiresAgentRestart: state === "enabled",
     };
   }
 
-  return { getStatus, enable, repair, disable, dismissOnboarding, synchronize, paths };
+  return {
+    getStatus,
+    enable,
+    repair,
+    disable,
+    dismissOnboarding,
+    synchronize,
+    installAgentSkill,
+    uninstallAgentSkill,
+    paths,
+  };
+}
+
+async function hasRequiredSourceFiles(paths: AgentSupportPaths): Promise<boolean> {
+  return (await pathExists(paths.cliSource)) && (await pathExists(path.join(paths.skillSource, "SKILL.md")));
 }
 
 async function installCli(
   paths: AgentSupportPaths,
   platform: NodeJS.Platform,
-  manifest: AgentSupportManifest | null,
+  allowManagedReplacement: boolean,
 ): Promise<void> {
   await mkdir(path.dirname(paths.cliTarget), { recursive: true });
   if (await pathExists(paths.cliTarget)) {
-    if (!manifest?.enabled || manifest.cli_target !== path.resolve(paths.cliTarget)) {
+    if (!allowManagedReplacement) {
       throw new Error(`命令目标已存在且不属于本软件：${paths.cliTarget}`);
     }
-    await rm(paths.cliTarget, { force: true });
+    await rm(paths.cliTarget, { recursive: true, force: true });
   }
   if (platform === "darwin") {
     await symlink(path.resolve(paths.cliSource), paths.cliTarget);
@@ -387,20 +496,21 @@ async function installCli(
 }
 
 async function installSkill(
-  paths: AgentSupportPaths,
-  manifest: AgentSupportManifest | null,
+  sourcePath: string,
+  targetPath: string,
+  allowManagedReplacement: boolean,
 ): Promise<void> {
-  await mkdir(path.dirname(paths.skillTarget), { recursive: true });
-  if (await pathExists(paths.skillTarget)) {
-    if (!manifest?.enabled || manifest.skill_target !== path.resolve(paths.skillTarget)) {
-      throw new Error(`Skill 目标已存在且不属于本软件：${paths.skillTarget}`);
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  if (await pathExists(targetPath)) {
+    if (!allowManagedReplacement) {
+      throw new Error(`Skill 目标已存在且不属于本软件：${targetPath}`);
     }
-    await rm(paths.skillTarget, { recursive: true, force: true });
+    await rm(targetPath, { recursive: true, force: true });
   }
-  const temporaryPath = `${paths.skillTarget}.${randomUUID()}.tmp`;
+  const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
   try {
-    await cp(paths.skillSource, temporaryPath, { recursive: true, force: false });
-    await rename(temporaryPath, paths.skillTarget);
+    await cp(sourcePath, temporaryPath, { recursive: true, force: false });
+    await rename(temporaryPath, targetPath);
   } finally {
     await rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -412,169 +522,156 @@ async function isInstallationHealthy(input: {
   manifest: AgentSupportManifest;
   readWindowsPath: () => Promise<string>;
 }): Promise<boolean> {
+  const { manifest, options, paths } = input;
   if (
-    input.manifest.schema_version !== MANIFEST_SCHEMA_VERSION ||
-    input.manifest.app_version !== input.options.appVersion ||
-    input.manifest.cli_source !== path.resolve(input.paths.cliSource) ||
-    input.manifest.cli_sha256 === null ||
-    input.manifest.skill_sha256 === null ||
-    !(await pathExists(input.paths.cliTarget)) ||
-    !(await pathExists(path.join(input.paths.skillTarget, "SKILL.md")))
+    manifest.schema_version !== MANIFEST_SCHEMA_VERSION
+    || manifest.app_version !== options.appVersion
+    || manifest.cli_source !== path.resolve(paths.cliSource)
+    || manifest.skill_source !== path.resolve(paths.skillSource)
+    || manifest.cli_sha256 === null
+    || !(await pathExists(paths.cliTarget))
+    || !(await fileFingerprintMatches(paths.cliTarget, manifest.cli_sha256))
+    || !(await fileFingerprintMatches(paths.cliSource, manifest.cli_sha256))
   ) {
     return false;
   }
-  if (
-    !(await fileFingerprintMatches(input.paths.cliTarget, input.manifest.cli_sha256)) ||
-    !(await fileFingerprintMatches(input.paths.cliSource, input.manifest.cli_sha256)) ||
-    !(await directoryFingerprintMatches(input.paths.skillTarget, input.manifest.skill_sha256)) ||
-    !(await directoryFingerprintMatches(input.paths.skillSource, input.manifest.skill_sha256))
-  ) {
-    return false;
+
+  for (const agentId of getManagedAgentIds(paths, manifest)) {
+    if (!(await isManagedAgentSkillHealthy(paths, manifest, agentId))) {
+      return false;
+    }
   }
-  if (input.options.platform === "darwin") {
+
+  if (options.platform === "darwin") {
     try {
-      const targetStats = await lstat(input.paths.cliTarget);
+      const targetStats = await lstat(paths.cliTarget);
       return targetStats.isSymbolicLink()
-        && path.resolve(path.dirname(input.paths.cliTarget), await readlink(input.paths.cliTarget))
-          === path.resolve(input.paths.cliSource)
-        && await macPathIsConfigured(input.paths, input.options.environmentPath ?? process.env.PATH ?? "");
+        && path.resolve(path.dirname(paths.cliTarget), await readlink(paths.cliTarget))
+          === path.resolve(paths.cliSource)
+        && await macPathIsConfigured(paths, options.environmentPath ?? process.env.PATH ?? "");
     } catch {
       return false;
     }
   }
   try {
-    return (await lstat(input.paths.cliTarget)).isFile()
-      && hasPathEntry(await input.readWindowsPath(), input.paths.commandDirectory, ";");
+    return (await lstat(paths.cliTarget)).isFile()
+      && hasPathEntry(await input.readWindowsPath(), paths.commandDirectory, ";");
   } catch {
     return false;
   }
 }
 
-async function findManagedModifications(
-  options: AgentSupportServiceOptions,
-  paths: AgentSupportPaths,
-  manifest: AgentSupportManifest,
-): Promise<ManagedModification[]> {
-  const modifications: ManagedModification[] = [];
-  if (await pathExists(paths.cliTarget)) {
-    let expectedInstallationType = false;
-    try {
-      const stats = await lstat(paths.cliTarget);
-      if (options.platform === "darwin") {
-        if (stats.isSymbolicLink()) {
-          const linkTarget = path.resolve(
-            path.dirname(paths.cliTarget),
-            await readlink(paths.cliTarget),
-          );
-          expectedInstallationType = linkTarget === path.resolve(paths.cliSource)
-            || (manifest.cli_source !== null && linkTarget === path.resolve(manifest.cli_source));
-        }
-      } else {
-        expectedInstallationType = stats.isFile();
-      }
-    } catch {
-      expectedInstallationType = false;
-    }
-    if (!expectedInstallationType) {
-      modifications.push({ kind: "cli", reason: "unexpected_type" });
-    } else if (options.platform !== "darwin") {
-      if (manifest.cli_sha256 === null) {
-        modifications.push({ kind: "cli", reason: "ownership_unknown" });
-      } else if (!(await fileFingerprintMatches(paths.cliTarget, manifest.cli_sha256))) {
-        modifications.push({ kind: "cli", reason: "content_changed" });
-      }
-    }
-  }
-
-  if (await pathExists(paths.skillTarget)) {
-    let isDirectory = false;
-    try {
-      isDirectory = (await lstat(paths.skillTarget)).isDirectory();
-    } catch {
-      isDirectory = false;
-    }
-    if (!isDirectory) {
-      modifications.push({ kind: "skill", reason: "unexpected_type" });
-    } else if (manifest.skill_sha256 === null) {
-      modifications.push({ kind: "skill", reason: "ownership_unknown" });
-    } else if (!(await directoryFingerprintMatches(paths.skillTarget, manifest.skill_sha256))) {
-      modifications.push({ kind: "skill", reason: "content_changed" });
-    }
-  }
-  return modifications;
-}
-
-function buildModifiedContentMessage(modifications: ManagedModification[]): string {
-  const labels = new Set(
-    modifications.map((modification) =>
-      modification.kind === "skill" ? "Agent 使用说明（Skill）" : "命令行工具",
-    ),
-  );
-  const hasUnknownOwnership = modifications.some(
-    (modification) => modification.reason === "ownership_unknown",
-  );
-  const detail = hasUnknownOwnership ? "无法确认原有内容是否被修改" : "检测到内容已被修改";
-  return `${[...labels].join("和")}${detail}。自动更新不会覆盖；点击“修复”时会先备份现有内容。`;
-}
-
-async function backupManagedModifications(
-  paths: AgentSupportPaths,
-  modifications: ManagedModification[],
-  timestamp: Date,
-): Promise<string> {
-  const safeTimestamp = timestamp.toISOString().replace(/[:.]/g, "-");
-  const backupDirectory = path.join(paths.backupDirectory, `${safeTimestamp}-${randomUUID()}`);
-  await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
-  for (const modification of modifications) {
-    const source = modification.kind === "skill" ? paths.skillTarget : paths.cliTarget;
-    if (!(await pathExists(source))) {
-      continue;
-    }
-    const target = path.join(
-      backupDirectory,
-      modification.kind === "skill" ? "auto-email-sender-skill" : path.basename(paths.cliTarget),
-    );
-    await copyPathForBackup(source, target);
-  }
-  return backupDirectory;
-}
-
-async function copyPathForBackup(source: string, target: string): Promise<void> {
-  const stats = await lstat(source);
-  if (!stats.isSymbolicLink()) {
-    await cp(source, target, { recursive: stats.isDirectory(), force: false });
-    return;
-  }
-
-  const linkTarget = await readlink(source);
-  await writeFile(`${target}.symlink.txt`, `${linkTarget}\n`, { encoding: "utf8", flag: "wx" });
-  try {
-    await cp(source, target, { recursive: true, dereference: true, force: false });
-  } catch (error) {
-    if (await pathExists(path.resolve(path.dirname(source), linkTarget))) {
-      throw error;
-    }
-  }
-}
-
-async function findUnmanagedConflicts(
+async function getAgentStatuses(
   paths: AgentSupportPaths,
   manifest: AgentSupportManifest | null,
-): Promise<string[]> {
-  const conflicts: string[] = [];
-  if (
-    await pathExists(paths.cliTarget) &&
-    (!manifest?.enabled || manifest.cli_target !== path.resolve(paths.cliTarget))
-  ) {
-    conflicts.push(paths.cliTarget);
+): Promise<AgentIntegrationStatus[]> {
+  const sourceSha256 = await sha256Directory(paths.skillSource).catch(() => null);
+  const statuses: AgentIntegrationStatus[] = [];
+
+  for (const agent of AGENT_INTEGRATIONS) {
+    const target = paths.agentSkillTargets[agent.id];
+    const record = manifest?.agents[agent.id];
+    if (isManagedAgentSkillTarget(record, target)) {
+      const healthy = manifest?.schema_version === MANIFEST_SCHEMA_VERSION
+        && sourceSha256 !== null
+        && record.skill_sha256 === sourceSha256
+        && await directoryFingerprintMatches(target, sourceSha256);
+      statuses.push({
+        id: agent.id,
+        name: agent.name,
+        state: healthy ? "installed" : "needs_update",
+        skillPath: target,
+        message: healthy ? "已安装官方 Skill" : "需要更新为当前官方 Skill",
+      });
+      continue;
+    }
+    if (await pathExists(target)) {
+      statuses.push({
+        id: agent.id,
+        name: agent.name,
+        state: "conflict",
+        skillPath: target,
+        message: "发现同名目录，未覆盖",
+      });
+      continue;
+    }
+    statuses.push({
+      id: agent.id,
+      name: agent.name,
+      state: "not_installed",
+      skillPath: target,
+      message: "可单独安装",
+    });
   }
+
+  const codexStatus = statuses.find((status) => status.id === "codex");
+  return statuses.map((status) => {
+    const definition = getAgentDefinition(status.id);
+    if (
+      status.state !== "not_installed"
+      || definition.sharedSkillFrom === undefined
+      || codexStatus?.state !== "installed"
+    ) {
+      return status;
+    }
+    return {
+      ...status,
+      state: "available_via_shared",
+      message: "可通过已安装的共享 Skill 使用",
+      sharedBy: definition.sharedSkillFrom,
+    };
+  });
+}
+
+async function isManagedAgentSkillHealthy(
+  paths: AgentSupportPaths,
+  manifest: AgentSupportManifest,
+  agentId: AgentIntegrationId,
+): Promise<boolean> {
+  const record = manifest.agents[agentId];
+  const target = paths.agentSkillTargets[agentId];
   if (
-    await pathExists(paths.skillTarget) &&
-    (!manifest?.enabled || manifest.skill_target !== path.resolve(paths.skillTarget))
+    !isManagedAgentSkillTarget(record, target)
+    || record.skill_sha256 === null
+    || !(await pathExists(path.join(target, "SKILL.md")))
   ) {
-    conflicts.push(paths.skillTarget);
+    return false;
   }
-  return conflicts;
+  return (await directoryFingerprintMatches(target, record.skill_sha256))
+    && await directoryFingerprintMatches(paths.skillSource, record.skill_sha256);
+}
+
+function getManagedAgentIds(
+  paths: AgentSupportPaths,
+  manifest: AgentSupportManifest | null,
+): AgentIntegrationId[] {
+  if (!manifest?.enabled) {
+    return [];
+  }
+  return AGENT_INTEGRATION_IDS.filter((agentId) =>
+    isManagedAgentSkillTarget(manifest.agents[agentId], paths.agentSkillTargets[agentId]),
+  );
+}
+
+function isManagedCliTarget(manifest: AgentSupportManifest | null, paths: AgentSupportPaths): boolean {
+  return Boolean(manifest?.enabled && manifest.cli_target === path.resolve(paths.cliTarget));
+}
+
+function isManagedAgentSkillTarget(
+  record: ManagedAgentSkill | undefined,
+  target: string,
+): record is ManagedAgentSkill {
+  return record !== undefined && record.skill_target === path.resolve(target);
+}
+
+async function findUnmanagedCliConflict(
+  paths: AgentSupportPaths,
+  manifest: AgentSupportManifest | null,
+): Promise<string | null> {
+  if (await pathExists(paths.cliTarget) && !isManagedCliTarget(manifest, paths)) {
+    return paths.cliTarget;
+  }
+  return null;
 }
 
 function getMissingAgentSupportFilesMessage(options: AgentSupportServiceOptions): string {
@@ -600,10 +697,7 @@ function getUnsupportedReason(options: AgentSupportServiceOptions): string | nul
   return "当前系统暂不支持命令行与 Agent 功能。";
 }
 
-async function ensureMacPath(
-  paths: AgentSupportPaths,
-  environmentPath: string,
-): Promise<boolean> {
+async function ensureMacPath(paths: AgentSupportPaths, environmentPath: string): Promise<boolean> {
   if (paths.shellProfilePath === null) {
     return false;
   }
@@ -674,9 +768,9 @@ export function addManagedZshPathBlock(content: string): string {
   }
   const prefix = content.length === 0 || content.endsWith("\n") ? content : `${content}\n`;
   return (
-    `${prefix}${ZSH_PATH_BLOCK_START}\n` +
-    'export PATH="$HOME/.local/bin:$PATH"\n' +
-    `${ZSH_PATH_BLOCK_END}\n`
+    `${prefix}${ZSH_PATH_BLOCK_START}\n`
+    + 'export PATH="$HOME/.local/bin:$PATH"\n'
+    + `${ZSH_PATH_BLOCK_END}\n`
   );
 }
 
@@ -742,37 +836,83 @@ async function writeWindowsUserPath(value: string): Promise<void> {
 
 async function readManifest(manifestPath: string): Promise<AgentSupportManifest | null> {
   try {
-    const value = JSON.parse(await readFile(manifestPath, "utf8")) as Partial<AgentSupportManifest>;
+    const value = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    const schemaVersion = value.schema_version;
     if (
-      (value.schema_version !== MANIFEST_SCHEMA_VERSION
-        && value.schema_version !== PREVIOUS_MANIFEST_SCHEMA_VERSION
-        && value.schema_version !== LEGACY_MANIFEST_SCHEMA_VERSION) ||
-      typeof value.enabled !== "boolean" ||
-      typeof value.prompt_dismissed !== "boolean" ||
-      typeof value.cli_target !== "string" ||
-      typeof value.skill_target !== "string" ||
-      typeof value.path_managed !== "boolean"
+      (schemaVersion !== MANIFEST_SCHEMA_VERSION
+        && schemaVersion !== PREVIOUS_MANIFEST_SCHEMA_VERSION
+        && schemaVersion !== OLDER_MANIFEST_SCHEMA_VERSION
+        && schemaVersion !== LEGACY_MANIFEST_SCHEMA_VERSION)
+      || typeof value.enabled !== "boolean"
+      || typeof value.prompt_dismissed !== "boolean"
+      || typeof value.cli_target !== "string"
+      || typeof value.path_managed !== "boolean"
     ) {
       return null;
     }
+
+    const agents = schemaVersion === MANIFEST_SCHEMA_VERSION
+      ? readManagedAgents(value.agents)
+      : readLegacyManagedAgents(value);
     return {
-      schema_version: value.schema_version,
+      schema_version: schemaVersion,
       enabled: value.enabled,
       prompt_dismissed: value.prompt_dismissed,
       app_version: typeof value.app_version === "string" ? value.app_version : null,
       cli_source: typeof value.cli_source === "string" ? value.cli_source : null,
+      skill_source: typeof value.skill_source === "string" ? value.skill_source : null,
       cli_target: value.cli_target,
-      skill_target: value.skill_target,
       cli_sha256: isSha256(value.cli_sha256) ? value.cli_sha256 : null,
-      skill_sha256: isSha256(value.skill_sha256) ? value.skill_sha256 : null,
       path_managed: value.path_managed,
-      last_backup_directory:
-        typeof value.last_backup_directory === "string" ? value.last_backup_directory : null,
+      agents,
       updated_at: typeof value.updated_at === "string" ? value.updated_at : "",
     };
   } catch {
     return null;
   }
+}
+
+function readManagedAgents(value: unknown): AgentSupportManifest["agents"] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const candidates = value as Record<string, unknown>;
+  const agents: AgentSupportManifest["agents"] = {};
+  for (const agentId of AGENT_INTEGRATION_IDS) {
+    const candidate = candidates[agentId];
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+      continue;
+    }
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.skill_target !== "string") {
+      continue;
+    }
+    agents[agentId] = {
+      skill_target: record.skill_target,
+      skill_sha256: isSha256(record.skill_sha256) ? record.skill_sha256 : null,
+    };
+  }
+  return agents;
+}
+
+function readLegacyManagedAgents(value: Record<string, unknown>): AgentSupportManifest["agents"] {
+  if (typeof value.skill_target !== "string") {
+    return {};
+  }
+  return {
+    codex: {
+      skill_target: value.skill_target,
+      skill_sha256: isSha256(value.skill_sha256) ? value.skill_sha256 : null,
+    },
+  };
+}
+
+function getAgentDefinition(agentId: AgentIntegrationId): AgentDefinition {
+  const agent = AGENT_INTEGRATIONS.find((candidate) => candidate.id === agentId);
+  if (agent === undefined) {
+    throw new Error(`不支持的 Agent：${agentId}`);
+  }
+  return agent;
 }
 
 async function sha256File(targetPath: string): Promise<string> {
@@ -788,7 +928,6 @@ async function sha256File(targetPath: string): Promise<string> {
 
 async function sha256Directory(directoryPath: string): Promise<string> {
   const entries: string[] = [];
-
   const visit = async (relativeDirectory: string): Promise<void> => {
     const absoluteDirectory = relativeDirectory
       ? path.join(directoryPath, ...relativeDirectory.split("/"))
@@ -810,7 +949,6 @@ async function sha256Directory(directoryPath: string): Promise<string> {
       }
     }
   };
-
   await visit("");
   const canonicalListing = entries.length > 0 ? `${entries.join("\n")}\n` : "";
   return createHash("sha256").update(canonicalListing, "utf8").digest("hex");
@@ -826,7 +964,7 @@ async function fileFingerprintMatches(targetPath: string, expected: string): Pro
 
 async function directoryFingerprintMatches(targetPath: string, expected: string): Promise<boolean> {
   try {
-    return await sha256Directory(targetPath) === expected;
+    return (await lstat(targetPath)).isDirectory() && await sha256Directory(targetPath) === expected;
   } catch {
     return false;
   }
