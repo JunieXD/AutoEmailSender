@@ -40,12 +40,11 @@ from app.services.community_mentor_data import (
 from test.migrated_database import create_migrated_sqlite_database
 
 
-DATASET_VERSION = "2026-08-03T000000Z-abcdef123456"
+DATASET_VERSION = "v2-abcdef123456abcdef123456abcdef12"
 GENERATED_AT = "2026-08-03T00:00:00Z"
 BASE_URL = "https://data.example/mentor-data/"
 UNIVERSITY_ID = "org_example_university"
 UNIT_ID = "org_example_school"
-SHARD_PATH = f"data/{UNIVERSITY_ID}/{UNIT_ID}.json"
 
 
 def _json_bytes(value: object) -> bytes:
@@ -109,18 +108,37 @@ def _record_payload(**overrides: object) -> dict[str, object]:
     return record
 
 
+def _shard_payload(records: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "university": {"id": UNIVERSITY_ID, "name": "示例大学"},
+        "unit": {"id": UNIT_ID, "name": "计算机学院", "type": "school"},
+        "records": records,
+    }
+
+
+DEFAULT_SHARD_BYTES = _json_bytes(_shard_payload([_record_payload()]))
+SHARD_PATH = f"objects/sha256/{hashlib.sha256(DEFAULT_SHARD_BYTES).hexdigest()}.json"
+
+
 def _dataset_payloads(
     *,
     records: list[dict[str, object]] | None = None,
     revocation_records: list[dict[str, object]] | None = None,
     minimum_app_version: str = "2.4.1",
-    shard_generated_at: str = GENERATED_AT,
+    dataset_version: str = DATASET_VERSION,
+    generated_at: str = GENERATED_AT,
 ) -> dict[str, bytes]:
     shard_records = records if records is not None else [_record_payload()]
+    shard_payload = _json_bytes(_shard_payload(shard_records))
+    shard_path = f"objects/sha256/{hashlib.sha256(shard_payload).hexdigest()}.json"
+    release_root = f"releases/{dataset_version}"
+    catalog_path = f"{release_root}/catalog.json"
+    revocations_path = f"{release_root}/revocations.json"
     catalog = {
-        "schema_version": 1,
-        "dataset_version": DATASET_VERSION,
-        "generated_at": GENERATED_AT,
+        "schema_version": 2,
+        "dataset_version": dataset_version,
+        "generated_at": generated_at,
         "record_count": len(shard_records),
         "universities": [
             {
@@ -133,36 +151,29 @@ def _dataset_payloads(
                         "name": "计算机学院",
                         "type": "school",
                         "record_count": len(shard_records),
-                        "path": SHARD_PATH,
+                        "path": shard_path,
                     },
                 ],
             },
         ],
     }
     revocations = {
-        "schema_version": 1,
-        "dataset_version": DATASET_VERSION,
-        "generated_at": GENERATED_AT,
+        "schema_version": 2,
+        "dataset_version": dataset_version,
+        "generated_at": generated_at,
         "records": revocation_records or [],
         "events": [],
     }
-    shard = {
-        "schema_version": 1,
-        "dataset_version": DATASET_VERSION,
-        "generated_at": shard_generated_at,
-        "university": {"id": UNIVERSITY_ID, "name": "示例大学"},
-        "unit": {"id": UNIT_ID, "name": "计算机学院", "type": "school"},
-        "records": shard_records,
-    }
     file_payloads = {
-        "catalog.json": _json_bytes(catalog),
-        "revocations.json": _json_bytes(revocations),
-        SHARD_PATH: _json_bytes(shard),
+        catalog_path: _json_bytes(catalog),
+        revocations_path: _json_bytes(revocations),
+        shard_path: shard_payload,
     }
     manifest = {
-        "schema_version": 1,
-        "dataset_version": DATASET_VERSION,
-        "generated_at": GENERATED_AT,
+        "schema_version": 2,
+        "dataset_version": dataset_version,
+        "generated_at": generated_at,
+        "source_sha256": f"{dataset_version.removeprefix('v2-')}{'c' * 32}",
         "minimum_app_version": minimum_app_version,
         "files": [
             {
@@ -174,20 +185,23 @@ def _dataset_payloads(
         ],
     }
     latest = {
-        "schema_version": 1,
-        "dataset_version": DATASET_VERSION,
-        "generated_at": GENERATED_AT,
-        "manifest_path": f"datasets/{DATASET_VERSION}/manifest.json",
-        "catalog_path": f"datasets/{DATASET_VERSION}/catalog.json",
+        "schema_version": 2,
+        "dataset_version": dataset_version,
+        "generated_at": generated_at,
+        "manifest_path": f"{release_root}/manifest.json",
+        "catalog_path": catalog_path,
     }
-    version_root = f"/mentor-data/datasets/{DATASET_VERSION}"
     return {
         "/mentor-data/latest.json": _json_bytes(latest),
-        f"{version_root}/manifest.json": _json_bytes(manifest),
-        f"{version_root}/catalog.json": file_payloads["catalog.json"],
-        f"{version_root}/revocations.json": file_payloads["revocations.json"],
-        f"{version_root}/{SHARD_PATH}": file_payloads[SHARD_PATH],
+        f"/mentor-data/{release_root}/manifest.json": _json_bytes(manifest),
+        **{f"/mentor-data/{path}": payload for path, payload in file_payloads.items()},
     }
+
+
+def _published_shard_path(payloads: dict[str, bytes]) -> str:
+    latest = json.loads(payloads["/mentor-data/latest.json"])
+    catalog = json.loads(payloads[f"/mentor-data/{latest['catalog_path']}"])
+    return catalog["universities"][0]["units"][0]["path"]
 
 
 def _transport_for_payloads(payloads: dict[str, bytes]) -> httpx.MockTransport:
@@ -311,6 +325,33 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cached.stale)
         self.assertIn("网络刷新失败", cached.warning or "")
 
+    async def test_reuses_content_addressed_shard_across_dataset_versions(self) -> None:
+        first_payloads = _dataset_payloads()
+        shard_path = _published_shard_path(first_payloads)
+        first_service = self._service(_transport_for_payloads(first_payloads))
+        await first_service.get_catalog(force_refresh=True)
+        await first_service.load_records(
+            dataset_version=DATASET_VERSION,
+            unit_paths=[shard_path],
+        )
+
+        next_version = "v2-dddddddddddddddddddddddddddddddd"
+        next_payloads = _dataset_payloads(
+            dataset_version=next_version,
+            generated_at="2026-08-04T00:00:00Z",
+        )
+        self.assertEqual(_published_shard_path(next_payloads), shard_path)
+        del next_payloads[f"/mentor-data/{shard_path}"]
+        next_service = self._service(_transport_for_payloads(next_payloads))
+        await next_service.get_catalog(force_refresh=True)
+
+        records = await next_service.load_records(
+            dataset_version=next_version,
+            unit_paths=[shard_path],
+        )
+
+        self.assertEqual(records.records[0].id, "mentor_example0001")
+
     async def test_cache_index_commit_failure_keeps_previous_version_readable(self) -> None:
         payloads = _dataset_payloads()
         service = self._service(_transport_for_payloads(payloads))
@@ -322,7 +363,7 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
                 raise OSError("simulated interrupted cache switch")
             original_write_atomic(path, payload)
 
-        version_root = f"/mentor-data/datasets/{DATASET_VERSION}"
+        version_root = f"/mentor-data/releases/{DATASET_VERSION}"
         with patch.object(service, "_write_atomic", side_effect=fail_before_index_commit):
             with self.assertRaisesRegex(CommunityDataError, "保留上一个完整版本"):
                 service._cache_catalog(
@@ -330,7 +371,7 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
                     manifest_payload=payloads[f"{version_root}/manifest.json"],
                     catalog_payload=payloads[f"{version_root}/catalog.json"],
                     revocations_payload=payloads[f"{version_root}/revocations.json"],
-                    version="2026-08-03T000001Z-bbbbbbbbbbbb",
+                    version=DATASET_VERSION,
                     base_url=BASE_URL,
                     verified_at=datetime.now(UTC),
                 )
@@ -338,24 +379,20 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         cached = await service.get_catalog(force_refresh=False)
         self.assertEqual(cached.catalog.dataset_version, DATASET_VERSION)
 
-    async def test_reads_legacy_cache_with_root_latest_file(self) -> None:
+    async def test_rejects_legacy_cache_index(self) -> None:
         service = self._service(_transport_for_payloads(_dataset_payloads()))
         await service.get_catalog(force_refresh=True)
-        version_latest = (
-            self.cache_directory / "datasets" / DATASET_VERSION / "latest.json"
-        )
-        legacy_latest = self.cache_directory / "latest.json"
-        legacy_latest.write_bytes(version_latest.read_bytes())
-        version_latest.unlink()
+        index_path = self.cache_directory / "cache-index.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index["schema_version"] = 1
+        index_path.write_text(json.dumps(index), encoding="utf-8")
 
-        cached = await service.get_catalog(force_refresh=False)
-
-        self.assertEqual(cached.catalog.dataset_version, DATASET_VERSION)
-        self.assertEqual(cached.source, "cache")
+        with self.assertRaisesRegex(CommunityDataError, "缓存版本不受支持"):
+            service._load_cached_catalog(stale=False, warning=None)
 
     async def test_rejects_hash_mismatch_before_caching(self) -> None:
         payloads = _dataset_payloads()
-        catalog_path = f"/mentor-data/datasets/{DATASET_VERSION}/catalog.json"
+        catalog_path = f"/mentor-data/releases/{DATASET_VERSION}/catalog.json"
         payloads[catalog_path] += b" "
         service = self._service(_transport_for_payloads(payloads))
 
@@ -363,6 +400,17 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
             await service._refresh_catalog_from_base(BASE_URL)
 
         self.assertFalse((self.cache_directory / "cache-index.json").exists())
+
+    async def test_rejects_dataset_version_that_does_not_match_source_digest(self) -> None:
+        payloads = _dataset_payloads()
+        manifest_path = f"/mentor-data/releases/{DATASET_VERSION}/manifest.json"
+        manifest = json.loads(payloads[manifest_path])
+        manifest["source_sha256"] = "d" * 64
+        payloads[manifest_path] = _json_bytes(manifest)
+        service = self._service(_transport_for_payloads(payloads))
+
+        with self.assertRaisesRegex(CommunityDataError, "格式或字段校验失败"):
+            await service._refresh_catalog_from_base(BASE_URL)
 
     async def test_rejects_oversized_response_from_content_length(self) -> None:
         async def oversized(request: httpx.Request) -> httpx.Response:
@@ -379,28 +427,25 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_two_community_entities_with_the_same_primary_email(self) -> None:
         second_record = _record_payload(id="mentor_example0002")
-        service = self._service(
-            _transport_for_payloads(
-                _dataset_payloads(records=[_record_payload(), second_record]),
-            ),
-        )
+        payloads = _dataset_payloads(records=[_record_payload(), second_record])
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
         await service.get_catalog(force_refresh=True)
 
         with self.assertRaisesRegex(CommunityDataError, "重复主邮箱"):
             await service.load_records(
                 dataset_version=DATASET_VERSION,
-                unit_paths=[SHARD_PATH],
+                unit_paths=[shard_path],
             )
 
-    async def test_rejects_shard_with_a_different_generation_time(self) -> None:
-        service = self._service(
-            _transport_for_payloads(
-                _dataset_payloads(shard_generated_at="2026-08-03T00:00:01Z"),
-            ),
-        )
+    async def test_rejects_shard_content_that_does_not_match_its_address(self) -> None:
+        payloads = _dataset_payloads()
+        shard_url = f"/mentor-data/{_published_shard_path(payloads)}"
+        payloads[shard_url] += b" "
+        service = self._service(_transport_for_payloads(payloads))
         await service.get_catalog(force_refresh=True)
 
-        with self.assertRaisesRegex(CommunityDataError, "学院分片与目录不一致"):
+        with self.assertRaisesRegex(CommunityDataError, "字节数与 Manifest 不一致"):
             await service.load_records(
                 dataset_version=DATASET_VERSION,
                 unit_paths=[SHARD_PATH],
@@ -414,15 +459,15 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
             university="另一所大学",
             affiliations=[wrong_affiliation],
         )
-        service = self._service(
-            _transport_for_payloads(_dataset_payloads(records=[wrong_record])),
-        )
+        payloads = _dataset_payloads(records=[wrong_record])
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
         await service.get_catalog(force_refresh=True)
 
         with self.assertRaisesRegex(CommunityDataError, "不属于目录声明"):
             await service.load_records(
                 dataset_version=DATASET_VERSION,
-                unit_paths=[SHARD_PATH],
+                unit_paths=[shard_path],
             )
 
     async def test_accepts_school_record_with_a_more_specific_primary_organization(self) -> None:
@@ -430,14 +475,14 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         nested_affiliation = dict(nested_record["affiliations"][0])  # type: ignore[index]
         nested_affiliation["organization_id"] = "org_example_department"
         nested_record["affiliations"] = [nested_affiliation]
-        service = self._service(
-            _transport_for_payloads(_dataset_payloads(records=[nested_record])),
-        )
+        payloads = _dataset_payloads(records=[nested_record])
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
         await service.get_catalog(force_refresh=True)
 
         result = await service.load_records(
             dataset_version=DATASET_VERSION,
-            unit_paths=[SHARD_PATH],
+            unit_paths=[shard_path],
         )
 
         self.assertEqual(len(result.records), 1)
@@ -454,15 +499,15 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
             school="另一所学院",
             affiliations=[wrong_affiliation],
         )
-        service = self._service(
-            _transport_for_payloads(_dataset_payloads(records=[wrong_record])),
-        )
+        payloads = _dataset_payloads(records=[wrong_record])
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
         await service.get_catalog(force_refresh=True)
 
         with self.assertRaisesRegex(CommunityDataError, "不属于目录声明"):
             await service.load_records(
                 dataset_version=DATASET_VERSION,
-                unit_paths=[SHARD_PATH],
+                unit_paths=[shard_path],
             )
 
     async def test_rejects_unit_selection_above_record_limit_before_downloading(self) -> None:
@@ -522,20 +567,20 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(record.recent_papers[0]), 3_405)
 
     def test_cache_pruning_removes_obsolete_versions_and_oldest_shards(self) -> None:
-        current_version = "2026-08-03T000002Z-cccccccccccc"
-        previous_version = "2026-08-03T000001Z-bbbbbbbbbbbb"
-        obsolete_version = "2026-08-03T000000Z-aaaaaaaaaaaa"
+        current_version = "v2-cccccccccccccccccccccccccccccccc"
+        previous_version = "v2-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        obsolete_version = "v2-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         service = CommunityMentorDataService(
             cache_directory=self.cache_directory,
             base_urls=(BASE_URL,),
             cache_max_bytes=25,
             cache_retained_versions=2,
         )
-        current_data = self.cache_directory / "datasets" / current_version / "data"
         previous_root = self.cache_directory / "datasets" / previous_version
         obsolete_root = self.cache_directory / "datasets" / obsolete_version
-        oldest_shard = current_data / "org_example_university" / "old.json"
-        newest_shard = current_data / "org_example_university" / "new.json"
+        shard_root = self.cache_directory / "objects" / "sha256"
+        oldest_shard = shard_root / f"{'a' * 64}.json"
+        newest_shard = shard_root / f"{'b' * 64}.json"
         for path, payload in (
             (oldest_shard, b"o" * 20),
             (newest_shard, b"n" * 20),

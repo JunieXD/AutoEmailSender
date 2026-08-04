@@ -288,11 +288,6 @@ class CommunityMentorDataService:
             payload, source = await self._load_or_download_manifest_file(bundle, manifest_file)
             downloaded_from_network = downloaded_from_network or source == "network"
             shard = self._parse_json_model(payload, CommunityShardDocument, path)
-            if shard.dataset_version != dataset_version:
-                raise CommunityDataError(
-                    f"学院分片版本不一致：{path}",
-                    code="COMMUNITY_DATA_INVALID",
-                )
             expected = catalog_units[path]
             if (
                 shard.university.id != expected.university_id
@@ -301,7 +296,6 @@ class CommunityMentorDataService:
                 or shard.unit.name != expected.unit_name
                 or shard.unit.type != expected.unit_type
                 or len(shard.records) != expected.record_count
-                or shard.generated_at != bundle.catalog.generated_at
             ):
                 raise CommunityDataError(
                     f"学院分片与目录不一致：{path}",
@@ -384,9 +378,9 @@ class CommunityMentorDataService:
     async def _refresh_catalog_from_base(self, base_url: str) -> CommunityCatalogBundle:
         latest_payload = await self._download_bytes(base_url, "latest.json", LATEST_MAX_BYTES)
         latest = self._parse_json_model(latest_payload, CommunityLatestDocument, "latest.json")
-        version_root = f"datasets/{latest.dataset_version}/"
-        expected_manifest_path = f"{version_root}manifest.json"
-        expected_catalog_path = f"{version_root}catalog.json"
+        release_root = f"releases/{latest.dataset_version}/"
+        expected_manifest_path = f"{release_root}manifest.json"
+        expected_catalog_path = f"{release_root}catalog.json"
         if latest.manifest_path != expected_manifest_path or latest.catalog_path != expected_catalog_path:
             raise CommunityDataError(
                 "latest.json 包含不安全或不一致的版本路径",
@@ -406,8 +400,9 @@ class CommunityMentorDataService:
         self._validate_core_versions(latest, manifest)
         self._validate_app_compatibility(manifest)
         manifest_files = {item.path: item for item in manifest.files}
-        catalog_file = manifest_files["catalog.json"]
-        revocations_file = manifest_files["revocations.json"]
+        catalog_file = manifest_files[latest.catalog_path]
+        revocations_relative_path = f"{release_root}revocations.json"
+        revocations_file = manifest_files[revocations_relative_path]
         self._validate_declared_size(catalog_file, CATALOG_MAX_BYTES)
         self._validate_declared_size(revocations_file, REVOCATIONS_MAX_BYTES)
 
@@ -423,7 +418,6 @@ class CommunityMentorDataService:
             "catalog.json",
         )
 
-        revocations_relative_path = f"{version_root}revocations.json"
         revocations_payload = await self._download_bytes(
             base_url,
             revocations_relative_path,
@@ -477,11 +471,11 @@ class CommunityMentorDataService:
             "verified_at",
         }:
             raise CommunityDataError("本地社区目录缓存索引无效")
-        if index.get("schema_version") != 1:
+        if index.get("schema_version") != 2:
             raise CommunityDataError("本地社区目录缓存版本不受支持")
         dataset_version = index.get("dataset_version")
         if not isinstance(dataset_version, str) or re.fullmatch(
-            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z-[a-f0-9]{12}",
+            r"v2-[a-f0-9]{32}",
             dataset_version,
         ) is None:
             raise CommunityDataError("本地社区目录缓存数据版本无效")
@@ -499,13 +493,7 @@ class CommunityMentorDataService:
             raise CommunityDataError("本地社区目录缓存核验时间缺少时区")
 
         version_root = self.cache_directory / "datasets" / dataset_version
-        version_latest_path = version_root / "latest.json"
-        latest_path = (
-            version_latest_path
-            if version_latest_path.is_file()
-            else self.cache_directory / "latest.json"
-        )
-        latest_payload = self._read_cache_file(latest_path, LATEST_MAX_BYTES)
+        latest_payload = self._read_cache_file(version_root / "latest.json", LATEST_MAX_BYTES)
         manifest_payload = self._read_cache_file(
             version_root / "manifest.json",
             MANIFEST_MAX_BYTES,
@@ -527,8 +515,9 @@ class CommunityMentorDataService:
         self._validate_core_versions(latest, manifest)
         self._validate_app_compatibility(manifest)
         manifest_files = {item.path: item for item in manifest.files}
-        self._verify_manifest_payload(catalog_payload, manifest_files["catalog.json"])
-        self._verify_manifest_payload(revocations_payload, manifest_files["revocations.json"])
+        self._verify_manifest_payload(catalog_payload, manifest_files[latest.catalog_path])
+        revocations_path = f"releases/{dataset_version}/revocations.json"
+        self._verify_manifest_payload(revocations_payload, manifest_files[revocations_path])
         catalog = self._parse_json_model(
             catalog_payload,
             CommunityCatalogDocument,
@@ -558,7 +547,7 @@ class CommunityMentorDataService:
         manifest_file: CommunityManifestFile,
     ) -> tuple[bytes, str]:
         self._validate_declared_size(manifest_file, SHARD_MAX_BYTES)
-        cache_path = self._cache_dataset_path(bundle.catalog.dataset_version, manifest_file.path)
+        cache_path = self._cache_manifest_path(manifest_file.path)
         try:
             cached_payload = self._read_cache_file(cache_path, SHARD_MAX_BYTES)
             self._verify_manifest_payload(cached_payload, manifest_file)
@@ -567,7 +556,7 @@ class CommunityMentorDataService:
         except CommunityDataError:
             pass
 
-        relative_path = f"datasets/{bundle.catalog.dataset_version}/{manifest_file.path}"
+        relative_path = manifest_file.path
         failures: list[str] = []
         candidate_bases = (bundle.base_url,) + tuple(
             value for value in self.base_urls if value != bundle.base_url
@@ -673,7 +662,7 @@ class CommunityMentorDataService:
     @staticmethod
     def _validate_data_path(path: str) -> None:
         CommunityMentorDataService._validate_relative_path(path)
-        if re.fullmatch(r"data/[a-z0-9_-]+/[a-z0-9_-]+\.json", path) is None:
+        if re.fullmatch(r"objects/sha256/[a-f0-9]{64}\.json", path) is None:
             raise CommunityDataError("学院分片路径无效", code="COMMUNITY_DATA_PATH_INVALID")
 
     @staticmethod
@@ -726,6 +715,15 @@ class CommunityMentorDataService:
                 f"{manifest_file.path} SHA-256 校验失败",
                 code="COMMUNITY_DATA_HASH_MISMATCH",
             )
+        if manifest_file.path.startswith("objects/sha256/"):
+            path_digest = (
+                manifest_file.path.removeprefix("objects/sha256/").removesuffix(".json")
+            )
+            if path_digest != digest:
+                raise CommunityDataError(
+                    f"{manifest_file.path} 内容寻址路径与 SHA-256 不一致",
+                    code="COMMUNITY_DATA_HASH_MISMATCH",
+                )
 
     @staticmethod
     def _validate_dataset_documents(
@@ -750,7 +748,9 @@ class CommunityMentorDataService:
         }
         if len(generated_times) != 1:
             raise CommunityDataError("社区核心数据文件生成时间不一致", code="COMMUNITY_DATA_INVALID")
-        manifest_data_paths = {item.path for item in manifest.files if item.path.startswith("data/")}
+        manifest_data_paths = {
+            item.path for item in manifest.files if item.path.startswith("objects/sha256/")
+        }
         catalog_data_paths = {
             unit.path
             for university in catalog.universities
@@ -782,7 +782,7 @@ class CommunityMentorDataService:
         version_root = self.cache_directory / "datasets" / version
         index_payload = json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "dataset_version": version,
                 "base_url": base_url,
                 "verified_at": verified_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
@@ -798,7 +798,7 @@ class CommunityMentorDataService:
             self._write_atomic(version_root / "revocations.json", revocations_payload)
             # cache-index.json 是唯一的“当前版本”指针，必须最后提交。
             self._write_atomic(self.cache_directory / CACHE_INDEX_NAME, index_payload)
-        except OSError as exc:
+        except (OSError, CommunityDataError) as exc:
             raise CommunityDataError(
                 "本地社区缓存写入失败，仍保留上一个完整版本",
                 code="COMMUNITY_DATA_CACHE_WRITE_FAILED",
@@ -818,14 +818,14 @@ class CommunityMentorDataService:
             if not child.is_symlink()
             and child.is_dir()
             and re.fullmatch(
-                r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z-[a-f0-9]{12}",
+                r"(?:v2-[a-f0-9]{32}|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z-[a-f0-9]{12})",
                 child.name,
             )
         ]
         versions_to_keep = {current_version}
         for directory in sorted(
             version_directories,
-            key=lambda item: item.name,
+            key=self._cache_file_mtime,
             reverse=True,
         ):
             if len(versions_to_keep) >= self.cache_retained_versions:
@@ -848,7 +848,7 @@ class CommunityMentorDataService:
                 and directory.name != current_version
                 and directory.exists()
             ),
-            key=lambda item: item.name,
+            key=self._cache_file_mtime,
         )
         for directory in previous_versions:
             self._remove_cache_tree(directory)
@@ -856,7 +856,7 @@ class CommunityMentorDataService:
             if total_bytes <= self.cache_max_bytes:
                 return
 
-        shard_root = datasets_root / current_version / "data"
+        shard_root = self.cache_directory / "objects" / "sha256"
         try:
             shard_files = [
                 path
@@ -912,9 +912,9 @@ class CommunityMentorDataService:
         except OSError:
             pass
 
-    def _cache_dataset_path(self, dataset_version: str, relative_path: str) -> Path:
+    def _cache_manifest_path(self, relative_path: str) -> Path:
         self._validate_relative_path(relative_path)
-        root = (self.cache_directory / "datasets" / dataset_version).resolve()
+        root = self.cache_directory.resolve()
         path = (root / relative_path).resolve()
         if path != root and root not in path.parents:
             raise CommunityDataError("缓存文件路径越界", code="COMMUNITY_DATA_PATH_INVALID")

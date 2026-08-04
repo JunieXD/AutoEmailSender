@@ -9,12 +9,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.schemas.base import ApiSchema
 
 
-DATASET_VERSION_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z-[a-f0-9]{12}$"
+DATASET_VERSION_FRAGMENT = r"v2-[a-f0-9]{32}"
+DATASET_VERSION_PATTERN = rf"^{DATASET_VERSION_FRAGMENT}$"
 MENTOR_ID_PATTERN = r"^mentor_[a-z0-9][a-z0-9_-]{7,63}$"
 ORGANIZATION_ID_PATTERN = r"^org_[a-z0-9][a-z0-9_-]{2,63}$"
 AFFILIATION_ID_PATTERN = r"^aff_[a-z0-9][a-z0-9_-]{7,63}$"
-DATA_FILE_PATTERN = r"^data/[a-z0-9_-]+/[a-z0-9_-]+\.json$"
-MANIFEST_FILE_PATTERN = r"^(catalog|revocations|data/[a-z0-9_-]+/[a-z0-9_-]+)\.json$"
+DATA_FILE_PATTERN = r"^objects/sha256/[a-f0-9]{64}\.json$"
+RELEASE_FILE_PATTERN = rf"^releases/{DATASET_VERSION_FRAGMENT}/(catalog|revocations)\.json$"
+MANIFEST_FILE_PATTERN = rf"^(?:{DATA_FILE_PATTERN[1:-1]}|{RELEASE_FILE_PATTERN[1:-1]})$"
 MAX_COMMUNITY_LOADED_RECORDS = 2_000
 
 COMMUNITY_IMPORT_FIELDS = (
@@ -90,7 +92,7 @@ class CommunityDatasetSchema(BaseModel):
 
 
 class CommunityLatestDocument(CommunityDatasetSchema):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     dataset_version: str = Field(pattern=DATASET_VERSION_PATTERN)
     generated_at: datetime
     manifest_path: str = Field(max_length=256)
@@ -102,21 +104,36 @@ class CommunityManifestFile(CommunityDatasetSchema):
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     bytes: int = Field(ge=0)
 
+    @model_validator(mode="after")
+    def _validate_content_address(self) -> "CommunityManifestFile":
+        if self.path.startswith("objects/sha256/"):
+            path_digest = self.path.removeprefix("objects/sha256/").removesuffix(".json")
+            if path_digest != self.sha256:
+                raise ValueError("内容寻址对象路径与 SHA-256 不一致")
+        return self
+
 
 class CommunityManifestDocument(CommunityDatasetSchema):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     dataset_version: str = Field(pattern=DATASET_VERSION_PATTERN)
     generated_at: datetime
+    source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     minimum_app_version: str = Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
     files: list[CommunityManifestFile] = Field(max_length=10_000)
 
     @model_validator(mode="after")
     def _validate_unique_paths(self) -> "CommunityManifestDocument":
+        if self.dataset_version != f"v2-{self.source_sha256[:32]}":
+            raise ValueError("Manifest 数据版本与规范数据摘要不一致")
         paths = [item.path for item in self.files]
         if len(paths) != len(set(paths)):
             raise ValueError("Manifest 包含重复文件路径")
-        if "catalog.json" not in paths or "revocations.json" not in paths:
-            raise ValueError("Manifest 缺少 catalog.json 或 revocations.json")
+        release_prefix = f"releases/{self.dataset_version}/"
+        if (
+            f"{release_prefix}catalog.json" not in paths
+            or f"{release_prefix}revocations.json" not in paths
+        ):
+            raise ValueError("Manifest 缺少当前版本的 catalog.json 或 revocations.json")
         return self
 
 
@@ -143,7 +160,7 @@ class CommunityCatalogUniversity(CommunityDatasetSchema):
 
 
 class CommunityCatalogDocument(CommunityDatasetSchema):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     dataset_version: str = Field(pattern=DATASET_VERSION_PATTERN)
     generated_at: datetime
     record_count: int = Field(ge=0)
@@ -167,9 +184,6 @@ class CommunityCatalogDocument(CommunityDatasetSchema):
                 if unit.path in paths:
                     raise ValueError("Catalog 包含重复学院分片路径")
                 paths.add(unit.path)
-                expected_path = f"data/{university.id}/{unit.id}.json"
-                if unit.path != expected_path:
-                    raise ValueError("Catalog 学校或学院 ID 与分片路径不一致")
                 unit_total += unit.record_count
             if unit_total != university.record_count:
                 raise ValueError("Catalog 学校记录数与学院合计不一致")
@@ -323,9 +337,7 @@ class CommunityShardUnit(CommunityShardOrganization):
 
 
 class CommunityShardDocument(CommunityDatasetSchema):
-    schema_version: Literal[1]
-    dataset_version: str = Field(pattern=DATASET_VERSION_PATTERN)
-    generated_at: datetime
+    schema_version: Literal[2]
     university: CommunityShardOrganization
     unit: CommunityShardUnit
     records: list[CommunityMentorRecord] = Field(max_length=MAX_COMMUNITY_LOADED_RECORDS)
@@ -354,7 +366,7 @@ class CommunityRevocationRecord(CommunityDatasetSchema):
 
 
 class CommunityRevocationsDocument(CommunityDatasetSchema):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     dataset_version: str = Field(pattern=DATASET_VERSION_PATTERN)
     generated_at: datetime
     records: list[CommunityRevocationRecord] = Field(max_length=100_000)
@@ -379,7 +391,7 @@ class CommunityLifecycleWarningRead(ApiSchema):
 
 
 class CommunityCatalogRead(ApiSchema):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     dataset_version: str
     generated_at: datetime
     record_count: int

@@ -47,8 +47,8 @@ vi.mock('@/lib/externalUrls', () => ({
 }));
 
 const emptyCatalog: CommunityCatalogDTO = {
-  schema_version: 1,
-  dataset_version: '2026-08-03T000000Z-abcdef123456',
+  schema_version: 2,
+  dataset_version: 'v2-0123456789abcdef0123456789abcdef',
   generated_at: '2026-08-03T00:00:00Z',
   record_count: 0,
   universities: [],
@@ -73,7 +73,7 @@ const populatedCatalog: CommunityCatalogDTO = {
           name: '计算机学院',
           type: 'school',
           record_count: 1,
-          path: 'data/org_example_university/org_example_school.json',
+          path: 'objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json',
         },
       ],
     },
@@ -402,7 +402,7 @@ describe('CommunityMentorsPage', () => {
     })).toBeDisabled();
     expect(apiMocks.preview).toHaveBeenCalledWith({
       dataset_version: populatedCatalog.dataset_version,
-      unit_paths: ['data/org_example_university/org_example_school.json'],
+      unit_paths: ['objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'],
       record_ids: ['mentor_example0001'],
     });
     fireEvent.click(screen.getByRole('button', { name: '确认导入 1 位' }));
@@ -410,7 +410,7 @@ describe('CommunityMentorsPage', () => {
     await waitFor(() => expect(apiMocks.importRecords).toHaveBeenCalledTimes(1));
     expect(apiMocks.importRecords).toHaveBeenCalledWith({
       dataset_version: populatedCatalog.dataset_version,
-      unit_paths: ['data/org_example_university/org_example_school.json'],
+      unit_paths: ['objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json'],
       items: [
         {
           community_record_id: comparison.record.id,
@@ -490,7 +490,7 @@ describe('CommunityMentorsPage', () => {
   });
 
   it('selects and clears all colleges in the current filter', async () => {
-    const secondPath = 'data/org_example_university/org_example_institute.json';
+    const secondPath = 'objects/sha256/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json';
     apiMocks.getCatalog.mockResolvedValue({
       ...populatedCatalog,
       record_count: 2,
@@ -1064,7 +1064,7 @@ describe('CommunityMentorsPage', () => {
   });
 
   it('keeps the loaded list but disables preview when the selected units change', async () => {
-    const secondPath = 'data/org_example_university/org_example_institute.json';
+    const secondPath = 'objects/sha256/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json';
     apiMocks.getCatalog.mockResolvedValue({
       ...populatedCatalog,
       record_count: 2,
