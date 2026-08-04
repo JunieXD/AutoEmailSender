@@ -29,7 +29,6 @@ import {
 import {
   getCommunityMentorCatalogSessionSnapshot,
   requestCommunityMentorCatalog,
-  shouldAutomaticallyRefreshCommunityMentorCatalog,
 } from '@/lib/communityMentorCatalogCache';
 import { buildCommunityReportUrl } from '@/lib/communityMentorLinks';
 import { openExternalHttpUrl } from '@/lib/externalUrls';
@@ -319,12 +318,16 @@ export const CommunityMentorsPage = () => {
 
   useEffect(() => {
     const bootstrapCatalog = async () => {
-      const initialCatalog = getCommunityMentorCatalogSessionSnapshot()
-        ?? await loadCatalog(false, false);
-      if (!initialCatalog || !shouldAutomaticallyRefreshCommunityMentorCatalog(initialCatalog)) {
+      const sessionCatalog = getCommunityMentorCatalogSessionSnapshot();
+      if (sessionCatalog) {
+        void loadCatalog(true, false);
         return;
       }
-      void loadCatalog(true, false);
+
+      const initialCatalog = await loadCatalog(false, false);
+      if (initialCatalog?.source === 'cache') {
+        void loadCatalog(true, false);
+      }
     };
 
     void bootstrapCatalog();
@@ -726,8 +729,14 @@ export const CommunityMentorsPage = () => {
           </Link>
         </div>
       ) : catalog ? (
-        <div className="mt-8 grid gap-6 lg:grid-cols-[21rem,minmax(0,1fr)]">
-          <aside className="self-start rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm lg:sticky lg:top-44">
+        <div
+          data-testid="community-mentor-browser-layout"
+          className="mt-8 space-y-6"
+        >
+          <section
+            data-testid="community-mentor-unit-selector"
+            className="rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm md:p-6"
+          >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-semibold text-stone-900">选择学校与学院</h2>
@@ -741,7 +750,7 @@ export const CommunityMentorsPage = () => {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
               <input value={catalogKeyword} onChange={(event) => setCatalogKeyword(event.target.value)} className="w-full rounded-xl border border-stone-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary" placeholder="搜索学校或学院" />
             </div>
-            <div className="mt-4 max-h-[34rem] space-y-3 overflow-y-auto pr-1">
+            <div className="mt-4 grid max-h-[30rem] gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
               {filteredUniversities.map((university) => (
                 <div key={university.id} className="rounded-2xl border border-stone-200 p-3">
                   <div className="flex items-center justify-between gap-2 text-sm font-semibold text-stone-900">
@@ -762,18 +771,20 @@ export const CommunityMentorsPage = () => {
                 </div>
               ))}
             </div>
-            <button type="button" disabled={recordsLoading || selectedUnitPaths.length === 0} onClick={() => void loadRecordsForPaths(selectedUnitPaths)} className="ui-btn-primary mt-5 w-full justify-center disabled:cursor-not-allowed disabled:opacity-50">
-              {recordsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-              加载所选学院
-            </button>
-          </aside>
+            <div className="mt-5 flex justify-end">
+              <button type="button" disabled={recordsLoading || selectedUnitPaths.length === 0} onClick={() => void loadRecordsForPaths(selectedUnitPaths)} className="ui-btn-primary w-full justify-center disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
+                {recordsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                加载所选学院
+              </button>
+            </div>
+          </section>
 
           <section className="min-w-0 rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm md:p-6">
             {!recordsPayload ? (
-              <div className="flex min-h-[28rem] flex-col items-center justify-center text-center">
+              <div className="flex min-h-64 flex-col items-center justify-center text-center">
                 <Users className="h-10 w-10 text-stone-300" />
-                <h2 className="mt-4 font-semibold text-stone-900">先从左侧选择学院</h2>
-                <p className="mt-2 max-w-md text-sm leading-6 text-stone-500">只会下载你选择的学院分片，不会把整个社区库作为一个超大文件塞进本地。</p>
+                <h2 className="mt-4 font-semibold text-stone-900">先在上方选择学校和学院</h2>
+                <p className="mt-2 max-w-md text-sm leading-6 text-stone-500">选择后点击“加载所选学院”，导师列表会显示在这里。</p>
               </div>
             ) : (
               <>

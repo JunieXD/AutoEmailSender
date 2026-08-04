@@ -378,6 +378,46 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
                 unit_paths=[SHARD_PATH],
             )
 
+    async def test_accepts_school_record_with_a_more_specific_primary_organization(self) -> None:
+        nested_record = _record_payload()
+        nested_affiliation = dict(nested_record["affiliations"][0])  # type: ignore[index]
+        nested_affiliation["organization_id"] = "org_example_department"
+        nested_record["affiliations"] = [nested_affiliation]
+        service = self._service(
+            _transport_for_payloads(_dataset_payloads(records=[nested_record])),
+        )
+        await service.get_catalog(force_refresh=True)
+
+        result = await service.load_records(
+            dataset_version=DATASET_VERSION,
+            unit_paths=[SHARD_PATH],
+        )
+
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(
+            result.records[0].affiliations[0].organization_id,
+            "org_example_department",
+        )
+
+    async def test_rejects_record_that_does_not_belong_to_shard_school(self) -> None:
+        wrong_record = _record_payload()
+        wrong_affiliation = dict(wrong_record["affiliations"][0])  # type: ignore[index]
+        wrong_affiliation["school"] = "另一所学院"
+        wrong_record.update(
+            school="另一所学院",
+            affiliations=[wrong_affiliation],
+        )
+        service = self._service(
+            _transport_for_payloads(_dataset_payloads(records=[wrong_record])),
+        )
+        await service.get_catalog(force_refresh=True)
+
+        with self.assertRaisesRegex(CommunityDataError, "不属于目录声明"):
+            await service.load_records(
+                dataset_version=DATASET_VERSION,
+                unit_paths=[SHARD_PATH],
+            )
+
     async def test_rejects_unit_selection_above_record_limit_before_downloading(self) -> None:
         service = self._service(_transport_for_payloads(_dataset_payloads()))
         await service.get_catalog(force_refresh=True)

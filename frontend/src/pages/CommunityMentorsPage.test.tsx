@@ -242,7 +242,7 @@ describe('CommunityMentorsPage', () => {
     await waitFor(() => expect(apiMocks.getCatalog).toHaveBeenCalledWith(true));
   });
 
-  it('reuses the session catalog immediately when returning to the page', async () => {
+  it('reuses the session catalog immediately and refreshes when returning to the page', async () => {
     apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
 
     const firstRender = renderPage();
@@ -254,7 +254,22 @@ describe('CommunityMentorsPage', () => {
 
     expect(screen.getByText('示例大学')).toBeInTheDocument();
     expect(screen.queryByText('正在加载社区导师库…')).not.toBeInTheDocument();
-    expect(apiMocks.getCatalog).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(apiMocks.getCatalog).toHaveBeenCalledTimes(2));
+    expect(apiMocks.getCatalog).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it('uses a stable vertical layout and points to the selector above', async () => {
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+
+    renderPage();
+
+    const layout = await screen.findByTestId('community-mentor-browser-layout');
+    const selector = screen.getByTestId('community-mentor-unit-selector');
+    expect(layout).toHaveClass('space-y-6');
+    expect(layout).not.toHaveClass('lg:grid-cols-[21rem,minmax(0,1fr)]');
+    expect(selector.className).not.toMatch(/sticky|top-/);
+    expect(screen.getByText('先在上方选择学校和学院')).toBeInTheDocument();
+    expect(screen.queryByText('先从左侧选择学院')).not.toBeInTheDocument();
   });
 
   it('keeps cached data usable while checking for updates in the background', async () => {

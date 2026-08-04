@@ -364,9 +364,15 @@ class CommunityMentorDataService:
         ) and (
             expected.unit_type != "department" or record.department == expected.unit_name
         )
+        # School and department shards may contain records whose primary
+        # organization is a more specific center or laboratory.
+        organization_matches = (
+            expected.unit_type in {"school", "department"}
+            or primary_affiliation.organization_id == expected.unit_id
+        )
         if (
             record.university != expected.university_name
-            or primary_affiliation.organization_id != expected.unit_id
+            or not organization_matches
             or not unit_projection_matches
         ):
             raise CommunityDataError(
