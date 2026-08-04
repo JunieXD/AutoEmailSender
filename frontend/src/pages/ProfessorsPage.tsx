@@ -784,6 +784,11 @@ export const ProfessorsPage = () => {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
+  const isRefreshingProfessors = hasLoadedProfessors && loading;
+  const shouldShowProfessorIntakePanel =
+    isRefreshingProfessors ||
+    archiveFilter === "archived" ||
+    professors.length > 0;
   const latestProfessorsRequestIdRef = useRef(0);
   const professorListStartRef = useRef<HTMLElement | null>(null);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
@@ -2110,7 +2115,7 @@ export const ProfessorsPage = () => {
             </div>
           </div>
 
-          {archiveFilter === "archived" || professors.length > 0 ? (
+          {shouldShowProfessorIntakePanel ? (
             <section
               data-testid="professor-intake-panel"
               aria-labelledby="professor-intake-title"
@@ -2206,6 +2211,10 @@ export const ProfessorsPage = () => {
                   key={item}
                   type="button"
                   onClick={() => {
+                    if (archiveFilter === item) {
+                      return;
+                    }
+                    setLoading(true);
                     setArchiveFilter(item);
                     setCurrentPage(1);
                     setSelectedIds(new Set());
@@ -2439,7 +2448,8 @@ export const ProfessorsPage = () => {
         ref={professorListStartRef}
         tabIndex={-1}
         aria-label="导师管理列表"
-        className="mt-6 scroll-mt-24 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
+        aria-busy={isRefreshingProfessors}
+        className="relative mt-6 scroll-mt-24 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
       >
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           <div className="text-sm text-stone-600">
@@ -2518,12 +2528,7 @@ export const ProfessorsPage = () => {
           <div className="flex justify-center text-center">操作</div>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 px-6 py-16 text-sm text-stone-500">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            正在加载导师列表...
-          </div>
-        ) : visibleProfessors.length === 0 ? (
+        {visibleProfessors.length === 0 ? (
           <div className="px-6 py-16 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-stone-100 text-stone-400">
               <Users className="h-6 w-6" />
@@ -2658,7 +2663,7 @@ export const ProfessorsPage = () => {
           </div>
         )}
 
-        {!loading && visibleProfessors.length > 0 ? (
+        {visibleProfessors.length > 0 ? (
           <Pagination
             page={safeCurrentPage}
             pageSize={pageSize}
@@ -2671,6 +2676,19 @@ export const ProfessorsPage = () => {
             focusTargetRef={professorListStartRef}
             className="border-t border-stone-100 px-6 py-4"
           />
+        ) : null}
+        {isRefreshingProfessors ? (
+          <div
+            data-testid="professor-list-refreshing"
+            role="status"
+            aria-live="polite"
+            className="absolute inset-0 z-10 flex cursor-wait items-center justify-center bg-white/35"
+          >
+            <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white/95 px-4 py-2 text-sm text-stone-600 shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              正在更新导师列表...
+            </div>
+          </div>
         ) : null}
       </section>
 

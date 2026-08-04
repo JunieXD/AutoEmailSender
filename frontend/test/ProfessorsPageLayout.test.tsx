@@ -947,6 +947,82 @@ describe("ProfessorsPage layout", () => {
     expect(within(intakePanel).getByRole("button", { name: "导出导师信息" })).toBeInTheDocument();
   });
 
+  it("keeps the previous list visible while an archive filter is refreshing", async () => {
+    let resolveArchived: (value: ProfessorManagementItemDTO[]) => void = () => {};
+    listProfessorsForManagement.mockImplementation((filter: string) => {
+      if (filter === "archived") {
+        return new Promise<ProfessorManagementItemDTO[]>((resolve) => {
+          resolveArchived = resolve;
+        });
+      }
+      return Promise.resolve([professor]);
+    });
+    renderPage();
+
+    expect(await screen.findByText("李教授")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "已删除" }));
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenLastCalledWith("archived");
+    });
+
+    expect(screen.getByText("李教授")).toBeInTheDocument();
+    expect(screen.getByTestId("professor-list-refreshing")).toHaveTextContent(
+      "正在更新导师列表...",
+    );
+    expect(screen.queryByText("正在加载导师列表...")).not.toBeInTheDocument();
+
+    resolveArchived([]);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("professor-list-refreshing")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "暂无导师" })).toBeInTheDocument();
+    });
+  });
+
+  it("keeps the intake panel mounted while returning from an empty deleted view", async () => {
+    let activeRequestCount = 0;
+    let resolveActiveRefresh: (value: ProfessorManagementItemDTO[]) => void =
+      () => {};
+    listProfessorsForManagement.mockImplementation((filter: string) => {
+      if (filter === "archived") {
+        return Promise.resolve([]);
+      }
+      activeRequestCount += 1;
+      if (activeRequestCount === 1) {
+        return Promise.resolve([professor]);
+      }
+      return new Promise<ProfessorManagementItemDTO[]>((resolve) => {
+        resolveActiveRefresh = resolve;
+      });
+    });
+    renderPage();
+
+    expect(await screen.findByText("李教授")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "已删除" }));
+    expect(
+      await screen.findByRole("heading", { name: "暂无导师" }),
+    ).toBeInTheDocument();
+
+    const intakePanel = screen.getByTestId("professor-intake-panel");
+    fireEvent.click(screen.getByRole("button", { name: "正常" }));
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenLastCalledWith("active");
+    });
+
+    expect(screen.getByTestId("professor-intake-panel")).toBe(intakePanel);
+    expect(screen.getByTestId("professor-list-refreshing")).toBeInTheDocument();
+
+    resolveActiveRefresh([professor]);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("professor-list-refreshing")).not.toBeInTheDocument();
+      expect(screen.getByText("李教授")).toBeInTheDocument();
+    });
+  });
+
   it("filters professors by title and school from the advanced filter panel", async () => {
     listProfessorsForManagement.mockResolvedValue([professor, anotherProfessor]);
     renderPage();
