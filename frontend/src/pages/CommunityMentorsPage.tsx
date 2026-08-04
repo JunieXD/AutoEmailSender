@@ -1,4 +1,5 @@
 import {
+  memo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -325,6 +326,97 @@ const ContributorLinks = ({
     </span>
   );
 };
+
+type CommunityMentorRecordCardProps = {
+  item: CommunityMentorComparisonDTO;
+  selected: boolean;
+  onToggle: (recordId: string) => void;
+  onOpenDetail: (item: CommunityMentorComparisonDTO) => void;
+  onReport: (record: CommunityMentorRecordDTO) => void;
+};
+
+const CommunityMentorRecordCard = memo(({
+  item,
+  selected,
+  onToggle,
+  onOpenDetail,
+  onReport,
+}: CommunityMentorRecordCardProps) => {
+  const meta = categoryMeta[item.category];
+  const selectable = isRecordSelectable(item);
+  const organization = [
+    item.record.university,
+    item.record.school,
+    item.record.department,
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <article className="rounded-2xl border border-stone-200 px-3 py-2.5 transition hover:border-orange-200 hover:shadow-sm">
+      <div className="flex items-stretch gap-3">
+        <div className="flex shrink-0 items-center">
+          <SelectionToggleButton
+            label={`选择 ${item.record.name}`}
+            disabled={!selectable}
+            selected={selected}
+            onToggle={() => onToggle(item.record.id)}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="grid min-w-0 gap-x-5 gap-y-2 lg:grid-cols-[minmax(13rem,0.95fr)_minmax(16rem,1.15fr)_7.5rem] lg:items-center">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h3 className="font-semibold text-stone-950">{item.record.name}</h3>
+                {item.record.title ? <span className="text-sm text-stone-500">{item.record.title}</span> : null}
+                <span title={meta.description} className={clsx('rounded-full border px-2 py-0.5 text-[11px] font-medium', meta.className)}>{meta.label}</span>
+                {item.record.contacts.length > 1 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">{item.record.contacts.length} 个邮箱</span> : null}
+                {item.record.affiliations.length > 1 ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{item.record.affiliations.length} 个任职</span> : null}
+              </div>
+              <p className="mt-1 truncate text-xs text-stone-500" title={organization}>{organization || '暂无任职信息'}</p>
+            </div>
+            <div className="min-w-0 text-xs text-stone-500">
+              <div className="flex min-w-0 items-center gap-1 text-sm text-stone-700">
+                <Mail className="h-3.5 w-3.5 shrink-0 text-stone-400" />
+                <span className="truncate" title={item.record.email}>{item.record.email}</span>
+              </div>
+              <p className="mt-1 truncate" title={item.record.research_direction ?? ''}>
+                {item.record.research_direction || '研究方向暂无'}
+              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span>核验：{formatShortDate(item.record.last_verified_at)}</span>
+                <span className="inline-flex flex-wrap items-center gap-1">
+                  贡献者：<ContributorLinks contributors={item.record.contributors} />
+                </span>
+                <button type="button" className="inline-flex items-center gap-1 font-medium text-primary hover:underline" onClick={() => openExternalHttpUrl(item.record.source_url)}>
+                  来源页 <ExternalLink className="h-3 w-3" />
+                </button>
+                <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => onReport(item.record)}>
+                  反馈错误 <ExternalLink className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center lg:justify-end">
+              <button type="button" className="ui-btn-secondary min-h-8 justify-center px-2.5 py-1 text-xs" onClick={() => onOpenDetail(item)}>
+                <Eye className="h-3.5 w-3.5" /> 查看详情
+              </button>
+            </div>
+          </div>
+          {item.import_blocked ? (
+            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs leading-5 text-red-800">
+              <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
+              <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
+            </div>
+          ) : item.identity_conflict ? (
+            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs leading-5 text-amber-800">
+              <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />{item.match_reason}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+});
+
+CommunityMentorRecordCard.displayName = 'CommunityMentorRecordCard';
 
 const DetailValue = ({
   label,
@@ -678,7 +770,38 @@ export const CommunityMentorsPage = () => {
     () => initialPageSnapshot?.identityConfirmations ?? {},
   );
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  const recordListRef = useRef<HTMLDivElement | null>(null);
+  const bulkSelectionTimerRef = useRef<number | null>(null);
   useDocumentScrollLock(previewPayload !== null);
+
+  const beginBulkRecordSelection = useCallback(() => {
+    const recordList = recordListRef.current;
+    if (!recordList) {
+      return;
+    }
+    recordList.classList.add('is-bulk-selecting');
+    if (bulkSelectionTimerRef.current !== null) {
+      window.clearTimeout(bulkSelectionTimerRef.current);
+    }
+    bulkSelectionTimerRef.current = window.setTimeout(() => {
+      recordList.classList.remove('is-bulk-selecting');
+      bulkSelectionTimerRef.current = null;
+    }, 50);
+  }, []);
+
+  const openRecordDetail = useCallback((item: CommunityMentorComparisonDTO) => {
+    setDetailRecord(item);
+  }, []);
+  const reportRecord = useCallback((record: CommunityMentorRecordDTO) => {
+    openFeedbackForm(record, notifySuccess);
+  }, [notifySuccess]);
+
+  useEffect(() => () => {
+    if (bulkSelectionTimerRef.current !== null) {
+      window.clearTimeout(bulkSelectionTimerRef.current);
+    }
+    recordListRef.current?.classList.remove('is-bulk-selecting');
+  }, []);
 
   useEffect(() => {
     setCommunityMentorPageSessionSnapshot({
@@ -1149,7 +1272,7 @@ export const CommunityMentorsPage = () => {
     setRecordPage((current) => Math.min(current, totalRecordPages));
   }, [totalRecordPages]);
 
-  const toggleRecord = (recordId: string) => {
+  const toggleRecord = useCallback((recordId: string) => {
     setSelectedRecordIds((current) => {
       if (current.includes(recordId)) {
         return current.filter((item) => item !== recordId);
@@ -1163,9 +1286,10 @@ export const CommunityMentorsPage = () => {
       }
       return [...current, recordId];
     });
-  };
+  }, [notifyWarning]);
 
   const toggleVisibleRecords = () => {
+    beginBulkRecordSelection();
     setSelectedRecordIds((current) => {
       if (allVisibleSelected) {
         const visibleIdSet = new Set(selectableVisibleIds);
@@ -1186,6 +1310,7 @@ export const CommunityMentorsPage = () => {
   };
 
   const clearVisibleRecords = () => {
+    beginBulkRecordSelection();
     const visibleIdSet = new Set(selectableVisibleIds);
     setSelectedRecordIds((current) => current.filter((id) => !visibleIdSet.has(id)));
   };
@@ -1751,83 +1876,23 @@ export const CommunityMentorsPage = () => {
                     预览并导入 {selectedRecordIds.length > 0 ? selectedRecordIds.length : ''}
                   </button>
                 </div>
-                <div className="mt-4 space-y-3">
+                <div
+                  ref={recordListRef}
+                  data-testid="community-mentor-record-list"
+                  className="community-mentor-record-list mt-4 space-y-3 [&.is-bulk-selecting_.selection-toggle-button]:transition-none"
+                >
                   {visibleRecords.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-stone-200 p-10 text-center text-sm text-stone-500">没有匹配的导师。</div>
-                  ) : paginatedVisibleRecords.map((item) => {
-                    const meta = categoryMeta[item.category];
-                    const selectable = isRecordSelectable(item);
-                    const selected = selectedRecordIdSet.has(item.record.id);
-                    const organization = [
-                      item.record.university,
-                      item.record.school,
-                      item.record.department,
-                    ].filter(Boolean).join(' · ');
-                    return (
-                      <article key={item.record.id} className="rounded-2xl border border-stone-200 px-3 py-2.5 transition hover:border-orange-200 hover:shadow-sm">
-                        <div className="flex items-stretch gap-3">
-                          <div className="flex shrink-0 items-center">
-                            <SelectionToggleButton
-                              label={`选择 ${item.record.name}`}
-                              disabled={!selectable}
-                              selected={selected}
-                              onToggle={() => toggleRecord(item.record.id)}
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="grid min-w-0 gap-x-5 gap-y-2 lg:grid-cols-[minmax(13rem,0.95fr)_minmax(16rem,1.15fr)_7.5rem] lg:items-center">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <h3 className="font-semibold text-stone-950">{item.record.name}</h3>
-                                  {item.record.title ? <span className="text-sm text-stone-500">{item.record.title}</span> : null}
-                                  <span title={meta.description} className={clsx('rounded-full border px-2 py-0.5 text-[11px] font-medium', meta.className)}>{meta.label}</span>
-                                  {item.record.contacts.length > 1 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">{item.record.contacts.length} 个邮箱</span> : null}
-                                  {item.record.affiliations.length > 1 ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{item.record.affiliations.length} 个任职</span> : null}
-                                </div>
-                                <p className="mt-1 truncate text-xs text-stone-500" title={organization}>{organization || '暂无任职信息'}</p>
-                              </div>
-                              <div className="min-w-0 text-xs text-stone-500">
-                                <div className="flex min-w-0 items-center gap-1 text-sm text-stone-700">
-                                  <Mail className="h-3.5 w-3.5 shrink-0 text-stone-400" />
-                                  <span className="truncate" title={item.record.email}>{item.record.email}</span>
-                                </div>
-                                <p className="mt-1 truncate" title={item.record.research_direction ?? ''}>
-                                  {item.record.research_direction || '研究方向暂无'}
-                                </p>
-                                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                  <span>核验：{formatShortDate(item.record.last_verified_at)}</span>
-                                  <span className="inline-flex flex-wrap items-center gap-1">
-                                    贡献者：<ContributorLinks contributors={item.record.contributors} />
-                                  </span>
-                                  <button type="button" className="inline-flex items-center gap-1 font-medium text-primary hover:underline" onClick={() => openExternalHttpUrl(item.record.source_url)}>
-                                    来源页 <ExternalLink className="h-3 w-3" />
-                                  </button>
-                                  <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => openFeedbackForm(item.record, notifySuccess)}>
-                                    反馈错误 <ExternalLink className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="flex items-center lg:justify-end">
-                                <button type="button" className="ui-btn-secondary min-h-8 justify-center px-2.5 py-1 text-xs" onClick={() => setDetailRecord(item)}>
-                                  <Eye className="h-3.5 w-3.5" /> 查看详情
-                                </button>
-                              </div>
-                            </div>
-                            {item.import_blocked ? (
-                              <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs leading-5 text-red-800">
-                                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
-                                <strong>暂不可导入：</strong>{item.import_blocked_reason ?? '请先处理这条导师记录的冲突。'}
-                              </div>
-                            ) : item.identity_conflict ? (
-                              <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs leading-5 text-amber-800">
-                                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />{item.match_reason}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
+                  ) : paginatedVisibleRecords.map((item) => (
+                    <CommunityMentorRecordCard
+                      key={item.record.id}
+                      item={item}
+                      selected={selectedRecordIdSet.has(item.record.id)}
+                      onToggle={toggleRecord}
+                      onOpenDetail={openRecordDetail}
+                      onReport={reportRecord}
+                    />
+                  ))}
                 </div>
                 {visibleRecords.length > RECORDS_PER_PAGE ? (
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">

@@ -21,7 +21,7 @@ export const SelectionToggleButton = ({
     disabled={disabled}
     onClick={onToggle}
     className={clsx(
-      "flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-sm transition",
+      "selection-toggle-button flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-sm transition",
       "focus:outline-none focus:ring-2 focus:ring-primary/30 focus:ring-offset-2",
       selected
         ? "border-primary bg-primary text-white shadow-sm shadow-primary/20"

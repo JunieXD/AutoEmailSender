@@ -631,7 +631,9 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
     expect(await screen.findByText('导师0101')).toBeInTheDocument();
 
+    const recordList = screen.getByTestId('community-mentor-record-list');
     fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    expect(recordList).toHaveClass('is-bulk-selecting');
     await waitFor(() => {
       const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
       expect(selectAll).toHaveAttribute('aria-pressed', 'true');
@@ -642,6 +644,7 @@ describe('CommunityMentorsPage', () => {
       const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
       expect(selectAll).toHaveAttribute('aria-pressed', 'false');
     });
+    await waitFor(() => expect(recordList).not.toHaveClass('is-bulk-selecting'));
     expect(notificationMocks.notifyWarning).not.toHaveBeenCalledWith(
       expect.stringContaining('已选择前'),
       expect.anything(),
