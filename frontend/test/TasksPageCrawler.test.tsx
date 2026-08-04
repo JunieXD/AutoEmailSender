@@ -1061,6 +1061,11 @@ describe("TasksPage crawler jobs tab", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     expect(within(dialog).getByText(/可导入\s+2\s+位/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "无邮箱 1 位，建议在右侧“全选候选”或“全选无邮箱”后点击“补全缺失信息”，补全任务结束后可继续审核。",
+      ),
+    ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "全选无邮箱" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "补全缺失信息" })).toBeInTheDocument();
 

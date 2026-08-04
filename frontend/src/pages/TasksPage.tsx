@@ -5868,7 +5868,9 @@ export const TasksPage = () => {
                           {selectedReviewableCrawlCandidateIds.length} 位
                           <span className="mt-1 block text-xs text-amber-700">
                             无邮箱 {reviewableCrawlCandidateIdsWithoutEmail.length}{" "}
-                            位，可反复选择候选补全缺失信息，补全后仍可继续审核。
+                            {
+                              "位，建议在右侧“全选候选”或“全选无邮箱”后点击“补全缺失信息”，补全任务结束后可继续审核。"
+                            }
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-2">

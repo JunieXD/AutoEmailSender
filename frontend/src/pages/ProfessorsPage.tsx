@@ -2110,7 +2110,7 @@ export const ProfessorsPage = () => {
             </div>
           </div>
 
-          {professors.length > 0 ? (
+          {archiveFilter === "archived" || professors.length > 0 ? (
             <section
               data-testid="professor-intake-panel"
               aria-labelledby="professor-intake-title"

@@ -922,6 +922,31 @@ describe("ProfessorsPage layout", () => {
     });
   });
 
+  it("keeps the intake panel visible after switching to deleted professors", async () => {
+    listProfessorsForManagement.mockImplementation((filter: string) =>
+      Promise.resolve(filter === "archived" ? [] : [professor]),
+    );
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+
+    const intakePanel = screen.getByTestId("professor-intake-panel");
+    fireEvent.click(screen.getByRole("button", { name: "已删除" }));
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("archived");
+    });
+
+    expect(screen.getByTestId("professor-intake-panel")).toBe(intakePanel);
+    expect(within(intakePanel).getByText("导师导入与导出方式")).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("button", { name: "智能抓取" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("button", { name: "模板导入" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("button", { name: "新增导师" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("button", { name: "导出导师信息" })).toBeInTheDocument();
+  });
+
   it("filters professors by title and school from the advanced filter panel", async () => {
     listProfessorsForManagement.mockResolvedValue([professor, anotherProfessor]);
     renderPage();
