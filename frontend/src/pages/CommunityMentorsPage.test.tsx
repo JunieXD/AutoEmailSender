@@ -280,6 +280,9 @@ describe('CommunityMentorsPage', () => {
     expect(
       await screen.findByRole('dialog', { name: '社区导师导入预览' }),
     ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('搜索导入预览导师'), {
+      target: { value: '张老师' },
+    });
     expect(document.body.style.overflow).toBe('hidden');
 
     firstRender.unmount();
@@ -289,6 +292,7 @@ describe('CommunityMentorsPage', () => {
     expect(
       screen.getByRole('dialog', { name: '社区导师导入预览' }),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText('搜索导入预览导师')).toHaveValue('张老师');
     expect(screen.getByLabelText('搜索导师')).toHaveValue('张老师');
     expect(screen.getByText(/已加载 1 位，已选择 1\/2000/)).toBeInTheDocument();
     expect(apiMocks.listRecords).toHaveBeenCalledTimes(1);
@@ -393,6 +397,9 @@ describe('CommunityMentorsPage', () => {
     expect(await screen.findByRole('dialog', { name: '社区导师导入预览' })).toBeInTheDocument();
     expect(screen.getByText('本地没有这位导师，将按社区资料新增。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '采用社区姓名' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', {
+      name: '当前筛选的姓名全部保留本地',
+    })).toBeDisabled();
     expect(apiMocks.preview).toHaveBeenCalledWith({
       dataset_version: populatedCatalog.dataset_version,
       unit_paths: ['data/org_example_university/org_example_school.json'],
@@ -685,6 +692,268 @@ describe('CommunityMentorsPage', () => {
     expect(within(preview).queryByText('导师0001')).not.toBeInTheDocument();
     expect(within(preview).getByText('导师0026')).toBeInTheDocument();
     expect(within(preview).getByText(/当前显示第 26–30 位/)).toBeInTheDocument();
+
+    fireEvent.change(within(preview).getByLabelText('搜索导入预览导师'), {
+      target: { value: '导师0030' },
+    });
+    expect(within(preview).getByText('导师0030')).toBeInTheDocument();
+    expect(
+      within(preview).queryByRole('button', { name: '下一页导入预览' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('filters preview records by field state and involved field', async () => {
+    const titleConflict: CommunityMentorComparisonDTO = {
+      ...buildComparison(0),
+      category: 'conflict',
+      local_professor_id: 1,
+      local_professor_name: '导师甲',
+      record: {
+        ...buildComparison(0).record,
+        name: '导师甲',
+      },
+      fields: [
+        {
+          field: 'title',
+          label: '职称',
+          local_value: '副教授',
+          community_value: '教授',
+          baseline_present: false,
+          baseline_value: null,
+          state: 'conflict',
+          suggested_choice: 'local',
+        },
+      ],
+    };
+    const papersUpdate: CommunityMentorComparisonDTO = {
+      ...buildComparison(1),
+      category: 'remote_modified',
+      local_professor_id: 2,
+      local_professor_name: '导师乙',
+      record: {
+        ...buildComparison(1).record,
+        name: '导师乙',
+      },
+      fields: [
+        {
+          field: 'recent_papers',
+          label: '近期论文',
+          local_value: ['旧论文'],
+          community_value: ['新论文'],
+          baseline_present: true,
+          baseline_value: ['旧论文'],
+          state: 'remote_modified',
+          suggested_choice: 'community',
+        },
+      ],
+    };
+    const payload = { ...recordsPayload, records: [titleConflict, papersUpdate] };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(payload);
+    apiMocks.preview.mockResolvedValue(payload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('导师甲');
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 2/ }));
+
+    const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
+    fireEvent.change(within(preview).getByLabelText('搜索导入预览导师'), {
+      target: { value: '副教授' },
+    });
+    expect(within(preview).getByText('导师甲')).toBeInTheDocument();
+    expect(within(preview).queryByText('导师乙')).not.toBeInTheDocument();
+    fireEvent.click(within(preview).getByRole('button', { name: '清除全部筛选' }));
+
+    fireEvent.click(within(preview).getByLabelText('差异类型：全部差异'));
+    fireEvent.click(within(preview).getByRole('button', { name: '取消全选当前结果' }));
+    fireEvent.click(within(preview).getByRole('option', { name: '内容不同' }));
+    fireEvent.click(within(preview).getByRole('button', { name: '应用' }));
+
+    expect(within(preview).getByText('导师甲')).toBeInTheDocument();
+    expect(within(preview).queryByText('导师乙')).not.toBeInTheDocument();
+
+    fireEvent.click(within(preview).getByRole('button', { name: '清除全部筛选' }));
+    fireEvent.click(within(preview).getByRole('button', {
+      name: '只看涉及近期论文的导师',
+    }));
+    expect(within(preview).queryByText('导师甲')).not.toBeInTheDocument();
+    expect(within(preview).getByText('导师乙')).toBeInTheDocument();
+  });
+
+  it('applies one field choice only to mentors in the current preview filter', async () => {
+    const first: CommunityMentorComparisonDTO = {
+      ...buildComparison(0),
+      category: 'conflict',
+      local_professor_id: 1,
+      local_professor_name: '导师甲',
+      record: { ...buildComparison(0).record, name: '导师甲' },
+      fields: [
+        {
+          field: 'title',
+          label: '职称',
+          local_value: '副教授',
+          community_value: '教授',
+          baseline_present: false,
+          baseline_value: null,
+          state: 'conflict',
+          suggested_choice: 'local',
+        },
+        {
+          field: 'research_direction',
+          label: '研究方向',
+          local_value: '本地方向',
+          community_value: '社区方向',
+          baseline_present: false,
+          baseline_value: null,
+          state: 'conflict',
+          suggested_choice: 'local',
+        },
+      ],
+    };
+    const second: CommunityMentorComparisonDTO = {
+      ...first,
+      comparison_token: 'b'.repeat(64),
+      local_professor_id: 2,
+      local_professor_name: '导师乙',
+      record: {
+        ...first.record,
+        id: 'mentor_second',
+        name: '导师乙',
+        email: 'second@example.edu',
+      },
+    };
+    const payload = { ...recordsPayload, records: [first, second] };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(payload);
+    apiMocks.preview.mockResolvedValue(payload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('导师甲');
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 2/ }));
+
+    const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
+    fireEvent.change(within(preview).getByLabelText('搜索导入预览导师'), {
+      target: { value: '导师甲' },
+    });
+    fireEvent.click(within(preview).getByRole('button', {
+      name: '当前筛选的职称全部采用社区',
+    }));
+    fireEvent.click(within(preview).getByRole('button', { name: '清除全部筛选' }));
+
+    const firstSection = within(preview).getByText('导师甲').closest('section');
+    const secondSection = within(preview).getByText('导师乙').closest('section');
+    expect(firstSection).not.toBeNull();
+    expect(secondSection).not.toBeNull();
+    expect(within(firstSection!).getByRole('button', { name: '采用社区职称' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    expect(within(firstSection!).getByRole('button', { name: '采用社区研究方向' }))
+      .toHaveAttribute('aria-pressed', 'false');
+    expect(within(secondSection!).getByRole('button', { name: '采用社区职称' }))
+      .toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('applies a filtered field choice to matching mentors on every preview page', async () => {
+    const comparisons = Array.from({ length: 30 }, (_, index) => {
+      const item = buildComparison(index);
+      return {
+        ...item,
+        category: 'conflict' as const,
+        local_professor_id: index + 1,
+        local_professor_name: item.record.name,
+        fields: [
+          {
+            field: 'title',
+            label: '职称',
+            local_value: '副教授',
+            community_value: '教授',
+            baseline_present: false,
+            baseline_value: null,
+            state: 'conflict' as const,
+            suggested_choice: 'local' as const,
+          },
+        ],
+      };
+    });
+    const payload = { ...recordsPayload, records: comparisons };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(payload);
+    apiMocks.preview.mockResolvedValue(payload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('导师0001');
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 30/ }));
+
+    const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
+    fireEvent.click(within(preview).getByRole('button', {
+      name: '当前筛选的职称全部采用社区',
+    }));
+    fireEvent.click(within(preview).getByRole('button', { name: '下一页导入预览' }));
+
+    const secondPageSection = within(preview).getByText('导师0026').closest('section');
+    expect(secondPageSection).not.toBeNull();
+    expect(within(secondPageSection!).getByRole('button', { name: '采用社区职称' }))
+      .toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('reveals a hidden unconfirmed identity instead of importing it', async () => {
+    const hiddenConflictBase = buildComparison(0);
+    const hiddenConflict: CommunityMentorComparisonDTO = {
+      ...hiddenConflictBase,
+      category: 'conflict',
+      local_professor_id: 1,
+      local_professor_name: '待确认导师',
+      identity_conflict: true,
+      match_reason: '姓名相同，但邮箱不同',
+      record: {
+        ...hiddenConflictBase.record,
+        name: '待确认导师',
+      },
+    };
+    const visibleRecordBase = buildComparison(1);
+    const visibleRecord: CommunityMentorComparisonDTO = {
+      ...visibleRecordBase,
+      record: {
+        ...visibleRecordBase.record,
+        name: '筛选中的导师',
+      },
+    };
+    const payload = { ...recordsPayload, records: [hiddenConflict, visibleRecord] };
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+    apiMocks.listRecords.mockResolvedValue(payload);
+    apiMocks.preview.mockResolvedValue(payload);
+
+    renderPage();
+    fireEvent.click(await screen.findByLabelText(/计算机学院/));
+    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    await screen.findByText('待确认导师');
+    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: /预览并导入 2/ }));
+
+    const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
+    fireEvent.change(within(preview).getByLabelText('搜索导入预览导师'), {
+      target: { value: '筛选中的导师' },
+    });
+    expect(within(preview).queryByText('待确认导师')).not.toBeInTheDocument();
+
+    fireEvent.click(within(preview).getByRole('button', { name: '确认导入 2 位' }));
+
+    expect(await within(preview).findByText('待确认导师')).toBeInTheDocument();
+    expect(within(preview).getByLabelText('只看尚未确认身份'))
+      .toHaveAttribute('aria-pressed', 'true');
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
+      '请确认导师身份',
+      '“待确认导师”存在姓名或学校冲突。',
+    );
+    expect(apiMocks.importRecords).not.toHaveBeenCalled();
   });
 
   it('allows an explicit community empty value while keeping it local by default', async () => {

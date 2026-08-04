@@ -34,6 +34,7 @@ import {
 import { KeywordSearchScopeSelect } from '@/components/molecules/KeywordSearchScopeSelect';
 import { MultiSelectFilter } from '@/components/molecules/MultiSelectFilter';
 import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
+import { TopBarSelectMenu } from '@/components/atoms/TopBarSelectMenu';
 import { useNotification } from '@/context/NotificationContext';
 import {
   importCommunityMentors,
@@ -203,6 +204,21 @@ const fieldStateMeta: Record<CommunityFieldStateDTO, { label: string; className:
   conflict: { label: '内容不同', className: 'text-amber-700' },
 };
 
+const previewFieldStateOptions: CommunityFieldStateDTO[] = [
+  'conflict',
+  'remote_modified',
+  'local_modified',
+  'fill_available',
+  'local_only',
+  'new',
+];
+const previewFieldStateOptionLabels = Object.fromEntries(
+  previewFieldStateOptions.map((state) => [state, fieldStateMeta[state].label]),
+);
+
+const getChangedFields = (item: CommunityMentorComparisonDTO) =>
+  item.fields.filter((field) => field.state !== 'same');
+
 const lifecycleLabels: Record<CommunityMentorStatusDTO, string> = {
   active: '在职',
   retired: '已退休',
@@ -242,16 +258,34 @@ const formatFieldValue = (value: unknown) => {
   return String(value);
 };
 
-const normalizeSearchValues = (values: Array<string | null | undefined>) =>
-  values.filter(Boolean).join('\n').toLocaleLowerCase();
+const normalizeSearchValues = (values: unknown[]) =>
+  values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .filter((value) => value !== null && value !== undefined && value !== '')
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .join('\n')
+    .toLocaleLowerCase();
+
+const getComparisonSearchValues = (
+  item: CommunityMentorComparisonDTO,
+  fields: string[],
+) => item.fields
+  .filter((field) => fields.includes(field.field))
+  .flatMap((field) => [field.local_value, field.community_value]);
 
 const buildRecordSearchIndex = (
   item: CommunityMentorComparisonDTO,
 ): Record<CommunityMentorSearchScope, string> => ({
-  name: normalizeSearchValues([item.record.name]),
+  name: normalizeSearchValues([
+    item.record.name,
+    item.local_professor_name,
+    ...getComparisonSearchValues(item, ['name']),
+  ]),
   email: normalizeSearchValues([
     item.record.email,
     ...item.record.contacts.map((contact) => contact.email),
+    ...getComparisonSearchValues(item, ['email']),
   ]),
   organization: normalizeSearchValues([
     item.record.university,
@@ -262,12 +296,17 @@ const buildRecordSearchIndex = (
       affiliation.school,
       affiliation.department,
     ]),
+    ...getComparisonSearchValues(item, ['university', 'school', 'department']),
   ]),
   title: normalizeSearchValues([
     item.record.title,
     ...item.record.affiliations.map((affiliation) => affiliation.title),
+    ...getComparisonSearchValues(item, ['title']),
   ]),
-  research_direction: normalizeSearchValues([item.record.research_direction]),
+  research_direction: normalizeSearchValues([
+    item.record.research_direction,
+    ...getComparisonSearchValues(item, ['research_direction']),
+  ]),
 });
 
 const openFeedbackForm = (
@@ -631,30 +670,32 @@ const DifferenceField = ({
     field.community_value === '' ||
     (Array.isArray(field.community_value) && field.community_value.length === 0);
   return (
-    <div className="grid gap-2 rounded-xl border border-stone-200 bg-white p-2.5 md:grid-cols-[7.5rem_minmax(0,1fr)_minmax(0,1fr)] md:items-stretch">
+    <div className="grid gap-1.5 border-t border-stone-100 px-2 py-2 md:grid-cols-[6.75rem_minmax(0,1fr)_minmax(0,1fr)] md:items-stretch">
       <div className="flex items-center justify-between gap-2 px-1 md:flex-col md:items-start md:justify-center">
-        <div className="text-sm font-semibold text-stone-900">{field.label}</div>
+        <div className="text-xs font-semibold text-stone-900">{field.label}</div>
         <div className={clsx('text-xs font-medium', fieldStateMeta[field.state].className)}>
           {fieldStateMeta[field.state].label}
         </div>
       </div>
       <button
         type="button"
+        aria-label={`保留本地${field.label}`}
         aria-pressed={choice === 'local'}
         disabled={!allowLocalChoice}
         onClick={() => onChange('local')}
         className={clsx(
-          'min-w-0 rounded-lg border px-2.5 py-2 text-left transition',
+          'min-h-[3.25rem] min-w-0 rounded-lg border px-2.5 py-1.5 text-left transition',
           choice === 'local'
             ? 'border-violet-300 bg-violet-50 ring-2 ring-violet-100'
             : 'border-stone-200 bg-stone-50',
           !allowLocalChoice && 'cursor-not-allowed opacity-50',
         )}
       >
-        <span className="text-[11px] font-semibold text-stone-500">
+        <span className="flex items-center gap-1 text-[11px] font-semibold text-stone-500">
+          {choice === 'local' ? <Check className="h-3 w-3" /> : null}
           {allowLocalChoice ? '保留本地' : '本地无记录'}
         </span>
-        <span className="mt-0.5 block max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-stone-800">
+        <span className="mt-0.5 block max-h-10 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-stone-800">
           {formatFieldValue(field.local_value)}
         </span>
       </button>
@@ -664,16 +705,19 @@ const DifferenceField = ({
         aria-pressed={choice === 'community'}
         onClick={() => onChange('community')}
         className={clsx(
-          'min-w-0 rounded-lg border px-2.5 py-2 text-left transition',
+          'min-h-[3.25rem] min-w-0 rounded-lg border px-2.5 py-1.5 text-left transition',
           choice === 'community'
             ? 'border-primary/40 bg-primary/5 ring-2 ring-primary/10'
             : 'border-stone-200 bg-stone-50',
         )}
       >
-        <span className="text-[11px] font-semibold text-primary">采用社区</span>
+        <span className="flex items-center gap-1 text-[11px] font-semibold text-primary">
+          {choice === 'community' ? <Check className="h-3 w-3" /> : null}
+          采用社区
+        </span>
         <span
           className={clsx(
-            'mt-0.5 block max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5',
+            'mt-0.5 block max-h-10 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5',
             communityIsEmpty ? 'font-medium text-amber-700' : 'text-stone-800',
           )}
         >
@@ -761,6 +805,27 @@ export const CommunityMentorsPage = () => {
   const [previewPage, setPreviewPage] = useState(
     () => initialPageSnapshot?.previewPage ?? 1,
   );
+  const [previewKeyword, setPreviewKeyword] = useState(
+    () => initialPageSnapshot?.previewKeyword ?? '',
+  );
+  const [previewSearchScopes, setPreviewSearchScopes] = useState<
+    CommunityMentorSearchScope[]
+  >(() => normalizeCommunityMentorSearchScopes(initialPageSnapshot?.previewSearchScopes));
+  const [previewCategoryFilters, setPreviewCategoryFilters] = useState<
+    CommunityComparisonCategoryDTO[]
+  >(() => initialPageSnapshot?.previewCategoryFilters ?? []);
+  const [previewFieldStateFilters, setPreviewFieldStateFilters] = useState<
+    CommunityFieldStateDTO[]
+  >(() => initialPageSnapshot?.previewFieldStateFilters ?? []);
+  const [previewFieldFilters, setPreviewFieldFilters] = useState<string[]>(
+    () => initialPageSnapshot?.previewFieldFilters ?? [],
+  );
+  const [previewOnlyUnconfirmed, setPreviewOnlyUnconfirmed] = useState(
+    () => initialPageSnapshot?.previewOnlyUnconfirmed ?? false,
+  );
+  const [previewBulkField, setPreviewBulkField] = useState<string | null>(
+    () => initialPageSnapshot?.previewBulkField ?? null,
+  );
   const [previewLoading, setPreviewLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [fieldChoices, setFieldChoices] = useState<
@@ -827,6 +892,13 @@ export const CommunityMentorsPage = () => {
       selectedRecordIds,
       previewPayload,
       previewPage,
+      previewKeyword,
+      previewSearchScopes,
+      previewCategoryFilters,
+      previewFieldStateFilters,
+      previewFieldFilters,
+      previewOnlyUnconfirmed,
+      previewBulkField,
       fieldChoices,
       identityConfirmations,
     });
@@ -841,6 +913,13 @@ export const CommunityMentorsPage = () => {
     loadedUnitPaths,
     previewPage,
     previewPayload,
+    previewBulkField,
+    previewCategoryFilters,
+    previewFieldFilters,
+    previewFieldStateFilters,
+    previewKeyword,
+    previewOnlyUnconfirmed,
+    previewSearchScopes,
     recordDepartmentFilters,
     recordKeyword,
     recordPage,
@@ -888,6 +967,13 @@ export const CommunityMentorsPage = () => {
             setSelectedRecordIds([]);
             setPreviewPayload(null);
             setPreviewPage(1);
+            setPreviewKeyword('');
+            setPreviewSearchScopes([...DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES]);
+            setPreviewCategoryFilters([]);
+            setPreviewFieldStateFilters([]);
+            setPreviewFieldFilters([]);
+            setPreviewOnlyUnconfirmed(false);
+            setPreviewBulkField(null);
             setFieldChoices({});
             setIdentityConfirmations({});
             setRecordPage(1);
@@ -1066,6 +1152,13 @@ export const CommunityMentorsPage = () => {
       setSelectedRecordIds([]);
       setPreviewPayload(null);
       setPreviewPage(1);
+      setPreviewKeyword('');
+      setPreviewSearchScopes([...DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES]);
+      setPreviewCategoryFilters([]);
+      setPreviewFieldStateFilters([]);
+      setPreviewFieldFilters([]);
+      setPreviewOnlyUnconfirmed(false);
+      setPreviewBulkField(null);
       setFieldChoices({});
       setIdentityConfirmations({});
       setRecordPage(1);
@@ -1254,12 +1347,134 @@ export const CommunityMentorsPage = () => {
       loadedUnitPaths &&
       !haveSamePaths(selectedUnitPaths, loadedUnitPaths),
   );
+  const previewFieldEntries = useMemo(() => {
+    const labels = new Map<string, string>();
+    (previewPayload?.records ?? []).forEach((item) => {
+      getChangedFields(item).forEach((field) => {
+        if (!labels.has(field.field)) {
+          labels.set(field.field, field.label);
+        }
+      });
+    });
+    return Array.from(labels, ([field, label]) => ({ field, label }));
+  }, [previewPayload]);
+  const previewFieldOptions = useMemo(
+    () => previewFieldEntries.map((entry) => entry.field),
+    [previewFieldEntries],
+  );
+  const previewFieldOptionLabels = useMemo(
+    () => Object.fromEntries(
+      previewFieldEntries.map((entry) => [entry.field, entry.label]),
+    ),
+    [previewFieldEntries],
+  );
+  const previewBulkFieldOptions = useMemo(
+    () => previewFieldEntries.map((entry) => ({
+      value: entry.field,
+      label: entry.label,
+    })),
+    [previewFieldEntries],
+  );
+  const previewSearchIndexById = useMemo(
+    () => new Map(
+      (previewPayload?.records ?? []).map((item) => [
+        item.record.id,
+        buildRecordSearchIndex(item),
+      ]),
+    ),
+    [previewPayload],
+  );
+  const filteredPreviewRecords = useMemo(() => {
+    const keyword = previewKeyword.trim().toLocaleLowerCase();
+    return (previewPayload?.records ?? []).filter((item) => {
+      if (
+        previewCategoryFilters.length > 0 &&
+        !previewCategoryFilters.includes(item.category)
+      ) {
+        return false;
+      }
+      if (
+        previewOnlyUnconfirmed &&
+        (!item.identity_conflict || identityConfirmations[item.record.id])
+      ) {
+        return false;
+      }
+      if (
+        keyword &&
+        !previewSearchScopes.some((scope) =>
+          (previewSearchIndexById.get(item.record.id)?.[scope] ?? '').includes(keyword),
+        )
+      ) {
+        return false;
+      }
+
+      const matchingFields = getChangedFields(item).filter((field) => (
+        previewFieldFilters.length === 0 || previewFieldFilters.includes(field.field)
+      ));
+      if (previewFieldFilters.length > 0 && matchingFields.length === 0) {
+        return false;
+      }
+      if (
+        previewFieldStateFilters.length > 0 &&
+        !matchingFields.some((field) => previewFieldStateFilters.includes(field.state))
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    identityConfirmations,
+    previewCategoryFilters,
+    previewFieldFilters,
+    previewFieldStateFilters,
+    previewKeyword,
+    previewOnlyUnconfirmed,
+    previewPayload,
+    previewSearchIndexById,
+    previewSearchScopes,
+  ]);
+  const previewFieldCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    (previewPayload?.records ?? []).forEach((item) => {
+      getChangedFields(item).forEach((field) => {
+        counts.set(field.field, (counts.get(field.field) ?? 0) + 1);
+      });
+    });
+    return counts;
+  }, [previewPayload]);
+  const previewUnconfirmedCount = useMemo(
+    () => (previewPayload?.records ?? []).filter(
+      (item) => item.identity_conflict && !identityConfirmations[item.record.id],
+    ).length,
+    [identityConfirmations, previewPayload],
+  );
+  const previewHasFilters = Boolean(
+    previewKeyword ||
+    previewCategoryFilters.length > 0 ||
+    previewFieldStateFilters.length > 0 ||
+    previewFieldFilters.length > 0 ||
+    previewOnlyUnconfirmed,
+  );
+  const previewBulkEligibleRecords = useMemo(
+    () => previewBulkField
+      ? filteredPreviewRecords.filter((item) =>
+          getChangedFields(item).some((field) => field.field === previewBulkField),
+        )
+      : [],
+    [filteredPreviewRecords, previewBulkField],
+  );
+  const previewBulkLocalEligibleCount = useMemo(
+    () => previewBulkEligibleRecords.filter(
+      (item) => item.local_professor_id !== null,
+    ).length,
+    [previewBulkEligibleRecords],
+  );
   const totalPreviewPages = Math.max(
     1,
-    Math.ceil((previewPayload?.records.length ?? 0) / PREVIEW_RECORDS_PER_PAGE),
+    Math.ceil(filteredPreviewRecords.length / PREVIEW_RECORDS_PER_PAGE),
   );
   const currentPreviewPage = Math.min(previewPage, totalPreviewPages);
-  const paginatedPreviewRecords = (previewPayload?.records ?? []).slice(
+  const paginatedPreviewRecords = filteredPreviewRecords.slice(
     (currentPreviewPage - 1) * PREVIEW_RECORDS_PER_PAGE,
     currentPreviewPage * PREVIEW_RECORDS_PER_PAGE,
   );
@@ -1271,6 +1486,19 @@ export const CommunityMentorsPage = () => {
   useEffect(() => {
     setRecordPage((current) => Math.min(current, totalRecordPages));
   }, [totalRecordPages]);
+
+  useEffect(() => {
+    setPreviewPage((current) => Math.min(current, totalPreviewPages));
+  }, [totalPreviewPages]);
+
+  useEffect(() => {
+    setPreviewBulkField((current) => {
+      if (current && previewFieldOptions.includes(current)) {
+        return current;
+      }
+      return previewFieldOptions[0] ?? null;
+    });
+  }, [previewFieldOptions]);
 
   const toggleRecord = useCallback((recordId: string) => {
     setSelectedRecordIds((current) => {
@@ -1313,6 +1541,16 @@ export const CommunityMentorsPage = () => {
     beginBulkRecordSelection();
     const visibleIdSet = new Set(selectableVisibleIds);
     setSelectedRecordIds((current) => current.filter((id) => !visibleIdSet.has(id)));
+  };
+
+  const clearPreviewFilters = () => {
+    setPreviewKeyword('');
+    setPreviewSearchScopes([...DEFAULT_COMMUNITY_MENTOR_SEARCH_SCOPES]);
+    setPreviewCategoryFilters([]);
+    setPreviewFieldStateFilters([]);
+    setPreviewFieldFilters([]);
+    setPreviewOnlyUnconfirmed(false);
+    setPreviewPage(1);
   };
 
   const openPreview = async () => {
@@ -1369,7 +1607,12 @@ export const CommunityMentorsPage = () => {
       });
       setFieldChoices(nextChoices);
       setIdentityConfirmations(nextConfirmations);
-      setPreviewPage(1);
+      clearPreviewFilters();
+      setPreviewBulkField(
+        result.records
+          .flatMap((item) => getChangedFields(item))
+          .at(0)?.field ?? null,
+      );
       setPreviewPayload(result);
     } catch (error) {
       notifyError('生成导入预览失败', getErrorMessage(error, '无法生成导入预览'));
@@ -1380,7 +1623,8 @@ export const CommunityMentorsPage = () => {
 
   const closePreview = () => {
     setPreviewPayload(null);
-    setPreviewPage(1);
+    clearPreviewFilters();
+    setPreviewBulkField(null);
     setFieldChoices({});
     setIdentityConfirmations({});
   };
@@ -1404,6 +1648,25 @@ export const CommunityMentorsPage = () => {
     ));
   };
 
+  const applyChoiceToFilteredPreviewField = (choice: CommunityFieldChoiceDTO) => {
+    if (!previewBulkField || previewBulkEligibleRecords.length === 0) {
+      return;
+    }
+    setFieldChoices((current) => {
+      const next = { ...current };
+      previewBulkEligibleRecords.forEach((item) => {
+        if (choice === 'local' && item.local_professor_id === null) {
+          return;
+        }
+        next[item.record.id] = {
+          ...(current[item.record.id] ?? {}),
+          [previewBulkField]: choice,
+        };
+      });
+      return next;
+    });
+  };
+
   const submitImport = async () => {
     if (!catalog || !previewPayload || !loadedUnitPaths) {
       return;
@@ -1420,12 +1683,13 @@ export const CommunityMentorsPage = () => {
       );
       return;
     }
-    const unconfirmedIndex = previewPayload.records.findIndex(
+    const unconfirmed = previewPayload.records.find(
       (item) => item.identity_conflict && !identityConfirmations[item.record.id],
     );
-    if (unconfirmedIndex >= 0) {
-      const unconfirmed = previewPayload.records[unconfirmedIndex];
-      setPreviewPage(Math.floor(unconfirmedIndex / PREVIEW_RECORDS_PER_PAGE) + 1);
+    if (unconfirmed) {
+      clearPreviewFilters();
+      setPreviewOnlyUnconfirmed(true);
+      setPreviewPage(1);
       previewScrollRef.current?.scrollTo?.({ top: 0 });
       notifyWarning('请确认导师身份', `“${unconfirmed.record.name}”存在姓名或学校冲突。`);
       return;
@@ -1936,12 +2200,15 @@ export const CommunityMentorsPage = () => {
       />
 
       {previewPayload ? (
-        <div role="dialog" aria-modal="true" aria-label="社区导师导入预览" className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[26px] border border-white/60 bg-stone-50 shadow-2xl">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 bg-white px-5 py-4">
+        <div role="dialog" aria-modal="true" aria-label="社区导师导入预览" className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-2 backdrop-blur-sm sm:p-4">
+          <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-y-auto rounded-[26px] border border-white/60 bg-stone-50 shadow-2xl md:max-h-[92vh] md:overflow-hidden">
+            <div className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-stone-200 bg-white px-4 py-3 sm:px-5 sm:py-4 md:static">
               <div className="min-w-0">
                 <h2 className="text-xl font-semibold text-stone-950">导入预览与字段选择</h2>
-                <p className="mt-1 text-xs text-stone-500">默认只补全本地空白；本地修改和不同内容会保留。</p>
+                <p className="mt-1 text-xs text-stone-500">
+                  共 {previewPayload.records.length} 位 · 当前筛选 {filteredPreviewRecords.length} 位
+                  {previewUnconfirmedCount > 0 ? ` · ${previewUnconfirmedCount} 位待确认身份` : ''}
+                </p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
@@ -1965,18 +2232,185 @@ export const CommunityMentorsPage = () => {
                 <button type="button" disabled={importing} onClick={closePreview} className="rounded-xl p-2 text-stone-500 hover:bg-stone-100" aria-label="关闭预览"><X className="h-5 w-5" /></button>
               </div>
             </div>
-            <div ref={previewScrollRef} className="flex-1 space-y-3 overflow-y-auto p-3 md:p-4">
-              {paginatedPreviewRecords.map((item) => {
+            <div
+              data-testid="community-import-preview-filters"
+              className="shrink-0 border-b border-stone-200 bg-stone-50/90 px-4 py-3"
+            >
+              <div className="grid gap-2.5 md:grid-cols-2 lg:grid-cols-4">
+                <div className="block min-w-0">
+                  <div className="mb-2 text-sm font-medium text-stone-800">关键词</div>
+                  <div className="ui-select-shell h-10 min-h-10 w-full py-0">
+                    <Search className="h-4 w-4 shrink-0 text-stone-400" />
+                    <input
+                      aria-label="搜索导入预览导师"
+                      value={previewKeyword}
+                      onChange={(event) => {
+                        setPreviewKeyword(event.target.value);
+                        setPreviewPage(1);
+                      }}
+                      className="w-full min-w-0 bg-transparent leading-5 outline-none placeholder:text-stone-400"
+                      placeholder="搜索所选字段"
+                    />
+                    <KeywordSearchScopeSelect
+                      label="预览搜索范围"
+                      options={COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS}
+                      selectedValues={previewSearchScopes}
+                      embedded
+                      onChange={(nextValues) => {
+                        setPreviewSearchScopes(normalizeCommunityMentorSearchScopes(nextValues));
+                        setPreviewPage(1);
+                      }}
+                    />
+                  </div>
+                </div>
+                <MultiSelectFilter
+                  label="与本地的关系"
+                  allLabel="全部情况"
+                  selectedValues={previewCategoryFilters}
+                  options={categoryOptions}
+                  optionLabels={categoryOptionLabels}
+                  onChange={(nextValues) => {
+                    setPreviewCategoryFilters(nextValues as CommunityComparisonCategoryDTO[]);
+                    setPreviewPage(1);
+                  }}
+                />
+                <MultiSelectFilter
+                  label="差异类型"
+                  allLabel="全部差异"
+                  selectedValues={previewFieldStateFilters}
+                  options={previewFieldStateOptions}
+                  optionLabels={previewFieldStateOptionLabels}
+                  onChange={(nextValues) => {
+                    setPreviewFieldStateFilters(nextValues as CommunityFieldStateDTO[]);
+                    setPreviewPage(1);
+                  }}
+                />
+                <MultiSelectFilter
+                  label="涉及字段"
+                  allLabel="全部字段"
+                  selectedValues={previewFieldFilters}
+                  options={previewFieldOptions}
+                  optionLabels={previewFieldOptionLabels}
+                  onChange={(nextValues) => {
+                    setPreviewFieldFilters(nextValues);
+                    setPreviewPage(1);
+                  }}
+                />
+              </div>
+
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+                <div className="flex items-center gap-2 text-xs text-stone-600">
+                  <SelectionToggleButton
+                    label="只看尚未确认身份"
+                    selected={previewOnlyUnconfirmed}
+                    onToggle={() => {
+                      setPreviewOnlyUnconfirmed((current) => !current);
+                      setPreviewPage(1);
+                    }}
+                  />
+                  <span>只看尚未确认身份</span>
+                </div>
+                {previewFieldEntries.length > 0 ? (
+                  <div className="flex min-w-0 flex-[1_1_24rem] items-center gap-1.5 overflow-x-auto pb-1">
+                    <span className="shrink-0 text-xs text-stone-500">差异字段：</span>
+                    {previewFieldEntries.map((entry) => {
+                      const active = previewFieldFilters.length === 1 &&
+                        previewFieldFilters[0] === entry.field;
+                      return (
+                        <button
+                          key={entry.field}
+                          type="button"
+                          aria-label={`只看涉及${entry.label}的导师`}
+                          aria-pressed={active}
+                          onClick={() => {
+                            setPreviewFieldFilters(active ? [] : [entry.field]);
+                            setPreviewPage(1);
+                          }}
+                          className={clsx(
+                            'shrink-0 rounded-lg border px-2 py-1 text-[11px] font-medium transition',
+                            active
+                              ? 'border-primary/35 bg-primary/10 text-primary'
+                              : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300',
+                          )}
+                        >
+                          {entry.label} {previewFieldCounts.get(entry.field) ?? 0}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {previewHasFilters ? (
+                  <button
+                    type="button"
+                    onClick={clearPreviewFilters}
+                    className="ml-auto text-xs font-medium text-stone-500 underline decoration-stone-300 underline-offset-2 hover:text-stone-800"
+                  >
+                    清除全部筛选
+                  </button>
+                ) : null}
+              </div>
+
+              {previewBulkFieldOptions.length > 0 ? (
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-stone-200 pt-2.5">
+                  <span className="text-xs font-semibold text-stone-700">按字段批量处理</span>
+                  <TopBarSelectMenu
+                    placeholder="字段"
+                    value={previewBulkField}
+                    options={previewBulkFieldOptions}
+                    disabled={importing}
+                    className="min-w-[11rem] max-w-[15rem] flex-1 sm:flex-none"
+                    onChange={(value) => setPreviewBulkField(String(value))}
+                  />
+                  <span className="text-xs text-stone-500">
+                    当前筛选可处理 {previewBulkEligibleRecords.length} 位
+                  </span>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      aria-label={`当前筛选的${previewFieldOptionLabels[previewBulkField ?? ''] ?? '字段'}全部保留本地`}
+                      disabled={importing || previewBulkLocalEligibleCount === 0}
+                      onClick={() => applyChoiceToFilteredPreviewField('local')}
+                      className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      该字段保留本地
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`当前筛选的${previewFieldOptionLabels[previewBulkField ?? ''] ?? '字段'}全部采用社区`}
+                      disabled={importing || previewBulkEligibleRecords.length === 0}
+                      onClick={() => applyChoiceToFilteredPreviewField('community')}
+                      className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      该字段采用社区
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div ref={previewScrollRef} className="flex-none space-y-3 overflow-visible p-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:p-4">
+              {paginatedPreviewRecords.length === 0 ? (
+                <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-stone-200 bg-white px-6 text-center">
+                  <Search className="h-7 w-7 text-stone-300" />
+                  <p className="mt-3 text-sm font-medium text-stone-700">没有符合筛选条件的导师</p>
+                  <button
+                    type="button"
+                    onClick={clearPreviewFilters}
+                    className="mt-2 text-xs font-medium text-primary hover:underline"
+                  >
+                    清除筛选
+                  </button>
+                </div>
+              ) : paginatedPreviewRecords.map((item) => {
                 const visibleFields = item.category === 'new'
                   ? []
-                  : item.fields.filter((field) => field.state !== 'same');
+                  : getChangedFields(item);
                 const allowLocalChoice = item.local_professor_id !== null;
                 return (
-                  <section key={item.record.id} className="rounded-2xl border border-stone-200 bg-white p-3 shadow-sm md:p-3.5">
+                  <section key={item.record.id} className="rounded-xl border border-stone-200 bg-white p-2.5 shadow-sm md:p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5"><h3 className="font-semibold text-stone-950">{item.record.name}</h3><span className={clsx('rounded-full border px-2 py-0.5 text-[11px] font-medium', categoryMeta[item.category].className)}>{categoryMeta[item.category].label}</span></div>
-                        <p className="mt-0.5 truncate text-xs text-stone-500">{item.record.email} · {[item.record.university, item.record.school].filter(Boolean).join(' · ')}</p>
+                        <div className="flex flex-wrap items-center gap-1.5"><h3 className="text-sm font-semibold text-stone-950">{item.record.name}</h3><span className={clsx('rounded-full border px-2 py-0.5 text-[11px] font-medium', categoryMeta[item.category].className)}>{categoryMeta[item.category].label}</span></div>
+                        <p className="mt-0.5 truncate text-[11px] text-stone-500">{item.record.email} · {[item.record.university, item.record.school].filter(Boolean).join(' · ')}</p>
                       </div>
                       {item.local_professor_id ? <Link to={`/professors?keyword=${encodeURIComponent(item.local_professor_name ?? item.record.name)}`} className="text-xs font-medium text-primary hover:underline">查看本地导师</Link> : null}
                     </div>
@@ -1999,7 +2433,12 @@ export const CommunityMentorsPage = () => {
                       </div>
                     ) : null}
                     {visibleFields.length > 0 ? (
-                      <div className="mt-2.5 grid gap-2 xl:grid-cols-2">
+                      <div className="mt-2.5 overflow-hidden rounded-xl border border-stone-200">
+                        <div className="hidden grid-cols-[6.75rem_minmax(0,1fr)_minmax(0,1fr)] bg-stone-50 px-2 py-1.5 text-[11px] font-medium text-stone-500 md:grid">
+                          <span className="px-1">字段</span>
+                          <span className="px-2.5">本地资料</span>
+                          <span className="px-2.5">社区资料</span>
+                        </div>
                         {visibleFields.map((field) => (
                           <DifferenceField key={field.field} field={field} choice={fieldChoices[item.record.id]?.[field.field] ?? field.suggested_choice} allowLocalChoice={allowLocalChoice} onChange={(choice) => setFieldChoices((current) => ({ ...current, [item.record.id]: { ...(current[item.record.id] ?? {}), [field.field]: choice } }))} />
                         ))}
@@ -2015,12 +2454,12 @@ export const CommunityMentorsPage = () => {
                 );
               })}
             </div>
-            {previewPayload.records.length > PREVIEW_RECORDS_PER_PAGE ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50 px-6 py-3">
+            {filteredPreviewRecords.length > PREVIEW_RECORDS_PER_PAGE ? (
+              <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50 px-4 py-3 sm:px-6">
                 <span className="text-xs text-stone-500">
                   第 {currentPreviewPage}/{totalPreviewPages} 页 · 当前显示第{' '}
                   {(currentPreviewPage - 1) * PREVIEW_RECORDS_PER_PAGE + 1}–
-                  {Math.min(currentPreviewPage * PREVIEW_RECORDS_PER_PAGE, previewPayload.records.length)} 位，共 {previewPayload.records.length} 位
+                  {Math.min(currentPreviewPage * PREVIEW_RECORDS_PER_PAGE, filteredPreviewRecords.length)} 位，筛选后共 {filteredPreviewRecords.length} 位
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -2050,7 +2489,7 @@ export const CommunityMentorsPage = () => {
                 </div>
               </div>
             ) : null}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-6 py-4">
+            <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-4 py-3 sm:px-6 sm:py-4 md:static">
               <p className="text-xs text-stone-500">不会导入标签、个人备注、任务、发送记录或匹配结果。</p>
               <div className="flex gap-3">
                 <button type="button" disabled={importing} onClick={closePreview} className="ui-btn-secondary">取消</button>

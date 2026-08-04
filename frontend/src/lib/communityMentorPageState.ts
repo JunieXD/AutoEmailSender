@@ -1,6 +1,7 @@
 import type {
   CommunityComparisonCategoryDTO,
   CommunityFieldChoiceDTO,
+  CommunityFieldStateDTO,
   CommunityRecordsDTO,
 } from '@/types';
 
@@ -30,6 +31,13 @@ export type CommunityMentorPageSessionSnapshot = {
   selectedRecordIds: string[];
   previewPayload: CommunityRecordsDTO | null;
   previewPage: number;
+  previewKeyword: string;
+  previewSearchScopes: CommunityMentorSearchScope[];
+  previewCategoryFilters: CommunityComparisonCategoryDTO[];
+  previewFieldStateFilters: CommunityFieldStateDTO[];
+  previewFieldFilters: string[];
+  previewOnlyUnconfirmed: boolean;
+  previewBulkField: string | null;
   fieldChoices: Record<string, Record<string, CommunityFieldChoiceDTO>>;
   identityConfirmations: Record<string, boolean>;
 };
