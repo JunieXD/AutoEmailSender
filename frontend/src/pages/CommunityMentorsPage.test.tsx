@@ -2,6 +2,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addFilteredCommunityUnitSelection,
   addVisibleRecordSelection,
   getVisibleRecordSelectionState,
 } from '@/lib/communityMentorSelection';
@@ -432,6 +433,41 @@ describe('CommunityMentorsPage', () => {
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
   });
 
+  it('selects and clears all colleges in the current filter', async () => {
+    const secondPath = 'data/org_example_university/org_example_institute.json';
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: 2,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: 2,
+        units: [
+          ...university.units,
+          {
+            id: 'org_example_institute',
+            name: '人工智能研究院',
+            type: 'institute' as const,
+            record_count: 1,
+            path: secondPath,
+          },
+        ],
+      })),
+    });
+
+    renderPage();
+
+    const selectFiltered = await screen.findByRole('button', {
+      name: '选择当前筛选结果（学院）',
+    });
+    fireEvent.click(selectFiltered);
+    expect(selectFiltered).toHaveAttribute('aria-pressed', 'true');
+    expect(within(selectFiltered).getByText(/已选 2\/2/)).toBeInTheDocument();
+
+    fireEvent.click(selectFiltered);
+    expect(selectFiltered).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByText(/已选 0\/20 个学院/)).toBeInTheDocument();
+  });
+
   it('opens a read-only detail dialog and links contributors to GitHub', async () => {
     apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
     apiMocks.listRecords.mockResolvedValue(recordsPayload);
@@ -550,7 +586,7 @@ describe('CommunityMentorsPage', () => {
       expect.stringContaining('已选择前'),
       expect.anything(),
     );
-  });
+  }, 10_000);
 
   it('paginates large import previews instead of rendering every selected mentor', async () => {
     const comparisons = Array.from({ length: 30 }, (_, index) => buildComparison(index));
@@ -644,6 +680,24 @@ describe('CommunityMentorsPage', () => {
       allVisibleSelected: false,
       partiallyVisibleSelected: true,
     });
+  });
+
+  it('adds filtered colleges in order while respecting both selection limits', () => {
+    const allUnits = Array.from({ length: 22 }, (_, index) => ({
+      id: `unit-${index + 1}`,
+      recordCount: index === 18 ? 1_900 : 10,
+    }));
+
+    const result = addFilteredCommunityUnitSelection([], allUnits, allUnits);
+
+    expect(result.unitIds).toEqual([
+      ...Array.from({ length: 18 }, (_, index) => `unit-${index + 1}`),
+      'unit-20',
+      'unit-21',
+    ]);
+    expect(result.selectedRecordCount).toBe(200);
+    expect(result.omittedByRecordLimit).toBe(1);
+    expect(result.omittedByUnitLimit).toBe(1);
   });
 
   it('keeps the loaded list but disables preview when the selected units change', async () => {

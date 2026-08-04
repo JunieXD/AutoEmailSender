@@ -66,7 +66,7 @@ import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import { downloadCommunitySharePackage } from "@/lib/api/communityMentorsApi";
 import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
-  buildCommunityContributionUrl,
+  buildCommunityContributionPrefill,
 } from "@/lib/communityMentorLinks";
 import {
   createProfessorInformationEnrichmentJob,
@@ -1271,26 +1271,43 @@ export const ProfessorsPage = () => {
       ["工作邮箱", payload.email],
       ["学校", payload.university],
       ["学院或研究院", payload.school],
-      ["高校官网证据", payload.source_url],
+      ["发现导师的来源页", payload.source_url],
     ] as const;
     const missingLabels = requiredFields
       .filter(([, value]) => !value?.trim())
       .map(([label]) => label);
+    const prefill = buildCommunityContributionPrefill(payload);
+    if (prefill.exceedsSafeLength) {
+      notifyWarning(
+        "导师基本信息过长",
+        "即使不带研究方向和代表论文，投稿链接仍超过 GitHub 可可靠处理的长度。请先缩短异常过长的基本字段。",
+      );
+      return;
+    }
+    const omittedLabels = prefill.omittedFields.map((field) =>
+      field === "research_direction" ? "研究方向" : "代表论文",
+    );
+    const prefillDescription = missingLabels.length > 0
+      ? `软件会把当前已有信息直接填入 GitHub 表单，无需复制粘贴。提交前还需补全：${missingLabels.join("、")}。`
+      : "软件会把当前信息直接填入 GitHub 表单，无需复制粘贴。打开后核对内容、勾选投稿确认并提交即可。";
+    const lengthDescription = omittedLabels.length > 0
+      ? `由于内容过长，${omittedLabels.join("和")}不会自动带入；投稿仍可正常提交。如需完整保留，请关闭窗口后在导师列表勾选这位导师，再用批量“贡献到社区”上传共享包。`
+      : null;
     const confirmed = await confirm({
       title: `贡献“${payload.name || "这位导师"}”到社区？`,
-      description: missingLabels.length > 0
-        ? `软件会把当前已有信息直接填入 GitHub 表单，无需复制粘贴。提交前还需补全：${missingLabels.join("、")}。`
-        : "软件会把当前信息直接填入 GitHub 表单，无需复制粘贴。打开后核对内容、勾选投稿确认并提交即可。",
+      description: [prefillDescription, lengthDescription].filter(Boolean).join("\n\n"),
       confirmLabel: "打开已预填的投稿表",
       cancelLabel: "暂不投稿",
     });
     if (!confirmed) {
       return;
     }
-    openExternalHttpUrl(buildCommunityContributionUrl(payload));
+    openExternalHttpUrl(prefill.url);
     notifySuccess(
       "已打开预填投稿表",
-      "现有导师信息已经填好，请在 GitHub 中核对、补全空项并提交。",
+      omittedLabels.length > 0
+        ? `基本信息已经填好；${omittedLabels.join("和")}因过长未自动带入。如需完整投稿，请改用导师列表中的批量“贡献到社区”。`
+        : "现有导师信息已经填好，请在 GitHub 中核对、补全空项并提交。",
     );
   };
 
@@ -1311,7 +1328,7 @@ export const ProfessorsPage = () => {
     if (incompleteProfessor) {
       notifyWarning(
         "暂时无法导出",
-        `导师“${incompleteProfessor.name}”缺少公开工作邮箱或官方来源链接，请先补全。`,
+        `导师“${incompleteProfessor.name}”缺少公开工作邮箱或发现来源页，请先补全。`,
       );
       return;
     }
@@ -1397,7 +1414,7 @@ export const ProfessorsPage = () => {
     const confirmed = await confirm({
       title: `补全选中的 ${selectedIds.size} 位导师信息？`,
       description:
-        "将访问已保存的主页链接补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
+        "将访问已保存的高校官网详情页补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
       confirmLabel: "开始补全",
       cancelLabel: "取消",
     });
@@ -2919,10 +2936,10 @@ export const ProfessorsPage = () => {
           </label>
           <UrlInputField
             id="professor-profile-url"
-            label="主页链接"
+            label="高校官网详情页"
             value={formState.profile_url}
-            placeholder="示例：https://faculty.example.edu/profile"
-            openLabel="打开主页链接"
+            placeholder="示例：https://example.edu/faculty/zhang"
+            openLabel="打开高校官网详情页"
             onChange={(value) =>
               setFormState((previous) => ({
                 ...previous,
@@ -2932,10 +2949,10 @@ export const ProfessorsPage = () => {
           />
           <UrlInputField
             id="professor-source-url"
-            label="来源链接"
+            label="发现来源页"
             value={formState.source_url}
             placeholder="示例：https://example.edu/faculty-directory"
-            openLabel="打开来源链接"
+            openLabel="打开发现来源页"
             onChange={(value) =>
               setFormState((previous) => ({
                 ...previous,
@@ -3218,7 +3235,7 @@ export const ProfessorsPage = () => {
                   {
                     value: "profile",
                     label: "详情页",
-                    hint: "单个导师个人主页",
+                    hint: "单个导师的高校官网详情页",
                   },
                 ] satisfies Array<{
                   value: CrawlJobEntryTypeDTO;

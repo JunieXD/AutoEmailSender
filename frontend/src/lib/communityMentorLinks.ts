@@ -10,6 +10,17 @@ export const COMMUNITY_BATCH_CONTRIBUTION_URL =
   `${COMMUNITY_REPOSITORY_URL}/issues/new?template=batch-contribution.yml`;
 export const COMMUNITY_REPORT_URL =
   `${COMMUNITY_REPOSITORY_URL}/issues/new?template=report-error.yml`;
+export const COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH = 7_500;
+
+export type CommunityContributionOmittedField =
+  | 'research_direction'
+  | 'recent_papers';
+
+export type CommunityContributionPrefill = {
+  url: string;
+  omittedFields: CommunityContributionOmittedField[];
+  exceedsSafeLength: boolean;
+};
 
 type ShareableMentor = Pick<
   ProfessorManagementItemDTO,
@@ -27,7 +38,15 @@ type ShareableMentor = Pick<
 
 const valueOrEmpty = (value: string | null | undefined) => value?.trim() ?? '';
 
-export const buildCommunityContributionUrl = (mentor: ShareableMentor) => {
+const setSearchParam = (url: URL, field: string, value: string) => {
+  if (value) {
+    url.searchParams.set(field, value);
+  }
+};
+
+export const buildCommunityContributionPrefill = (
+  mentor: ShareableMentor,
+): CommunityContributionPrefill => {
   const url = new URL(COMMUNITY_CONTRIBUTION_URL);
   const mentorName = mentor.name.trim();
   const titledMentorName = mentorName.endsWith('老师') ? mentorName : `${mentorName}老师`;
@@ -42,18 +61,42 @@ export const buildCommunityContributionUrl = (mentor: ShareableMentor) => {
     school: valueOrEmpty(mentor.school),
     department: valueOrEmpty(mentor.department),
     academic_title: valueOrEmpty(mentor.title),
-    research_direction: valueOrEmpty(mentor.research_direction),
-    recent_papers: mentor.recent_papers.join('\n'),
     profile_url: valueOrEmpty(mentor.profile_url),
     source_url: valueOrEmpty(mentor.source_url),
   };
   Object.entries(fields).forEach(([field, value]) => {
-    if (value) {
-      url.searchParams.set(field, value);
+    setSearchParam(url, field, value);
+  });
+
+  const omittedFields: CommunityContributionOmittedField[] = [];
+  const optionalFields: Array<[CommunityContributionOmittedField, string]> = [
+    ['research_direction', valueOrEmpty(mentor.research_direction)],
+    [
+      'recent_papers',
+      mentor.recent_papers.map((paper) => paper.trim()).filter(Boolean).join('\n'),
+    ],
+  ];
+  optionalFields.forEach(([field, value]) => {
+    if (!value) {
+      return;
+    }
+    url.searchParams.set(field, value);
+    if (url.toString().length > COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH) {
+      url.searchParams.delete(field);
+      omittedFields.push(field);
     }
   });
-  return url.toString();
+
+  const result = url.toString();
+  return {
+    url: result,
+    omittedFields,
+    exceedsSafeLength: result.length > COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH,
+  };
 };
+
+export const buildCommunityContributionUrl = (mentor: ShareableMentor) =>
+  buildCommunityContributionPrefill(mentor).url;
 
 const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
   [
@@ -64,8 +107,8 @@ const buildCommunityReportCurrentValue = (record: CommunityMentorRecordDTO) =>
     `学院：${valueOrEmpty(record.school)}`,
     `系所：${valueOrEmpty(record.department)}`,
     `研究方向：${valueOrEmpty(record.research_direction)}`,
-    `官方主页：${valueOrEmpty(record.profile_url)}`,
-    `当前证据：${record.source_url}`,
+    `高校官网详情页：${valueOrEmpty(record.profile_url)}`,
+    `发现来源页：${record.source_url}`,
   ].join('\n');
 
 export const buildCommunityReportUrl = (record: CommunityMentorRecordDTO) => {

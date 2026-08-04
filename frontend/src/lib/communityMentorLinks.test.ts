@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
+  COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH,
   COMMUNITY_CONTRIBUTION_URL,
+  buildCommunityContributionPrefill,
   buildCommunityContributionUrl,
   buildCommunityReportUrl,
 } from '@/lib/communityMentorLinks';
@@ -74,7 +76,7 @@ describe('community mentor GitHub helpers', () => {
     expect(url.searchParams.get('title')).toBe('[信息反馈] 示例大学张老师');
     expect(url.searchParams.get('record_id')).toBe('mentor_example0001');
     expect(url.searchParams.get('current_value')).toContain('邮箱：zhang@example.edu');
-    expect(url.searchParams.get('current_value')).toContain('当前证据：https://example.edu/source');
+    expect(url.searchParams.get('current_value')).toContain('发现来源页：https://example.edu/source');
     expect(url.searchParams.get('evidence_url')).toBeNull();
 
     const titleWithoutTeacherSuffix = new URL(
@@ -90,5 +92,36 @@ describe('community mentor GitHub helpers', () => {
     expect(COMMUNITY_BATCH_CONTRIBUTION_URL).toContain(
       'template=batch-contribution.yml',
     );
+  });
+
+  it('keeps GitHub prefill URLs below the verified safe budget without silently truncating text', () => {
+    const result = buildCommunityContributionPrefill({
+      ...professor,
+      research_direction: '研'.repeat(1_000),
+      recent_papers: ['A short paper'],
+    });
+    const url = new URL(result.url);
+
+    expect(result.url.length).toBeLessThanOrEqual(COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH);
+    expect(result.omittedFields).toEqual(['research_direction']);
+    expect(result.exceedsSafeLength).toBe(false);
+    expect(url.searchParams.get('research_direction')).toBeNull();
+    expect(url.searchParams.get('recent_papers')).toBe('A short paper');
+    expect(url.searchParams.get('academic_title')).toBe('教授');
+  });
+
+  it('drops an oversized publication field as a whole and keeps the core contribution fields', () => {
+    const result = buildCommunityContributionPrefill({
+      ...professor,
+      recent_papers: ['论'.repeat(1_000)],
+    });
+    const url = new URL(result.url);
+
+    expect(result.omittedFields).toEqual(['recent_papers']);
+    expect(url.searchParams.get('recent_papers')).toBeNull();
+    expect(url.searchParams.get('name')).toBe('张老师');
+    expect(url.searchParams.get('academic_title')).toBe('教授');
+    expect(url.searchParams.get('profile_url')).toBe('https://example.edu/profile');
+    expect(url.searchParams.get('source_url')).toBe('https://example.edu/source');
   });
 });

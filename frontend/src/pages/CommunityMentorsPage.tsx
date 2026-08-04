@@ -47,10 +47,12 @@ import { openExternalHttpUrl } from '@/lib/externalUrls';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
 import { useDocumentScrollLock } from '@/lib/useDocumentScrollLock';
 import {
+  addFilteredCommunityUnitSelection,
   addVisibleRecordSelection,
   getVisibleRecordSelectionState,
   MAX_LOADED_COMMUNITY_MENTORS,
   MAX_SELECTED_COMMUNITY_MENTORS,
+  MAX_SELECTED_COMMUNITY_UNITS,
 } from '@/lib/communityMentorSelection';
 import type {
   CommunityCatalogDTO,
@@ -66,7 +68,7 @@ import type {
 } from '@/types';
 
 
-const MAX_SELECTED_UNITS = 20;
+const MAX_SELECTED_UNITS = MAX_SELECTED_COMMUNITY_UNITS;
 const MAX_SELECTED_RECORDS = MAX_SELECTED_COMMUNITY_MENTORS;
 const MAX_LOADED_RECORDS = MAX_LOADED_COMMUNITY_MENTORS;
 const RECORDS_PER_PAGE = 100;
@@ -451,16 +453,16 @@ const CommunityMentorDetailDialog = ({
           <section>
             <h3 className="text-sm font-semibold text-stone-900">来源与核验</h3>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <DetailValue label="导师主页">
+              <DetailValue label="高校官网详情页">
                 {record.profile_url ? (
                   <ExternalTextLink url={record.profile_url} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                    打开导师主页 <ExternalLink className="h-3.5 w-3.5" />
+                    打开详情页 <ExternalLink className="h-3.5 w-3.5" />
                   </ExternalTextLink>
                 ) : '暂无'}
               </DetailValue>
-              <DetailValue label="官方证据">
+              <DetailValue label="发现导师的来源页">
                 <ExternalTextLink url={record.source_url} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                  打开官方来源 <ExternalLink className="h-3.5 w-3.5" />
+                  打开来源页 <ExternalLink className="h-3.5 w-3.5" />
                 </ExternalTextLink>
               </DetailValue>
               <DetailValue label="最后核验">{formatDate(record.last_verified_at)}</DetailValue>
@@ -741,6 +743,15 @@ export const CommunityMentorsPage = () => {
     (total, path) => total + (catalogUnitsByPath.get(path)?.record_count ?? 0),
     0,
   );
+  const filteredCatalogUnitPaths = useMemo(
+    () => filteredCatalogUnits.map((entry) => entry.unit.path),
+    [filteredCatalogUnits],
+  );
+  const {
+    selectedVisibleCount: selectedFilteredUnitCount,
+    allVisibleSelected: allFilteredUnitsSelected,
+    partiallyVisibleSelected: partiallyFilteredUnitsSelected,
+  } = getVisibleRecordSelectionState(selectedUnitPaths, filteredCatalogUnitPaths);
 
   const loadRecordsForPaths = async (unitPaths: string[]) => {
     if (!catalog || unitPaths.length === 0) {
@@ -809,6 +820,42 @@ export const CommunityMentorsPage = () => {
         return current;
       }
       return [...current, path];
+    });
+  };
+
+  const toggleFilteredUnits = () => {
+    setSelectedUnitPaths((current) => {
+      if (allFilteredUnitsSelected) {
+        const filteredPathSet = new Set(filteredCatalogUnitPaths);
+        return current.filter((path) => !filteredPathSet.has(path));
+      }
+      const result = addFilteredCommunityUnitSelection(
+        current,
+        catalogUnitEntries.map((entry) => ({
+          id: entry.unit.path,
+          recordCount: entry.unit.record_count,
+        })),
+        filteredCatalogUnits.map((entry) => ({
+          id: entry.unit.path,
+          recordCount: entry.unit.record_count,
+        })),
+      );
+      const omittedCount = result.omittedByUnitLimit + result.omittedByRecordLimit;
+      if (omittedCount > 0) {
+        const reasons = [
+          result.omittedByUnitLimit > 0
+            ? `${result.omittedByUnitLimit} 个超过 ${MAX_SELECTED_UNITS} 个学院上限`
+            : null,
+          result.omittedByRecordLimit > 0
+            ? `${result.omittedByRecordLimit} 个会超过 ${MAX_LOADED_RECORDS} 位导师上限`
+            : null,
+        ].filter(Boolean).join('，');
+        notifyWarning(
+          '已选择能加入的学院',
+          `按当前显示顺序完成选择，跳过 ${omittedCount} 个学院：${reasons}。`,
+        );
+      }
+      return result.unitIds;
     });
   };
 
@@ -1232,6 +1279,44 @@ export const CommunityMentorsPage = () => {
                 }}
               />
             </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-stone-50 px-4 py-3">
+              <button
+                type="button"
+                aria-label="选择当前筛选结果（学院）"
+                aria-pressed={allFilteredUnitsSelected}
+                disabled={filteredCatalogUnitPaths.length === 0}
+                onClick={toggleFilteredUnits}
+                className="inline-flex items-center gap-2 text-sm text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {allFilteredUnitsSelected ? (
+                  <SquareCheck className="h-5 w-5 shrink-0 text-primary" />
+                ) : partiallyFilteredUnitsSelected ? (
+                  <SquareMinus className="h-5 w-5 shrink-0 text-primary" />
+                ) : (
+                  <Square className="h-5 w-5 shrink-0 text-stone-400" />
+                )}
+                <span>
+                  选择当前筛选结果
+                  {selectedFilteredUnitCount > 0
+                    ? `（已选 ${selectedFilteredUnitCount}/${filteredCatalogUnitPaths.length}）`
+                    : ''}
+                </span>
+              </button>
+              {selectedFilteredUnitCount > 0 ? (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-stone-600 underline decoration-stone-300 underline-offset-2"
+                  onClick={() => {
+                    const filteredPathSet = new Set(filteredCatalogUnitPaths);
+                    setSelectedUnitPaths((current) => current.filter(
+                      (path) => !filteredPathSet.has(path),
+                    ));
+                  }}
+                >
+                  清除当前筛选选择
+                </button>
+              ) : null}
+            </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {paginatedCatalogUnits.length === 0 ? (
                 <div className="col-span-full rounded-2xl border border-dashed border-stone-200 p-8 text-center text-sm text-stone-500">
@@ -1504,7 +1589,7 @@ export const CommunityMentorsPage = () => {
                                     贡献者：<ContributorLinks contributors={item.record.contributors} />
                                   </span>
                                   <button type="button" className="inline-flex items-center gap-1 font-medium text-primary hover:underline" onClick={() => openExternalHttpUrl(item.record.source_url)}>
-                                    官方来源 <ExternalLink className="h-3 w-3" />
+                                    来源页 <ExternalLink className="h-3 w-3" />
                                   </button>
                                   <button type="button" className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline" onClick={() => openFeedbackForm(item.record, notifySuccess)}>
                                     反馈错误 <ExternalLink className="h-3 w-3" />

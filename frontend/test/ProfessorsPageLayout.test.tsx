@@ -634,6 +634,48 @@ describe("ProfessorsPage layout", () => {
     expect(clipboardWrite).not.toHaveBeenCalled();
   });
 
+  it("warns before opening when long optional text cannot fit in the GitHub URL", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      installUpdate: vi.fn(),
+      getUpdateStatus: vi.fn(),
+      onUpdateStatus: vi.fn(() => () => undefined),
+    };
+    listProfessorsForManagement.mockResolvedValue([
+      {
+        ...professor,
+        research_direction: "研".repeat(1_000),
+        source_url: "https://example.edu/faculty",
+      },
+    ]);
+    renderPage();
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: /贡献到社区/ }));
+
+    const confirmation = await screen.findByRole("dialog", {
+      name: "贡献“李教授”到社区？",
+    });
+    expect(confirmation).toHaveTextContent("研究方向不会自动带入");
+    expect(confirmation).toHaveTextContent("批量“贡献到社区”上传共享包");
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "打开已预填的投稿表" }),
+    );
+
+    await waitFor(() => expect(openExternalUrl).toHaveBeenCalledTimes(1));
+    const url = new URL(openExternalUrl.mock.calls[0][0] as string);
+    expect(url.searchParams.get("research_direction")).toBeNull();
+    expect(url.searchParams.get("recent_papers")).toBe("Paper A");
+    expect(url.searchParams.get("academic_title")).toBe("Associate Professor");
+  });
+
   it("starts single information enrichment from the edit dialog and disables the button", async () => {
     renderPage();
 
@@ -642,7 +684,7 @@ describe("ProfessorsPage layout", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    fireEvent.change(screen.getByLabelText("主页链接"), {
+    fireEvent.change(screen.getByLabelText("高校官网详情页"), {
       target: { value: "https://example.edu/not-saved-yet" },
     });
     fireEvent.click(screen.getByRole("button", { name: "智能补全" }));
@@ -759,7 +801,7 @@ describe("ProfessorsPage layout", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "将访问已保存的主页链接补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
+        "将访问已保存的高校官网详情页补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
       ),
     ).toBeInTheDocument();
     expect(createProfessorInformationEnrichmentJob).not.toHaveBeenCalled();
@@ -806,12 +848,12 @@ describe("ProfessorsPage layout", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
 
-    const profileInput = screen.getByLabelText("主页链接");
+    const profileInput = screen.getByLabelText("高校官网详情页");
     fireEvent.change(profileInput, {
       target: { value: " https://example.edu/li-updated " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "打开主页链接" }));
-    fireEvent.click(screen.getByRole("button", { name: "打开来源链接" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开高校官网详情页" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开发现来源页" }));
 
     expect(openExternalUrl).toHaveBeenCalledWith("https://example.edu/li-updated");
     expect(openExternalUrl).toHaveBeenCalledWith(
@@ -837,7 +879,7 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    fireEvent.click(screen.getByRole("button", { name: "打开主页链接" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开高校官网详情页" }));
 
     await waitFor(() => {
       expect(openWindow).toHaveBeenCalledWith(
