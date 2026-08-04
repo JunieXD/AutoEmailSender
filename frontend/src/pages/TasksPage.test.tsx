@@ -706,6 +706,7 @@ const buildWorkspaceThread = (
     title: "Professor",
     university: "Example University",
     school: "School of Computing",
+    department: "Computer Science",
     research_direction: "Human-centered AI",
     recent_papers: ["Recent AI paper"],
     profile_url: null,
@@ -1735,9 +1736,14 @@ describe("TasksPage batch draft review", () => {
     });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
     apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    const thread = buildWorkspaceThread();
     apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread({
+      professor: {
+        ...thread.professor,
+        profile_url: "https://example.edu/mentor",
+      },
       current_task: {
-        ...buildWorkspaceThread().current_task,
+        ...thread.current_task,
         id: item.id,
         batch_task_id: task.id,
       },
@@ -1766,6 +1772,27 @@ describe("TasksPage batch draft review", () => {
     );
     expect(screen.getByRole("button", { name: "审核通过" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "立即发送" })).not.toBeInTheDocument();
+
+    const attachmentCard = screen.getByRole("region", { name: "随信附件" });
+    const reviewCard = screen.getByRole("region", { name: "审核操作" });
+    const professorCard = screen.getByRole("region", { name: "老师详情" });
+    const matchCard = screen.getByRole("region", { name: "匹配摘要" });
+    expect(attachmentCard.nextElementSibling).toBe(reviewCard);
+    expect(reviewCard.nextElementSibling).toBe(professorCard);
+    expect(professorCard.nextElementSibling).toBe(matchCard);
+
+    expect(within(professorCard).getByText("学校")).toBeInTheDocument();
+    expect(within(professorCard).getByText("Example University")).toBeInTheDocument();
+    expect(within(professorCard).getByText("学院")).toBeInTheDocument();
+    expect(within(professorCard).getByText("School of Computing")).toBeInTheDocument();
+    expect(within(professorCard).getByText("系所")).toBeInTheDocument();
+    expect(within(professorCard).getByText("Computer Science")).toBeInTheDocument();
+    expect(within(professorCard).getByText("研究方向")).toBeInTheDocument();
+    expect(within(professorCard).getByText("Human-centered AI")).toBeInTheDocument();
+    expect(within(professorCard).getByText("主页链接")).toBeInTheDocument();
+    expect(
+      within(professorCard).getByRole("link", { name: "https://example.edu/mentor" }),
+    ).toHaveAttribute("href", "https://example.edu/mentor");
   });
 
   it("regenerates and deletes batch review drafts from the review panel", async () => {
@@ -1796,6 +1823,10 @@ describe("TasksPage batch draft review", () => {
       next_action: null,
     };
     const firstThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        profile_url: "   ",
+      },
       current_task: {
         ...buildWorkspaceThread().current_task,
         id: 11,
@@ -1845,6 +1876,9 @@ describe("TasksPage batch draft review", () => {
     expect(await screen.findByText("AI 改写批量任务")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
     fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
+
+    const professorCard = await screen.findByRole("region", { name: "老师详情" });
+    expect(within(professorCard).queryByText("主页链接")).not.toBeInTheDocument();
 
     confirmMock.mockResolvedValueOnce(false);
     fireEvent.click(await screen.findByRole("button", { name: "重新生成" }));

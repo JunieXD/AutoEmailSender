@@ -18,6 +18,7 @@ const buildThread = (
     title: "教授",
     university: "示例大学",
     school: "计算机学院",
+    department: "计算机科学与技术系",
     research_direction: "自然语言处理",
     recent_papers: [],
     profile_url: null,

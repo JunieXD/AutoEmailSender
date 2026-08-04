@@ -163,6 +163,7 @@ const buildWorkspaceThread = (
     title: "Professor",
     university: "Example University",
     school: "School of Computing",
+    department: "Computer Science",
     research_direction: "Agents",
     recent_papers: [],
     profile_url: null,

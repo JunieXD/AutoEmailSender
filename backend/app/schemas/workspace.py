@@ -15,6 +15,7 @@ class WorkspaceProfessorRead(ApiSchema):
     title: str | None
     university: str | None
     school: str | None
+    department: str | None
     research_direction: str | None
     recent_papers: list[str]
     profile_url: str | None
