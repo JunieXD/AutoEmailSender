@@ -267,7 +267,7 @@ async def list_crawl_candidates(
 
 
 async def _list_crawl_pages_for_job(session: AsyncSession, job_id: int) -> list[CrawlPage]:
-    return list(
+    attempts = list(
         (
             await session.execute(
                 select(CrawlPage)
@@ -275,6 +275,36 @@ async def _list_crawl_pages_for_job(session: AsyncSession, job_id: int) -> list[
                 .order_by(CrawlPage.created_at.asc(), CrawlPage.id.asc()),
             )
         ).scalars(),
+    )
+    return _select_canonical_crawl_pages(attempts)
+
+
+def _select_canonical_crawl_pages(attempts: list[CrawlPage]) -> list[CrawlPage]:
+    pages_by_url: dict[str, CrawlPage] = {}
+    for page in attempts:
+        key = _crawl_page_normalized_url(page.url)
+        current = pages_by_url.get(key)
+        if current is None or _crawl_page_display_rank(page) > _crawl_page_display_rank(current):
+            pages_by_url[key] = page
+    return list(pages_by_url.values())
+
+
+def _crawl_page_normalized_url(url: str) -> str:
+    try:
+        return normalize_url(url)
+    except ValueError:
+        return url.strip()
+
+
+def _crawl_page_display_rank(page: CrawlPage) -> tuple[bool, bool, bool, int, int]:
+    title = (page.title or "").strip()
+    text_excerpt = (page.text_excerpt or "").strip()
+    return (
+        page.status == "succeeded",
+        bool(title),
+        bool(text_excerpt),
+        len(text_excerpt),
+        int(page.id or 0),
     )
 
 
@@ -1074,7 +1104,7 @@ async def _build_crawl_job_summaries(
         return []
 
     job_ids = [job.id for job in jobs]
-    page_counts = await _count_by_job_id(session, CrawlPage.job_id, job_ids)
+    page_counts = await _count_unique_crawl_pages_by_job_id(session, job_ids)
     candidate_counts = await _count_by_job_id(session, CrawlCandidate.job_id, job_ids)
 
     return [
@@ -1108,6 +1138,23 @@ async def _count_by_job_id(
         )
     ).all()
     return {int(job_id): int(count) for job_id, count in rows}
+
+
+async def _count_unique_crawl_pages_by_job_id(
+    session: AsyncSession,
+    job_ids: list[int],
+) -> dict[int, int]:
+    rows = (
+        await session.execute(
+            select(CrawlPage.job_id, CrawlPage.url)
+            .where(CrawlPage.job_id.in_(job_ids))
+            .distinct(),
+        )
+    ).all()
+    urls_by_job: dict[int, set[str]] = {}
+    for job_id, url in rows:
+        urls_by_job.setdefault(int(job_id), set()).add(_crawl_page_normalized_url(str(url)))
+    return {job_id: len(urls) for job_id, urls in urls_by_job.items()}
 
 
 def _latest_event_message(agent_trace: object) -> str | None:

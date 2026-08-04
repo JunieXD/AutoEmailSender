@@ -1275,6 +1275,30 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
         )
 
+    def test_dynamic_directory_detection_ignores_empty_optional_groups_with_populated_peers(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://sice.bupt.edu.cn/szdw1.htm",
+            title="师资队伍",
+            text="泛网无线教研中心 张三 李四",
+            html="""
+            <html><body><main class="article-con">
+              <div class="list_li">
+                <ul class="fr ul_list"><li><a href="/zhang">张三</a></li></ul>
+              </div>
+              <div class="list_li">
+                <ul class="fr ul_list"></ul>
+              </div>
+            </main></body></html>
+            """,
+            links=["https://sice.bupt.edu.cn/zhang"],
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        self.assertFalse(
+            crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
+        )
+
     async def test_dynamic_directory_browser_waits_until_content_is_stable(self) -> None:
         empty_html = """
         <html><body><main class="content">
@@ -1337,6 +1361,78 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ready)
         self.assertEqual(html, empty_html)
         self.assertEqual(page.wait_for_timeout.await_count, 2)
+
+    def test_playwright_dynamic_directory_timeout_keeps_available_page_succeeded(self) -> None:
+        async def run() -> None:
+            html = """
+            <html><head><title>Faculty directory</title></head><body>
+              <main class="content">
+                <p>Directory navigation remains available.</p>
+                <ul class="teacher-list"></ul>
+              </main>
+            </body></html>
+            """
+            content_calls = 0
+
+            class _Page:
+                url = "https://example.edu/faculty"
+
+                async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                    self.url = url
+
+                async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                    return None
+
+                async def wait_for_timeout(self, timeout: float) -> None:
+                    return None
+
+                async def content(self) -> str:
+                    nonlocal content_calls
+                    content_calls += 1
+                    return html
+
+            class _Context:
+                async def new_page(self) -> _Page:
+                    return _Page()
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    return _Context()
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for_dynamic_directory=True,
+                dynamic_directory_ready_timeout_ms=200,
+                dynamic_directory_ready_poll_ms=100,
+                dynamic_directory_stable_ms=100,
+            )
+            with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+                snapshot = await crawler_tools._try_playwright_browser_fetch_once(
+                    "https://example.edu/faculty",
+                    options,
+                )
+
+            self.assertEqual(snapshot.status, "succeeded")
+            self.assertIsNone(snapshot.error_message)
+            self.assertIn("Directory navigation remains available", snapshot.text)
+            self.assertEqual(content_calls, 3)
+
+        asyncio.run(run())
 
     async def test_crawl_page_with_browser_fallback_retries_browser_for_site_error_page(self) -> None:
         ctx = CrawlToolContext(

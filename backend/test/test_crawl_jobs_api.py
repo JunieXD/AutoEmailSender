@@ -427,6 +427,102 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(cancel_completed_response.status_code, 200)
         self.assertEqual(cancel_completed_response.json()["status"], "completed")
 
+    def test_crawl_job_pages_and_count_deduplicate_fetch_attempts_by_normalized_url(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+
+        async def seed_attempts() -> None:
+            from app.core.database import get_session_factory
+            from app.models import CrawlPage
+
+            async with get_session_factory()() as session:
+                session.add_all(
+                    [
+                        CrawlPage(
+                            job_id=job_id,
+                            url="https://EXAMPLE.edu/faculty?utm_source=direct",
+                            parent_url=None,
+                            fetch_method="http",
+                            page_type="entry",
+                            status="failed",
+                            title=None,
+                            text_excerpt=None,
+                            error_message="HTTP 412 blocked",
+                        ),
+                        CrawlPage(
+                            job_id=job_id,
+                            url="https://example.edu/faculty",
+                            parent_url=None,
+                            fetch_method="browser",
+                            page_type="entry",
+                            status="failed",
+                            title="Faculty",
+                            text_excerpt="Partial browser content",
+                            error_message="Browser wait timed out",
+                        ),
+                        CrawlPage(
+                            job_id=job_id,
+                            url="https://example.edu/faculty",
+                            parent_url=None,
+                            fetch_method="browser",
+                            page_type="entry",
+                            status="succeeded",
+                            title="Faculty directory",
+                            text_excerpt="Complete browser content",
+                            error_message=None,
+                        ),
+                        CrawlPage(
+                            job_id=job_id,
+                            url="https://example.edu/faculty?page=2",
+                            parent_url="https://example.edu/faculty",
+                            fetch_method="http",
+                            page_type="pagination",
+                            status="succeeded",
+                            title="Faculty directory page 2",
+                            text_excerpt="Second page",
+                            error_message=None,
+                        ),
+                    ],
+                )
+                await session.commit()
+
+        asyncio.run(seed_attempts())
+
+        pages_response = self.client.get(f"/api/crawl-jobs/{job_id}/pages")
+        self.assertEqual(pages_response.status_code, 200, msg=pages_response.text)
+        pages = pages_response.json()
+        self.assertEqual(len(pages), 2)
+        self.assertEqual(
+            [page["title"] for page in pages],
+            ["Faculty directory", "Faculty directory page 2"],
+        )
+
+        detail_response = self.client.get(f"/api/crawl-jobs/{job_id}")
+        self.assertEqual(detail_response.status_code, 200, msg=detail_response.text)
+        self.assertEqual(detail_response.json()["page_count"], 2)
+
+        list_response = self.client.get("/api/crawl-jobs")
+        self.assertEqual(list_response.status_code, 200, msg=list_response.text)
+        self.assertEqual(list_response.json()[0]["page_count"], 2)
+
+        import sqlite3
+
+        with sqlite3.connect(self.db_path) as connection:
+            raw_attempt_count = connection.execute(
+                "SELECT COUNT(*) FROM crawl_pages WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+        self.assertEqual(raw_attempt_count, 4)
+
     def test_pause_resume_crawl_job_flow_preserves_saved_data(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",

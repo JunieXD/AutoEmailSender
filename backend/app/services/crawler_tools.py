@@ -1657,10 +1657,15 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
         ):
             return True
 
-    for container in soup.select("ul, ol, tbody"):
-        if container.get_text(" ", strip=True):
-            continue
-        if container.find("a", href=True) or container.find("img", src=True):
+    collections = list(soup.select("ul, ol, tbody"))
+    populated_families = {
+        _dynamic_collection_family(container)
+        for container in collections
+        if _dynamic_collection_has_content(container)
+    }
+
+    for container in collections:
+        if _dynamic_collection_has_content(container):
             continue
         if container.has_attr("hidden") or str(container.get("aria-hidden") or "").lower() == "true":
             continue
@@ -1682,8 +1687,42 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
             or context_tokens.intersection(_DYNAMIC_MAIN_CONTENT_TOKENS)
         ):
             continue
+        if _dynamic_collection_family(container) in populated_families:
+            continue
         return True
     return False
+
+
+def _dynamic_collection_has_content(element: Any) -> bool:
+    return bool(
+        element.get_text(" ", strip=True)
+        or element.find("a", href=True)
+        or element.find("img", src=True)
+    )
+
+
+def _dynamic_collection_family(element: Any) -> tuple[str, tuple[str, ...]]:
+    tag_name = str(getattr(element, "name", "") or "")
+    tokens = _html_class_tokens(element) or _html_structure_tokens(element)
+    if not tokens:
+        parent = getattr(element, "parent", None)
+        tokens = _html_structure_tokens(parent)
+    return tag_name, tuple(sorted(tokens))
+
+
+def _html_class_tokens(element: Any) -> set[str]:
+    if not hasattr(element, "get"):
+        return set()
+    classes = element.get("class") or []
+    if isinstance(classes, str):
+        values = [classes]
+    else:
+        values = [str(item) for item in classes]
+    return {
+        token
+        for token in re.split(r"[^a-z0-9]+", " ".join(values).lower())
+        if token
+    }
 
 
 def _html_structure_tokens(element: Any) -> set[str]:
@@ -2131,7 +2170,6 @@ async def _try_playwright_browser_fetch_once(
         )
 
     browser = None
-    dynamic_directory_ready = True
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
@@ -2151,7 +2189,7 @@ async def _try_playwright_browser_fetch_once(
                     timeout=options.wait_for_timeout_ms,
                 )
             if options.wait_for_dynamic_directory:
-                html, dynamic_directory_ready = await _wait_for_dynamic_directory_html(
+                html, _ = await _wait_for_dynamic_directory_html(
                     page,
                     absolute_url=absolute_url,
                     options=options,
@@ -2183,10 +2221,6 @@ async def _try_playwright_browser_fetch_once(
         final_url=final_url,
         absolute_url=absolute_url,
     )
-    if not dynamic_directory_ready:
-        snapshot.status = "failed"
-        snapshot.error_message = "动态名单内容在 5 秒内仍未加载完成"
-        snapshot.suspicious_empty = True
     return snapshot
 
 
