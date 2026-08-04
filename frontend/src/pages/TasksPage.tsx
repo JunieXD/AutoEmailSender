@@ -4557,23 +4557,10 @@ export const TasksPage = () => {
                         </div>
 
                         <aside className="space-y-4">
-                          <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
-                            <div className="text-xs font-medium text-stone-500">
-                              匹配摘要
-                            </div>
-                            <div className="mt-2 text-sm font-semibold text-stone-900">
-                              {batchReviewThread.current_task.match_score !== null
-                                ? `匹配分 ${batchReviewThread.current_task.match_score}`
-                                : "暂无匹配分"}
-                            </div>
-                            {batchReviewThread.current_task.match_reason ? (
-                              <p className="mt-2 text-xs leading-5 text-stone-600">
-                                {batchReviewThread.current_task.match_reason}
-                              </p>
-                            ) : null}
-                          </div>
-
-                          <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
+                          <section
+                            aria-label="随信附件"
+                            className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
+                          >
                             <div className="text-xs font-medium text-stone-500">
                               随信附件
                             </div>
@@ -4619,9 +4606,12 @@ export const TasksPage = () => {
                               totalSizeBytes={batchReviewAttachmentTotalBytes}
                               className="mt-3"
                             />
-                          </div>
+                          </section>
 
-                          <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                          <section
+                            aria-label="审核操作"
+                            className="rounded-2xl border border-stone-100 bg-white px-4 py-3"
+                          >
                             <div className="text-xs leading-5 text-stone-500">
                               审核通过后会进入批量发送队列；定时批量任务会继续遵守日期、时间窗口和每日数量限制。
                             </div>
@@ -4656,7 +4646,66 @@ export const TasksPage = () => {
                                 </button>
                               ) : null}
                             </div>
-                          </div>
+                          </section>
+
+                          <section
+                            aria-label="老师详情"
+                            className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
+                          >
+                            <div className="text-xs font-medium text-stone-500">
+                              老师详情
+                            </div>
+                            <dl className="mt-2 space-y-1.5">
+                              {[
+                                { label: "学校", value: batchReviewThread.professor.university },
+                                { label: "学院", value: batchReviewThread.professor.school },
+                                { label: "系所", value: batchReviewThread.professor.department },
+                                {
+                                  label: "研究方向",
+                                  value: batchReviewThread.professor.research_direction,
+                                },
+                                { label: "主页链接", value: batchReviewThread.professor.profile_url },
+                              ].map(({ label, value }) => {
+                                const normalizedValue = value?.trim();
+                                if (!normalizedValue) {
+                                  return null;
+                                }
+
+                                return (
+                                  <div
+                                    key={label}
+                                    className="grid grid-cols-[3.5rem_minmax(0,1fr)] items-start gap-2 text-xs leading-5"
+                                  >
+                                    <dt className="text-stone-500">{label}</dt>
+                                    <dd className="min-w-0 break-words text-stone-700">
+                                      {label === "主页链接"
+                                        ? renderCandidateExternalUrl(normalizedValue)
+                                        : normalizedValue}
+                                    </dd>
+                                  </div>
+                                );
+                              })}
+                            </dl>
+                          </section>
+
+                          <section
+                            aria-label="匹配摘要"
+                            className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
+                          >
+                            <div className="text-xs font-medium text-stone-500">
+                              匹配摘要
+                            </div>
+                            <div className="mt-2 text-sm font-semibold text-stone-900">
+                              {batchReviewThread.current_task.match_score !== null
+                                ? `匹配分 ${batchReviewThread.current_task.match_score}`
+                                : "暂无匹配分"}
+                            </div>
+                            {batchReviewThread.current_task.match_reason ? (
+                              <p className="mt-2 text-xs leading-5 text-stone-600">
+                                {batchReviewThread.current_task.match_reason}
+                              </p>
+                            ) : null}
+                          </section>
                         </aside>
                       </div>
                     ) : (

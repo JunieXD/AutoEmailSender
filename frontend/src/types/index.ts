@@ -1060,6 +1060,7 @@ export interface WorkspaceProfessorDTO {
   title: string | null;
   university: string | null;
   school: string | null;
+  department: string | null;
   research_direction: string | null;
   recent_papers: string[];
   profile_url: string | null;

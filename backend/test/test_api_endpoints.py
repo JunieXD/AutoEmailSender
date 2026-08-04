@@ -9050,6 +9050,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(thread_response.json()["current_task"]["id"], first_task_id)
         self.assertEqual(thread_response.json()["current_task"]["batch_task_id"], first_batch_id)
         self.assertEqual(thread_response.json()["current_task"]["generated_subject"], "第一批草稿")
+        self.assertEqual(thread_response.json()["professor"]["department"], "Computer Science")
 
         mismatch_response = self.client.get(
             f"/api/batch-tasks/{first_batch_id}/items/{second_task_id}/thread",
