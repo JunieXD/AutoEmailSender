@@ -47,8 +47,29 @@ describe("DashboardProfessorRow", () => {
       />,
     );
 
-    expect(screen.getByText("匹配 86")).toBeInTheDocument();
-    expect(screen.queryByText("匹配 86%")).not.toBeInTheDocument();
+    expect(screen.getByText("匹配度 86")).toBeInTheDocument();
+    expect(screen.queryByText("匹配度 86%")).not.toBeInTheDocument();
+  });
+
+  it("labels an uncalculated score as match degree", () => {
+    render(
+      <DashboardProfessorRow
+        professor={professor}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("匹配度 未计算")).toBeInTheDocument();
+    expect(screen.queryByText("匹配 未计算")).not.toBeInTheDocument();
   });
 
   it("shows an active schedule alongside the relationship status", () => {
