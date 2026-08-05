@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.core.time import utc_now
+from app.core.agent_revisions import revision_for
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,7 @@ from app.services.system_settings import get_or_create_app_settings
 
 
 def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
-    return RuntimeSettingsRead(
+    result = RuntimeSettingsRead(
         match_analysis_job_worker_count=settings.match_analysis_job_worker_count,
         match_analysis_job_item_concurrency=settings.match_analysis_job_item_concurrency,
         match_analysis_job_interval_seconds=settings.match_analysis_job_interval_seconds,
@@ -33,6 +34,7 @@ def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
         intended_research_direction=settings.intended_research_direction,
         updated_at=settings.updated_at,
     )
+    return result.model_copy(update={"revision": revision_for(result)})
 
 
 async def get_runtime_settings(session: AsyncSession) -> AppSetting:

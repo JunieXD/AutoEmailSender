@@ -11,6 +11,7 @@ from auto_email_sender_cli.commands.common import (
     cli_context,
     format_detail,
     run_read_command,
+    validate_context_options,
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
@@ -41,6 +42,14 @@ def list_diagnostics_logs(
         str | None,
         typer.Option("--end-at", help="带时区的 ISO 8601 时间。"),
     ] = None,
+    all_items: Annotated[
+        bool,
+        typer.Option("--all", help="从当前 offset 开始读取全部诊断日志。"),
+    ] = False,
+    fields: Annotated[
+        str | None,
+        typer.Option("--fields", help="只返回需要的字段，逗号分隔。"),
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -60,6 +69,8 @@ def list_diagnostics_logs(
         ),
         guide_topic="diagnostics",
         human_formatter=format_detail,
+        fetch_all=all_items,
+        fields=fields,
     )
 
 
@@ -86,6 +97,11 @@ def export_diagnostics_logs(
     context = cli_context(ctx)
     command = "diagnostics.export"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         client = AgentApiClient(timeout=120.0)
         data = client.request(
             "GET",
@@ -126,6 +142,11 @@ def download_crawler_debug_log(
     context = cli_context(ctx)
     command = "diagnostics.crawler-debug"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         client = AgentApiClient(timeout=120.0)
         content = client.download_bytes(
             f"/api/agent/v1/diagnostics/crawler-debug/{job_id}/export",

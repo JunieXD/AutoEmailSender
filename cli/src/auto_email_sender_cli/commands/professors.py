@@ -10,11 +10,13 @@ import typer
 
 from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.commands.common import (
+    add_mutation_receipt,
     cli_context,
     format_detail,
     format_page,
     run_read_command,
     run_write_command,
+    validate_context_options,
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
@@ -36,6 +38,7 @@ def list_professors(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。") ] = False,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -49,6 +52,7 @@ def list_professors(
             "limit": limit,
         },
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(("id", "ID"), ("name", "姓名"), ("email", "邮箱"), ("university", "学校")),
@@ -66,6 +70,11 @@ def export_professors(
     context = cli_context(ctx)
     command = "professors.export"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         destination = output.expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         client = AgentApiClient(timeout=360.0)
@@ -116,15 +125,29 @@ def prepare_professor_import(
     context = cli_context(ctx)
     command = "professors.import"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         with file_path.open("rb") as import_file:
             client = AgentApiClient(timeout=360.0)
+            request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
             data = client.request(
                 "POST",
                 "/api/agent/v1/professors/prepare-import",
                 files={"file": (file_path.name, import_file, mime_type)},
-                idempotency_key=f"cli_{secrets.token_urlsafe(24)}",
+                idempotency_key=request_id,
+                if_revision=context.if_revision,
             )
+        data = add_mutation_receipt(
+            data,
+            command=command,
+            request_id=request_id,
+            json_body=None,
+            response_headers=getattr(client, "last_response_headers", {}),
+        )
         emit_success(
             context,
             command=command,
@@ -132,6 +155,7 @@ def prepare_professor_import(
             human_text=format_detail(data),
             guide_topic="safety",
             app_version=client.descriptor.app_version,
+            request_id=getattr(client, "last_request_id", None) or request_id,
         )
     except OSError as exc:
         error = CliError(
@@ -170,6 +194,7 @@ def list_community_records(
         list[str],
         typer.Option("--unit-path", help="重复指定 catalog 中的学院分片路径。"),
     ] = [],
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_write_command(
         ctx,
@@ -180,6 +205,7 @@ def list_community_records(
         human_formatter=format_detail,
         timeout=90.0,
         use_idempotency_key=False,
+        fields=fields,
     )
 
 
@@ -191,6 +217,7 @@ def preview_community_import(
         list[str],
         typer.Option("--unit-path", help="重复指定 catalog 中的学院分片路径。"),
     ] = [],
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     record_ids: Annotated[
         list[str],
         typer.Option("--record-id", help="重复指定要比对的社区导师 ID。"),
@@ -209,6 +236,7 @@ def preview_community_import(
         human_formatter=format_detail,
         timeout=90.0,
         use_idempotency_key=False,
+        fields=fields,
     )
 
 
@@ -283,6 +311,11 @@ def export_community_share_package(
         emit_error(context, command=command, error=error, guide_topic="community")
         raise typer.Exit(error.exit_code)
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         destination = output.expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         client = AgentApiClient(timeout=90.0)
@@ -475,6 +508,7 @@ def list_professor_tags(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
     all_items: Annotated[bool, typer.Option("--all")] = False,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -482,6 +516,7 @@ def list_professor_tags(
         path="/api/agent/v1/professor-tags",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(("id", "ID"), ("name", "标签")),

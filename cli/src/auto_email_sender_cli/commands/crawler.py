@@ -28,6 +28,7 @@ def list_faculty_crawl_jobs(
     view: Annotated[str, typer.Option("--view", help="current 或 trash。")] = "current",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -36,6 +37,7 @@ def list_faculty_crawl_jobs(
         path="/api/agent/v1/crawler/jobs",
         params={"view": view, "cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
@@ -100,6 +102,7 @@ def list_faculty_crawl_pages(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -108,6 +111,7 @@ def list_faculty_crawl_pages(
         path=f"/api/agent/v1/crawler/jobs/{job_id}/pages",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
@@ -128,6 +132,7 @@ def list_faculty_crawl_job_events(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -136,6 +141,7 @@ def list_faculty_crawl_job_events(
         path=f"/api/agent/v1/crawler/jobs/{job_id}/events",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
@@ -154,6 +160,7 @@ def list_faculty_crawl_candidates(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -162,6 +169,7 @@ def list_faculty_crawl_candidates(
         path=f"/api/agent/v1/crawler/jobs/{job_id}/candidates",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,

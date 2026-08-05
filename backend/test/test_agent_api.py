@@ -110,6 +110,10 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(info.status_code, 200, msg=info.text)
         self.assertEqual(info.json()["authentication_scope"], "agent")
         self.assertEqual(info.json()["protocol_version"], "2")
+        self.assertEqual(
+            info.json()["guide_command"],
+            "auto-email-sender --format json guide",
+        )
 
     def test_options_and_allowed_local_cors_origin_work_without_a_token(self) -> None:
         response = self.client.options(
@@ -299,11 +303,24 @@ class AgentApiTests(unittest.TestCase):
         ):
             refreshed = self.client.post(
                 f"/api/agent/v1/workspaces/{professor_id}/refresh-replies",
-                headers=self._agent_headers(),
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-workspace-refresh-once",
+                },
+                params=params,
+            )
+            refreshed_replay = self.client.post(
+                f"/api/agent/v1/workspaces/{professor_id}/refresh-replies",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-workspace-refresh-once",
+                },
                 params=params,
             )
 
         self.assertEqual(refreshed.status_code, 200, msg=refreshed.text)
+        self.assertEqual(refreshed_replay.status_code, 200, msg=refreshed_replay.text)
+        self.assertEqual(refreshed_replay.json(), refreshed.json())
         sync_mock.assert_awaited_once()
         warning = refreshed.json()["sync_warnings"][0]
         self.assertEqual(warning["trust_level"], "untrusted_external_content")
@@ -1001,6 +1018,8 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         self.assertEqual(replayed.status_code, 201, msg=replayed.text)
+        self.assertTrue(created.headers.get("x-agent-mutation-receipt"))
+        self.assertTrue(replayed.headers.get("x-agent-mutation-receipt"))
         professor_id = created.json()["id"]
         self.assertEqual(replayed.json()["id"], professor_id)
         self.assertEqual(created.json()["tags"][0]["id"], tag_id)
@@ -1025,6 +1044,24 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(updated.json()["name"], "新导师")
         self.assertEqual(updated.json()["research_direction"], "具身智能")
         self.assertEqual(updated.json()["recent_papers"], ["Paper A"])
+
+        # The optimistic-concurrency precondition participates in the
+        # idempotency fingerprint.  Reusing a request id with a different
+        # revision must not silently replay the earlier mutation.
+        reused_with_revision = self.client.put(
+            f"/api/agent/v1/professors/{professor_id}",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-professor-update",
+                "If-Revision": updated.json()["revision"],
+            },
+            json={"research_direction": "新的方向"},
+        )
+        self.assertEqual(reused_with_revision.status_code, 409, msg=reused_with_revision.text)
+        self.assertEqual(
+            reused_with_revision.json()["error"]["code"],
+            "IDEMPOTENCY_KEY_REUSED",
+        )
 
         tags_cleared = self.client.put(
             f"/api/agent/v1/professors/{professor_id}/tags",
@@ -1061,6 +1098,35 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(professor_count, 1)
         self.assertEqual(agent_log_count, 1)
+
+    def test_agent_revision_precondition_rejects_stale_professor_update(self) -> None:
+        professor_id = self._create_professor(email="revision@example.edu")
+        original = self._agent_get(f"/api/agent/v1/professors/{professor_id}").json()
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+
+        changed = self.client.put(
+            f"/api/agent/v1/professors/{professor_id}",
+            headers={**self._agent_headers(), "Idempotency-Key": "revision-change"},
+            json={"personal_note": "先由另一个调用方修改"},
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        self.assertNotEqual(changed.json()["revision"], original["revision"])
+
+        stale = self.client.put(
+            f"/api/agent/v1/professors/{professor_id}",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json={"personal_note": "不应覆盖"},
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(
+            self._agent_get(f"/api/agent/v1/professors/{professor_id}").json()["personal_note"],
+            "先由另一个调用方修改",
+        )
 
     def test_agent_can_prepare_and_execute_bulk_professor_tag_change_plan(self) -> None:
         first_tag = self.client.post(
@@ -1563,6 +1629,32 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(template_count, 2)
         self.assertEqual(agent_log_count, 1)
 
+    def test_agent_revision_precondition_rejects_stale_template_update(self) -> None:
+        template_id = self._create_template()
+        original = self._agent_get(f"/api/agent/v1/templates/{template_id}").json()
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+        changed = self.client.put(
+            f"/api/agent/v1/templates/{template_id}",
+            headers={**self._agent_headers(), "Idempotency-Key": "template-revision-change"},
+            json={"body_text": "先修改模板"},
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        stale = self.client.put(
+            f"/api/agent/v1/templates/{template_id}",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "template-revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json={"body_text": "不应覆盖"},
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(
+            self._agent_get(f"/api/agent/v1/templates/{template_id}").json()["body_text"],
+            "先修改模板",
+        )
+
     def test_agent_can_parse_template_file_without_persisting_it(self) -> None:
         parsed = self.client.post(
             "/api/agent/v1/templates/import-file",
@@ -1677,20 +1769,33 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_can_request_a_scoped_mailbox_sync(self) -> None:
         identity_id = self._create_identity()
         sync_mock = AsyncMock(return_value=3)
+        sync_headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-mailbox-sync-once",
+        }
         with patch(
             "app.api.agent_v1.router.sync_identity_history_poll_once",
             sync_mock,
         ):
             response = self.client.post(
                 "/api/agent/v1/communications/sync",
-                headers=self._agent_headers(),
+                headers=sync_headers,
+                json={"identity_id": identity_id},
+            )
+            replayed = self.client.post(
+                "/api/agent/v1/communications/sync",
+                headers=sync_headers,
                 json={"identity_id": identity_id},
             )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(replayed.status_code, 200, msg=replayed.text)
         self.assertEqual(response.json()["identity_id"], identity_id)
         self.assertEqual(response.json()["detected_count"], 3)
+        self.assertEqual(replayed.json(), response.json())
         sync_mock.assert_awaited_once()
+        self.assertEqual(response.headers["x-agent-mutation-status"], "applied")
+        self.assertEqual(replayed.headers["x-agent-mutation-status"], "replayed")
         with sqlite3.connect(self.db_path) as connection:
             sync_log_count = connection.execute(
                 """
@@ -1709,6 +1814,38 @@ class AgentApiTests(unittest.TestCase):
             connection.commit()
         self.assertEqual(sync_log_count, 1)
 
+        unknown_identity_id = self._create_identity(email="unknown-sync@example.com")
+        failed_sync = AsyncMock(side_effect=RuntimeError("provider connection lost"))
+        with patch(
+            "app.api.agent_v1.router.sync_identity_history_poll_once",
+            failed_sync,
+        ):
+            unknown = self.client.post(
+                "/api/agent/v1/communications/sync",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-mailbox-sync-unknown",
+                },
+                json={"identity_id": unknown_identity_id},
+            )
+            unknown_replay = self.client.post(
+                "/api/agent/v1/communications/sync",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-mailbox-sync-unknown",
+                },
+                json={"identity_id": unknown_identity_id},
+            )
+        self.assertEqual(unknown.status_code, 502, msg=unknown.text)
+        self.assertEqual(unknown.json()["error"]["code"], "EXTERNAL_EXECUTION_UNKNOWN")
+        self.assertFalse(unknown.json()["error"]["retryable"])
+        self.assertEqual(unknown_replay.status_code, 409, msg=unknown_replay.text)
+        self.assertEqual(
+            unknown_replay.json()["error"]["code"],
+            "MUTATION_RESULT_UNKNOWN",
+        )
+        failed_sync.assert_awaited_once()
+
         unavailable = self.client.post(
             "/api/agent/v1/communications/sync",
             headers=self._agent_headers(),
@@ -1716,6 +1853,108 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(unavailable.status_code, 409, msg=unavailable.text)
         self.assertEqual(unavailable.json()["error"]["code"], "IMAP_NOT_CONFIGURED")
+
+    def test_agent_draft_generation_replays_without_creating_a_second_draft(self) -> None:
+        identity_id = self._create_identity()
+        llm_profile_id = self._create_llm_profile()
+        professor_id = self._create_professor(email="draft-idempotency@example.edu")
+        material_id = self._upload_material(identity_id)
+        template_id = self._create_template()
+        payload = {
+            "professor_id": professor_id,
+            "identity_id": identity_id,
+            "llm_profile_id": llm_profile_id,
+            "template_id": template_id,
+            "generation_mode": "template",
+            "reference_material_id": None,
+            "attachment_material_ids": [material_id],
+        }
+        headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-draft-generate-once",
+        }
+        first = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
+        replayed = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
+
+        self.assertEqual(first.status_code, 201, msg=first.text)
+        self.assertEqual(replayed.status_code, 201, msg=replayed.text)
+        self.assertEqual(replayed.json()["task_id"], first.json()["task_id"])
+        self.assertEqual(first.headers["x-agent-mutation-status"], "applied")
+        self.assertEqual(replayed.headers["x-agent-mutation-status"], "replayed")
+        with sqlite3.connect(self.db_path) as connection:
+            draft_rows = connection.execute(
+                "SELECT COUNT(*) FROM email_logs WHERE email_task_id = ? AND direction = 'draft'",
+                (first.json()["task_id"],),
+            ).fetchone()[0]
+        self.assertEqual(draft_rows, 1)
+
+        reused = self.client.post(
+            "/api/agent/v1/drafts",
+            headers=headers,
+            json={**payload, "template_id": None},
+        )
+        self.assertEqual(reused.status_code, 409, msg=reused.text)
+        self.assertEqual(reused.json()["error"]["code"], "IDEMPOTENCY_KEY_REUSED")
+
+    def test_agent_external_draft_failure_is_unknown_and_never_retried(self) -> None:
+        identity_id = self._create_identity()
+        llm_profile_id = self._create_llm_profile()
+        professor_id = self._create_professor(email="draft-external-unknown@example.edu")
+        material_id = self._upload_material(identity_id)
+        template_id = self._create_template()
+        payload = {
+            "professor_id": professor_id,
+            "identity_id": identity_id,
+            "llm_profile_id": llm_profile_id,
+            "template_id": template_id,
+            "generation_mode": "ai_rewrite",
+            "reference_material_id": material_id,
+            "attachment_material_ids": [],
+        }
+        headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-draft-external-unknown",
+        }
+        with patch(
+            "app.services.agent_drafts.regenerate_task_draft",
+            new=AsyncMock(side_effect=RuntimeError("provider connection lost")),
+        ) as regenerate:
+            first = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
+            replayed = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
+
+        self.assertEqual(first.status_code, 502, msg=first.text)
+        self.assertEqual(first.json()["error"]["code"], "EXTERNAL_EXECUTION_UNKNOWN")
+        self.assertFalse(first.json()["error"]["retryable"])
+        self.assertEqual(replayed.status_code, 409, msg=replayed.text)
+        self.assertEqual(replayed.json()["error"]["code"], "MUTATION_RESULT_UNKNOWN")
+        regenerate.assert_awaited_once()
+
+    def test_non_external_factory_failure_releases_idempotency_reservation(self) -> None:
+        from app.core.agent_api_errors import AgentApiError
+
+        key = "agent-plan-cancel-non-external-failure"
+        failure = AgentApiError(
+            status_code=404,
+            code="PLAN_NOT_FOUND",
+            message="未找到发送计划。",
+        )
+        with patch(
+            "app.api.agent_v1.router.cancel_email_action_plan",
+            new=AsyncMock(side_effect=[RuntimeError("database unavailable"), failure]),
+        ) as cancel:
+            first = self.client.post(
+                "/api/agent/v1/plans/plan_missing/cancel",
+                headers={**self._agent_headers(), "Idempotency-Key": key},
+            )
+            second = self.client.post(
+                "/api/agent/v1/plans/plan_missing/cancel",
+                headers={**self._agent_headers(), "Idempotency-Key": key},
+            )
+
+        self.assertEqual(first.status_code, 500, msg=first.text)
+        self.assertEqual(second.status_code, 404, msg=second.text)
+        self.assertEqual(second.json()["error"]["code"], "PLAN_NOT_FOUND")
+        self.assertEqual(cancel.await_count, 2)
 
     def test_agent_can_manage_match_analysis_jobs_idempotently(self) -> None:
         identity_id = self._create_identity()
@@ -2064,6 +2303,54 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(job_count, 1)
         self.assertEqual(create_log_count, 1)
+
+    def test_agent_revision_precondition_rejects_stale_crawl_candidate_update(self) -> None:
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-candidate-revision-job"},
+            json={
+                "university": "版本大学",
+                "school": "版本学院",
+                "start_url": "https://example.edu/revision",
+                "entry_type": "list",
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = created.json()["id"]
+        with sqlite3.connect(self.db_path) as connection:
+            candidate_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, university, confidence)
+                VALUES (?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (job_id, "并发候选", "candidate-revision@example.edu", "版本大学", 0.8),
+            ).fetchone()[0]
+            connection.commit()
+
+        original = self._agent_get(f"/api/agent/v1/crawler/jobs/{job_id}/candidates").json()["items"][0]
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+        changed = self.client.patch(
+            f"/api/agent/v1/crawler/candidates/{candidate_id}",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-candidate-revision-change"},
+            json={"title": "已被其他调用方修改"},
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        self.assertNotEqual(changed.json()["revision"], original["revision"])
+
+        stale = self.client.patch(
+            f"/api/agent/v1/crawler/candidates/{candidate_id}",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-candidate-revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json={"email": "should-not-overwrite@example.edu"},
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.json()["error"]["details"]["resource"], "crawler.candidates")
+        self.assertEqual(stale.json()["error"]["details"]["latest"]["title"], "已被其他调用方修改")
 
     def test_agent_can_prepare_and_execute_crawl_candidate_approval_change_plan(self) -> None:
         existing_professor_id = self._create_professor(email="existing-crawl@example.edu")
@@ -2976,6 +3263,118 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertIsNone(archived_at)
 
+    def test_agent_revision_precondition_rejects_stale_identity_settings(self) -> None:
+        identity_id = self._create_identity(email="identity-revision@example.com")
+        original = self._agent_get(f"/api/agent/v1/identities/{identity_id}").json()
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+        changed = self.client.put(
+            f"/api/agent/v1/identities/{identity_id}/settings",
+            headers=self._agent_headers(),
+            json={"sender_name": "先由另一个调用方修改"},
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        stale = self.client.put(
+            f"/api/agent/v1/identities/{identity_id}/settings",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "identity-revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json={"sender_name": "不应覆盖"},
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.json()["error"]["details"]["resource"], "identities")
+
+    def test_agent_revision_precondition_rejects_stale_llm_profile_settings(self) -> None:
+        profile_id = self._create_llm_profile()
+        original = self._agent_get(f"/api/agent/v1/llm-profiles/{profile_id}").json()
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+        changed = self.client.put(
+            f"/api/agent/v1/llm-profiles/{profile_id}/settings",
+            headers=self._agent_headers(),
+            json={"model_name": "先修改的模型"},
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        stale = self.client.put(
+            f"/api/agent/v1/llm-profiles/{profile_id}/settings",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "llm-profile-revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json={"model_name": "不应覆盖"},
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.json()["error"]["details"]["resource"], "llm-profiles")
+
+    def test_agent_revision_precondition_rejects_stale_communication_group_update(self) -> None:
+        first_identity_id = self._create_identity(email="group-revision-first@example.com")
+        second_identity_id = self._create_identity(email="group-revision-second@example.com")
+        third_identity_id = self._create_identity(email="group-revision-third@example.com")
+        created = self.client.post(
+            "/api/agent/v1/communication-groups",
+            headers=self._agent_headers(),
+            json={"identity_ids": [first_identity_id, second_identity_id]},
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        group_id = created.json()["id"]
+        original = self._agent_get(f"/api/agent/v1/communication-groups/{group_id}").json()
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+        changed = self.client.put(
+            f"/api/agent/v1/communication-groups/{group_id}",
+            headers=self._agent_headers(),
+            json={
+                "identity_ids": [first_identity_id, second_identity_id, third_identity_id],
+                "confirm_merge_existing_groups": False,
+            },
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        stale = self.client.put(
+            f"/api/agent/v1/communication-groups/{group_id}",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "communication-group-revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json={
+                "identity_ids": [first_identity_id, second_identity_id],
+                "confirm_merge_existing_groups": False,
+            },
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.json()["error"]["details"]["resource"], "communication-groups")
+
+    def test_agent_revision_precondition_rejects_stale_runtime_settings(self) -> None:
+        original = self._agent_get("/api/agent/v1/settings").json()
+        self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
+        payload = {
+            key: value
+            for key, value in original.items()
+            if key not in {"revision", "updated_at"}
+        }
+        changed_payload = {**payload, "crawler_worker_count": payload["crawler_worker_count"] + 1}
+        changed = self.client.patch(
+            "/api/agent/v1/settings",
+            headers=self._agent_headers(),
+            json=changed_payload,
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        stale = self.client.patch(
+            "/api/agent/v1/settings",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "runtime-settings-revision-stale",
+                "If-Revision": original["revision"],
+            },
+            json=payload,
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.json()["error"]["details"]["resource"], "settings")
+
     def test_template_draft_is_draft_only_and_keeps_reference_separate_from_attachments(self) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
@@ -3051,6 +3450,31 @@ class AgentApiTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM email_logs WHERE direction = 'sent'",
             ).fetchone()[0]
         self.assertEqual(sent_count, 0)
+
+    def test_agent_revision_precondition_rejects_stale_draft_save(self) -> None:
+        draft = self._create_template_draft()
+        original_revision = draft["revision"]
+        changed = self.client.put(
+            f"/api/agent/v1/drafts/{draft['task_id']}",
+            headers=self._agent_headers(),
+            json={
+                "subject": "先保存的主题",
+                "body_text": "先保存的正文",
+                "attachment_material_ids": [],
+            },
+        )
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        stale = self.client.put(
+            f"/api/agent/v1/drafts/{draft['task_id']}",
+            headers={**self._agent_headers(), "If-Revision": original_revision},
+            json={
+                "subject": "不应覆盖",
+                "body_text": "不应覆盖",
+                "attachment_material_ids": [],
+            },
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
 
     def test_send_plan_requires_confirmation_detects_stale_content_and_expires(self) -> None:
         draft = self._create_template_draft()

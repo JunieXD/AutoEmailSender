@@ -9,11 +9,13 @@ import typer
 
 from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.commands.common import (
+    add_mutation_receipt,
     cli_context,
     format_detail,
     format_page,
     run_read_command,
     run_write_command,
+    validate_context_options,
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
@@ -32,6 +34,7 @@ def list_templates(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
     all_items: Annotated[bool, typer.Option("--all")] = False,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -43,6 +46,7 @@ def list_templates(
             "limit": limit,
         },
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -79,20 +83,36 @@ def import_template_file(
     context = cli_context(ctx)
     command = "templates.import-file"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         with file_path.open("rb") as template_file:
             client = AgentApiClient(timeout=360.0)
+            request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
             data = client.request(
                 "POST",
                 "/api/agent/v1/templates/import-file",
                 files={"file": (file_path.name, template_file, mime_type)},
+                idempotency_key=request_id,
+                if_revision=context.if_revision,
             )
+        data = add_mutation_receipt(
+            data,
+            command=command,
+            request_id=request_id,
+            json_body=None,
+            response_headers=getattr(client, "last_response_headers", {}),
+        )
         emit_success(
             context,
             command=command,
             data=data,
             human_text=format_detail(data),
             app_version=client.descriptor.app_version,
+            request_id=getattr(client, "last_request_id", None) or request_id,
         )
     except OSError as exc:
         error = CliError(
@@ -240,6 +260,7 @@ def list_materials(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
     all_items: Annotated[bool, typer.Option("--all")] = False,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -253,6 +274,7 @@ def list_materials(
         },
         guide_topic="materials",
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -296,9 +318,15 @@ def upload_material(
 ) -> None:
     context = cli_context(ctx)
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         with file_path.open("rb") as uploaded_file:
             client = AgentApiClient(timeout=360.0)
+            request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
             data = client.request(
                 "POST",
                 "/api/agent/v1/materials",
@@ -308,8 +336,16 @@ def upload_material(
                     "display_name": display_name or "",
                 },
                 files={"file": (file_path.name, uploaded_file, mime_type)},
-                idempotency_key=f"cli_{secrets.token_urlsafe(24)}",
+                idempotency_key=request_id,
+                if_revision=context.if_revision,
             )
+        data = add_mutation_receipt(
+            data,
+            command="materials.upload",
+            request_id=request_id,
+            json_body={"identity_id": identity_id, "material_type": material_type},
+            response_headers=getattr(client, "last_response_headers", {}),
+        )
         emit_success(
             context,
             command="materials.upload",
@@ -317,6 +353,7 @@ def upload_material(
             human_text=format_detail(data),
             guide_topic="materials",
             app_version=client.descriptor.app_version,
+            request_id=getattr(client, "last_request_id", None) or request_id,
         )
     except OSError as exc:
         error = CliError(
@@ -355,6 +392,11 @@ def download_material(
     context = cli_context(ctx)
     command = "materials.download"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         destination = output.expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         client = AgentApiClient(timeout=360.0)
@@ -412,6 +454,7 @@ def list_identities(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
     all_items: Annotated[bool, typer.Option("--all")] = False,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -419,6 +462,7 @@ def list_identities(
         path="/api/agent/v1/identities",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -599,6 +643,7 @@ def list_llm_profiles(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
     all_items: Annotated[bool, typer.Option("--all")] = False,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -606,6 +651,7 @@ def list_llm_profiles(
         path="/api/agent/v1/llm-profiles",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(

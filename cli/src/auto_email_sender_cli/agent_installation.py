@@ -73,8 +73,10 @@ def inspect_agent_skill_installation() -> dict[str, object]:
     skill_source = manifest.get("skill_source")
     source_hash = _sha256_directory(Path(skill_source)) if isinstance(skill_source, str) else None
     items: list[dict[str, object]] = []
+    malformed_agent_entry = False
     for agent_id, record in agents.items():
         if not isinstance(agent_id, str) or not isinstance(record, dict):
+            malformed_agent_entry = True
             continue
         target = record.get("skill_target")
         expected_hash = record.get("skill_sha256")
@@ -95,6 +97,14 @@ def inspect_agent_skill_installation() -> dict[str, object]:
             },
         )
 
+    if malformed_agent_entry or not items:
+        return {
+            "ok": False,
+            "state": "needs_update",
+            "manifest_path": manifest_path.as_posix(),
+            "message": "Agent 安装信息格式损坏，需要在个人中心重新安装。",
+            "items": items,
+        }
     if any(item["state"] == "needs_update" for item in items):
         return {
             "ok": False,

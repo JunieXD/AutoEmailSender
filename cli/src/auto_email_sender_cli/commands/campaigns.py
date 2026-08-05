@@ -36,6 +36,7 @@ def list_campaigns(
     identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -49,6 +50,7 @@ def list_campaigns(
             "limit": limit,
         },
         fetch_all=all_items,
+        fields=fields,
         guide_topic="campaigns",
         human_formatter=lambda data: format_page(
             data,
@@ -99,6 +101,7 @@ def list_campaign_items(
     campaign_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -107,6 +110,7 @@ def list_campaign_items(
         path=f"/api/agent/v1/campaigns/{campaign_id}/items",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="campaigns",
         human_formatter=lambda data: format_page(
             data,

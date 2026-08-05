@@ -23,6 +23,7 @@ class AgentCrawlPageRead(CrawlPageRead):
 
 
 class AgentCrawlCandidateRead(CrawlCandidateRead):
+    revision: str | None = None
     trust_level: Literal["untrusted_external_content"] = "untrusted_external_content"
 
 
@@ -52,6 +53,7 @@ class AgentProfessorTagUsageRead(ApiSchema):
 
 class AgentProfessorRead(ApiSchema):
     id: int
+    revision: str | None = None
     name: str
     email: str | None = None
     title: str | None = None
@@ -179,6 +181,7 @@ class AgentCommunicationGroupDeleteRead(ApiSchema):
 
 class AgentIdentityRead(ApiSchema):
     id: int
+    revision: str | None = None
     name: str
     profile_name: str
     sender_name: str
@@ -202,6 +205,7 @@ class AgentIdentityRead(ApiSchema):
 
 class AgentLLMProfileRead(ApiSchema):
     id: int
+    revision: str | None = None
     name: str
     provider: str
     model_name: str
@@ -248,6 +252,7 @@ class AgentLLMProfileTestRead(ApiSchema):
 
 class AgentMaterialRead(ApiSchema):
     id: int
+    revision: str | None = None
     identity_id: int
     display_name: str
     original_filename: str
@@ -262,6 +267,7 @@ class AgentMaterialRead(ApiSchema):
 
 class AgentTemplateRead(ApiSchema):
     id: int
+    revision: str | None = None
     name: str
     recommended_generation_mode: str
     subject: str | None = None
@@ -283,6 +289,7 @@ class AgentTemplateImportRead(ApiSchema):
 
 class AgentDraftRead(ApiSchema):
     task_id: int
+    revision: str | None = None
     source: str
     batch_task_id: int | None = None
     parent_task_id: int | None = None
@@ -520,4 +527,4 @@ class AgentInfoRead(ApiSchema):
     protocol_version: str = "2"
     api_version: str = "v1"
     authentication_scope: Literal["agent"] = "agent"
-    guide_command: str = "auto-email-sender guide --format json"
+    guide_command: str = "auto-email-sender --format json guide"

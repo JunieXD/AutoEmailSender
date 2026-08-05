@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "definition": "关键覆盖对象是 GUI、另一 CLI 调用方或后台任务可能并发修改，且静默覆盖会造成用户数据损失的对象。",
+  "objects": [
+    {
+      "resource": "professors",
+      "read_commands": ["professors.list", "professors.get"],
+      "write_commands": ["professors.update", "professors.archive", "professors.restore", "professors.tags.set"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_professor_update"
+    },
+    {
+      "resource": "templates",
+      "read_commands": ["templates.list", "templates.get"],
+      "write_commands": ["templates.update", "templates.set-default", "templates.restore"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_template_update"
+    },
+    {
+      "resource": "drafts",
+      "read_commands": ["drafts.get"],
+      "write_commands": ["drafts.save", "drafts.regenerate", "drafts.rewrite"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_draft_save"
+    },
+    {
+      "resource": "identities",
+      "read_commands": ["identities.list", "identities.get"],
+      "write_commands": ["identities.update-settings", "identities.set-default", "identities.set-default-template"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_identity_settings"
+    },
+    {
+      "resource": "llm-profiles",
+      "read_commands": ["llm-profiles.list", "llm-profiles.get"],
+      "write_commands": ["llm-profiles.update-settings", "llm-profiles.set-default"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_llm_profile_settings"
+    },
+    {
+      "resource": "communication-groups",
+      "read_commands": ["communication-groups.list", "communication-groups.get"],
+      "write_commands": ["communication-groups.update"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_communication_group_update"
+    },
+    {
+      "resource": "settings",
+      "read_commands": ["settings.get"],
+      "write_commands": ["settings.update"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_runtime_settings"
+    },
+    {
+      "resource": "crawler.candidates",
+      "read_commands": ["crawler.jobs.candidates"],
+      "write_commands": ["crawler.candidates.update"],
+      "revision_field": "revision",
+      "if_revision_supported": true,
+      "conflict_test": "test_agent_revision_precondition_rejects_stale_crawl_candidate_update"
+    }
+  ],
+  "excluded_resources": {
+    "materials": "上传是新增记录，主材料切换是受控指针动作，删除使用独立计划快照，不会静默覆盖材料内容。",
+    "campaigns": "仅通过状态机动作和发送计划修改；没有对活动正文的静默 PATCH 入口。",
+    "matching.jobs": "仅通过任务状态动作修改；逐项结果由后台任务写入，不提供静默覆盖的编辑入口。",
+    "enrichment.jobs": "仅通过任务状态动作修改；逐项结果由后台任务写入，不提供静默覆盖的编辑入口。",
+    "crawler.jobs": "任务状态和审核动作由服务端状态机校验；候选记录单独通过 crawler.candidates 的 revision 合同保护。",
+    "workspaces": "确保任务和同步回信是幂等动作，不是对用户自由编辑文本的覆盖写入。",
+    "tasks": "任务控制动作通过草稿 revision 或状态机校验，不提供任意任务字段 PATCH。"
+  }
+}

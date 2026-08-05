@@ -31,6 +31,7 @@ def list_match_analysis_jobs(
     ] = "current",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -45,6 +46,7 @@ def list_match_analysis_jobs(
             "limit": limit,
         },
         fetch_all=all_items,
+        fields=fields,
         guide_topic="matching",
         human_formatter=lambda data: format_page(
             data,
@@ -106,6 +108,7 @@ def list_match_analysis_job_items(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -114,6 +117,7 @@ def list_match_analysis_job_items(
         path=f"/api/agent/v1/matching/jobs/{job_id}/items",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="matching",
         human_formatter=lambda data: format_page(
             data,
