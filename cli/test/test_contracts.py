@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import unittest
 import tempfile
 from copy import deepcopy
@@ -19,10 +21,18 @@ from auto_email_sender_cli.capabilities import (
     supports_wait,
 )
 from auto_email_sender_cli.contracts import command_contract_revision, validate_command_contract
-from auto_email_sender_cli.describe import describe_command, describe_command_revisions
+from auto_email_sender_cli.describe import (
+    compact_command_description,
+    describe_command,
+    describe_command_revisions,
+)
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.main import app
-from auto_email_sender_cli.operation_specs import OPERATION_SPECS, validate_operation_manifest
+from auto_email_sender_cli.operation_specs import (
+    OPERATION_SPECS,
+    effect_has_external_action,
+    validate_operation_manifest,
+)
 from auto_email_sender_cli.commands.common import (
     _redact_receipt_value,
     _with_revision,
@@ -59,7 +69,7 @@ class ContractTests(unittest.TestCase):
             spec = OPERATION_SPECS[capability.command]
             self.assertEqual(spec.effects.mutates, capability.mutates, capability.command)
             self.assertEqual(
-                bool(spec.effects.external_services or spec.effects.downstream_external_services),
+                effect_has_external_action(spec.effects),
                 capability.external_action,
                 capability.command,
             )
@@ -162,6 +172,19 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(description["effects"]["mutates"], capability.mutates)
             self.assertEqual(description["risk"]["availability"], capability.availability)
             self.assertEqual(description["risk"]["requires_plan"], capability.requires_plan)
+            compact = compact_command_description(description)
+            self.assertLess(
+                len(
+                    json.dumps(
+                        compact,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8"),
+                ),
+                3_600,
+                capability.command,
+            )
             self.assertEqual(
                 description["effects"]["requires_confirmation_plan"],
                 description["effects"]["plan_role"] == "consumer",
@@ -637,16 +660,43 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(producer["effects"]["confirmation_required_before_invocation"])
         self.assertEqual(producer["effects"]["current_effects"]["external_services"], [])
         self.assertEqual(producer["effects"]["downstream_effects"]["external_services"], ["smtp"])
+        compact_producer = compact_command_description(producer)
+        self.assertTrue(compact_producer["effects"]["downstream_effects"]["mutates"])
 
         self.assertEqual(consumer["effects"]["plan_role"], "consumer")
         self.assertFalse(consumer["effects"]["produces_confirmation_plan"])
         self.assertTrue(consumer["effects"]["confirmation_required_before_invocation"])
+        self.assertTrue(consumer["effects"]["delegated_effects"])
+        self.assertTrue(consumer["effects"]["requires_target_contract"])
+        self.assertTrue(consumer["effects"]["downstream_effects"]["mutates"])
 
         self.assertEqual(delegated["risk"]["risk_mode"], "delegated")
         self.assertEqual(delegated["effects"]["risk_mode"], "delegated")
         self.assertEqual(delegated["effects"]["plan_role"], "delegated")
         self.assertFalse(delegated["effects"]["mutates"])
         self.assertEqual(delegated["effects"]["external_services"], [])
+        self.assertTrue(delegated["effects"]["delegated_effects"])
+        self.assertTrue(delegated["effects"]["requires_target_contract"])
+        self.assertTrue(delegated["risk"]["delegated_effects"])
+        self.assertTrue(delegated["risk"]["requires_target_contract"])
+
+        compact_delegated = compact_command_description(delegated)
+        self.assertTrue(compact_delegated["risk"]["delegated_effects"])
+        self.assertTrue(compact_delegated["risk"]["requires_target_contract"])
+
+    def test_compact_description_does_not_mutate_full_next_actions(self) -> None:
+        description = describe_command(app, "plans.execute")
+        self.assertIsNotNone(description)
+        assert description is not None
+        original_actions = deepcopy(description["next_actions"])
+
+        # Force every compacting stage so the regression is independent of the
+        # command's current prose length and global byte budget.
+        description["summary"] = "x" * 10_000
+        compact = compact_command_description(description)
+
+        self.assertEqual(description["next_actions"], original_actions)
+        self.assertNotEqual(compact["next_actions"], original_actions)
 
     def test_offline_and_wait_error_lifecycle_contracts_are_precise(self) -> None:
         version = describe_command(app, "version")
@@ -864,6 +914,88 @@ class ContractTests(unittest.TestCase):
             with patch(
                 "auto_email_sender_cli.commands.common.AgentApiClient",
                 return_value=_FakeClient(),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                    ],
+                )
+            self.assertEqual(result.exit_code, 2, msg=result.output)
+            self.assertEqual(json.loads(result.stdout)["error"]["code"], "OUTPUT_EXISTS")
+            self.assertEqual(destination.read_text(encoding="utf-8"), "keep me\n")
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits are not portable on Windows")
+    def test_collection_exports_are_private_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "professors.jsonl"
+            with patch(
+                "auto_email_sender_cli.commands.common.AgentApiClient",
+                return_value=_FakeClient(),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                    ],
+                )
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+
+    def test_streaming_export_falls_back_when_hard_links_are_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "professors.jsonl"
+            with (
+                patch(
+                    "auto_email_sender_cli.commands.common.AgentApiClient",
+                    return_value=_FakeClient(),
+                ),
+                patch(
+                    "auto_email_sender_cli.commands.common.os.link",
+                    side_effect=OSError("hard links unsupported"),
+                ),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                    ],
+                )
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            rows = [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([row["id"] for row in rows], [1, 2])
+
+    def test_streaming_export_fallback_never_overwrites_an_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "professors.jsonl"
+            destination.write_text("keep me\n", encoding="utf-8")
+            with (
+                patch(
+                    "auto_email_sender_cli.commands.common.AgentApiClient",
+                    return_value=_FakeClient(),
+                ),
+                patch(
+                    "auto_email_sender_cli.commands.common.os.link",
+                    side_effect=OSError("hard links unsupported"),
+                ),
             ):
                 result = CliRunner().invoke(
                     app,

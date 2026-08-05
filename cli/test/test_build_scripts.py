@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -19,8 +20,8 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--copy-metadata auto-email-sender-cli", script)
         self.assertIn("generate_cli_build_identity.py", script)
         self.assertIn('--runtime-hook "$BuildIdentityHook"', script)
-        self.assertIn('"$CliExecutable" --format json version', script)
-        self.assertIn('"$CliExecutable" --format json capabilities', script)
+        self.assertIn("verify_cli_binary.py", script)
+        self.assertIn('--executable "$CliExecutable"', script)
 
     def test_windows_build_creates_one_file_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.ps1")
@@ -30,8 +31,48 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("auto-email-sender.exe", script)
         self.assertIn("generate_cli_build_identity.py", script)
         self.assertIn("--runtime-hook $BuildIdentityHook", script)
-        self.assertIn("& $CliExecutable --format json version", script)
-        self.assertIn("& $CliExecutable --format json capabilities", script)
+        self.assertIn("verify_cli_binary.py", script)
+        self.assertIn("--executable $CliExecutable", script)
+
+    def test_frozen_binary_verifier_requires_embedded_identity_and_matching_catalog(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        namespace = runpy.run_path((repo_root / "scripts" / "verify_cli_binary.py").as_posix())
+        validate_payloads = namespace["validate_payloads"]
+        revision = "a" * 40
+        version = {
+            "ok": True,
+            "data": {
+                "cli_version": "2.4.1",
+                "protocol_version": "2",
+                "schema_version": "3",
+                "contract_version": "3",
+                "catalog_version": "3",
+                "build_revision": revision,
+                "build_kind": "embedded",
+            },
+            "_meta": {"build_revision": revision, "build_kind": "embedded"},
+        }
+        capabilities = {
+            "ok": True,
+            "data": {
+                "build": {"revision": revision, "kind": "embedded"},
+                "scope_revision": "scope-1",
+            },
+            "_meta": {"build_revision": revision, "build_kind": "embedded"},
+        }
+        validate_payloads(version, capabilities)
+
+        version["data"]["build_revision"] = "development"
+        with self.assertRaisesRegex(RuntimeError, "embedded build revision"):
+            validate_payloads(version, capabilities)
+
+        version["data"]["build_revision"] = revision
+        version["data"]["build_kind"] = "override"
+        version["_meta"]["build_kind"] = "override"
+        capabilities["data"]["build"]["kind"] = "override"
+        capabilities["_meta"]["build_kind"] = "override"
+        with self.assertRaisesRegex(RuntimeError, "unexpected frozen CLI build kind"):
+            validate_payloads(version, capabilities)
 
     def test_generated_build_identity_hook_uses_string_environment_values(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]

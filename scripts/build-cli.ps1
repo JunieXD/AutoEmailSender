@@ -34,8 +34,8 @@ try {
     (Join-Path $CliDir "src\auto_email_sender_cli\__main__.py")
 
   $CliExecutable = Join-Path $CliDir "dist\auto-email-sender.exe"
-  & $CliExecutable --format json version
-  & $CliExecutable --format json capabilities
+  uv run python (Join-Path $RepoRoot "scripts\verify_cli_binary.py") `
+    --executable $CliExecutable
 } finally {
   Pop-Location
 }

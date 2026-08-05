@@ -133,6 +133,8 @@ export async function calculateDevelopmentCliFingerprint(
     path.join(cliDirectory, "pyproject.toml"),
     path.join(cliDirectory, "uv.lock"),
     path.join(repoRoot, "scripts", buildScript),
+    path.join(repoRoot, "scripts", "generate_cli_build_identity.py"),
+    path.join(repoRoot, "scripts", "verify_cli_binary.py"),
     ...await collectInputFiles(path.join(cliDirectory, "src")),
   ].sort((left, right) => left.localeCompare(right));
   const hash = createHash("sha256");

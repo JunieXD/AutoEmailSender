@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from typing import Any, Final
 
@@ -34,6 +35,8 @@ DESCRIPTION_SECTIONS: Final[tuple[str, ...]] = (
     "idempotency",
     "lifecycle",
 )
+_MAX_COMPACT_DESCRIPTION_BYTES: Final = 3_300
+_MAX_INLINE_PARAMETER_CARDS: Final = 6
 
 _DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
     "input": "input",
@@ -235,10 +238,8 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
 
     summary: dict[str, object] = {
         "command": description.get("command"),
-        "kind": description.get("kind"),
         "summary": description.get("summary"),
         "usage": description.get("usage"),
-        "example": description.get("example"),
         "contract_version": description.get("contract_version"),
         "contract_revision": description.get("contract_revision"),
         "risk": _compact_risk(description.get("risk")),
@@ -259,10 +260,15 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             "state_metadata": output_contract.get("state_metadata") is not None,
         },
         "effects": _compact_effects(description.get("effects")),
-        "preconditions": description.get("preconditions"),
+        "preconditions": _compact_preconditions(description.get("preconditions")),
         "state_transitions": description.get("state_transitions", []),
         "errors": _compact_errors(description.get("errors")),
-        "next_actions": description.get("next_actions", []),
+        "next_actions": [
+            dict(action) if isinstance(action, dict) else action
+            for action in description.get("next_actions", [])
+        ]
+        if isinstance(description.get("next_actions"), list)
+        else [],
         "details_available": {
             "sections": list(DESCRIPTION_SECTIONS),
             "full_view": True,
@@ -317,7 +323,91 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     children = description.get("children")
     if isinstance(children, list) and children:
         summary["children"] = children
+    return _bound_compact_description(summary)
+
+
+def _bound_compact_description(summary: dict[str, object]) -> dict[str, object]:
+    """Keep the default execution card within one small Agent context slice.
+
+    Full parameter help, state transitions, and recovery prose remain
+    addressable through ``--section`` and ``--view full``.  Large commands
+    retain every required parameter inline and list optional parameter names,
+    so an Agent knows when it must request the input section instead of
+    guessing a flag contract.
+    """
+
+    if _compact_size(summary) <= _MAX_COMPACT_DESCRIPTION_BYTES:
+        return summary
+
+    input_contract = summary.get("input")
+    if isinstance(input_contract, dict):
+        parameters = input_contract.get("parameters")
+        if isinstance(parameters, dict):
+            for parameter in parameters.values():
+                if isinstance(parameter, dict):
+                    parameter.pop("description", None)
+            if len(parameters) > _MAX_INLINE_PARAMETER_CARDS:
+                required_parameters = {
+                    name: parameter
+                    for name, parameter in parameters.items()
+                    if isinstance(parameter, dict) and parameter.get("required") is True
+                }
+                optional_parameters = [
+                    name
+                    for name, parameter in parameters.items()
+                    if not isinstance(parameter, dict) or parameter.get("required") is not True
+                ]
+                input_contract["parameters"] = required_parameters
+                input_contract["optional_parameters"] = optional_parameters
+                input_contract["parameter_details_required"] = bool(optional_parameters)
+        global_options = input_contract.get("global_options")
+        if isinstance(global_options, dict):
+            for option in global_options.values():
+                if isinstance(option, dict):
+                    option.pop("description", None)
+
+    if _compact_size(summary) > _MAX_COMPACT_DESCRIPTION_BYTES:
+        summary.pop("state_transitions", None)
+        next_actions = summary.get("next_actions")
+        if isinstance(next_actions, list):
+            for action in next_actions:
+                if isinstance(action, dict):
+                    action.pop("reason", None)
+                    action.pop("blocked_reason", None)
+        idempotency = summary.get("idempotency")
+        if isinstance(idempotency, dict):
+            idempotency.pop("retry_guidance", None)
+        trust = summary.get("trust")
+        if isinstance(trust, dict):
+            trust.pop("untrusted_fields", None)
+
+    if _compact_size(summary) > _MAX_COMPACT_DESCRIPTION_BYTES:
+        errors = summary.get("errors")
+        if isinstance(errors, list):
+            summary["errors"] = [
+                {"code": error.get("code")}
+                for error in errors
+                if isinstance(error, dict) and error.get("code")
+            ]
+        output = summary.get("output")
+        if isinstance(output, dict):
+            output.pop("terminal_states", None)
+
+    details_available = summary.get("details_available")
+    if isinstance(details_available, dict):
+        details_available["compact_truncated"] = True
     return summary
+
+
+def _compact_size(value: object) -> int:
+    return len(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8"),
+    )
 
 
 def description_sections(
@@ -376,12 +466,28 @@ def _compact_risk(value: object) -> dict[str, object]:
             "availability",
             "risk_mode",
             "plan_role",
+            "delegated_effects",
+            "requires_target_contract",
             "mutates",
             "external_action",
             "requires_plan",
             "confirmation_required_before_invocation",
             "produces_confirmation_plan",
             "long_running",
+        )
+        if key in value
+    }
+
+
+def _compact_preconditions(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: value[key]
+        for key in (
+            "runtime",
+            "manual_app_open_required",
+            "blocked_reason_when_unavailable",
         )
         if key in value
     }
@@ -396,23 +502,29 @@ def _compact_effects(value: object) -> dict[str, object]:
             "mutates",
             "external_services",
             "cost_may_apply",
+            "reversible",
             "requires_explicit_user_intent",
             "confirmation_required_before_invocation",
             "produces_confirmation_plan",
             "plan_role",
             "risk_mode",
+            "delegated_effects",
+            "requires_target_contract",
             "impact_scope",
             "confirmation_rule",
+            "unknown_external_result_protection",
         )
         if key in value
     }
     nested = value.get("downstream_effects")
     if isinstance(nested, dict) and (
-        nested.get("external_services") or nested.get("cost_may_apply")
+        nested.get("external_services")
+        or nested.get("cost_may_apply")
+        or nested.get("mutates")
     ):
         result["downstream_effects"] = {
             key: nested[key]
-            for key in ("external_services", "cost_may_apply")
+            for key in ("mutates", "external_services", "cost_may_apply", "reversible")
             if key in nested
         }
     return result
@@ -430,6 +542,7 @@ def _key_output_fields(fields: list[str]) -> list[str]:
         "next_cursor",
         "has_more",
         "mutation_receipt",
+        "effects",
         "warnings",
     )
     selected = [field for field in priority if field in fields]
@@ -583,6 +696,8 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
             "availability": "available",
             "risk_mode": "static",
             "plan_role": "none",
+            "delegated_effects": False,
+            "requires_target_contract": False,
             "confirmation_required_before_invocation": False,
             "produces_confirmation_plan": False,
         }
@@ -597,6 +712,10 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
         "unavailable_reason": capability.unavailable_reason,
         "risk_mode": spec.effects.risk_mode if spec is not None else "static",
         "plan_role": spec.effects.plan_role if spec is not None else "none",
+        "delegated_effects": spec.effects.delegated_effects if spec is not None else False,
+        "requires_target_contract": (
+            spec.effects.requires_target_contract if spec is not None else False
+        ),
         "confirmation_required_before_invocation": (
             spec.effects.requires_confirmation_plan if spec is not None else False
         ),

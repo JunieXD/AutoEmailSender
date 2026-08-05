@@ -2647,6 +2647,8 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(replayed.status_code, 201, msg=replayed.text)
         plan = prepared.json()
         self.assertEqual(plan["action"], "crawler.job.retry")
+        self.assertEqual(plan["effects"]["external_services"], ["public_web", "llm"])
+        self.assertTrue(plan["effects"]["cost_may_apply"])
         self.assertTrue(plan["summary"]["clear_existing_data"])
         self.assertEqual(plan["summary"]["affected_records"]["candidate_count"], 1)
         self.assertEqual(plan["summary"]["affected_records"]["page_count"], 1)
@@ -3071,6 +3073,8 @@ class AgentApiTests(unittest.TestCase):
         plan = created.json()
         plan_id = plan["plan_id"]
         self.assertEqual(plan["action"], "material.delete")
+        self.assertEqual(plan["effects"]["external_services"], [])
+        self.assertFalse(plan["effects"]["reversible"])
         self.assertTrue(plan["summary"]["material"]["is_primary"])
         self.assertTrue(plan["summary"]["effects"]["clears_default_reference_material"])
         self.assertNotIn("file_path", created.text)
@@ -3489,6 +3493,10 @@ class AgentApiTests(unittest.TestCase):
         plan = create_plan.json()
         self.assertEqual(plan["status"], "awaiting_confirmation")
         self.assertIn("尚未发送", plan["confirmation_message"])
+        self.assertEqual(plan["effects"]["resolution"], "delegated")
+        self.assertEqual(plan["effects"]["action"], "email.send")
+        self.assertEqual(plan["effects"]["external_services"], ["smtp"])
+        self.assertTrue(plan["effects"]["confirmation_required_before_invocation"])
 
         missing_confirmation = self.client.post(
             f"/api/agent/v1/plans/{plan['plan_id']}/execute",
@@ -3654,6 +3662,8 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(prepared.status_code, 201, msg=prepared.text)
         create_plan = prepared.json()
         self.assertEqual(create_plan["action"], "campaign.create")
+        self.assertEqual(create_plan["effects"]["external_services"], [])
+        self.assertTrue(create_plan["effects"]["reversible"])
         self.assertEqual(create_plan["status"], "awaiting_confirmation")
         self.assertEqual(create_plan["summary"]["recipient_count"], 2)
         self.assertIn("不会发送", " ".join(create_plan["warnings"]))
@@ -3715,6 +3725,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(send_prepared.status_code, 201, msg=send_prepared.text)
         send_plan = send_prepared.json()
         self.assertEqual(send_plan["action"], "campaign.send")
+        self.assertEqual(send_plan["effects"]["external_services"], ["smtp"])
         self.assertEqual(send_plan["summary"]["recipient_count"], 2)
         self.assertEqual(len(send_plan["summary"]["items"]), 2)
         self.assertIn("尚未发送", send_plan["confirmation_message"])

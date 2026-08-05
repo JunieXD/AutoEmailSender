@@ -155,6 +155,8 @@ def _fallback_effects() -> dict[str, object]:
         "produces_confirmation_plan": False,
         "plan_role": "none",
         "risk_mode": "static",
+        "delegated_effects": False,
+        "requires_target_contract": False,
         "impact_scope": "当前命令的读取范围",
         "confirmation_rule": "none",
         "unknown_external_result_protection": False,
@@ -582,7 +584,7 @@ _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
         {
             "plan_id", "action", "status", "task_id", "content_fingerprint", "expires_at",
             "confirmed_at", "executed_at", "canceled_at", "summary", "warnings", "result",
-            "idempotent_replay", "confirmation_message",
+            "effects", "idempotent_replay", "confirmation_message",
         },
     ),
     "campaigns": frozenset(

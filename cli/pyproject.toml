@@ -6,7 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1,<1",
     "pydantic>=2.12.5,<3",
-    "typer>=0.16,<1",
+    # Parser error handling and generic invocation currently use Typer's
+    # vendored Click compatibility layer; keep that private surface pinned.
+    "typer>=0.27,<0.28",
 ]
 
 [project.scripts]

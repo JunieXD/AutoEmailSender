@@ -49,5 +49,5 @@ uv run pyinstaller \
   "$CliDir/src/auto_email_sender_cli/__main__.py"
 
 CliExecutable="$CliDir/dist/auto-email-sender"
-"$CliExecutable" --format json version
-"$CliExecutable" --format json capabilities
+uv run python "$RepoRoot/scripts/verify_cli_binary.py" \
+  --executable "$CliExecutable"

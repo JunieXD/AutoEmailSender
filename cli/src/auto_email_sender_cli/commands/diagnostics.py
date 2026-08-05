@@ -12,6 +12,7 @@ from auto_email_sender_cli.commands.common import (
     format_detail,
     run_read_command,
     validate_context_options,
+    write_export_bytes,
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
@@ -210,9 +211,7 @@ def _write_json_export(output: Path, data: object, *, force: bool) -> Path:
 def _write_bytes_export(output: Path, content: bytes, *, force: bool) -> Path:
     destination = output.expanduser().resolve()
     try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open("wb" if force else "xb") as file:
-            file.write(content)
+        return write_export_bytes(destination, content, force=force)
     except FileExistsError as exc:
         raise CliError(
             code="OUTPUT_EXISTS",
@@ -226,4 +225,3 @@ def _write_bytes_export(output: Path, content: bytes, *, force: bool) -> Path:
             message=f"无法写入导出文件：{exc}",
             exit_code=5,
         ) from exc
-    return destination

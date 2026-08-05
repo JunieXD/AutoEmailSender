@@ -52,6 +52,7 @@ from app.services.material_mutations import (
     prepare_material_deletion_snapshot,
 )
 from app.services.operation_logs import record_operation_log
+from app.services.agent_plan_effects import resolve_agent_plan_effects
 from app.services.outreach_template_mutations import (
     OutreachTemplateMutationError,
     archive_outreach_template_record,
@@ -2382,6 +2383,7 @@ def _serialize_change_plan(
         executed_at=plan.executed_at,
         canceled_at=plan.canceled_at,
         summary=summary,
+        effects=resolve_agent_plan_effects(plan.action),
         warnings=[str(item) for item in warnings] if isinstance(warnings, list) else [],
         result=plan.result,
         idempotent_replay=idempotent_replay,

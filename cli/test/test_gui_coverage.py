@@ -11,10 +11,34 @@ from auto_email_sender_cli.capabilities import get_capability
 ROOT = Path(__file__).resolve().parents[2]
 COVERAGE_FILE = ROOT / "docs" / "agent_cli_gui_coverage.json"
 API_DIR = ROOT / "frontend" / "src" / "lib" / "api"
-EXPORT_PATTERN = re.compile(
-    r"^export\s+(?:async\s+)?(?:const|function|class)\s+([A-Za-z_$][\w$]*)",
+_DIRECT_EXPORT_PATTERN = re.compile(
+    r"^\s*export\s+(?:default\s+)?(?:async\s+)?(?:const|function|class)\s+([A-Za-z_$][\w$]*)",
     re.MULTILINE,
 )
+_NAMED_EXPORT_PATTERN = re.compile(r"export\s*\{(?P<body>[^}]*)\}", re.DOTALL)
+
+
+def extract_exported_actions(source: str) -> set[str]:
+    """Extract value exports, including re-exports, without counting TS types.
+
+    The previous single-line pattern silently dropped ``export { run }`` and
+    ``export default function run()``.  This lightweight parser intentionally
+    handles the export grammar used by the frontend API modules while keeping
+    the coverage check dependency-free (it runs before npm dependencies are
+    installed in some CI jobs).
+    """
+
+    names = set(_DIRECT_EXPORT_PATTERN.findall(source))
+    for match in _NAMED_EXPORT_PATTERN.finditer(source):
+        for raw_specifier in match.group("body").split(","):
+            specifier = raw_specifier.strip()
+            if not specifier or specifier.startswith("type "):
+                continue
+            parts = re.split(r"\s+as\s+", specifier, maxsplit=1)
+            exported_name = parts[-1].strip()
+            if re.fullmatch(r"[A-Za-z_$][\w$]*", exported_name):
+                names.add(exported_name)
+    return names
 
 
 class GuiCoverageTests(unittest.TestCase):
@@ -39,8 +63,8 @@ class GuiCoverageTests(unittest.TestCase):
             self.assertTrue(item.get("id"), item)
             self.assertTrue(item.get("reason"), item)
             source = item["source"]
-            exported_names = set(
-                EXPORT_PATTERN.findall((API_DIR / source).read_text(encoding="utf-8")),
+            exported_names = extract_exported_actions(
+                (API_DIR / source).read_text(encoding="utf-8"),
             )
             classified_actions = item.get("exported_actions")
             self.assertIsInstance(classified_actions, list, item)
@@ -103,6 +127,17 @@ class GuiCoverageTests(unittest.TestCase):
                         self.assertIn(command, ui_only, f"{item['id']} missing ui_only declaration")
                 elif item["status"] == "ui_only":
                     self.assertIn(capability.availability, {"ui_only", "planned", "unsupported_on_platform"})
+
+    def test_export_scanner_covers_reexports_and_default_named_functions(self) -> None:
+        source = """
+        export { run, run as execute, type Payload };
+        export default function fallback() { return null; }
+        export async function load() { return null; }
+        """
+        self.assertEqual(
+            extract_exported_actions(source),
+            {"run", "execute", "fallback", "load"},
+        )
 
 
 if __name__ == "__main__":

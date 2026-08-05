@@ -205,6 +205,15 @@ def emit_error(
                 err=True,
             )
         return
+    if context.output_format is OutputFormat.JSONL:
+        typer.echo(
+            json.dumps(
+                {"type": "error", "error": payload, "meta": envelope["_meta"]},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+        return
     typer.echo(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")))
 
 

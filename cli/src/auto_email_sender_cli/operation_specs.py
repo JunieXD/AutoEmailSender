@@ -42,6 +42,11 @@ class EffectSpec:
     downstream_external_services: tuple[str, ...] = ()
     downstream_cost_may_apply: bool = False
     downstream_reversible: bool = True
+    # A gateway whose actual effects are supplied by a runtime target/plan.
+    # Keep this explicit so an empty static service list cannot be mistaken
+    # for a safe read.
+    delegated_effects: bool = False
+    requires_target_contract: bool = False
 
     def to_dict(self) -> dict[str, object]:
         current_effects = {
@@ -65,6 +70,8 @@ class EffectSpec:
             "produces_confirmation_plan": self.produces_confirmation_plan,
             "plan_role": self.plan_role,
             "risk_mode": self.risk_mode,
+            "delegated_effects": self.delegated_effects,
+            "requires_target_contract": self.requires_target_contract,
             "impact_scope": self.impact_scope,
             "confirmation_rule": self.confirmation_rule,
             "current_effects": current_effects,
@@ -383,17 +390,21 @@ _CRAWLER_PLAN_EFFECT: Final = EffectSpec(
     downstream_cost_may_apply=True,
     downstream_reversible=False,
 )
-_SEND_EXECUTION_EFFECT: Final = EffectSpec(
+_DELEGATED_PLAN_EXECUTION_EFFECT: Final = EffectSpec(
     mutates=True,
-    external_services=("smtp",),
+    external_services=(),
     cost_may_apply=False,
     reversible=False,
     requires_explicit_user_intent=True,
     requires_confirmation_plan=True,
-    impact_scope="已确认计划中的邮件发送或排程范围",
-    confirmation_rule="explicit_plan_confirmation",
+    impact_scope="具体计划 action 的完整影响范围（见 plans.show.effects）",
+    confirmation_rule="先读 plans.show.effects，再确认",
     unknown_external_result_protection=True,
     plan_role="consumer",
+    risk_mode="delegated",
+    delegated_effects=True,
+    requires_target_contract=True,
+    downstream_mutates=True,
 )
 _INVOKE_EFFECT: Final = EffectSpec(
     mutates=False,
@@ -407,6 +418,8 @@ _INVOKE_EFFECT: Final = EffectSpec(
     unknown_external_result_protection=False,
     plan_role="delegated",
     risk_mode="delegated",
+    delegated_effects=True,
+    requires_target_contract=True,
 )
 _INVOKE_PRECONDITIONS: Final = PreconditionsSpec(
     desktop_app_must_be_open=False,
@@ -885,7 +898,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _PLAN_REPLAY,
     ),
     "send_execution": OperationProfile(
-        _SEND_EXECUTION_EFFECT,
+        _DELEGATED_PLAN_EXECUTION_EFFECT,
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         (),
@@ -1238,6 +1251,16 @@ def _build_specs() -> dict[str, OperationSpec]:
 OPERATION_SPECS: Final[dict[str, OperationSpec]] = _build_specs()
 
 
+def effect_has_external_action(effect: EffectSpec) -> bool:
+    """Return whether an effect can touch an external or delegated target."""
+
+    return bool(
+        effect.delegated_effects
+        or effect.external_services
+        or effect.downstream_external_services
+    )
+
+
 def get_operation_spec(command: str) -> OperationSpec | None:
     """Return the explicit semantic spec, if ``command`` is a published leaf."""
 
@@ -1280,8 +1303,8 @@ def validate_operation_manifest(
         spec = OPERATION_SPECS[command]
         if bool(getattr(capability, "mutates", False)) != spec.effects.mutates:
             errors.append(f"mismatch:{command}:mutates")
-        if bool(getattr(capability, "external_action", False)) != bool(
-            spec.effects.external_services or spec.effects.downstream_external_services
+        if bool(getattr(capability, "external_action", False)) != effect_has_external_action(
+            spec.effects,
         ):
             errors.append(f"mismatch:{command}:external_action")
         participates_in_plan = spec.effects.plan_role in {"producer", "consumer"}

@@ -47,6 +47,12 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Test Agent CLI
+        working-directory: cli
+        run: |
+          uv sync --dev
+          uv run python -m unittest discover test
+
       - name: Build Agent CLI
         run: ./scripts/build-cli.ps1 -Clean
         shell: pwsh
@@ -106,6 +112,12 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Test Agent CLI
+        working-directory: cli
+        run: |
+          uv sync --dev
+          uv run python -m unittest discover test
 
       - name: Build Agent CLI
         run: ./scripts/build-cli.sh --clean

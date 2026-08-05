@@ -76,6 +76,21 @@ class AgentPlanExecuteRequest(ApiSchema):
     confirm: bool = False
 
 
+class AgentPlanEffectsRead(ApiSchema):
+    """Effects resolved from the concrete action behind a confirmation plan."""
+
+    resolution: Literal["delegated"] = "delegated"
+    action: str
+    mutates: bool
+    external_services: list[str] = Field(default_factory=list)
+    cost_may_apply: bool
+    reversible: bool
+    impact_scope: str
+    confirmation_required_before_invocation: bool = True
+    confirmation_rule: str
+    unknown_external_result_protection: bool
+
+
 class AgentProfessorUpsertRequest(ApiSchema):
     name: str
     email: str
@@ -382,6 +397,7 @@ class AgentActionPlanRead(ApiSchema):
     executed_at: datetime | None = None
     canceled_at: datetime | None = None
     summary: AgentPlanSummaryRead
+    effects: AgentPlanEffectsRead
     warnings: list[str] = Field(default_factory=list)
     result: dict[str, object] | None = None
     idempotent_replay: bool = False
@@ -397,6 +413,7 @@ class AgentChangePlanRead(ApiSchema):
     executed_at: datetime | None = None
     canceled_at: datetime | None = None
     summary: dict[str, object]
+    effects: AgentPlanEffectsRead
     warnings: list[str] = Field(default_factory=list)
     result: dict[str, object] | None = None
     idempotent_replay: bool = False

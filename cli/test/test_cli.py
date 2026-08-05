@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -242,6 +243,15 @@ class CliTests(unittest.TestCase):
         # The old default emitted every leaf's detailed metadata.  This limit
         # protects the routine discovery path from consuming an Agent turn.
         self.assertLess(len(result.stdout.encode("utf-8")), 8_000)
+        system = next(item for item in payload["items"] if item["resource"] == "system")
+        self.assertTrue(system["has_delegated_gateways"])
+        self.assertTrue(system["has_mutations"])
+        self.assertTrue(system["has_external_actions"])
+
+        invoke = list_capability_cards(command="invoke")[0]
+        self.assertTrue(invoke["delegated_effects"])
+        self.assertTrue(invoke["requires_target_contract"])
+        self.assertTrue(invoke["effects"]["external_action"])
 
     def test_every_catalog_resource_can_be_selected_without_guessing_aliases(self) -> None:
         catalog = list_resource_catalog()
@@ -511,6 +521,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("capabilities --resource", skill)
         self.assertIn("scope_revision", skill)
         self.assertIn("describe --command", skill)
+        self.assertIn("delegated_effects", skill)
+        self.assertIn("requires_target_contract", skill)
         self.assertIn("untrusted", skill)
         self.assertIn("APP_UNAVAILABLE", skill)
         self.assertNotIn("guide --topic", skill)
@@ -663,6 +675,19 @@ class CliTests(unittest.TestCase):
         rows = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(rows[0]["type"], "meta")
         self.assertEqual(rows[1]["type"], "item")
+
+    def test_jsonl_errors_use_an_explicit_error_record(self) -> None:
+        result = self.runner.invoke(
+            app,
+            ["--format", "jsonl", "describe", "--command", "missing.command"],
+        )
+
+        self.assertEqual(result.exit_code, 4, msg=result.output)
+        rows = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["type"], "error")
+        self.assertEqual(rows[0]["error"]["code"], "COMMAND_NOT_FOUND")
+        self.assertEqual(rows[0]["meta"]["command"], "describe")
 
     def test_professor_list_calls_agent_api_and_keeps_pagination_metadata(self) -> None:
         fake_client = _FakeAgentClient(
@@ -827,6 +852,26 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(projected["messages"][0]["body_text"], long_body)
         self.assertEqual(projected["messages"][0]["metadata"]["kind"], "object_summary")
+
+    def test_large_arbitrary_nested_arrays_are_bounded_unless_explicitly_expanded(self) -> None:
+        data = {
+            "plan_id": "change-large",
+            "summary": {"items": [{"id": index, "name": f"导师 {index}"} for index in range(5_000)]},
+        }
+        projected = prepare_result_data(data, command="plans.show")
+        expanded = prepare_result_data(
+            data,
+            command="plans.show",
+            expanded_paths=("/summary/items",),
+        )
+
+        self.assertEqual(projected["summary"]["items"]["kind"], "array_summary")
+        self.assertEqual(projected["summary"]["items"]["item_count"], 5_000)
+        self.assertIn("/summary/items", projected["omitted_paths"])
+        self.assertTrue(projected["truncated"])
+        self.assertLess(len(json.dumps(projected, ensure_ascii=False).encode("utf-8")), 2_000)
+        self.assertEqual(len(expanded["summary"]["items"]), 5_000)
+        self.assertNotIn("/summary/items", expanded["omitted_paths"])
 
     def test_retryable_write_error_returns_the_generated_request_id(self) -> None:
         class FailingClient:
@@ -3105,6 +3150,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(export.exit_code, 0, msg=export.output)
             self.assertEqual(debug.exit_code, 0, msg=debug.output)
             self.assertEqual(debug_path.read_bytes(), b'{"event":"crawl"}\n')
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(export_path.stat().st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(debug_path.stat().st_mode), 0o600)
 
         self.assertEqual(
             log_client.calls[0],

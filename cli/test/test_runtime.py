@@ -14,9 +14,37 @@ from auto_email_sender_cli.runtime import (
     get_runtime_file_path,
     load_runtime_descriptor,
 )
+from auto_email_sender_cli.version import get_build_identity
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_build_identity_ignores_blank_explicit_revision_and_uses_embedded(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AUTO_EMAIL_SENDER_BUILD_REVISION": "   ",
+                "AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION": "  abc123  ",
+                "AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY": "0",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                get_build_identity(),
+                {"revision": "abc123", "kind": "embedded", "dirty": False},
+            )
+
+    def test_build_identity_falls_back_to_development_when_all_revisions_are_blank(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AUTO_EMAIL_SENDER_BUILD_REVISION": " ",
+                "AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION": "\t",
+            },
+            clear=True,
+        ):
+            identity = get_build_identity()
+        self.assertEqual(identity["revision"], "development")
+        self.assertEqual(identity["kind"], "development")
     def test_runtime_file_uses_electron_user_data_directory_on_macos(self) -> None:
         with (
             patch.dict(os.environ, {}, clear=True),

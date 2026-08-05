@@ -48,6 +48,26 @@ _STRUCTURED_FIELDS = frozenset(
 )
 _MAX_DETAIL_PREVIEW_CHARS = 480
 _MAX_COLLECTION_PREVIEW_CHARS = 120
+# A collection that is not an explicitly paged top-level ``items`` page is
+# otherwise unbounded (for example ``summary.items`` in a change plan). Keep
+# the default representation bounded even when every item is a short scalar.
+_MAX_INLINE_NESTED_ARRAY_ITEMS = 50
+_MAX_INLINE_PAGE_ITEMS = 500
+_MAX_INLINE_STRUCTURAL_ITEMS = 100
+_SMALL_STRUCTURAL_ARRAY_FIELDS = frozenset(
+    {
+        "selected_fields",
+        "warnings",
+        "required_input",
+        "untrusted_fields",
+        "external_services",
+        "filter_fields",
+        "filter_operators",
+        "terminal_states",
+        "key_fields",
+        "available_actions",
+    },
+)
 
 
 def is_business_result(command: str) -> bool:
@@ -79,11 +99,18 @@ def prepare_result_data(
         for selector in expanded_paths
         if isinstance(selector, str) and selector.strip()
     )
+    preserve_collection_items = frozenset(
+        {"/items"}
+        if isinstance(data.get("items"), list)
+        and any(key in data for key in ("next_cursor", "has_more", "pagination_mode"))
+        else set()
+    )
     summarized, omitted_paths = _summarize_value(
         data,
         path="",
         projection=normalized_projection,
         selectors=selectors,
+        preserve_collection_items=preserve_collection_items,
     )
     assert isinstance(summarized, dict)
     limit = _result_limit(summarized)
@@ -128,6 +155,7 @@ def _summarize_value(
     path: str,
     projection: str,
     selectors: tuple[str, ...],
+    preserve_collection_items: frozenset[str],
 ) -> tuple[Any, list[str]]:
     if isinstance(value, dict):
         result: dict[str, object] = {}
@@ -144,11 +172,33 @@ def _summarize_value(
                 path=nested_path,
                 projection=projection,
                 selectors=selectors,
+                preserve_collection_items=preserve_collection_items,
             )
             result[key_text] = compact
             omitted.extend(nested_omitted)
         return result, omitted
     if isinstance(value, list):
+        field_name = path.rsplit("/", 1)[-1]
+        preserve_small_structural_array = (
+            field_name in _SMALL_STRUCTURAL_ARRAY_FIELDS
+            and len(value) <= _MAX_INLINE_STRUCTURAL_ITEMS
+        )
+        if (
+            projection != "full"
+            and path not in preserve_collection_items
+            and not preserve_small_structural_array
+            and len(value) > _MAX_INLINE_NESTED_ARRAY_ITEMS
+            and not _is_expanded(field_name, path, selectors)
+            and not _selector_targets_descendant(path, value, selectors)
+        ):
+            return _summary(value, path=path), [path]
+        if (
+            projection != "full"
+            and path in preserve_collection_items
+            and len(value) > _MAX_INLINE_PAGE_ITEMS
+            and not _is_expanded(field_name, path, selectors)
+        ):
+            return _summary(value, path=path), [path]
         result: list[Any] = []
         omitted: list[str] = []
         for index, nested in enumerate(value):
@@ -157,6 +207,7 @@ def _summarize_value(
                 path=_join_path(path, str(index)),
                 projection=projection,
                 selectors=selectors,
+                preserve_collection_items=preserve_collection_items,
             )
             result.append(compact)
             omitted.extend(nested_omitted)

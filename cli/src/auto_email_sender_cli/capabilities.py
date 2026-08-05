@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Final, Literal
 
-from auto_email_sender_cli.operation_specs import get_operation_spec
+from auto_email_sender_cli.operation_specs import effect_has_external_action, get_operation_spec
 from auto_email_sender_cli.version import get_build_identity
 
 
@@ -423,8 +423,14 @@ class Capability:
                 "supports_wait": supports_wait(self.command),
                 "supports_if_revision": supports_if_revision(self.command),
                 "supports_idempotent_retry": spec.idempotency.supports_idempotent_retry,
+                # Derive this from the semantic manifest.  Delegated gateways
+                # are external-capable even when their concrete service list
+                # is resolved only after reading a target/plan.
+                "external_action": effect_has_external_action(spec.effects),
                 "risk_mode": spec.effects.risk_mode,
                 "plan_role": spec.effects.plan_role,
+                "delegated_effects": spec.effects.delegated_effects,
+                "requires_target_contract": spec.effects.requires_target_contract,
                 "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
                 "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
                 "stateful": spec.stateful,
@@ -451,9 +457,10 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("describe", "读取某个命令的机器可读操作说明", "L0", "available"),
     Capability(
         "invoke",
-        "以 JSON 对象调用一个已发布命令，并复用其真实参数解析与安全保护",
+        "通过 delegated gateway 调用已发布命令；必须先读取目标命令合同",
         "L0",
         "available",
+        external_action=True,
     ),
     Capability("wait", "等待已运行的后台任务进入终态，不会启动桌面应用", "L0", "available", long_running=True),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
@@ -1416,7 +1423,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability(
         "plans.execute",
-        "在用户明确确认后一次性执行发送或排程计划",
+        "在读取具体计划 delegated effects 并获得确认后执行计划",
         "L3",
         "available",
         mutates=True,
@@ -1525,7 +1532,7 @@ def capability_catalog_revision(
                 "risk_level": item.risk_level,
                 "availability": item.availability,
                 "mutates": item.mutates,
-                "external_action": item.external_action,
+                "external_action": effect_has_external_action(spec.effects),
                 "requires_plan": item.requires_plan,
                 "long_running": item.long_running,
                 "semantic_revision": spec.manifest_revision(),
@@ -1590,12 +1597,13 @@ def _capability_card(
         "risk_level": item.risk_level,
         "risk_mode": spec.effects.risk_mode,
         "plan_role": spec.effects.plan_role,
+        "delegated_effects": spec.effects.delegated_effects,
+        "requires_target_contract": spec.effects.requires_target_contract,
         "effects": {
             "mutates": spec.effects.mutates,
-            "external_action": bool(
-                spec.effects.external_services
-                or spec.effects.downstream_external_services
-            ),
+            "external_action": effect_has_external_action(spec.effects),
+            "delegated_effects": spec.effects.delegated_effects,
+            "requires_target_contract": spec.effects.requires_target_contract,
             "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
             "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
             "current": {
@@ -1643,10 +1651,17 @@ def _resource_card(
         "available_count": available_count,
         "unavailable_count": len(capabilities) - available_count,
         "risk_levels": risk_levels,
-        "has_mutations": any(_require_operation_spec(item.command).effects.mutates for item in capabilities),
+        "has_mutations": any(
+            _require_operation_spec(item.command).effects.mutates
+            or _require_operation_spec(item.command).effects.delegated_effects
+            for item in capabilities
+        ),
         "has_external_actions": any(
-            _require_operation_spec(item.command).effects.external_services
-            or _require_operation_spec(item.command).effects.downstream_external_services
+            effect_has_external_action(_require_operation_spec(item.command).effects)
+            for item in capabilities
+        ),
+        "has_delegated_gateways": any(
+            _require_operation_spec(item.command).effects.delegated_effects
             for item in capabilities
         ),
     }

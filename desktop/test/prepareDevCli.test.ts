@@ -26,6 +26,16 @@ async function createRepositoryFixture(): Promise<string> {
   );
   await writeFile(path.join(repoRoot, "scripts", "build-cli.sh"), "#!/usr/bin/env bash\n", "utf8");
   await writeFile(path.join(repoRoot, "scripts", "build-cli.ps1"), "param()\n", "utf8");
+  await writeFile(
+    path.join(repoRoot, "scripts", "generate_cli_build_identity.py"),
+    "# identity generator\n",
+    "utf8",
+  );
+  await writeFile(
+    path.join(repoRoot, "scripts", "verify_cli_binary.py"),
+    "# binary verifier\n",
+    "utf8",
+  );
   return repoRoot;
 }
 
@@ -63,6 +73,14 @@ describe("development CLI preparation", () => {
     );
     await expect(prepareDevelopmentCli(options)).resolves.toMatchObject({ state: "built" });
     expect(runBuild).toHaveBeenCalledTimes(2);
+
+    await writeFile(
+      path.join(repoRoot, "scripts", "verify_cli_binary.py"),
+      "# updated binary verifier\n",
+      "utf8",
+    );
+    await expect(prepareDevelopmentCli(options)).resolves.toMatchObject({ state: "built" });
+    expect(runBuild).toHaveBeenCalledTimes(3);
   });
 
   it("selects the Windows executable and falls back to Windows PowerShell", async () => {

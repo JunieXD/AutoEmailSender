@@ -28,14 +28,16 @@ def get_build_identity() -> dict[str, object]:
 
     explicit = os.getenv("AUTO_EMAIL_SENDER_BUILD_REVISION")
     embedded = os.getenv("AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION")
-    revision = (explicit or embedded or DEVELOPMENT_BUILD_REVISION).strip()
+    explicit_revision = explicit.strip() if explicit else ""
+    embedded_revision = embedded.strip() if embedded else ""
+    revision = explicit_revision or embedded_revision or DEVELOPMENT_BUILD_REVISION
     dirty_value = os.getenv("AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY", "0")
     return {
         "revision": revision,
         "kind": (
             "override"
-            if explicit and explicit.strip()
-            else ("embedded" if embedded and embedded.strip() else "development")
+            if explicit_revision
+            else ("embedded" if embedded_revision else "development")
         ),
         "dirty": dirty_value.strip().lower() in {"1", "true", "yes"},
     }
