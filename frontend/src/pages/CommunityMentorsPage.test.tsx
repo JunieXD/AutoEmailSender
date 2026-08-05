@@ -317,6 +317,25 @@ describe('CommunityMentorsPage', () => {
     expect(screen.queryByText('先从左侧选择学院')).not.toBeInTheDocument();
   });
 
+  it('treats the university and unit as peer labels and toggles from the card body', async () => {
+    apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
+
+    renderPage();
+
+    const unitCard = await screen.findByRole('button', {
+      name: '选择 示例大学 计算机学院',
+    });
+    expect(within(unitCard).getByText('示例大学')).toHaveClass('text-sm', 'font-normal');
+    expect(within(unitCard).getByText('计算机学院')).toHaveClass('text-sm', 'font-normal');
+    expect(within(unitCard).getByText('计算机学院')).not.toHaveClass('font-semibold');
+
+    fireEvent.click(within(unitCard).getByText('示例大学'));
+    expect(unitCard).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(within(unitCard).getByText('计算机学院'));
+    expect(unitCard).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('keeps cached data usable while checking for updates in the background', async () => {
     let resolveRefresh: ((value: CommunityCatalogDTO) => void) | undefined;
     apiMocks.getCatalog

@@ -1905,28 +1905,38 @@ export const CommunityMentorsPage = () => {
               ) : paginatedCatalogUnits.map((entry) => {
                 const selected = selectedUnitPaths.includes(entry.unit.path);
                 return (
-                  <article
+                  <button
+                    type="button"
                     key={entry.unit.path}
+                    aria-label={`${selected ? '取消选择' : '选择'} ${entry.universityName} ${entry.unit.name}`}
+                    aria-pressed={selected}
+                    onClick={() => toggleUnit(entry.unit.path)}
                     className={clsx(
-                      'flex min-h-[72px] items-center gap-3 rounded-2xl border px-3 py-2.5 transition',
+                      'flex min-h-[72px] w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2',
                       selected
                         ? 'border-primary/35 bg-primary/[0.035]'
                         : 'border-stone-200 hover:border-orange-200 hover:bg-orange-50/40',
                     )}
                   >
-                    <SelectionToggleButton
-                      label={`${selected ? '取消选择' : '选择'} ${entry.universityName} ${entry.unit.name}`}
-                      selected={selected}
-                      onToggle={() => toggleUnit(entry.unit.path)}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs text-stone-500">{entry.universityName}</div>
-                      <div className="mt-0.5 truncate text-sm font-semibold text-stone-900">{entry.unit.name}</div>
-                    </div>
+                    <span
+                      aria-hidden="true"
+                      className={clsx(
+                        'flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-sm transition',
+                        selected
+                          ? 'border-primary bg-primary text-white shadow-sm shadow-primary/20'
+                          : 'border-stone-200 bg-white text-stone-300',
+                      )}
+                    >
+                      <Check className={clsx('h-3.5 w-3.5', selected ? 'opacity-100' : 'opacity-0')} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-normal text-stone-800">{entry.universityName}</span>
+                      <span className="mt-0.5 block truncate text-sm font-normal text-stone-800">{entry.unit.name}</span>
+                    </span>
                     <span className="shrink-0 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500">
                       {entry.unit.record_count} 位
                     </span>
-                  </article>
+                  </button>
                 );
               })}
             </div>
