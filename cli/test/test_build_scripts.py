@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -27,6 +32,54 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--runtime-hook $BuildIdentityHook", script)
         self.assertIn("& $CliExecutable --format json version", script)
         self.assertIn("& $CliExecutable --format json capabilities", script)
+
+    def test_generated_build_identity_hook_uses_string_environment_values(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        generator = repo_root / "scripts" / "generate_cli_build_identity.py"
+        revision = "a" * 40
+        environment = os.environ.copy()
+        environment["AUTO_EMAIL_SENDER_BUILD_REVISION"] = revision
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            hook = Path(temporary_directory) / "cli_build_identity_hook.py"
+            generated = subprocess.run(
+                [
+                    sys.executable,
+                    generator.as_posix(),
+                    "--repo-root",
+                    repo_root.as_posix(),
+                    "--output",
+                    hook.as_posix(),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            metadata = json.loads(generated.stdout)
+            self.assertEqual(metadata["revision"], revision)
+
+            probe = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import json, os, runpy, sys; "
+                        "runpy.run_path(sys.argv[1]); "
+                        "print(json.dumps({"
+                        "'revision': os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION'], "
+                        "'dirty': os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY']"
+                        "}))"
+                    ),
+                    hook.as_posix(),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            embedded = json.loads(probe.stdout)
+            self.assertEqual(embedded["revision"], revision)
+            self.assertIn(embedded["dirty"], {"0", "1"})
 
 
 def _read_script(name: str) -> str:

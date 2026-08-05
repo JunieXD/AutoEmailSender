@@ -23,7 +23,8 @@ def main() -> None:
     output.write_text(
         "import os\n"
         f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION'] = {json.dumps(revision)}\n"
-        f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY'] = {'1' if dirty else '0'}\n",
+        f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY'] = "
+        f"{json.dumps('1' if dirty else '0')}\n",
         encoding="utf-8",
     )
     print(json.dumps({"revision": revision, "dirty": dirty, "output": output.as_posix()}))
