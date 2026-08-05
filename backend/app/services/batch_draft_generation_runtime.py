@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,9 @@ from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskCancellat
 from app.services.batch_task_item_actions import (
     batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
+)
+from app.services.batch_draft_fallback import (
+    build_missing_research_fallback_for_task,
 )
 from app.services.task_runtime import (
     WORKSPACE_DRAFT_REWRITE_INTERRUPTED_MESSAGE,
@@ -142,6 +145,10 @@ async def run_queued_batch_drafts_once(
     coordinator: BatchDraftGenerationCoordinator,
 ) -> int:
     await recover_stale_generating_drafts(session_factory)
+    await materialize_missing_research_template_fallbacks(
+        session_factory,
+        limit=max(concurrency, 1) * 4,
+    )
     claimed = await _claim_queued_llm_drafts(session_factory, limit=max(concurrency, 1) * 2)
     semaphore = asyncio.Semaphore(max(concurrency, 1))
 
@@ -176,6 +183,87 @@ async def run_queued_batch_drafts_once(
         ),
     )
     return len(claimed)
+
+
+async def materialize_missing_research_template_fallbacks(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    limit: int,
+) -> int:
+    if limit <= 0:
+        return 0
+
+    async with session_factory() as session:
+        candidates = list(
+            await session.scalars(
+                select(EmailTask)
+                .join(BatchTask, EmailTask.batch_task_id == BatchTask.id)
+                .join(Professor, EmailTask.professor_id == Professor.id)
+                .options(
+                    selectinload(EmailTask.batch_task),
+                    selectinload(EmailTask.identity),
+                    selectinload(EmailTask.professor),
+                )
+                .where(
+                    EmailTask.source == EmailTaskSource.BATCH.value,
+                    EmailTask.status.in_(
+                        [
+                            EmailTaskStatus.DISCOVERED.value,
+                            EmailTaskStatus.MATCHED.value,
+                        ],
+                    ),
+                    EmailTask.batch_send_canceled_at.is_(None),
+                    batch_item_uses_llm_generation_column(
+                        EmailTask.outreach_generation_mode,
+                    ),
+                    EmailTask.primary_material_id.is_not(None),
+                    or_(
+                        Professor.research_direction.is_(None),
+                        func.trim(Professor.research_direction) == "",
+                    ),
+                    BatchTask.status == BatchTaskStatus.RUNNING.value,
+                )
+                .order_by(
+                    BatchTask.created_at.asc(),
+                    EmailTask.created_at.asc(),
+                    EmailTask.id.asc(),
+                )
+                .limit(limit),
+            ),
+        )
+        converted = 0
+        now = utc_now()
+        for task in candidates:
+            try:
+                fallback = build_missing_research_fallback_for_task(task)
+            except ValueError:
+                continue
+            if fallback is None:
+                continue
+            result = await session.execute(
+                update(EmailTask)
+                .where(
+                    EmailTask.id == task.id,
+                    EmailTask.status == task.status,
+                    EmailTask.batch_send_canceled_at.is_(None),
+                )
+                .values(
+                    generated_subject=fallback.subject,
+                    generated_content_text=fallback.body_text,
+                    generated_content_html=fallback.body_html,
+                    draft_generation_source=fallback.generation_source,
+                    draft_fallback_reason=fallback.fallback_reason,
+                    status=EmailTaskStatus.REVIEW_REQUIRED.value,
+                    draft_generation_previous_status=None,
+                    draft_generation_started_at=None,
+                    last_error=None,
+                    updated_at=now,
+                ),
+            )
+            if result.rowcount == 1:
+                converted += 1
+        await session.commit()
+        return converted
 
 
 async def _claim_queued_llm_drafts(

@@ -29,6 +29,8 @@ const buildTask = (
   generated_subject: null,
   generated_content_text: null,
   generated_content_html: null,
+  draft_generation_source: null,
+  draft_fallback_reason: null,
   approved_subject: null,
   approved_body_text: null,
   approved_body_html: null,

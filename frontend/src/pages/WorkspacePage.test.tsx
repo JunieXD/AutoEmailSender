@@ -206,6 +206,8 @@ const buildWorkspaceThread = (
     generated_subject: "AI 原始主题",
     generated_content_text: "AI 原始正文",
     generated_content_html: "<p>AI 原始正文</p>",
+    draft_generation_source: "llm",
+    draft_fallback_reason: null,
     approved_subject: null,
     approved_body_text: null,
     approved_body_html: null,

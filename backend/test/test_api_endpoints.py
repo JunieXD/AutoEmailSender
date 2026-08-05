@@ -9409,6 +9409,116 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.status_code, 200, msg=items.text)
         self.assertEqual(items.json()[0]["status"], "approved")
 
+    def test_ai_batch_missing_research_uses_reviewable_template_fallback(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"My research focuses on agent systems.",
+            material_type="resume",
+        )
+        professor_response = self.client.post(
+            "/api/professors",
+            json={
+                "name": "缺研究方向导师",
+                "email": "template-fallback@example.edu",
+                "title": "Professor",
+                "university": "Example University",
+                "school": "School of Computing",
+                "department": "Computer Science",
+                "research_direction": "",
+                "recent_papers": [],
+                "profile_url": None,
+                "source_url": None,
+            },
+        )
+        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+
+        response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "AI 模板降级任务",
+                "professor_ids": [professor_response.json()["id"]],
+                "schedule_type": "immediate",
+                "primary_material_id": material_id,
+                "selected_material_ids": [],
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": "申请与{{name}}老师交流",
+                "outreach_template_body_text": "{{name}}老师您好，我是{{sender_name}}。",
+                "outreach_template_body_html": "<p>{{name}}老师您好，我是{{sender_name}}。</p>",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        batch_task_id = response.json()["id"]
+        self.assertEqual(response.json()["pending_generation_count"], 0)
+        self.assertEqual(response.json()["review_required_count"], 1)
+
+        items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        item = items.json()[0]
+        self.assertEqual(item["status"], "review_required")
+        self.assertEqual(item["next_action"], "review_draft")
+        self.assertEqual(item["draft_generation_source"], "template_fallback")
+        self.assertEqual(item["draft_fallback_reason"], "missing_research_direction")
+
+        thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/thread",
+        )
+        self.assertEqual(thread.status_code, 200, msg=thread.text)
+        self.assertEqual(thread.json()["current_task"]["outreach_generation_mode"], "llm")
+        self.assertEqual(
+            thread.json()["current_task"]["generated_subject"],
+            "申请与缺研究方向导师老师交流",
+        )
+        self.assertEqual(
+            thread.json()["current_task"]["generated_content_text"],
+            "缺研究方向导师老师您好，我是测试身份。",
+        )
+        self.assertEqual(
+            thread.json()["current_task"]["draft_generation_source"],
+            "template_fallback",
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=AssertionError("缺研究方向时不应调用模型")),
+        ) as mocked_generate:
+            regenerate = self.client.post(
+                f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/regenerate-draft",
+            )
+        self.assertEqual(regenerate.status_code, 400, msg=regenerate.text)
+        self.assertIn("请先补充导师研究方向", regenerate.json()["detail"])
+        mocked_generate.assert_not_awaited()
+
+        preserved = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/thread",
+        ).json()
+        self.assertEqual(preserved["current_task"]["status"], "review_required")
+        self.assertEqual(
+            preserved["current_task"]["generated_content_text"],
+            "缺研究方向导师老师您好，我是测试身份。",
+        )
+        self.assertEqual(
+            preserved["current_task"]["draft_generation_source"],
+            "template_fallback",
+        )
+
+        approved = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/approve",
+            json={
+                "subject": preserved["current_task"]["generated_subject"],
+                "body_text": preserved["current_task"]["generated_content_text"],
+                "body_html": preserved["current_task"]["generated_content_html"],
+                "selected_material_ids": [],
+            },
+        )
+        self.assertEqual(approved.status_code, 200, msg=approved.text)
+        self.assertEqual(approved.json()["current_task"]["status"], "approved")
+
     def test_batch_task_items_show_professor_delivery_progress(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()

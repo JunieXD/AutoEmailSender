@@ -690,6 +690,8 @@ const buildBatchItem = (
   sent_at: null,
   last_send_attempt_at: null,
   last_error: null,
+  draft_generation_source: null,
+  draft_fallback_reason: null,
   is_replied: false,
   updated_at: "2026-05-08T00:00:00",
   next_action: "waiting_send",
@@ -760,6 +762,8 @@ const buildWorkspaceThread = (
     generated_subject: "申请与老师交流",
     generated_content_text: "老师您好，我想交流。",
     generated_content_html: "<p>老师您好，我想交流。</p>",
+    draft_generation_source: "llm",
+    draft_fallback_reason: null,
     approved_subject: null,
     approved_body_text: null,
     approved_body_html: null,
@@ -1795,6 +1799,109 @@ describe("TasksPage batch draft review", () => {
     ).toHaveAttribute("href", "https://example.edu/mentor");
   });
 
+  it("reviews template fallback drafts and blocks AI rewrite without research direction", async () => {
+    const task = buildBatchTask({
+      name: "AI 模板降级任务",
+      schedule_type: "immediate",
+      outreach_generation_mode: "llm",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 61,
+      professor_name: "缺研究方向导师",
+      status: "review_required",
+      next_action: "review_draft",
+      draft_generation_source: "template_fallback",
+      draft_fallback_reason: "missing_research_direction",
+    });
+    const fallbackThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        name: "缺研究方向导师",
+        research_direction: null,
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+        outreach_template_body_text:
+          "关注到您在{{research_direction}}方向的工作。",
+        generated_subject: "申请与缺研究方向导师老师交流",
+        generated_content_text: "缺研究方向导师老师您好，我是申请人。",
+        generated_content_html: "<p>缺研究方向导师老师您好，我是申请人。</p>",
+        draft_generation_source: "template_fallback",
+        draft_fallback_reason: "missing_research_direction",
+      },
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(fallbackThread);
+    apiMocks.approveBatchTaskItemDraft.mockResolvedValue(
+      buildWorkspaceThread({
+        ...fallbackThread,
+        current_task: {
+          ...fallbackThread.current_task,
+          status: "approved",
+        },
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(
+      await screen.findByText(/其中 1 封因导师缺少研究方向/),
+    ).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    expect(await screen.findByText("未进行 AI 改写")).toBeInTheDocument();
+
+    const fallbackNotice = await screen.findByRole("region", {
+      name: "未进行 AI 改写提示",
+    });
+    expect(fallbackNotice).toHaveTextContent(
+      "该导师缺少研究方向，系统已直接使用「博士申请模板」模板生成草稿",
+    );
+    expect(fallbackNotice).toHaveTextContent(
+      "模板中的研究方向变量为空，请重点检查相关语句",
+    );
+    expect(
+      within(fallbackNotice).getByRole("link", { name: "补全导师资料" }),
+    ).toHaveAttribute(
+      "href",
+      "/professors?keyword=mentor%40example.edu",
+    );
+
+    confirmMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
+    expect(notificationMocks.notifyError).toHaveBeenCalledWith(
+      "无法使用 AI 改写",
+      "该导师缺少研究方向。当前模板草稿不会受到影响，你可以直接审核，或先补全导师资料。",
+    );
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(apiMocks.regenerateBatchTaskItemDraft).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("邮件正文")).toHaveValue(
+      "<p>缺研究方向导师老师您好，我是申请人。</p>",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "审核通过" }));
+    await waitFor(() => {
+      expect(apiMocks.approveBatchTaskItemDraft).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+        expect.objectContaining({
+          subject: "申请与缺研究方向导师老师交流",
+          body_text: "缺研究方向导师老师您好，我是申请人。",
+        }),
+      );
+    });
+  });
+
   it("keeps the current draft visible until the next professor is ready", async () => {
     const task = buildBatchTask({
       name: "无感切换批量任务",
@@ -2117,6 +2224,8 @@ describe("TasksPage batch draft review", () => {
       professor_name: "第一位待审核导师",
       status: "review_required",
       next_action: "review_draft",
+      draft_generation_source: "template_fallback",
+      draft_fallback_reason: "missing_research_direction",
       selected_attachment_size_bytes: 1024 * 1024 + 1,
     });
     const secondItem = buildBatchItem({
@@ -2165,7 +2274,7 @@ describe("TasksPage batch draft review", () => {
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "确认全部通过这 2 封 AI 改写草稿？",
+          title: "确认全部通过这 2 封草稿？",
           description: expect.stringContaining("确认后会立即进入发送队列"),
           confirmLabel: "仍然全部通过",
           cancelLabel: "继续逐封审核",
@@ -2175,6 +2284,9 @@ describe("TasksPage batch draft review", () => {
     });
     expect(confirmMock.mock.calls[0][0].description).toContain(
       "生成中或生成失败的邮件不会被处理",
+    );
+    expect(confirmMock.mock.calls[0][0].description).toContain(
+      "其中 1 封因导师缺少研究方向",
     );
     expect(confirmMock.mock.calls[0][0].description).toContain(
       "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",

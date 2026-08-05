@@ -1,4 +1,6 @@
 export type OutreachGenerationMode = 'llm' | 'template';
+export type DraftGenerationSource = 'llm' | 'template' | 'template_fallback';
+export type DraftFallbackReason = 'missing_research_direction';
 
 export type MentorStatus = '未发送' | '已读' | '待审核' | '已回复' | '婉拒';
 
@@ -992,6 +994,8 @@ export interface BatchTaskItemDTO {
   last_send_attempt_at: string | null;
   last_error: string | null;
   possible_cause?: string | null;
+  draft_generation_source: DraftGenerationSource | null;
+  draft_fallback_reason: DraftFallbackReason | null;
   selected_attachment_size_bytes?: number;
   is_replied: boolean;
   updated_at: string;
@@ -1106,6 +1110,8 @@ export interface WorkspaceTaskSummaryDTO {
   generated_subject: string | null;
   generated_content_text: string | null;
   generated_content_html: string | null;
+  draft_generation_source: DraftGenerationSource | null;
+  draft_fallback_reason: DraftFallbackReason | null;
   approved_subject: string | null;
   approved_body_text: string | null;
   approved_body_html: string | null;

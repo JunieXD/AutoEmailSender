@@ -61,6 +61,10 @@ from app.services.batch_schedule import (
     is_datetime_in_batch_window,
     normalize_scheduled_dates,
 )
+from app.services.batch_draft_fallback import (
+    DRAFT_GENERATION_SOURCE_LLM,
+    DRAFT_GENERATION_SOURCE_TEMPLATE,
+)
 from app.services.batch_task_status import sync_batch_task_completion
 from app.services.mail_runtime import MailAttachment, ReceivedEmail
 from app.services.materials import (
@@ -973,6 +977,12 @@ async def generate_task_draft(
         task.generated_subject = subject
         task.generated_content_text = body_text
         task.generated_content_html = body_html
+        task.draft_generation_source = (
+            DRAFT_GENERATION_SOURCE_TEMPLATE
+            if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE
+            else DRAFT_GENERATION_SOURCE_LLM
+        )
+        task.draft_fallback_reason = None
         task.status = EmailTaskStatus.REVIEW_REQUIRED.value
         task.draft_generation_previous_status = None
         task.updated_at = utc_now()
@@ -1290,6 +1300,8 @@ async def rewrite_task_draft(
         task.generated_subject = result.subject
         task.generated_content_text = result.body_text
         task.generated_content_html = result.body_html
+        task.draft_generation_source = DRAFT_GENERATION_SOURCE_LLM
+        task.draft_fallback_reason = None
         task.approved_subject = None
         task.approved_body_text = None
         task.approved_body_html = None
@@ -1672,6 +1684,8 @@ async def update_task_outreach_config(
             task.generated_subject = None
             task.generated_content_text = None
             task.generated_content_html = None
+            task.draft_generation_source = None
+            task.draft_fallback_reason = None
             task.approved_subject = None
             task.approved_body_text = None
             task.approved_body_html = None

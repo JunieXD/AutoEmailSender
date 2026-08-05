@@ -3730,6 +3730,75 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(after_send["approved_count"], 2)
         self.assertEqual(after_send["sent_count"], 0)
 
+    def test_agent_ai_campaign_marks_missing_research_template_fallbacks(self) -> None:
+        identity_id = self._create_identity()
+        llm_profile_id = self._create_llm_profile()
+        ai_professor_id = self._create_professor(email="campaign-ai@example.edu")
+        fallback_professor_id = self._create_professor(
+            email="campaign-fallback@example.edu",
+        )
+        material_id = self._upload_material(identity_id)
+        template_id = self._create_template()
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE professors SET research_direction = '' WHERE id = ?",
+                (fallback_professor_id,),
+            )
+            connection.commit()
+
+        prepared = self.client.post(
+            "/api/agent/v1/campaigns/prepare-create",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-campaign-ai-fallback",
+            },
+            json={
+                "name": "AI 混合草稿",
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "professor_ids": [ai_professor_id, fallback_professor_id],
+                "generation_mode": "ai_rewrite",
+                "template_id": template_id,
+                "reference_material_id": material_id,
+                "attachment_material_ids": [],
+            },
+        )
+
+        self.assertEqual(prepared.status_code, 201, msg=prepared.text)
+        plan = prepared.json()
+        self.assertEqual(plan["summary"]["template_fallback_count"], 1)
+        self.assertTrue(any("缺少研究方向" in warning for warning in plan["warnings"]))
+
+        created = self.client.post(
+            f"/api/agent/v1/plans/{plan['plan_id']}/execute",
+            headers=self._agent_headers(),
+            json={"confirm": True},
+        )
+        self.assertEqual(created.status_code, 200, msg=created.text)
+        result = created.json()["result"]
+        self.assertEqual(result["pending_generation_count"], 1)
+        self.assertEqual(result["review_required_count"], 1)
+
+        items = self._agent_get(
+            f"/api/agent/v1/campaigns/{result['campaign_id']}/items",
+        ).json()["items"]
+        item_by_professor = {item["professor_id"]: item for item in items}
+        self.assertEqual(item_by_professor[ai_professor_id]["status"], "discovered")
+        self.assertIsNone(
+            item_by_professor[ai_professor_id]["draft_generation_source"],
+        )
+        fallback_item = item_by_professor[fallback_professor_id]
+        self.assertEqual(fallback_item["status"], "review_required")
+        self.assertTrue(fallback_item["has_final_content"])
+        self.assertEqual(
+            fallback_item["draft_generation_source"],
+            "template_fallback",
+        )
+        self.assertEqual(
+            fallback_item["draft_fallback_reason"],
+            "missing_research_direction",
+        )
+
     def test_agent_campaign_send_plan_rejects_changed_draft_content(self) -> None:
         campaign_id, item_id = self._create_template_campaign()
         prepared = self.client.post(

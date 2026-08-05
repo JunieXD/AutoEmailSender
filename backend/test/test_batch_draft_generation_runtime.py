@@ -391,6 +391,8 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(processed, 1)
         self.assertEqual(task.status, EmailTaskStatus.REVIEW_REQUIRED.value)
         self.assertEqual(task.outreach_generation_mode, "llm")
+        self.assertEqual(task.draft_generation_source, "llm")
+        self.assertIsNone(task.draft_fallback_reason)
 
     def test_items_missing_primary_material_are_not_claimed_for_generation(self) -> None:
         task_ids = self._run_async(
@@ -417,11 +419,12 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
         mocked_generate.assert_not_awaited()
 
-    def test_items_missing_professor_research_direction_are_not_claimed_for_generation(self) -> None:
+    def test_items_missing_professor_research_direction_use_template_fallback(self) -> None:
         task_ids = self._run_async(
             self._create_batch_with_tasks(
                 [EmailTaskStatus.DISCOVERED.value],
                 professor_research_direction="",
+                identity_template_body_html="<p>当前身份模板不属于任务快照。</p>",
             ),
         )
 
@@ -439,9 +442,18 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         task = self._run_async(self._get_task(task_ids[0]))
         self.assertEqual(processed, 0)
-        self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
+        self.assertEqual(task.status, EmailTaskStatus.REVIEW_REQUIRED.value)
+        self.assertEqual(task.outreach_generation_mode, "llm")
+        self.assertEqual(task.draft_generation_source, "template_fallback")
+        self.assertEqual(task.draft_fallback_reason, "missing_research_direction")
+        self.assertEqual(task.generated_subject, "申请与张教授1老师交流")
+        self.assertEqual(task.generated_content_text, "老师您好，我是王同学。")
+        self.assertEqual(
+            task.generated_content_html,
+            "<p>老师您好，我是王同学。</p>",
+        )
+        self.assertIsNone(task.approved_at)
         mocked_generate.assert_not_awaited()
-
 
     def test_batch_draft_generation_keeps_batch_selected_materials(self) -> None:
         task_ids = self._run_async(
@@ -515,6 +527,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         outreach_generation_mode: str | None = "llm",
         with_primary_material: bool = True,
         professor_research_direction: str = "Large language models",
+        identity_template_body_html: str | None = None,
         batch_status: str = BatchTaskStatus.RUNNING.value,
     ) -> list[int]:
         async with self.session_factory() as session:
@@ -532,6 +545,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 outreach_generation_mode="llm",
                 outreach_template_subject="申请与{{name}}老师交流",
                 outreach_template_body_text="老师您好，我是{{sender_name}}。",
+                outreach_template_body_html=identity_template_body_html,
                 is_default=True,
             )
             material = IdentityMaterial(

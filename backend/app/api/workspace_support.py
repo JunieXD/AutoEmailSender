@@ -224,6 +224,12 @@ async def _build_workspace_thread_read(
             generated_subject=current_task.generated_subject if current_task else None,
             generated_content_text=current_task.generated_content_text if current_task else None,
             generated_content_html=current_task.generated_content_html if current_task else None,
+            draft_generation_source=(
+                current_task.draft_generation_source if current_task else None
+            ),
+            draft_fallback_reason=(
+                current_task.draft_fallback_reason if current_task else None
+            ),
             approved_subject=current_task.approved_subject if current_task else None,
             approved_body_text=current_task.approved_body_text if current_task else None,
             approved_body_html=current_task.approved_body_html if current_task else None,

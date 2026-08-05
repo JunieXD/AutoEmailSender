@@ -362,6 +362,8 @@ class AgentCampaignItemRead(ApiSchema):
     professor_email: str | None = None
     status: str
     generation_mode: Literal["template", "ai_rewrite"]
+    draft_generation_source: str | None = None
+    draft_fallback_reason: str | None = None
     subject: str | None = None
     has_final_content: bool
     attachment_material_ids: list[int] = Field(default_factory=list)
@@ -449,6 +451,8 @@ class AgentWorkspaceTaskRead(ApiSchema):
     generated_subject: str | None = None
     generated_content_text: str | None = None
     generated_content_html: str | None = None
+    draft_generation_source: str | None = None
+    draft_fallback_reason: str | None = None
     approved_subject: str | None = None
     approved_body_text: str | None = None
     approved_body_html: str | None = None

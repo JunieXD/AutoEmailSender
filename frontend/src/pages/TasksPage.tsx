@@ -1282,6 +1282,13 @@ export const TasksPage = () => {
       ),
     [selectedBatchTaskItems],
   );
+  const templateFallbackReviewCount = useMemo(
+    () =>
+      reviewRequiredBatchTaskItems.filter(
+        (item) => item.draft_generation_source === "template_fallback",
+      ).length,
+    [reviewRequiredBatchTaskItems],
+  );
   const batchReviewQueueItems = useMemo(
     () =>
       selectedBatchTaskItems.filter(
@@ -2942,11 +2949,27 @@ export const TasksPage = () => {
     if (!selectedBatchTask || !activeBatchReviewItem || itemId === null) {
       return;
     }
+    const usesTemplateFallback =
+      batchReviewThread?.current_task.draft_generation_source ===
+        "template_fallback" ||
+      activeBatchReviewItem.draft_generation_source === "template_fallback";
+    if (
+      usesTemplateFallback &&
+      !batchReviewThread?.professor.research_direction?.trim()
+    ) {
+      notifyError(
+        "无法使用 AI 改写",
+        "该导师缺少研究方向。当前模板草稿不会受到影响，你可以直接审核，或先补全导师资料。",
+      );
+      return;
+    }
     const confirmed = await confirm({
-      title: "确认重新生成草稿？",
-      description: "重新生成后会覆盖当前草稿内容，原草稿将无法保留。",
-      confirmLabel: "确认重新生成",
-      cancelLabel: "先不重新生成",
+      title: usesTemplateFallback ? "确认使用 AI 改写？" : "确认重新生成草稿？",
+      description: usesTemplateFallback
+        ? "AI 改写会覆盖当前模板草稿，当前编辑内容将无法保留。"
+        : "重新生成后会覆盖当前草稿内容，原草稿将无法保留。",
+      confirmLabel: usesTemplateFallback ? "确认使用 AI 改写" : "确认重新生成",
+      cancelLabel: usesTemplateFallback ? "继续审核模板草稿" : "先不重新生成",
     });
     if (!confirmed) {
       return;
@@ -2961,7 +2984,7 @@ export const TasksPage = () => {
         }
         return currentItemId;
       });
-      notifySuccess("草稿已重新生成");
+      notifySuccess(usesTemplateFallback ? "AI 改写已完成" : "草稿已重新生成");
       if (selectedBatchTask) {
         await loadBatchTaskDetails(selectedBatchTask.id);
       }
@@ -3042,6 +3065,9 @@ export const TasksPage = () => {
     const taskId = selectedBatchTask.id;
     const itemIds = reviewRequiredBatchTaskItems.map((item) => item.id);
     const approvedCount = itemIds.length;
+    const fallbackCount = reviewRequiredBatchTaskItems.filter(
+      (item) => item.draft_generation_source === "template_fallback",
+    ).length;
     const attachmentWarning = buildBulkLargeAttachmentWarning(
       reviewRequiredBatchTaskItems.map(
         (item) => item.selected_attachment_size_bytes ?? 0,
@@ -3061,9 +3087,12 @@ export const TasksPage = () => {
         ? "本次只处理当前已经生成且仍为待审核状态的草稿；生成中或生成失败的邮件不会被处理。"
         : null;
     const confirmed = await confirm({
-      title: `确认全部通过这 ${approvedCount} 封 AI 改写草稿？`,
+      title: `确认全部通过这 ${approvedCount} 封草稿？`,
       description: [
-        "系统将直接采用每封邮件当前的 AI 主题、正文和附件设置，不再逐封检查。",
+        "系统将直接采用每封邮件当前的主题、正文和附件设置，不再逐封检查。",
+        fallbackCount > 0
+          ? `其中 ${fallbackCount} 封因导师缺少研究方向，直接使用模板生成，未进行 AI 改写。`
+          : null,
         attachmentWarning,
         deliveryDescription,
         ignoredDraftDescription,
@@ -3743,6 +3772,21 @@ export const TasksPage = () => {
     batchReviewItemId !== null
       ? batchReviewItemActions[batchReviewItemId] ?? null
       : null;
+  const batchReviewUsesTemplateFallback =
+    batchReviewThread?.current_task.draft_generation_source ===
+      "template_fallback" ||
+    activeBatchReviewItem?.draft_generation_source === "template_fallback";
+  const batchReviewTemplateReferencesResearchDirection = [
+    batchReviewThread?.current_task.outreach_template_subject,
+    batchReviewThread?.current_task.outreach_template_body_text,
+    batchReviewThread?.current_task.outreach_template_body_html,
+  ].some((value) => /\{\{\s*research_direction\s*\}\}/.test(value ?? ""));
+  const batchReviewProfessorHref = activeBatchReviewItem
+    ? `/professors?keyword=${encodeURIComponent(
+        activeBatchReviewItem.professor_email ||
+          activeBatchReviewItem.professor_name,
+      )}`
+    : "/professors";
   const canSendBatchReviewImmediately =
     selectedBatchTask?.schedule_type === "immediate";
 
@@ -4580,6 +4624,12 @@ export const TasksPage = () => {
                                       重新生成中
                                     </span>
                                   ) : null}
+                                  {item.draft_generation_source ===
+                                  "template_fallback" ? (
+                                    <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                                      未进行 AI 改写
+                                    </span>
+                                  ) : null}
                                 </div>
                                 <div className="mt-1 truncate text-xs text-stone-500">
                                   {[item.professor_title, item.professor_school]
@@ -4617,6 +4667,35 @@ export const TasksPage = () => {
                     ) : batchReviewThread ? (
                       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
                         <div className="min-w-0">
+                          {batchReviewUsesTemplateFallback ? (
+                            <section
+                              aria-label="未进行 AI 改写提示"
+                              className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"
+                            >
+                              <div className="flex items-center gap-2 font-semibold">
+                                <Sparkles className="h-4 w-4" />
+                                当前草稿未进行 AI 改写
+                              </div>
+                              <p className="mt-1">
+                                该导师缺少研究方向，系统已直接使用
+                                {selectedBatchTask
+                                  ? `「${getOutreachTemplateSourceLabel(selectedBatchTask)}」`
+                                  : "本次所选"}
+                                模板生成草稿。你可以编辑并审核通过。
+                              </p>
+                              {batchReviewTemplateReferencesResearchDirection ? (
+                                <p className="mt-1 font-medium">
+                                  模板中的研究方向变量为空，请重点检查相关语句。
+                                </p>
+                              ) : null}
+                              <Link
+                                to={batchReviewProfessorHref}
+                                className="mt-2 inline-flex font-medium text-amber-900 underline underline-offset-4"
+                              >
+                                补全导师资料
+                              </Link>
+                            </section>
+                          ) : null}
                           <div className="mb-5 rounded-2xl border border-primary/10 bg-primary/5 px-4 py-3">
                             <div className="text-sm font-semibold text-stone-900">
                               {batchReviewThread.professor.name}
@@ -4715,8 +4794,14 @@ export const TasksPage = () => {
                                 disabled={Boolean(activeBatchReviewAction) || !batchReviewThread}
                                 className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                <RotateCcw className="h-4 w-4" />
-                                重新生成
+                                {batchReviewUsesTemplateFallback ? (
+                                  <Sparkles className="h-4 w-4" />
+                                ) : (
+                                  <RotateCcw className="h-4 w-4" />
+                                )}
+                                {batchReviewUsesTemplateFallback
+                                  ? "使用 AI 改写"
+                                  : "重新生成"}
                               </button>
                               <button
                                 type="button"
@@ -4990,8 +5075,11 @@ export const TasksPage = () => {
                 {reviewRequiredBatchTaskItems.length > 0 ? (
                   <div className="mt-2 flex flex-col gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 sm:flex-row sm:items-center sm:justify-between">
                     <p>
-                      当前有 {reviewRequiredBatchTaskItems.length} 封 AI
-                      改写草稿待审核。你可以逐封检查，也可以直接通过当前全部待审核草稿。
+                      当前有 {reviewRequiredBatchTaskItems.length} 封草稿待审核。
+                      {templateFallbackReviewCount > 0
+                        ? `其中 ${templateFallbackReviewCount} 封因导师缺少研究方向，使用模板生成且未进行 AI 改写。`
+                        : "这些草稿已完成 AI 改写。"}
+                      你可以逐封检查，也可以直接通过当前全部待审核草稿。
                     </p>
                     <button
                       type="button"

@@ -264,6 +264,8 @@ async def _configure_agent_draft(
         task.generated_subject = None
         task.generated_content_text = None
         task.generated_content_html = None
+        task.draft_generation_source = None
+        task.draft_fallback_reason = None
         task.approved_subject = None
         task.approved_body_text = None
         task.approved_body_html = None

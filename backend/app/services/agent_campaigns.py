@@ -34,6 +34,10 @@ from app.services.batch_schedule import (
     has_future_batch_window,
     normalize_scheduled_dates,
 )
+from app.services.batch_draft_fallback import (
+    build_initial_batch_draft,
+    professor_has_research_direction,
+)
 from app.services.batch_task_status import sync_batch_task_completion
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
@@ -46,7 +50,6 @@ from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     OutreachTemplateConfig,
     get_outreach_template_defaults_validation_error,
-    render_outreach_template,
     resolve_outreach_template_config,
 )
 from app.services.rich_text import normalize_email_html, text_to_email_html
@@ -700,23 +703,31 @@ async def execute_campaign_create_snapshot(
     session.add(batch_task)
     await session.flush()
 
+    pending_generation_count = 0
+    review_required_count = 0
     for professor in context.professors:
         generated_subject = None
         generated_body_text = None
         generated_body_html = None
+        draft_generation_source = None
+        draft_fallback_reason = None
         task_status = EmailTaskStatus.DISCOVERED.value
-        if context.outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
-            rendered = render_outreach_template(
-                context.identity,
-                professor,
-                subject_template=context.outreach_config.subject_template,
-                body_text_template=context.outreach_config.body_text_template,
-                body_html_template=context.outreach_config.body_html_template,
-            )
-            generated_subject = rendered.subject
-            generated_body_text = rendered.body_text
-            generated_body_html = rendered.body_html
+        initial_draft = build_initial_batch_draft(
+            context.identity,
+            professor,
+            context.outreach_config,
+            primary_material_available=context.primary_material is not None,
+        )
+        if initial_draft is not None:
+            generated_subject = initial_draft.subject
+            generated_body_text = initial_draft.body_text
+            generated_body_html = initial_draft.body_html
+            draft_generation_source = initial_draft.generation_source
+            draft_fallback_reason = initial_draft.fallback_reason
             task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+            review_required_count += 1
+        else:
+            pending_generation_count += 1
 
         session.add(
             EmailTask(
@@ -750,6 +761,8 @@ async def execute_campaign_create_snapshot(
                 generated_subject=generated_subject,
                 generated_content_text=generated_body_text,
                 generated_content_html=generated_body_html,
+                draft_generation_source=draft_generation_source,
+                draft_fallback_reason=draft_fallback_reason,
                 selected_material_ids=[material.id for material in context.attachment_materials]
                 or None,
             ),
@@ -777,16 +790,8 @@ async def execute_campaign_create_snapshot(
         "campaign_id": batch_task.id,
         "status": batch_task.status,
         "target_count": batch_task.target_count,
-        "pending_generation_count": (
-            batch_task.target_count
-            if batch_task.outreach_generation_mode == OUTREACH_GENERATION_MODE_LLM
-            else 0
-        ),
-        "review_required_count": (
-            batch_task.target_count
-            if batch_task.outreach_generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE
-            else 0
-        ),
+        "pending_generation_count": pending_generation_count,
+        "review_required_count": review_required_count,
     }
 
 
@@ -984,23 +989,21 @@ async def _resolve_campaign_create_context(
             code="CAMPAIGN_TEMPLATE_CONTENT_INVALID",
             message=validation_error,
         )
-    if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
-        for professor in professors:
-            try:
-                render_outreach_template(
-                    identity,
-                    professor,
-                    subject_template=outreach_config.subject_template,
-                    body_text_template=outreach_config.body_text_template,
-                    body_html_template=outreach_config.body_html_template,
-                )
-            except ValueError as exc:
-                raise AgentApiError(
-                    status_code=422,
-                    code="CAMPAIGN_TEMPLATE_RENDER_FAILED",
-                    message=f"无法为导师 {professor.id} 渲染固定模板：{exc}",
-                    details={"professor_id": professor.id},
-                ) from exc
+    for professor in professors:
+        try:
+            build_initial_batch_draft(
+                identity,
+                professor,
+                outreach_config,
+                primary_material_available=primary_material is not None,
+            )
+        except ValueError as exc:
+            raise AgentApiError(
+                status_code=422,
+                code="CAMPAIGN_TEMPLATE_RENDER_FAILED",
+                message=f"无法为导师 {professor.id} 渲染模板草稿：{exc}",
+                details={"professor_id": professor.id},
+            ) from exc
     return CampaignCreateContext(
         payload=payload,
         identity=identity,
@@ -1053,6 +1056,15 @@ def _validate_campaign_schedule(payload: AgentCampaignCreateRequest) -> list[str
 
 def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str, object]:
     payload = context.payload
+    fallback_count = sum(
+        1
+        for professor in context.professors
+        if (
+            payload.generation_mode == "ai_rewrite"
+            and context.primary_material is not None
+            and not professor_has_research_direction(professor)
+        )
+    )
     state = {
         "identity": _identity_state(context.identity),
         "llm_profile": _llm_profile_state(context.llm_profile),
@@ -1083,6 +1095,7 @@ def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str,
         "identity": _named_identity(context.identity),
         "llm_profile": _named_llm_profile(context.llm_profile),
         "generation_mode": payload.generation_mode,
+        "template_fallback_count": fallback_count,
         "template": _named_template(context.selected_template),
         "reference_material": _named_material(context.primary_material),
         "attachments": [_named_material(material) for material in context.attachment_materials],
@@ -1092,6 +1105,10 @@ def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str,
         warnings.append(
             "AI 草稿尚未开始生成。需在创建后明确运行 campaigns start-drafts，才会调用模型。",
         )
+        if fallback_count:
+            warnings.append(
+                f"其中 {fallback_count} 位导师缺少研究方向；这些邮件会直接使用模板生成到待审核状态，不会调用模型。",
+            )
     else:
         warnings.append("固定模板草稿会生成到待审核状态；发送前仍需单独创建并确认批量发送计划。")
     snapshot = {
@@ -2003,6 +2020,8 @@ def _serialize_campaign_item(
         professor_email=task.professor.email,
         status=task.status,
         generation_mode=_agent_generation_mode(task.outreach_generation_mode),
+        draft_generation_source=task.draft_generation_source,
+        draft_fallback_reason=task.draft_fallback_reason,
         subject=subject,
         has_final_content=has_final_content,
         attachment_material_ids=list(task.selected_material_ids or []),

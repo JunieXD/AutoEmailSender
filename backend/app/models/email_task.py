@@ -173,6 +173,8 @@ class EmailTask(Base):
     generated_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_generation_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    draft_fallback_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     outreach_generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
     outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)

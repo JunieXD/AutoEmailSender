@@ -70,6 +70,8 @@ class WorkspaceTaskSummaryRead(ApiSchema):
     generated_subject: str | None
     generated_content_text: str | None
     generated_content_html: str | None
+    draft_generation_source: str | None
+    draft_fallback_reason: str | None
     approved_subject: str | None
     approved_body_text: str | None
     approved_body_html: str | None

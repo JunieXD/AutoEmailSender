@@ -1758,6 +1758,8 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("primary_material_id", task_columns)
         self.assertIn("selected_material_ids", task_columns)
         self.assertIn("draft_generation_previous_status", task_columns)
+        self.assertIn("draft_generation_source", task_columns)
+        self.assertIn("draft_fallback_reason", task_columns)
         self.assertNotIn("selected_attachments", task_columns)
         self.assertIn("display_name", material_columns)
         self.assertIn("original_filename", material_columns)

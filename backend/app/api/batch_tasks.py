@@ -41,6 +41,10 @@ from app.services.batch_schedule import (
     has_future_batch_window,
     normalize_scheduled_dates,
 )
+from app.services.batch_draft_fallback import (
+    DRAFT_GENERATION_SOURCE_TEMPLATE,
+    build_initial_batch_draft,
+)
 from app.services.batch_task_item_actions import (
     batch_item_uses_llm_generation,
     normalize_batch_item_generation_mode,
@@ -63,7 +67,6 @@ from app.services.outreach_template_library import (
 from app.services.outreach_templates import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     get_outreach_template_defaults_validation_error,
-    render_outreach_template,
     resolve_outreach_template_config,
 )
 from app.services.smtp_error_explanations import explain_smtp_error
@@ -300,24 +303,30 @@ async def create_batch_task(
         generated_subject = None
         generated_body_text = None
         generated_body_html = None
+        draft_generation_source = None
+        draft_fallback_reason = None
         task_status = EmailTaskStatus.DISCOVERED.value
         approved_at = None
-        if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
-            try:
-                rendered = render_outreach_template(
-                    identity,
-                    professor,
-                    subject_template=outreach_config.subject_template,
-                    body_text_template=outreach_config.body_text_template,
-                    body_html_template=outreach_config.body_html_template,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            generated_subject = rendered.subject
-            generated_body_text = rendered.body_text
-            generated_body_html = rendered.body_html
-            task_status = EmailTaskStatus.APPROVED.value
-            approved_at = utc_now()
+        try:
+            initial_draft = build_initial_batch_draft(
+                identity,
+                professor,
+                outreach_config,
+                primary_material_available=primary_material_id is not None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if initial_draft is not None:
+            generated_subject = initial_draft.subject
+            generated_body_text = initial_draft.body_text
+            generated_body_html = initial_draft.body_html
+            draft_generation_source = initial_draft.generation_source
+            draft_fallback_reason = initial_draft.fallback_reason
+            if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
+                task_status = EmailTaskStatus.APPROVED.value
+                approved_at = utc_now()
+            else:
+                task_status = EmailTaskStatus.REVIEW_REQUIRED.value
 
         email_task = EmailTask(
             source=EmailTaskSource.BATCH.value,
@@ -338,9 +347,11 @@ async def create_batch_task(
             generated_subject=generated_subject,
             generated_content_text=generated_body_text,
             generated_content_html=generated_body_html,
-            approved_subject=generated_subject,
-            approved_body_text=generated_body_text,
-            approved_body_html=generated_body_html,
+            draft_generation_source=draft_generation_source,
+            draft_fallback_reason=draft_fallback_reason,
+            approved_subject=(generated_subject if approved_at is not None else None),
+            approved_body_text=(generated_body_text if approved_at is not None else None),
+            approved_body_html=(generated_body_html if approved_at is not None else None),
             approved_at=approved_at,
             scheduled_at=scheduled_at_values[index],
             selected_material_ids=selected_material_ids,
@@ -405,6 +416,8 @@ async def list_batch_task_items(
                 EmailTask.batch_send_canceled_at,
                 EmailTask.match_score,
                 EmailTask.outreach_generation_mode,
+                EmailTask.draft_generation_source,
+                EmailTask.draft_fallback_reason,
                 EmailTask.scheduled_at,
                 EmailTask.last_send_attempt_at,
                 EmailTask.sent_at,
@@ -1175,6 +1188,8 @@ def _serialize_batch_task_item(
             if email_task.status == EmailTaskStatus.SEND_FAILED.value
             else None
         ),
+        draft_generation_source=email_task.draft_generation_source,
+        draft_fallback_reason=email_task.draft_fallback_reason,
         is_replied=email_task.is_replied,
         updated_at=email_task.updated_at,
         next_action=(
