@@ -5367,10 +5367,10 @@ export const TasksPage = () => {
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <p className="text-sm font-medium text-stone-900">
-                                {item.professor_name}
-                              </p>
-                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="text-sm font-medium text-stone-900">
+                                  {item.professor_name}
+                                </p>
                                 {missingResearchDirection ? (
                                   <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
                                     缺少研究方向

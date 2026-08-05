@@ -2852,6 +2852,8 @@ describe("batch task expiration display", () => {
       professor_research_direction: null,
       status: "discovered",
       next_action: "complete_professor_profile",
+      draft_generation_source: "template_fallback",
+      draft_fallback_reason: "missing_research_direction",
     });
     const professor = buildProfessor({
       name: item.professor_name,
@@ -2878,7 +2880,13 @@ describe("batch task expiration display", () => {
     expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
 
-    expect(await screen.findByText("缺少研究方向")).toBeInTheDocument();
+    const professorName = await screen.findByText(item.professor_name);
+    const missingResearchDirectionBadge = screen.getByText("缺少研究方向");
+    const templateFallbackBadge = screen.getByText("未进行 AI 改写");
+    expect(professorName.parentElement).toContainElement(
+      missingResearchDirectionBadge,
+    );
+    expect(professorName.parentElement).toContainElement(templateFallbackBadge);
     const profileButton = await screen.findByRole("button", { name: "补充资料" });
     expect(screen.queryByRole("link", { name: "补全导师资料" })).not.toBeInTheDocument();
 
