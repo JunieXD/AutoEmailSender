@@ -30,7 +30,7 @@ try {
 
   $CliExecutable = Join-Path $CliDir "dist\auto-email-sender.exe"
   & $CliExecutable --format json version
-  & $CliExecutable --format json guide --topic overview
+  & $CliExecutable --format json capabilities
 } finally {
   Pop-Location
 }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import asdict, dataclass
 from typing import Final, Literal
@@ -9,6 +11,41 @@ RiskLevel = Literal["L0", "L1", "L2", "L3"]
 Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
 
 CONTRACT_VERSION: Final = "1"
+CAPABILITY_CATALOG_VERSION: Final = "1"
+
+
+# Discovery must be cheap enough to use at the start of every Agent turn.
+# These are deliberately resource-level descriptions: operation-specific
+# contracts remain in ``describe`` so this table cannot become another manual.
+_DISCOVERY_RESOURCE_SUMMARIES: Final[dict[str, str]] = {
+    "system": "CLI 版本、运行状态、诊断和协议发现",
+    "professors": "导师档案、标签、导入导出和社区资料",
+    "professors.tags": "导师标签及批量标签变更",
+    "professors.community": "社区导师目录、字段比对和导入计划",
+    "communications": "邮件线程、邮件记录与邮箱同步",
+    "templates": "邮件模板的读取、导入和维护",
+    "materials": "参考材料和真实邮件附件",
+    "identities": "发件身份及 SMTP/IMAP 连接检查",
+    "llm-profiles": "已保存模型配置和连接检查",
+    "matching": "导师匹配分析任务",
+    "enrichment": "导师公开资料补全任务",
+    "drafts": "单封邮件草稿的生成、编辑和发送准备",
+    "campaigns": "批量草稿活动、审核和发送准备",
+    "crawler": "公开网页抓取、候选审核和导入准备",
+    "communication-groups": "发件身份间的通信历史共享范围",
+    "test-email": "发送到本人地址的测试邮件",
+    "dashboard": "工作概览",
+    "usage": "模型 Token 使用记录与汇总",
+    "diagnostics": "已脱敏的运行诊断信息",
+    "settings": "不含凭据的运行设置",
+    "workspaces": "单位导师的邮件工作区",
+    "tasks": "单封任务的状态和写信设置",
+    "plans": "高风险操作的确认计划",
+}
+
+_SYSTEM_DISCOVERY_COMMANDS: Final[frozenset[str]] = frozenset(
+    {"version", "status", "doctor", "guide", "capabilities", "describe", "wait"},
+)
 
 
 # Collection behavior is deliberately explicit instead of inferred from a
@@ -343,6 +380,8 @@ class Capability:
     external_action: bool = False
     requires_plan: bool = False
     long_running: bool = False
+    # Kept only while command handlers and older callers still pass it.  The
+    # runtime protocol no longer advertises static prose-guide topics.
     guide_topic: str = "overview"
     unavailable_reason: str | None = None
 
@@ -357,6 +396,7 @@ class Capability:
         """
 
         result = asdict(self)
+        result.pop("guide_topic", None)
         result.update(
             {
                 "contract_version": CONTRACT_VERSION,
@@ -384,7 +424,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("version", "查看 CLI 与协议版本", "L0", "available"),
     Capability("status", "查看桌面应用和本地服务状态", "L0", "available"),
     Capability("doctor", "检查 CLI、Skill、运行文件和本地服务", "L0", "available"),
-    Capability("guide", "读取 Agent 使用说明", "L0", "available"),
+    Capability("guide", "读取已废弃的兼容使用约定；命令契约请使用 describe", "L0", "available"),
     Capability("capabilities", "读取当前命令能力和风险信息", "L0", "available"),
     Capability("describe", "读取某个命令的机器可读操作说明", "L0", "available"),
     Capability("wait", "等待已运行的后台任务进入终态，不会启动桌面应用", "L0", "available", long_running=True),
@@ -1368,6 +1408,85 @@ def list_capabilities(
     *,
     resource: str | None = None,
 ) -> list[dict[str, object]]:
+    """Return the complete records for an explicit full-capability request.
+
+    The public ``capabilities`` command defaults to catalog/card views.  This
+    function intentionally keeps the complete form for ``--view full``,
+    compatibility callers, and contract tests.
+    """
+
+    return [item.to_dict() for item in _select_capabilities(command, resource=resource)]
+
+
+def list_capability_cards(
+    command: str | None = None,
+    *,
+    resource: str | None = None,
+) -> list[dict[str, object]]:
+    """Return compact command cards suitable for routine Agent discovery."""
+
+    return [_capability_card(item) for item in _select_capabilities(command, resource=resource)]
+
+
+def list_resource_catalog(
+    command: str | None = None,
+    *,
+    resource: str | None = None,
+) -> list[dict[str, object]]:
+    """Return a bounded resource index without enumerating every operation."""
+
+    selected = _select_capabilities(command, resource=resource)
+    selected_resources = {
+        _discovery_resource(item.command)
+        for item in selected
+    }
+    grouped: dict[str, list[Capability]] = {}
+    for item in CAPABILITIES:
+        discovery_resource = _discovery_resource(item.command)
+        if discovery_resource not in selected_resources:
+            continue
+        grouped.setdefault(discovery_resource, []).append(item)
+
+    return [
+        _resource_card(discovery_resource, capabilities)
+        for discovery_resource, capabilities in grouped.items()
+    ]
+
+
+def capability_catalog_revision() -> str:
+    """Return a stable short revision so clients can cache discovery safely."""
+
+    snapshot = [
+        {
+            "command": item.command,
+            "summary": item.summary,
+            "risk_level": item.risk_level,
+            "availability": item.availability,
+            "mutates": item.mutates,
+            "external_action": item.external_action,
+            "requires_plan": item.requires_plan,
+            "long_running": item.long_running,
+        }
+        for item in CAPABILITIES
+    ]
+    encoded = json.dumps(
+        {
+            "catalog_version": CAPABILITY_CATALOG_VERSION,
+            "contract_version": CONTRACT_VERSION,
+            "items": snapshot,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def _select_capabilities(
+    command: str | None = None,
+    *,
+    resource: str | None = None,
+) -> tuple[Capability, ...]:
     items = CAPABILITIES
     if command:
         normalized = normalize_capability_command(command)
@@ -1386,7 +1505,55 @@ def list_capabilities(
                 or capability_resource(item.command).startswith(f"{normalized_resource}.")
             )
         )
-    return [item.to_dict() for item in items]
+    return items
+
+
+def _capability_card(item: Capability) -> dict[str, object]:
+    """Keep the routing facts while omitting detailed schema duplicates."""
+
+    return {
+        "command": item.command,
+        "summary": item.summary,
+        "resource": capability_resource(item.command),
+        "operation": capability_operation(item.command),
+        "availability": item.availability,
+        "risk_level": item.risk_level,
+        "effects": {
+            "mutates": item.mutates,
+            "external_action": item.external_action,
+            "confirmation_required": item.requires_plan or item.risk_level == "L3",
+            "long_running": item.long_running,
+        },
+        "contract_version": CONTRACT_VERSION,
+    }
+
+
+def _resource_card(
+    resource: str,
+    capabilities: list[Capability],
+) -> dict[str, object]:
+    available_count = sum(item.availability == "available" for item in capabilities)
+    risk_levels = sorted(
+        {item.risk_level for item in capabilities},
+        key=lambda level: int(level[1:]),
+    )
+    return {
+        "resource": resource,
+        "summary": _DISCOVERY_RESOURCE_SUMMARIES.get(resource, resource),
+        "command_count": len(capabilities),
+        "available_count": available_count,
+        "unavailable_count": len(capabilities) - available_count,
+        "risk_levels": risk_levels,
+        "has_mutations": any(item.mutates for item in capabilities),
+        "has_external_actions": any(item.external_action for item in capabilities),
+    }
+
+
+def _discovery_resource(command: str) -> str:
+    normalized = normalize_capability_command(command)
+    if normalized in _SYSTEM_DISCOVERY_COMMANDS:
+        return "system"
+    return capability_resource(normalized)
 
 
 def normalize_capability_command(command: str) -> str:

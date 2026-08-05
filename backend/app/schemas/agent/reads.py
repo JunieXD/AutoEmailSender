@@ -527,4 +527,7 @@ class AgentInfoRead(ApiSchema):
     protocol_version: str = "2"
     api_version: str = "v1"
     authentication_scope: Literal["agent"] = "agent"
-    guide_command: str = "auto-email-sender --format json guide"
+    # Kept under the historical field name for compatible desktop clients.
+    # Discovery is now catalog-first; command-specific detail comes from
+    # ``describe --command`` rather than a static prose guide.
+    guide_command: str = "auto-email-sender --format json capabilities"

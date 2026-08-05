@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Final
 
 import typer
 from typer._click import Command, Context
@@ -18,6 +18,28 @@ from auto_email_sender_cli.contracts import build_command_contract
 
 
 CommandDescription = dict[str, object]
+
+
+DESCRIPTION_VIEWS: Final[frozenset[str]] = frozenset({"summary", "full"})
+DESCRIPTION_SECTIONS: Final[tuple[str, ...]] = (
+    "input",
+    "output",
+    "effects",
+    "preconditions",
+    "states",
+    "errors",
+    "actions",
+)
+
+_DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
+    "input": "input",
+    "output": "output",
+    "effects": "effects",
+    "preconditions": "preconditions",
+    "states": "state_transitions",
+    "errors": "errors",
+    "actions": "next_actions",
+}
 
 
 JSON_FILE_EXAMPLES: dict[str, dict[str, object]] = {
@@ -87,6 +109,178 @@ def describe_command(app: typer.Typer, requested_command: str) -> CommandDescrip
         ),
     )
     return description
+
+
+def compact_command_description(description: CommandDescription) -> dict[str, object]:
+    """Return the execution facts an Agent needs before requesting details.
+
+    ``describe`` used to return its legacy fields, a full input schema, and a
+    full output schema together.  That is useful for an explicit contract
+    inspection but too expensive for ordinary routing.  Keep all detail
+    addressable through ``description_sections`` and ``--view full``.
+    """
+
+    parameters = description.get("parameters")
+    compact_parameters: dict[str, object] = {}
+    if isinstance(parameters, list):
+        for parameter in parameters:
+            if not isinstance(parameter, dict):
+                continue
+            name = parameter.get("name")
+            if not isinstance(name, str):
+                continue
+            compact_parameters[name] = _compact_parameter(parameter)
+
+    input_contract = description.get("input")
+    global_options: dict[str, object] = {}
+    if isinstance(input_contract, dict):
+        raw_global_options = input_contract.get("global_options")
+        if isinstance(raw_global_options, dict):
+            for name, option in raw_global_options.items():
+                if not isinstance(name, str) or not isinstance(option, dict):
+                    continue
+                if name in {"request_id", "format"} or bool(option.get("supported")):
+                    global_options[name] = {
+                        key: option[key]
+                        for key in ("flags", "type", "supported", "description")
+                        if key in option
+                    }
+
+    output_contract = description.get("output")
+    if not isinstance(output_contract, dict):
+        output_contract = {}
+    known_fields = output_contract.get("known_fields")
+    fields = [field for field in known_fields if isinstance(field, str)] if isinstance(known_fields, list) else []
+
+    summary: dict[str, object] = {
+        "command": description.get("command"),
+        "kind": description.get("kind"),
+        "summary": description.get("summary"),
+        "usage": description.get("usage"),
+        "example": description.get("example"),
+        "risk": _compact_risk(description.get("risk")),
+        "input": {
+            "parameters": compact_parameters,
+            "global_options": global_options,
+            "file_input_available": bool(description.get("input_file_examples")),
+        },
+        "output": {
+            "shape": "page" if output_contract.get("pagination") else "object",
+            "field_count": len(fields),
+            "key_fields": _key_output_fields(fields),
+            "pagination": bool(output_contract.get("pagination")),
+            "field_selection": bool(output_contract.get("field_selection")),
+            "structured_filter": bool(output_contract.get("structured_filter")),
+            "file_export": bool(output_contract.get("file_export")),
+            "terminal_states": output_contract.get("terminal_states", []),
+            "state_metadata": output_contract.get("state_metadata") is not None,
+        },
+        "effects": description.get("effects"),
+        "preconditions": description.get("preconditions"),
+        "state_transitions": description.get("state_transitions", []),
+        "errors": _compact_errors(description.get("errors")),
+        "next_actions": description.get("next_actions", []),
+        "details_available": {
+            "sections": list(DESCRIPTION_SECTIONS),
+            "full_view": True,
+        },
+    }
+    children = description.get("children")
+    if isinstance(children, list) and children:
+        summary["children"] = children
+    return summary
+
+
+def description_sections(
+    description: CommandDescription,
+    requested_sections: Iterable[str],
+) -> tuple[dict[str, object], list[str]]:
+    """Return only explicitly requested full-contract sections and invalid names."""
+
+    selected: dict[str, object] = {}
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for requested in requested_sections:
+        normalized = requested.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        key = _DESCRIPTION_SECTION_KEYS.get(normalized)
+        if key is None:
+            invalid.append(requested)
+            continue
+        selected[normalized] = description.get(key)
+    return selected, invalid
+
+
+def _compact_parameter(parameter: dict[str, object]) -> dict[str, object]:
+    type_info = parameter.get("type")
+    result: dict[str, object] = {
+        "kind": parameter.get("kind"),
+        "type": type_info.get("kind", "string") if isinstance(type_info, dict) else "string",
+        "required": bool(parameter.get("required")),
+        "flags": parameter.get("flags", []),
+    }
+    if isinstance(type_info, dict):
+        values = type_info.get("values")
+        if isinstance(values, list):
+            result["enum"] = values
+        for key in ("minimum", "maximum"):
+            if type_info.get(key) is not None:
+                result[key] = type_info[key]
+    if bool(parameter.get("multiple")):
+        result["multiple"] = True
+    if parameter.get("default") is not None:
+        result["default"] = parameter["default"]
+    if parameter.get("help"):
+        result["description"] = parameter["help"]
+    return result
+
+
+def _compact_risk(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: value[key]
+        for key in ("level", "availability", "mutates", "external_action", "requires_plan", "long_running")
+        if key in value
+    }
+
+
+def _key_output_fields(fields: list[str]) -> list[str]:
+    priority = (
+        "id",
+        "plan_id",
+        "job_id",
+        "task_id",
+        "status",
+        "revision",
+        "items",
+        "next_cursor",
+        "has_more",
+        "mutation_receipt",
+        "warnings",
+    )
+    selected = [field for field in priority if field in fields]
+    if selected:
+        return selected
+    return fields[:6]
+
+
+def _compact_errors(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for error in value:
+        if not isinstance(error, dict):
+            continue
+        code = error.get("code")
+        if not isinstance(code, str) or code in seen:
+            continue
+        seen.add(code)
+        result.append({"code": code, "retryable": bool(error.get("retryable"))})
+    return result
 
 
 def _describe_parameter(parameter: Any) -> dict[str, object]:
@@ -215,7 +409,6 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
             "external_action": False,
             "requires_plan": False,
             "long_running": False,
-            "guide_topic": "overview",
             "availability": "available",
         }
     return {
@@ -224,7 +417,6 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
         "external_action": capability.external_action,
         "requires_plan": capability.requires_plan,
         "long_running": capability.long_running,
-        "guide_topic": capability.guide_topic,
         "availability": capability.availability,
         "unavailable_reason": capability.unavailable_reason,
     }
@@ -245,10 +437,8 @@ def _describe_preconditions(command: str) -> dict[str, object]:
 
 def _next_steps(capability: Capability | None) -> list[str]:
     if capability is None:
-        return ["使用 describe 查看具体子命令。"]
-    steps = [
-        f"读取规则：auto-email-sender --format json guide --topic {capability.guide_topic}",
-    ]
+        return ["使用 capabilities --resource <resource> 查看具体子命令。"]
+    steps: list[str] = []
     if capability.requires_plan:
         steps.append("展示返回的计划；只有用户明确确认后，才能运行 plans execute <plan-id> --confirm。")
     elif capability.mutates:

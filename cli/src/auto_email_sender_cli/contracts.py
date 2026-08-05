@@ -404,9 +404,9 @@ _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
 _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "version": frozenset({"cli_version", "protocol_version"}),
     "status": frozenset({"state", "desktop_process_running", "backend_ready", "app_version", "protocol_version", "protocol_compatible", "runtime_file", "message"}),
-    "guide": frozenset({"version", "topic", "title", "rules", "topics"}),
-    "capabilities": frozenset({"items", "summary"}),
-    "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "contract_version", "resource", "operation", "input", "output", "effects", "state_transitions", "errors", "next_actions"}),
+    "guide": frozenset({"version", "topic", "title", "deprecated", "rules", "replacement"}),
+    "capabilities": frozenset({"catalog_version", "catalog_revision", "view", "items", "summary", "next"}),
+    "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "contract_version", "resource", "operation", "input", "output", "effects", "state_transitions", "errors", "next_actions", "details_available", "details"}),
     "doctor": frozenset({"healthy", "checks", "recommended_action", "repair_command"}),
     "wait": frozenset({"resource", "id", "status", "terminal", "timed_out", "poll_count", "elapsed_seconds", "result", "available_actions"}),
     "professors.tags.usage": frozenset({"tag", "professors"}),
@@ -523,9 +523,9 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         return {"type": ["integer", "null"]}
     if normalized.endswith("_seconds") or normalized in {"match_score", "score", "temperature", "confidence"}:
         return {"type": ["number", "null"]}
-    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "terminal", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable"}:
+    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "terminal", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable", "deprecated"}:
         return {"type": "boolean"}
-    if normalized in {"professor", "identity", "llm_profile", "current_task", "draft", "thread", "usage", "summary", "result", "settings", "by_status", "by_identity", "tag", "job", "template", "reference_material", "defaults", "task", "chart", "metadata", "raw", "field_confidence", "evidence", "filters"}:
+    if normalized in {"professor", "identity", "llm_profile", "current_task", "draft", "thread", "usage", "summary", "result", "settings", "by_status", "by_identity", "tag", "job", "template", "reference_material", "defaults", "task", "chart", "metadata", "raw", "field_confidence", "evidence", "filters", "next", "replacement", "details_available", "details"}:
         return {"type": ["object", "null"]}
     if normalized in {
         "tags",

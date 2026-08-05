@@ -37,14 +37,6 @@ class CliContext:
     force_output: bool = False
 
 
-def guide_metadata(topic: str = "overview") -> dict[str, str]:
-    return {
-        "version": get_cli_version(),
-        "command": f"auto-email-sender --format json guide --topic {topic}",
-        "message": "多步骤、写入或真实发送前，请先读取相关 Agent 使用说明。",
-    }
-
-
 def build_meta(
     *,
     command: str,
@@ -53,13 +45,16 @@ def build_meta(
     warnings: list[str] | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
+    # ``guide_topic`` remains an internal compatibility parameter while older
+    # command handlers migrate.  Repeating a prose guide hint in every result
+    # wastes context and makes a static manual appear authoritative.
+    _ = guide_topic
     meta: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
         "command": command,
         "cli_version": get_cli_version(),
         "app_version": app_version,
-        "agent_guide": guide_metadata(guide_topic),
         "warnings": warnings or [],
     }
     if request_id:
@@ -107,9 +102,6 @@ def emit_success(
     }
     if context.output_format is OutputFormat.HUMAN:
         typer.echo(_sanitize_terminal_text(human_text if human_text is not None else _pretty_json(data)))
-        typer.echo(
-            f"\nAgent 使用说明：auto-email-sender --format json guide --topic {guide_topic}",
-        )
         return
     if context.output_format is OutputFormat.JSONL:
         typer.echo(json.dumps({"type": "meta", "meta": envelope["_meta"]}, ensure_ascii=False))

@@ -45,4 +45,4 @@ uv run pyinstaller \
 
 CliExecutable="$CliDir/dist/auto-email-sender"
 "$CliExecutable" --format json version
-"$CliExecutable" --format json guide --topic overview
+"$CliExecutable" --format json capabilities

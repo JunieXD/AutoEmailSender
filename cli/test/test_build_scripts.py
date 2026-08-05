@@ -13,7 +13,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--target-arch arm64", script)
         self.assertIn("--copy-metadata auto-email-sender-cli", script)
         self.assertIn('"$CliExecutable" --format json version', script)
-        self.assertIn('"$CliExecutable" --format json guide --topic overview', script)
+        self.assertIn('"$CliExecutable" --format json capabilities', script)
 
     def test_windows_build_creates_one_file_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.ps1")
@@ -22,7 +22,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--onefile", script)
         self.assertIn("auto-email-sender.exe", script)
         self.assertIn("& $CliExecutable --format json version", script)
-        self.assertIn("& $CliExecutable --format json guide --topic overview", script)
+        self.assertIn("& $CliExecutable --format json capabilities", script)
 
 
 def _read_script(name: str) -> str:

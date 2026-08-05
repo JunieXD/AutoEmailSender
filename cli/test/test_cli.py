@@ -28,9 +28,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["_meta"]["schema_version"], "1")
+        self.assertEqual(payload["_meta"]["schema_version"], "2")
         self.assertEqual(payload["_meta"]["command"], "version")
-        self.assertIn("agent_guide", payload["_meta"])
+        self.assertNotIn("agent_guide", payload["_meta"])
 
     def test_guide_version_matches_cli_version_metadata(self) -> None:
         guide = self.runner.invoke(app, ["--format", "json", "guide"])
@@ -41,10 +41,7 @@ class CliTests(unittest.TestCase):
         guide_payload = json.loads(guide.stdout)
         version_payload = json.loads(version.stdout)
         self.assertEqual(guide_payload["data"]["version"], version_payload["data"]["cli_version"])
-        self.assertEqual(
-            guide_payload["_meta"]["agent_guide"]["version"],
-            version_payload["data"]["cli_version"],
-        )
+        self.assertTrue(guide_payload["data"]["deprecated"])
 
     def test_json_alias_is_supported(self) -> None:
         result = self.runner.invoke(app, ["--json", "guide", "--topic", "sending"])
@@ -52,7 +49,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["data"]["topic"], "sending")
-        self.assertIn("一次性计划", " ".join(payload["data"]["rules"]))
+        self.assertIn("describe", " ".join(payload["data"]["rules"]))
 
     def test_unknown_guide_topic_returns_machine_error(self) -> None:
         result = self.runner.invoke(
@@ -92,14 +89,15 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["view"], "commands")
         self.assertEqual(payload["data"]["items"][0]["availability"], "available")
-        self.assertEqual(payload["data"]["items"][0]["guide_topic"], "communications")
+        self.assertIn("effects", payload["data"]["items"][0])
         self.assertTrue(any(item["availability"] == "available" for item in payload["data"]["items"]))
 
     def test_capabilities_mark_desktop_only_areas_as_unavailable(self) -> None:
         result = self.runner.invoke(
             app,
-            ["--format", "json", "capabilities"],
+            ["--format", "json", "capabilities", "--view", "full"],
         )
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
@@ -185,6 +183,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(by_command["test-email.prepare-send"]["risk_level"], "L3")
         self.assertTrue(by_command["test-email.prepare-send"]["requires_plan"])
 
+    def test_capabilities_default_to_a_bounded_resource_catalog(self) -> None:
+        result = self.runner.invoke(app, ["--format", "json", "capabilities"])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(payload["view"], "catalog")
+        self.assertEqual(payload["summary"]["commands"], len(CAPABILITIES))
+        self.assertTrue(payload["items"])
+        self.assertTrue(all("resource" in item and "command" not in item for item in payload["items"]))
+        self.assertIn("catalog_revision", payload)
+        # The old default emitted every leaf's detailed metadata.  This limit
+        # protects the routine discovery path from consuming an Agent turn.
+        self.assertLess(len(result.stdout.encode("utf-8")), 8_000)
+
     def test_capabilities_are_available_without_a_running_desktop_app(self) -> None:
         result = self.runner.invoke(app, ["--format", "json", "capabilities"])
 
@@ -222,11 +234,42 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "drafts.generate")
         self.assertEqual(payload["risk"]["level"], "L1")
         self.assertTrue(payload["preconditions"]["manual_app_open_required"])
-        parameters = {parameter["name"]: parameter for parameter in payload["parameters"]}
+        parameters = payload["input"]["parameters"]
         self.assertTrue(parameters["professor_id"]["required"])
-        self.assertEqual(parameters["professor_id"]["type"]["kind"], "integer")
-        self.assertEqual(parameters["generation_mode"]["type"]["values"], ["template", "ai_rewrite", "manual"])
-        self.assertIn("guide --topic drafts", " ".join(payload["next_steps"]))
+        self.assertEqual(parameters["professor_id"]["type"], "integer")
+        self.assertEqual(parameters["generation_mode"]["enum"], ["template", "ai_rewrite", "manual"])
+        self.assertNotIn("parameters", payload)
+        self.assertIn("output", payload["details_available"]["sections"])
+
+    def test_describe_expands_only_requested_contract_sections(self) -> None:
+        result = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "describe",
+                "--command",
+                "plans execute",
+                "--section",
+                "output",
+            ],
+        )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertIn("details", payload)
+        self.assertEqual(set(payload["details"]), {"output"})
+        self.assertIn("schema", payload["details"]["output"])
+
+        full = self.runner.invoke(
+            app,
+            ["--format", "json", "describe", "--command", "plans execute", "--view", "full"],
+        )
+        self.assertEqual(full.exit_code, 0, msg=full.output)
+        full_payload = json.loads(full.stdout)["data"]
+        self.assertIn("parameters", full_payload)
+        self.assertIn("output", full_payload)
+        self.assertLess(len(result.stdout.encode("utf-8")), len(full.stdout.encode("utf-8")))
 
     def test_every_available_capability_has_a_describe_contract(self) -> None:
         missing = [
@@ -263,6 +306,24 @@ class CliTests(unittest.TestCase):
         skill_check = next(check for check in doctor_payload["checks"] if check["id"] == "agent_skills")
         self.assertFalse(skill_check["ok"])
         self.assertIn("重新安装", doctor_payload["recommended_action"])
+
+    def test_source_skill_contains_only_global_protocol_invariants(self) -> None:
+        skill_path = (
+            Path(__file__).resolve().parents[2]
+            / "agent-support"
+            / "skills"
+            / "auto-email-sender"
+            / "SKILL.md"
+        )
+        skill = skill_path.read_text(encoding="utf-8")
+
+        self.assertLess(len(skill.encode("utf-8")), 5_000)
+        self.assertIn("capabilities --resource", skill)
+        self.assertIn("describe --command", skill)
+        self.assertIn("untrusted", skill)
+        self.assertIn("APP_UNAVAILABLE", skill)
+        self.assertNotIn("guide --topic", skill)
+        self.assertNotIn("campaigns prepare-send", skill)
 
     def test_skill_inspection_detects_modified_or_outdated_official_skills(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

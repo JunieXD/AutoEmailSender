@@ -112,7 +112,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(info.json()["protocol_version"], "2")
         self.assertEqual(
             info.json()["guide_command"],
-            "auto-email-sender --format json guide",
+            "auto-email-sender --format json capabilities",
         )
 
     def test_options_and_allowed_local_cors_origin_work_without_a_token(self) -> None:

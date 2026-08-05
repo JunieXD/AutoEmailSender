@@ -7,7 +7,11 @@ import httpx
 import typer
 
 from auto_email_sender_cli.capabilities import (
+    CAPABILITY_CATALOG_VERSION,
+    capability_catalog_revision,
+    list_capability_cards,
     list_capabilities,
+    list_resource_catalog,
     normalize_capability_command,
     suggest_capabilities,
 )
@@ -36,7 +40,12 @@ from auto_email_sender_cli.commands import (
 )
 from auto_email_sender_cli.commands.wait import wait_for_resource
 from auto_email_sender_cli.errors import CliError
-from auto_email_sender_cli.describe import describe_command
+from auto_email_sender_cli.describe import (
+    DESCRIPTION_VIEWS,
+    compact_command_description,
+    describe_command,
+    description_sections,
+)
 from auto_email_sender_cli.guide import GUIDE_TOPICS, get_guide
 from auto_email_sender_cli.output import (
     CliContext,
@@ -56,7 +65,7 @@ app = typer.Typer(
     name="auto-email-sender",
     help=(
         "让本地 Agent 安全查询和操作 Auto Email Sender。\n"
-        "多步骤或写入操作前，请运行 guide；使用 capabilities 查看能力，使用 describe 查看命令参数。"
+        "先用 capabilities 逐层发现能力，再用 describe 读取选中命令的实时契约。"
     ),
     no_args_is_help=True,
     add_completion=False,
@@ -195,11 +204,52 @@ def capabilities_command(
         str | None,
         typer.Option("--resource", help="按资源族筛选，例如 professors、communications、campaigns。"),
     ] = None,
+    view: Annotated[
+        str | None,
+        typer.Option(
+            "--view",
+            help="catalog（资源目录）、commands（精简命令卡）或 full（完整能力契约）。",
+        ),
+    ] = None,
+    all_details: Annotated[
+        bool,
+        typer.Option("--all", help="等同于 --view full；仅在确实需要完整能力清单时使用。"),
+    ] = False,
 ) -> None:
     context = _context(ctx)
+    requested_view = view.strip().lower() if view else None
+    if requested_view is not None and requested_view not in {"catalog", "commands", "full"}:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message=f"未知 capabilities 视图：{view}",
+            exit_code=2,
+            details={"view": view, "available_views": ["catalog", "commands", "full"]},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if all_details and requested_view not in {None, "full"}:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--all 只能与 --view full 一起使用。",
+            exit_code=2,
+            details={"view": view},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+
+    # A selector already narrows the universe, so its useful default is a
+    # command-card list.  The root default is a bounded resource catalog.
+    effective_view = (
+        "full"
+        if all_details
+        else (
+            requested_view
+            or ("commands" if command or resource else "catalog")
+        )
+    )
     try:
-        items = list_capabilities(command, resource=resource)
-        if (command or resource) and not items:
+        full_items = list_capabilities(command, resource=resource)
+        if (command or resource) and not full_items:
             requested = command or resource or ""
             normalized = normalize_capability_command(requested)
             error = CliError(
@@ -217,21 +267,73 @@ def capabilities_command(
     except CliError as error:
         emit_error(context, command="capabilities", error=error)
         raise typer.Exit(error.exit_code) from error
-    available_count = sum(item["availability"] == "available" for item in items)
+
+    if effective_view == "catalog":
+        items = list_resource_catalog(command, resource=resource)
+        summary: dict[str, object] = {
+            "resources": len(items),
+            "commands": len(full_items),
+            "available_commands": sum(
+                item["availability"] == "available"
+                for item in full_items
+            ),
+        }
+        human_lines = ["当前 CLI 资源目录："]
+        for item in items:
+            human_lines.append(
+                f"- {item['resource']}: {item['summary']} "
+                f"（{item['available_count']}/{item['command_count']} 个可用命令）",
+            )
+    elif effective_view == "commands":
+        items = list_capability_cards(command, resource=resource)
+        summary = {
+            "commands": len(items),
+            "available_commands": sum(
+                item["availability"] == "available"
+                for item in items
+            ),
+            "unavailable_commands": sum(
+                item["availability"] != "available"
+                for item in items
+            ),
+        }
+        human_lines = ["当前 CLI 命令："]
+        for item in items:
+            human_lines.append(
+                f"- [{item['availability']}] {item['command']}: {item['summary']} "
+                f"(风险 {item['risk_level']})",
+            )
+    else:
+        items = full_items
+        summary = {
+            "commands": len(items),
+            "available_commands": sum(
+                item["availability"] == "available"
+                for item in items
+            ),
+            "unavailable_commands": sum(
+                item["availability"] != "available"
+                for item in items
+            ),
+        }
+        human_lines = ["当前 CLI 完整能力："]
+        for item in items:
+            human_lines.append(
+                f"- [{item['availability']}] {item['command']}: {item['summary']} "
+                f"(风险 {item['risk_level']})",
+            )
     data = {
+        "catalog_version": CAPABILITY_CATALOG_VERSION,
+        "catalog_revision": capability_catalog_revision(),
+        "view": effective_view,
         "items": items,
-        "summary": {
-            "total": len(items),
-            "available": available_count,
-            "unavailable": len(items) - available_count,
+        "summary": summary,
+        "next": {
+            "list_commands": "auto-email-sender --format json capabilities --resource <resource>",
+            "describe_command": "auto-email-sender --format json describe --command <command>",
+            "complete_catalog": "auto-email-sender --format json capabilities --view full",
         },
     }
-    human_lines = ["当前 CLI 能力："]
-    for item in items:
-        human_lines.append(
-            f"- [{item['availability']}] {item['command']}: {item['summary']} "
-            f"(风险 {item['risk_level']})",
-        )
     emit_success(
         context,
         command="capabilities",
@@ -247,8 +349,38 @@ def describe_command_handler(
         str,
         typer.Option("--command", help="要查看的命令，可使用空格或点号。"),
     ],
+    view: Annotated[
+        str,
+        typer.Option("--view", help="summary（默认执行卡）或 full（完整机器契约）。"),
+    ] = "summary",
+    sections: Annotated[
+        list[str],
+        typer.Option(
+            "--section",
+            help="按需展开 input、output、effects、preconditions、states、errors 或 actions；可重复。",
+        ),
+    ] = [],
 ) -> None:
     context = _context(ctx)
+    normalized_view = view.strip().lower()
+    if normalized_view not in DESCRIPTION_VIEWS:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message=f"未知 describe 视图：{view}",
+            exit_code=2,
+            details={"view": view, "available_views": sorted(DESCRIPTION_VIEWS)},
+        )
+        emit_error(context, command="describe", error=error)
+        raise typer.Exit(error.exit_code)
+    if normalized_view == "full" and sections:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--view full 已包含全部契约，不能同时指定 --section。",
+            exit_code=2,
+            details={"sections": sections},
+        )
+        emit_error(context, command="describe", error=error)
+        raise typer.Exit(error.exit_code)
     description = describe_command(app, command)
     if description is None:
         normalized = normalize_capability_command(command)
@@ -264,11 +396,32 @@ def describe_command_handler(
         )
         emit_error(context, command="describe", error=error)
         raise typer.Exit(error.exit_code)
+
+    data: dict[str, object]
+    if normalized_view == "full":
+        data = description
+    else:
+        data = compact_command_description(description)
+        requested_details, invalid_sections = description_sections(description, sections)
+        if invalid_sections:
+            error = CliError(
+                code="INVALID_ARGUMENT",
+                message=f"未知 describe section：{', '.join(invalid_sections)}",
+                exit_code=2,
+                details={
+                    "sections": invalid_sections,
+                    "available_sections": data["details_available"]["sections"],
+                },
+            )
+            emit_error(context, command="describe", error=error)
+            raise typer.Exit(error.exit_code)
+        if requested_details:
+            data["details"] = requested_details
     emit_success(
         context,
         command="describe",
-        data=description,
-        human_text=_format_description_human(description),
+        data=data,
+        human_text=_format_description_human(data),
     )
 
 
@@ -464,10 +617,28 @@ def _format_description_human(description: dict[str, object]) -> str:
             label = " / ".join(str(flag) for flag in flags) if isinstance(flags, list) else str(parameter.get("name"))
             required = "必填" if parameter.get("required") else "可选"
             lines.append(f"- {label}（{required}）")
-    next_steps = description.get("next_steps")
+    elif isinstance(description.get("input"), dict):
+        compact_input = description["input"]
+        compact_parameters = compact_input.get("parameters")
+        if isinstance(compact_parameters, dict) and compact_parameters:
+            lines.append("\n参数：")
+            for name, parameter in compact_parameters.items():
+                if not isinstance(name, str) or not isinstance(parameter, dict):
+                    continue
+                flags = parameter.get("flags")
+                label = " / ".join(str(flag) for flag in flags) if isinstance(flags, list) else name
+                required = "必填" if parameter.get("required") else "可选"
+                lines.append(f"- {label}（{required}）")
+    next_steps = description.get("next_steps") or description.get("next_actions")
     if isinstance(next_steps, list) and next_steps:
         lines.append("\n下一步：")
-        lines.extend(f"- {step}" for step in next_steps)
+        for step in next_steps:
+            if isinstance(step, dict):
+                command = step.get("command")
+                reason = step.get("reason")
+                lines.append(f"- {command}: {reason}" if reason else f"- {command}")
+            else:
+                lines.append(f"- {step}")
     return "\n".join(lines)
 
 
