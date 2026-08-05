@@ -124,6 +124,16 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+const selectAllCandidatesWithoutEmail = (dialog: HTMLElement) => {
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "候选导师资料状态" }),
+  );
+  fireEvent.click(within(dialog).getByRole("option", { name: "邮箱为空" }));
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "选择全部筛选结果" }),
+  );
+};
+
 describe("TasksPage crawler jobs tab", () => {
   beforeEach(() => {
     clearDiagnosticEvents();
@@ -448,6 +458,92 @@ describe("TasksPage crawler jobs tab", () => {
     });
   });
 
+  it("searches and filters review candidates before opening the direct email editor", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review" as const,
+    };
+    const baseCandidate = {
+      id: 21,
+      job_id: 7,
+      professor_id: null,
+      name: "张教授",
+      email: null,
+      title: "教授",
+      university: "示例大学",
+      school: "计算机学院",
+      department: "人工智能系",
+      research_direction: "机器学习",
+      recent_papers: [],
+      profile_url: null,
+      source_url: "https://example.edu/faculty",
+      confidence: 0.86,
+      field_confidence: null,
+      evidence: null,
+      review_status: "pending" as const,
+      created_at: "2026-04-26T10:02:00Z",
+      updated_at: "2026-04-26T10:02:00Z",
+    };
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
+    vi.mocked(listCrawlCandidates).mockResolvedValue([
+      baseCandidate,
+      {
+        ...baseCandidate,
+        id: 22,
+        name: "李教授",
+        email: "li@example.edu",
+        department: "软件工程系",
+        research_direction: "多模态学习",
+      },
+      {
+        ...baseCandidate,
+        id: 23,
+        name: "王教授",
+        review_status: "rejected",
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    const searchInput = within(dialog).getByRole("searchbox", {
+      name: "搜索候选导师",
+    });
+    fireEvent.change(searchInput, { target: { value: "多模态" } });
+    expect(within(dialog).getByText("李教授")).toBeInTheDocument();
+    expect(within(dialog).queryByText("张教授")).not.toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "" } });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "候选导师资料状态" }),
+    );
+    fireEvent.click(within(dialog).getByRole("option", { name: "邮箱为空" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "候选导师审核状态" }),
+    );
+    fireEvent.click(within(dialog).getByRole("option", { name: "待审核" }));
+
+    expect(within(dialog).getByText("张教授")).toBeInTheDocument();
+    expect(within(dialog).queryByText("李教授")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("王教授")).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/显示\s+1\s+\/\s+3\s+位/)).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "填写邮箱" }));
+    const candidateDialog = await screen.findByRole("dialog", {
+      name: "候选导师详情",
+    });
+    expect(
+      within(candidateDialog).getByRole("textbox", { name: "邮箱" }),
+    ).toBeInTheDocument();
+    expect(
+      within(candidateDialog).queryByRole("button", { name: "编辑" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("asks before closing candidate details with unsaved edits", async () => {
     const reviewJob = {
       ...runningJob,
@@ -672,7 +768,7 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
-    expect(crawlDialog).toHaveTextContent("暂无邮箱（可尝试进行补全）");
+    expect(crawlDialog).toHaveTextContent("暂无邮箱（可手工填写或尝试补全）");
     fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
 
     const candidateDialog = await screen.findByRole("dialog", { name: "候选导师详情" });
@@ -1061,15 +1157,10 @@ describe("TasksPage crawler jobs tab", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     expect(within(dialog).getByText(/可导入\s+2\s+位/)).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(
-        "无邮箱 1 位，建议在右侧“全选候选”或“全选无邮箱”后点击“补全缺失信息”，补全任务结束后可继续审核。",
-      ),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "全选无邮箱" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "补全缺失信息" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("searchbox", { name: "搜索候选导师" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "候选导师资料状态" })).toBeInTheDocument();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "全选无邮箱" }));
+    selectAllCandidatesWithoutEmail(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
     await waitFor(() => {
@@ -1077,6 +1168,7 @@ describe("TasksPage crawler jobs tab", () => {
     });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "清空选择" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "重置筛选" }));
     fireEvent.click(
       within(dialog).getByRole("checkbox", { name: "选择候选导师 李教授" }),
     );
@@ -1189,8 +1281,8 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "全选无邮箱" }));
-    expect(within(dialog).getByText(/已选\s+2\s+位/)).toBeInTheDocument();
+    selectAllCandidatesWithoutEmail(dialog);
+    expect(within(dialog).getAllByText(/已选\s+2\s+位/).length).toBeGreaterThan(0);
 
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
@@ -1221,7 +1313,7 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "全选无邮箱" }));
+    selectAllCandidatesWithoutEmail(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
     await waitFor(() => {
@@ -1258,7 +1350,7 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "全选无邮箱" }));
+    selectAllCandidatesWithoutEmail(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
     await waitFor(() => {

@@ -23,8 +23,11 @@ import {
   Play,
   RotateCcw,
   Save,
+  Search,
   Sparkles,
   Square,
+  SquareCheck,
+  SquareMinus,
   Trash2,
   X,
 } from "lucide-react";
@@ -107,9 +110,15 @@ import {
   updateCrawlCandidate,
 } from "@/lib/api/crawlJobsApi";
 import {
+  DEFAULT_CRAWL_CANDIDATE_FILTERS,
+  filterCrawlCandidates,
   getReviewableCandidateIdsWithoutEmail,
   getReviewableCandidateIds,
+  hasActiveCrawlCandidateFilters,
   pruneSelectedCandidateIds,
+  type CrawlCandidateFilters,
+  type CrawlCandidateInformationFilter,
+  type CrawlCandidateReviewStatusFilter,
 } from "@/features/crawl-review/client/reviewCandidates";
 import {
   getCandidateEnrichmentFailureMessage,
@@ -1049,6 +1058,8 @@ export const TasksPage = () => {
   const [crawlJobCandidates, setCrawlJobCandidates] = useState<
     CrawlCandidateDTO[]
   >([]);
+  const [crawlCandidateFilters, setCrawlCandidateFilters] =
+    useState<CrawlCandidateFilters>({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
   const [crawlJobEvents, setCrawlJobEvents] = useState<CrawlJobEventDTO[]>([]);
   const [crawlJobDetailsLoading, setCrawlJobDetailsLoading] = useState(false);
   const [selectedCrawlCandidateIds, setSelectedCrawlCandidateIds] = useState<
@@ -1338,9 +1349,13 @@ export const TasksPage = () => {
     crawlDetailPagePage,
     getTotalPages(crawlJobPages.length, crawlDetailPagePageSize),
   );
+  const filteredCrawlJobCandidates = useMemo(
+    () => filterCrawlCandidates(crawlJobCandidates, crawlCandidateFilters),
+    [crawlCandidateFilters, crawlJobCandidates],
+  );
   const safeCrawlCandidatePage = Math.min(
     crawlCandidatePage,
-    getTotalPages(crawlJobCandidates.length, crawlCandidatePageSize),
+    getTotalPages(filteredCrawlJobCandidates.length, crawlCandidatePageSize),
   );
   const hasActiveBatchRestoreDeadline = useMemo(
     () =>
@@ -1412,11 +1427,15 @@ export const TasksPage = () => {
   const visibleCrawlJobCandidates = useMemo(
     () =>
       getPageItems(
-        crawlJobCandidates,
+        filteredCrawlJobCandidates,
         safeCrawlCandidatePage,
         crawlCandidatePageSize,
       ),
-    [crawlCandidatePageSize, crawlJobCandidates, safeCrawlCandidatePage],
+    [
+      crawlCandidatePageSize,
+      filteredCrawlJobCandidates,
+      safeCrawlCandidatePage,
+    ],
   );
   const selectedCrawlJobId = selectedCrawlJob?.id ?? null;
   const taskDetailDialogOpen =
@@ -1445,24 +1464,37 @@ export const TasksPage = () => {
       pruneSelectedCandidateIds(selectedCrawlCandidateIds, crawlJobCandidates),
     [crawlJobCandidates, selectedCrawlCandidateIds],
   );
-  const allReviewableCrawlCandidatesSelected = useMemo(
-    () =>
-      reviewableCrawlCandidateIds.length > 0 &&
-      reviewableCrawlCandidateIds.every((candidateId) =>
-        selectedReviewableCrawlCandidateIds.includes(candidateId),
-      ),
-    [reviewableCrawlCandidateIds, selectedReviewableCrawlCandidateIds],
+  const filteredReviewableCrawlCandidateIds = useMemo(
+    () => getReviewableCandidateIds(filteredCrawlJobCandidates),
+    [filteredCrawlJobCandidates],
   );
-  const allReviewableCrawlCandidatesWithoutEmailSelected = useMemo(
+  const filteredSelectedCrawlCandidateCount = useMemo(
     () =>
-      reviewableCrawlCandidateIdsWithoutEmail.length > 0 &&
-      reviewableCrawlCandidateIdsWithoutEmail.every((candidateId) =>
+      filteredReviewableCrawlCandidateIds.filter((candidateId) =>
         selectedReviewableCrawlCandidateIds.includes(candidateId),
-      ),
+      ).length,
     [
-      reviewableCrawlCandidateIdsWithoutEmail,
+      filteredReviewableCrawlCandidateIds,
       selectedReviewableCrawlCandidateIds,
     ],
+  );
+  const someFilteredCrawlCandidatesSelected =
+    filteredSelectedCrawlCandidateCount > 0;
+  const allFilteredCrawlCandidatesSelected =
+    filteredReviewableCrawlCandidateIds.length > 0 &&
+    filteredSelectedCrawlCandidateCount ===
+      filteredReviewableCrawlCandidateIds.length;
+  const selectedCrawlCandidateIdsWithoutEmail = useMemo(() => {
+    const withoutEmailIds = new Set(reviewableCrawlCandidateIdsWithoutEmail);
+    return selectedReviewableCrawlCandidateIds.filter((candidateId) =>
+      withoutEmailIds.has(candidateId),
+    );
+  }, [
+    reviewableCrawlCandidateIdsWithoutEmail,
+    selectedReviewableCrawlCandidateIds,
+  ]);
+  const crawlCandidateFiltersActive = hasActiveCrawlCandidateFilters(
+    crawlCandidateFilters,
   );
 
   useEffect(() => {
@@ -1942,10 +1974,17 @@ export const TasksPage = () => {
     setCrawlCandidatePage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(crawlJobCandidates.length, crawlCandidatePageSize),
+        getTotalPages(
+          filteredCrawlJobCandidates.length,
+          crawlCandidatePageSize,
+        ),
       ),
     );
-  }, [crawlCandidatePageSize, crawlJobCandidates.length, setCrawlCandidatePage]);
+  }, [
+    crawlCandidatePageSize,
+    filteredCrawlJobCandidates.length,
+    setCrawlCandidatePage,
+  ]);
 
   useEffect(() => {
     setBatchSentItemPage((currentPage) =>
@@ -2149,6 +2188,7 @@ export const TasksPage = () => {
     }
     previousSelectedCrawlJobIdRef.current = selectedCrawlJobId;
     setSelectedCrawlCandidateIds([]);
+    setCrawlCandidateFilters({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
     setCrawlJobApproveLoading(false);
     setCrawlJobEnrichLoading(false);
     setResumingCrawlJobReviewId(null);
@@ -2540,6 +2580,41 @@ export const TasksPage = () => {
     }
   };
 
+  const updateCrawlCandidateFilters = (
+    patch: Partial<CrawlCandidateFilters>,
+  ) => {
+    setCrawlCandidateFilters((currentFilters) => ({
+      ...currentFilters,
+      ...patch,
+    }));
+    setCrawlCandidatePage(1);
+  };
+
+  const resetCrawlCandidateFilters = () => {
+    setCrawlCandidateFilters({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
+    setCrawlCandidatePage(1);
+  };
+
+  const handleToggleFilteredCrawlCandidateSelection = () => {
+    setSelectedCrawlCandidateIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      const shouldDeselect =
+        filteredReviewableCrawlCandidateIds.length > 0 &&
+        filteredReviewableCrawlCandidateIds.every((candidateId) =>
+          nextIds.has(candidateId),
+        );
+
+      filteredReviewableCrawlCandidateIds.forEach((candidateId) => {
+        if (shouldDeselect) {
+          nextIds.delete(candidateId);
+        } else {
+          nextIds.add(candidateId);
+        }
+      });
+      return Array.from(nextIds);
+    });
+  };
+
   const handleToggleCrawlCandidateSelection = (candidateId: number) => {
     if (!reviewableCrawlCandidateIds.includes(candidateId)) {
       return;
@@ -2729,6 +2804,7 @@ export const TasksPage = () => {
     setCrawlJobCandidates([]);
     setCrawlJobEvents([]);
     setSelectedCrawlCandidateIds([]);
+    setCrawlCandidateFilters({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
     setCrawlJobApproveLoading(false);
     setSelectedCandidateDetail(null);
     setCandidateEditForm(null);
@@ -5926,205 +6002,374 @@ export const TasksPage = () => {
                   候选导师
                 </h3>
                 <div className="mt-3 space-y-2">
-                  {selectedCrawlJobCanReview ? (
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="text-sm text-amber-900">
-                          可导入 {reviewableCrawlCandidateIds.length} 位，已选{" "}
-                          {selectedReviewableCrawlCandidateIds.length} 位
-                          <span className="mt-1 block text-xs text-amber-700">
-                            无邮箱 {reviewableCrawlCandidateIdsWithoutEmail.length}{" "}
-                            {
-                              "位，建议在右侧“全选候选”或“全选无邮箱”后点击“补全缺失信息”，补全任务结束后可继续审核。"
-                            }
-                          </span>
+                  {crawlJobCandidates.length > 0 ? (
+                    <div
+                      data-testid="crawl-candidate-review-toolbar"
+                      className="overflow-visible rounded-2xl border border-stone-200 bg-stone-50/70"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3 px-4 pb-3 pt-4">
+                        <div>
+                          <h4 className="text-sm font-semibold text-stone-900">
+                            {selectedCrawlJobCanReview
+                              ? "审核工作区"
+                              : "候选筛选"}
+                          </h4>
+                          <p className="mt-1 text-xs leading-5 text-stone-500">
+                            {selectedCrawlJobCanReview
+                              ? "先搜索或筛选候选，再选择全部筛选结果进行批量处理；缺邮箱时也可逐位手工填写。"
+                              : "可按关键词、资料完整度或审核状态快速定位候选导师。"}
+                          </p>
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        {crawlCandidateFiltersActive ? (
                           <button
                             type="button"
-                            onClick={() =>
-                              setSelectedCrawlCandidateIds(
-                                reviewableCrawlCandidateIds,
-                              )
-                            }
-                            disabled={
-                              reviewableCrawlCandidateIds.length === 0 ||
-                              allReviewableCrawlCandidatesSelected ||
-                              crawlJobApproveLoading ||
-                              crawlJobEnrichLoading
-                            }
-                            className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={resetCrawlCandidateFilters}
+                            className="text-xs font-medium text-stone-500 underline decoration-stone-300 underline-offset-2 hover:text-stone-800"
                           >
-                            全选候选
+                            重置筛选
                           </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSelectedCrawlCandidateIds(
-                                reviewableCrawlCandidateIdsWithoutEmail,
-                              )
-                            }
-                            disabled={
-                              reviewableCrawlCandidateIdsWithoutEmail.length ===
-                                0 ||
-                              allReviewableCrawlCandidatesWithoutEmailSelected ||
-                              crawlJobApproveLoading ||
-                              crawlJobEnrichLoading
-                            }
-                            className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            全选无邮箱
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCrawlCandidateIds([])}
-                            disabled={
-                              selectedReviewableCrawlCandidateIds.length ===
-                                0 ||
-                              crawlJobApproveLoading ||
-                              crawlJobEnrichLoading
-                            }
-                            className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            清空选择
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void handleEnrichSelectedCrawlCandidates()
-                            }
-                            disabled={
-                              selectedReviewableCrawlCandidateIds.length ===
-                                0 ||
-                              crawlJobApproveLoading ||
-                              crawlJobEnrichLoading
-                            }
-                            className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {crawlJobEnrichLoading
-                              ? "补全中..."
-                              : "补全缺失信息"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void handleApproveSelectedCrawlCandidates()
-                            }
-                            disabled={
-                              selectedReviewableCrawlCandidateIds.length ===
-                                0 ||
-                              crawlJobApproveLoading ||
-                              crawlJobEnrichLoading
-                            }
-                            className="ui-btn-primary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {crawlJobApproveLoading
-                              ? "导入中..."
-                              : "审核通过并导入"}
-                          </button>
-                        </div>
+                        ) : null}
                       </div>
+
+                      <div className="grid gap-3 px-4 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(18rem,2fr)_minmax(11rem,1fr)_minmax(11rem,1fr)]">
+                        <div className="min-w-0">
+                          <div className="mb-2 text-sm font-medium text-stone-800">
+                            搜索候选
+                          </div>
+                          <label className="ui-select-shell h-10 min-h-10 w-full py-0">
+                            <Search className="h-4 w-4 shrink-0 text-stone-400" />
+                            <input
+                              type="search"
+                              aria-label="搜索候选导师"
+                              value={crawlCandidateFilters.keyword}
+                              onChange={(event) =>
+                                updateCrawlCandidateFilters({
+                                  keyword: event.target.value,
+                                })
+                              }
+                              placeholder="姓名、邮箱、职称、学院或研究方向"
+                              className="w-full min-w-0 bg-transparent text-sm leading-5 outline-none placeholder:text-stone-400"
+                            />
+                          </label>
+                        </div>
+                        <NativeSelectField
+                          label="资料状态"
+                          ariaLabel="候选导师资料状态"
+                          value={crawlCandidateFilters.information}
+                          onChange={(event) =>
+                            updateCrawlCandidateFilters({
+                              information: event.target
+                                .value as CrawlCandidateInformationFilter,
+                            })
+                          }
+                          shellClassName="h-10 min-h-10"
+                        >
+                          <option value="all">全部资料</option>
+                          <option value="missing_email">邮箱为空</option>
+                          <option value="has_email">已有邮箱</option>
+                          <option value="missing_title">职称为空</option>
+                          <option value="missing_department">系所为空</option>
+                          <option value="missing_profile_url">
+                            个人主页为空
+                          </option>
+                          <option value="missing_research_direction">
+                            研究方向为空
+                          </option>
+                          <option value="missing_recent_papers">
+                            近期论文为空
+                          </option>
+                        </NativeSelectField>
+                        <NativeSelectField
+                          label="审核状态"
+                          ariaLabel="候选导师审核状态"
+                          value={crawlCandidateFilters.reviewStatus}
+                          onChange={(event) =>
+                            updateCrawlCandidateFilters({
+                              reviewStatus: event.target
+                                .value as CrawlCandidateReviewStatusFilter,
+                            })
+                          }
+                          shellClassName="h-10 min-h-10"
+                        >
+                          <option value="all">全部状态</option>
+                          <option value="pending">待审核</option>
+                          <option value="accepted">已通过</option>
+                          <option value="merged">已合并</option>
+                          <option value="rejected">已拒绝</option>
+                        </NativeSelectField>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white/80 px-4 py-3">
+                        <div className="text-sm text-stone-600">
+                          显示 {filteredCrawlJobCandidates.length} /{" "}
+                          {crawlJobCandidates.length} 位
+                          {selectedCrawlJobCanReview ? (
+                            <>
+                              {" "}
+                              · 可导入 {reviewableCrawlCandidateIds.length} 位 ·
+                              无邮箱{" "}
+                              {reviewableCrawlCandidateIdsWithoutEmail.length} 位
+                            </>
+                          ) : null}
+                        </div>
+                        {selectedCrawlJobCanReview ? (
+                          <button
+                            type="button"
+                            aria-label={
+                              allFilteredCrawlCandidatesSelected
+                                ? "取消选择全部筛选结果"
+                                : "选择全部筛选结果"
+                            }
+                            aria-pressed={allFilteredCrawlCandidatesSelected}
+                            onClick={handleToggleFilteredCrawlCandidateSelection}
+                            disabled={
+                              filteredReviewableCrawlCandidateIds.length === 0 ||
+                              crawlJobApproveLoading ||
+                              crawlJobEnrichLoading
+                            }
+                            className={`inline-flex min-h-9 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                              allFilteredCrawlCandidatesSelected
+                                ? "border-primary/30 bg-primary/5 text-primary"
+                                : "border-stone-200 bg-white text-stone-700 hover:border-primary/40 hover:text-primary"
+                            }`}
+                          >
+                            {allFilteredCrawlCandidatesSelected ? (
+                              <SquareCheck className="h-4 w-4" />
+                            ) : someFilteredCrawlCandidatesSelected ? (
+                              <SquareMinus className="h-4 w-4" />
+                            ) : (
+                              <Square className="h-4 w-4" />
+                            )}
+                            {allFilteredCrawlCandidatesSelected
+                              ? "取消选择全部筛选结果"
+                              : "选择全部筛选结果"}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {selectedCrawlJobCanReview &&
+                      selectedReviewableCrawlCandidateIds.length > 0 ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-amber-200 bg-amber-50/80 px-4 py-3">
+                          <div className="text-sm text-amber-950">
+                            已选 {selectedReviewableCrawlCandidateIds.length} 位
+                            <span className="mt-1 block text-xs text-amber-700">
+                              当前筛选结果中已选{" "}
+                              {filteredSelectedCrawlCandidateCount} 位，其中无邮箱{" "}
+                              {selectedCrawlCandidateIdsWithoutEmail.length} 位
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCrawlCandidateIds([])}
+                              disabled={
+                                crawlJobApproveLoading || crawlJobEnrichLoading
+                              }
+                              className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              清空选择
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleEnrichSelectedCrawlCandidates()
+                              }
+                              disabled={
+                                crawlJobApproveLoading || crawlJobEnrichLoading
+                              }
+                              className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {crawlJobEnrichLoading
+                                ? "补全中..."
+                                : "补全缺失信息"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleApproveSelectedCrawlCandidates()
+                              }
+                              disabled={
+                                crawlJobApproveLoading || crawlJobEnrichLoading
+                              }
+                              className="ui-btn-primary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {crawlJobApproveLoading
+                                ? "导入中..."
+                                : "审核通过并导入"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  ) : selectedCrawlJobNeedsReviewResume &&
-                    reviewableCrawlCandidateIds.length > 0 ? (
+                  ) : null}
+                  {selectedCrawlJobNeedsReviewResume &&
+                  reviewableCrawlCandidateIds.length > 0 ? (
                     <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
                       请先将任务转入待审核状态，再补全或审核导入候选导师。
                     </div>
                   ) : null}
-                  {crawlJobCandidates.length > 0 ? (
-                    visibleCrawlJobCandidates.map((candidate) => (
-                      <div
-                        key={candidate.id}
-                        className="rounded-2xl border border-stone-100 px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="flex min-w-0 items-center gap-3">
-                            {selectedCrawlJobCanReview ? (
-                              <input
-                                type="checkbox"
-                                checked={selectedReviewableCrawlCandidateIds.includes(
-                                  candidate.id,
-                                )}
-                                disabled={
-                                  crawlJobApproveLoading ||
-                                  crawlJobEnrichLoading
-                                }
-                                onChange={() =>
-                                  handleToggleCrawlCandidateSelection(
+                  {filteredCrawlJobCandidates.length > 0 ? (
+                    visibleCrawlJobCandidates.map((candidate) => {
+                      const candidateMissingEmail = !candidate.email?.trim();
+                      const candidateCanEdit =
+                        selectedCrawlJobCanReview &&
+                        candidate.review_status === "pending";
+
+                      return (
+                        <div
+                          key={candidate.id}
+                          className="rounded-2xl border border-stone-100 bg-white px-4 py-3"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="flex min-w-0 items-start gap-3">
+                              {selectedCrawlJobCanReview ? (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedReviewableCrawlCandidateIds.includes(
                                     candidate.id,
-                                  )
-                                }
-                                aria-label={`选择候选导师 ${candidate.name}`}
-                                className="h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/30"
-                              />
-                            ) : null}
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-stone-800">
-                                {candidate.name}
-                              </p>
-                              <p className="mt-1 text-sm text-stone-500">
-                                {candidate.email ?? "暂无邮箱（可尝试进行补全）"}
-                              </p>
-                              {selectedCrawlJobNeedsReviewResume &&
-                              candidate.review_status === "pending" ? (
-                                <p className="mt-2 text-xs text-amber-700">
-                                  先转入待审核后才可补全或审核导入
-                                </p>
+                                  )}
+                                  disabled={
+                                    candidate.review_status !== "pending" ||
+                                    crawlJobApproveLoading ||
+                                    crawlJobEnrichLoading
+                                  }
+                                  onChange={() =>
+                                    handleToggleCrawlCandidateSelection(
+                                      candidate.id,
+                                    )
+                                  }
+                                  aria-label={`选择候选导师 ${candidate.name}`}
+                                  className="mt-1 h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/30"
+                                />
                               ) : null}
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-medium text-stone-800">
+                                    {candidate.name}
+                                  </p>
+                                  {candidate.title ? (
+                                    <span className="text-xs text-stone-500">
+                                      {candidate.title}
+                                    </span>
+                                  ) : null}
+                                  {candidateMissingEmail ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                                      邮箱为空
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p
+                                  className={`mt-1 break-all text-sm ${
+                                    candidateMissingEmail
+                                      ? "text-amber-700"
+                                      : "text-stone-600"
+                                  }`}
+                                >
+                                  {candidate.email?.trim() ||
+                                    "暂无邮箱（可手工填写或尝试补全）"}
+                                </p>
+                                {[candidate.school, candidate.department]
+                                  .filter(Boolean)
+                                  .join(" / ") ? (
+                                  <p className="mt-1 text-xs text-stone-400">
+                                    {[candidate.school, candidate.department]
+                                      .filter(Boolean)
+                                      .join(" / ")}
+                                  </p>
+                                ) : null}
+                                {selectedCrawlJobNeedsReviewResume &&
+                                candidate.review_status === "pending" ? (
+                                  <p className="mt-2 text-xs text-amber-700">
+                                    先转入待审核后才可补全或审核导入
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
+                                置信度 {Math.round(candidate.confidence * 100)}%
+                              </span>
+                              <span
+                                className={`rounded-full border px-3 py-1 text-xs ${
+                                  CRAWL_CANDIDATE_REVIEW_STATUS_TONES[
+                                    candidate.review_status
+                                  ]
+                                }`}
+                              >
+                                {
+                                  CRAWL_CANDIDATE_REVIEW_STATUS_LABELS[
+                                    candidate.review_status
+                                  ]
+                                }
+                              </span>
+                              {candidateMissingEmail && candidateCanEdit ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCandidateDetail(candidate);
+                                    setCandidateEditForm(
+                                      toCrawlCandidateEditForm(candidate),
+                                    );
+                                  }}
+                                  className="ui-btn-secondary px-3 py-2 text-sm"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                  填写邮箱
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCandidateEditForm(null);
+                                  setSelectedCandidateDetail(candidate);
+                                }}
+                                className="ui-btn-secondary px-3 py-2 text-sm"
+                              >
+                                查看详情
+                              </button>
                             </div>
                           </div>
-                          <div className="flex shrink-0 flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
-                              置信度 {Math.round(candidate.confidence * 100)}%
-                            </span>
-                            <span
-                              className={`rounded-full border px-3 py-1 text-xs ${
-                                CRAWL_CANDIDATE_REVIEW_STATUS_TONES[
-                                  candidate.review_status
-                                ]
-                              }`}
-                            >
-                              {
-                                CRAWL_CANDIDATE_REVIEW_STATUS_LABELS[
-                                  candidate.review_status
-                                ]
-                              }
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCandidateEditForm(null);
-                                setSelectedCandidateDetail(candidate);
-                              }}
-                              className="ui-btn-secondary px-3 py-2 text-sm"
-                            >
-                              查看详情
-                            </button>
-                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
+                  ) : crawlJobCandidates.length > 0 ? (
+                    <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-6 py-8 text-center">
+                      <Search className="mx-auto h-6 w-6 text-stone-300" />
+                      <p className="mt-3 text-sm font-medium text-stone-700">
+                        没有符合筛选条件的候选导师
+                      </p>
+                      <button
+                        type="button"
+                        onClick={resetCrawlCandidateFilters}
+                        className="mt-2 text-xs font-medium text-primary hover:underline"
+                      >
+                        重置筛选
+                      </button>
+                    </div>
                   ) : (
                     <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">
                       暂无候选导师。
                     </p>
                   )}
                 </div>
-                <Pagination
-                  page={safeCrawlCandidatePage}
-                  pageSize={crawlCandidatePageSize}
-                  totalCount={crawlJobCandidates.length}
-                  onChange={handleCrawlCandidatePaginationChange}
-                  ariaLabel="候选导师分页"
-                  pageSizeAriaLabel="候选导师每页数量"
-                  variant="compact"
-                  pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
-                  unitLabel="位"
-                  itemLabel="位导师"
-                  focusTargetRef={crawlCandidatesStartRef}
-                  menuPlacement="popover"
-                  className="mt-3 border-t border-stone-100 pt-3"
-                />
+                {filteredCrawlJobCandidates.length > 0 ? (
+                  <Pagination
+                    page={safeCrawlCandidatePage}
+                    pageSize={crawlCandidatePageSize}
+                    totalCount={filteredCrawlJobCandidates.length}
+                    onChange={handleCrawlCandidatePaginationChange}
+                    ariaLabel="候选导师分页"
+                    pageSizeAriaLabel="候选导师每页数量"
+                    variant="compact"
+                    pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
+                    unitLabel="位"
+                    itemLabel="位导师"
+                    summary={`共 ${filteredCrawlJobCandidates.length} 位符合筛选条件，已选 ${selectedReviewableCrawlCandidateIds.length} 位`}
+                    focusTargetRef={crawlCandidatesStartRef}
+                    menuPlacement="popover"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
+                ) : null}
               </section>
             </div>
           </section>
@@ -6165,7 +6410,7 @@ export const TasksPage = () => {
                 <p className="mt-1 text-sm text-stone-500">
                   {candidateEditForm
                     ? "手动修正待审核资料，保存后仍可继续补全缺失信息。"
-                    : selectedCandidateDetail.email ??
+                    : selectedCandidateDetail.email?.trim() ||
                       "暂无邮箱（可尝试进行补全）"}
                 </p>
               </div>

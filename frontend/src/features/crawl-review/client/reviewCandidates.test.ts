@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { CrawlCandidateDTO } from '@/types';
 import {
+  DEFAULT_CRAWL_CANDIDATE_FILTERS,
+  filterCrawlCandidates,
   getReviewableCandidateIdsWithoutEmail,
   getReviewableCandidateIds,
+  hasActiveCrawlCandidateFilters,
   pruneSelectedCandidateIds,
 } from './reviewCandidates';
 
@@ -63,5 +66,62 @@ describe('reviewCandidates', () => {
     ];
 
     expect(pruneSelectedCandidateIds([4, 3, 2, 999, 1], candidates)).toEqual([4, 1]);
+  });
+
+  it('searches candidate fields with normalized, multi-term matching', () => {
+    const candidates = [
+      buildCandidate({
+        id: 1,
+        name: '张老师',
+        department: '人工智能系',
+        research_direction: '多模态学习',
+      }),
+      buildCandidate({
+        id: 2,
+        name: '李老师',
+        department: '软件工程系',
+        research_direction: '程序分析',
+      }),
+    ];
+
+    expect(
+      filterCrawlCandidates(candidates, {
+        ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+        keyword: '张老师 多模态',
+      }).map((candidate) => candidate.id),
+    ).toEqual([1]);
+  });
+
+  it('filters candidates by information completeness and review status', () => {
+    const candidates = [
+      buildCandidate({ id: 1, email: null, review_status: 'pending' }),
+      buildCandidate({ id: 2, email: ' ', review_status: 'accepted' }),
+      buildCandidate({ id: 3, email: 'li@example.edu', review_status: 'pending' }),
+    ];
+
+    expect(
+      filterCrawlCandidates(candidates, {
+        keyword: '',
+        information: 'missing_email',
+        reviewStatus: 'pending',
+      }).map((candidate) => candidate.id),
+    ).toEqual([1]);
+    expect(
+      filterCrawlCandidates(candidates, {
+        keyword: '',
+        information: 'has_email',
+        reviewStatus: 'all',
+      }).map((candidate) => candidate.id),
+    ).toEqual([3]);
+  });
+
+  it('reports whether any candidate filter is active', () => {
+    expect(hasActiveCrawlCandidateFilters(DEFAULT_CRAWL_CANDIDATE_FILTERS)).toBe(false);
+    expect(
+      hasActiveCrawlCandidateFilters({
+        ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+        information: 'missing_profile_url',
+      }),
+    ).toBe(true);
   });
 });
