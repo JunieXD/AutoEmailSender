@@ -176,7 +176,7 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
                 if name in {"request_id", "format"} or bool(option.get("supported")):
                     global_options[name] = {
                         key: option[key]
-                        for key in ("flags", "type", "supported", "description")
+                        for key in ("flags", "type", "values", "supported", "description")
                         if key in option
                     }
 
@@ -221,6 +221,13 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             "full_view": True,
         },
     }
+    result_protocol = output_contract.get("result_protocol")
+    if isinstance(result_protocol, dict):
+        summary["output"]["result_protocol"] = {
+            key: result_protocol[key]
+            for key in ("version", "default_projection", "fields")
+            if key in result_protocol
+        }
     trust = description.get("trust")
     if isinstance(trust, dict) and trust.get("external_content") != "none":
         summary["trust"] = {

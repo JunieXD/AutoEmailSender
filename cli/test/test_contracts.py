@@ -931,18 +931,55 @@ class ContractTests(unittest.TestCase):
 
     def test_state_metadata_covers_non_terminal_partial_and_nested_task_states(self) -> None:
         data = {
+            "id": 42,
             "status": "partially_completed",
-            "current_task": {"status": "review_required", "approved_body_text": "正文"},
-            "items": [{"status": "queued"}, {"status": "failed"}],
+            "current_task": {
+                "task_id": 8,
+                "status": "review_required",
+                "approved_body_text": "正文",
+            },
         }
         projected = augment_state_metadata(data, command="campaigns.get")
+        action_map = {
+            item["action"]: item
+            for item in projected["available_actions"]
+        }
         self.assertEqual(projected["status"], "partially_completed")
-        self.assertIn("read", projected["available_actions"])
-        self.assertIn("retry", projected["available_actions"])
+        self.assertEqual(action_map["read"]["command"], "campaigns.get")
+        self.assertEqual(action_map["read"]["arguments"], {"campaign_id": 42})
+        self.assertIn("retry", projected["blocked_actions"])
         self.assertIn("wait", projected["blocked_actions"])
-        self.assertIn("prepare-send", projected["current_task"]["available_actions"])
-        self.assertIn("wait", projected["items"][0]["available_actions"])
-        self.assertIn("retry", projected["items"][1]["available_actions"])
+        task_actions = {
+            item["action"]: item
+            for item in projected["current_task"]["available_actions"]
+        }
+        self.assertEqual(task_actions["prepare-send"]["command"], "drafts.prepare-send")
+        self.assertEqual(task_actions["prepare-send"]["arguments"], {"task_id": 8})
+
+        campaign_item = augment_state_metadata(
+            {"id": 99, "campaign_id": 42, "status": "review_required"},
+            command="campaigns.items",
+        )
+        item_actions = {
+            item["action"]: item
+            for item in campaign_item["available_actions"]
+        }
+        prepare_send = item_actions["prepare-send"]
+        self.assertEqual(prepare_send["command"], "campaigns.prepare-send")
+        self.assertEqual(prepare_send["arguments"], {"campaign_id": 42, "item_ids": [99]})
+        self.assertEqual(prepare_send["risk_level"], "L3")
+        self.assertTrue(prepare_send["confirmation_required"])
+        self.assertIsNone(prepare_send["blocked_reason"])
+
+        plan = augment_state_metadata(
+            {"plan_id": "plan-7", "status": "pending"},
+            command="plans.show",
+        )
+        plan_actions = {item["action"]: item for item in plan["available_actions"]}
+        self.assertEqual(plan_actions["execute"]["command"], "plans.execute")
+        self.assertEqual(plan_actions["execute"]["arguments"], {"plan_id": "plan-7"})
+        self.assertTrue(plan_actions["execute"]["confirmation_required"])
+        self.assertEqual(plan_actions["execute"]["required_input"], ["confirm"])
 
     def test_read_only_status_fields_do_not_gain_lifecycle_actions(self) -> None:
         projected = augment_state_metadata(
@@ -983,17 +1020,19 @@ class ContractTests(unittest.TestCase):
                     self.assertNotIn("succeeded", projected["available_actions"])
 
     def test_wait_state_rules_do_not_confuse_paused_unknown_or_partial_results(self) -> None:
-        paused = _available_actions("crawler.jobs", "paused")
-        self.assertTrue(any(item["action"] == "resume" and item["allowed"] for item in paused))
-        self.assertTrue(any(item["action"] == "wait" and not item["allowed"] for item in paused))
+        paused = _available_actions("crawler.jobs", 7, "paused")
+        paused_actions = {item["action"]: item for item in paused}
+        self.assertEqual(paused_actions["resume"]["command"], "crawler.jobs.resume")
+        self.assertNotIn("wait", paused_actions)
 
-        unknown = _available_actions("matching.jobs", "mystery")
-        self.assertTrue(any(item["action"] == "wait" and not item["allowed"] for item in unknown))
-        self.assertTrue(any("未声明" in str(item.get("reason")) for item in unknown if item["action"] == "wait"))
+        unknown = _available_actions("matching.jobs", 8, "mystery")
+        self.assertEqual([item["action"] for item in unknown], ["read"])
+        self.assertEqual(unknown[0]["command"], "matching.jobs.get")
 
-        partial = _available_actions("enrichment.jobs", "partially_completed")
-        self.assertTrue(any(item["action"] == "retry" and item["allowed"] for item in partial))
-        self.assertTrue(any(item["action"] == "wait" and not item["allowed"] for item in partial))
+        partial = _available_actions("enrichment.jobs", 9, "partially_completed")
+        partial_actions = {item["action"]: item for item in partial}
+        self.assertEqual(partial_actions["retry"]["command"], "enrichment.jobs.retry-failed")
+        self.assertNotIn("wait", partial_actions)
 
 
 if __name__ == "__main__":

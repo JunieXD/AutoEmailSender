@@ -36,7 +36,7 @@ def list_professors(
     archived: Annotated[str, typer.Option("--archived", help="active、archived 或 all。") ]="active",
     tag_id: Annotated[int | None, typer.Option("--tag-id", min=1)] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。") ] = False,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
@@ -506,7 +506,7 @@ def restore_professor(
 def list_professor_tags(
     ctx: typer.Context,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:

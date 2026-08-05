@@ -52,7 +52,7 @@ def list_threads(
     sent: Annotated[str | None, typer.Option("--sent", help="true 或 false。") ] = None,
     replied: Annotated[str | None, typer.Option("--replied", help="true 或 false。") ] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all")] = False,
 ) -> None:
@@ -91,7 +91,7 @@ def get_thread(
     thread_id: Annotated[str, typer.Argument(help="通信线程 ID，例如 2:17。")],
     include_body: Annotated[bool, typer.Option("--include-body", help="包含完整邮件正文。") ] = False,
     cursor: Annotated[int, typer.Option("--cursor", min=0, help="线程内消息游标。") ] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
 ) -> None:
     run_read_command(
         ctx,
@@ -117,7 +117,7 @@ def list_messages(
     include_body: Annotated[bool, typer.Option("--include-body")] = False,
     order: Annotated[str, typer.Option("--order", help="asc 或 desc。") ] = "desc",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all")] = False,
 ) -> None:

@@ -356,6 +356,24 @@ _SEND_EXECUTION_EFFECT: Final = EffectSpec(
     confirmation_rule="explicit_plan_confirmation",
     unknown_external_result_protection=True,
 )
+_INVOKE_EFFECT: Final = EffectSpec(
+    mutates=True,
+    external_services=("imap", "smtp", "llm", "public_web"),
+    cost_may_apply=True,
+    reversible=False,
+    requires_explicit_user_intent=True,
+    requires_confirmation_plan=True,
+    impact_scope="由 --command 选择的实时目标命令范围",
+    confirmation_rule="target_command_contract",
+    unknown_external_result_protection=True,
+)
+_INVOKE_PRECONDITIONS: Final = PreconditionsSpec(
+    desktop_app_must_be_open=False,
+    manual_app_open_required=True,
+    runtime="depends_on_target_command",
+    requirements=("先读取目标命令的实时 describe 合同；目标命令自行声明运行时前置条件。",),
+    blocked_reason_when_unavailable="目标命令返回 APP_UNAVAILABLE 时请手动打开软件并等待加载",
+)
 
 _INVALID_ARGUMENT: Final = ErrorSpec("INVALID_ARGUMENT", False, "输入不符合合同或业务约束")
 _NOT_FOUND: Final = ErrorSpec("RESOURCE_NOT_FOUND", False, "按 ID 查询的对象不存在")
@@ -490,6 +508,16 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         (),
         ("使用 capabilities 的 scope_revision 缓存发现结果；版本变化后再刷新。",),
         _NO_RETRY,
+    ),
+    "invoke": OperationProfile(
+        _INVOKE_EFFECT,
+        _INVOKE_PRECONDITIONS,
+        _UNTRUSTED_DATA,
+        (),
+        _EXTERNAL_PLAN_ERRORS,
+        (),
+        ("只调用 capabilities/describe 已发布的叶子命令；JSON 输入必须符合目标命令的实时参数合同。",),
+        _STATUS_BEFORE_RETRY,
     ),
     "observe": OperationProfile(
         _READ_EFFECT,
@@ -835,6 +863,7 @@ _bind(
     "capabilities",
     "describe",
 )
+_bind("invoke", "invoke")
 _bind("wait", "wait")
 _bind(
     "observe",

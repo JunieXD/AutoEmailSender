@@ -28,7 +28,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["_meta"]["schema_version"], "2")
+        self.assertEqual(payload["_meta"]["schema_version"], "3")
         self.assertEqual(payload["_meta"]["command"], "version")
         self.assertNotIn("agent_guide", payload["_meta"])
 
@@ -513,7 +513,162 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["data"]["items"][0]["id"], 7)
         self.assertEqual(payload["_meta"]["pagination"]["next_cursor"], "1")
+        self.assertEqual(payload["data"]["limit"], 1)
+        self.assertTrue(payload["data"]["truncated"])
+        self.assertEqual(
+            payload["data"]["continuation"],
+            {
+                "command": "professors.list",
+                "input": {"archived": "active", "cursor": "1", "limit": 1},
+                "cursor": "1",
+                "mode": "cursor",
+                "reuse_previous_input": True,
+            },
+        )
         self.assertEqual(fake_client.calls[0][1], "/api/agent/v1/professors")
+
+    def test_large_business_results_use_explicit_summary_and_continuation_protocol(self) -> None:
+        long_message = "诊断日志内容" * 200
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/diagnostics/operation-logs": {
+                    "items": [
+                        {
+                            "id": 7,
+                            "message": long_message,
+                            "metadata": {"raw_payload": "x" * 200},
+                        },
+                    ],
+                    "next_cursor": "8",
+                    "has_more": True,
+                    "pagination_mode": "offset",
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            summary = self.runner.invoke(
+                app,
+                ["--format", "json", "diagnostics", "logs"],
+            )
+            expanded = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "--expand",
+                    "message",
+                    "diagnostics",
+                    "logs",
+                ],
+            )
+            full = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "--projection",
+                    "full",
+                    "diagnostics",
+                    "logs",
+                ],
+            )
+
+        self.assertEqual(summary.exit_code, 0, msg=summary.output)
+        summary_data = json.loads(summary.stdout)["data"]
+        self.assertEqual(summary_data["projection"]["mode"], "summary")
+        self.assertEqual(summary_data["limit"], 25)
+        self.assertTrue(summary_data["truncated"])
+        self.assertIn("/items/0/message", summary_data["omitted_paths"])
+        self.assertEqual(summary_data["items"][0]["message"]["kind"], "text_summary")
+        self.assertEqual(summary_data["items"][0]["message"]["characters"], len(long_message))
+        self.assertEqual(
+            summary_data["continuation"]["input"],
+            {"offset": 8, "limit": 25},
+        )
+        self.assertTrue(summary_data["continuation"]["reuse_previous_input"])
+        self.assertEqual(fake_client.calls[0][2]["limit"], 25)
+
+        self.assertEqual(expanded.exit_code, 0, msg=expanded.output)
+        expanded_data = json.loads(expanded.stdout)["data"]
+        self.assertEqual(expanded_data["items"][0]["message"], long_message)
+        self.assertIn("/items/0/metadata", expanded_data["omitted_paths"])
+
+        self.assertEqual(full.exit_code, 0, msg=full.output)
+        full_data = json.loads(full.stdout)["data"]
+        self.assertEqual(full_data["projection"]["mode"], "full")
+        self.assertEqual(full_data["items"][0]["message"], long_message)
+        self.assertNotIn("/items/0/message", full_data["omitted_paths"])
+
+    def test_invoke_reuses_target_parser_and_confirmation_gate(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/professors/7": {
+                    "id": 7,
+                    "name": "测试导师",
+                    "email": "p@example.edu",
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            invoked = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "invoke",
+                    "--command",
+                    "professors.get",
+                    "--input",
+                    "-",
+                ],
+                input='{"professor_id":7}',
+            )
+
+        self.assertEqual(invoked.exit_code, 0, msg=invoked.output)
+        invoked_payload = json.loads(invoked.stdout)
+        self.assertEqual(invoked_payload["_meta"]["command"], "professors.get")
+        self.assertEqual(invoked_payload["data"]["id"], 7)
+        self.assertEqual(fake_client.calls[0][:2], ("GET", "/api/agent/v1/professors/7"))
+
+        invalid = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "invoke",
+                "--command",
+                "professors.get",
+                "--input",
+                "-",
+            ],
+            input='{"unknown":7}',
+        )
+        self.assertEqual(invalid.exit_code, 2, msg=invalid.output)
+        self.assertEqual(json.loads(invalid.stdout)["error"]["code"], "INVALID_INVOKE_INPUT")
+
+        confirmation = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "invoke",
+                "--command",
+                "plans.execute",
+                "--input",
+                "-",
+            ],
+            input='{"plan_id":"plan-7"}',
+        )
+        self.assertEqual(confirmation.exit_code, 6, msg=confirmation.output)
+        confirmation_payload = json.loads(confirmation.stdout)
+        self.assertEqual(confirmation_payload["error"]["code"], "PLAN_CONFIRMATION_REQUIRED")
+        self.assertEqual(confirmation_payload["_meta"]["command"], "plans.execute")
 
     def test_professor_write_commands_use_safe_agent_routes_and_partial_updates(self) -> None:
         fake_client = _FakeAgentClient(
@@ -1814,7 +1969,7 @@ class CliTests(unittest.TestCase):
             (
                 "GET",
                 "/api/agent/v1/usage/records",
-                {"page": 1, "page_size": 100, "feature_type": "match_analysis"},
+                {"page": 1, "page_size": 25, "feature_type": "match_analysis"},
             ),
         )
         self.assertEqual(

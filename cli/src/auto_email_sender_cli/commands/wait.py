@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from auto_email_sender_cli.action_links import resolve_action_links
 from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.commands.common import (
     cli_context,
@@ -103,7 +104,7 @@ def wait_for_resource(
             "poll_count": polls,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "result": latest,
-            "available_actions": _available_actions(resource, status_value),
+            "available_actions": _available_actions(resource, resource_id, status_value),
         }
         warnings = ["等待超时；任务仍未进入终态，不能报告为已完成。"] if timed_out else []
         emit_success(
@@ -131,42 +132,40 @@ def _status(value: object) -> str | None:
     return None
 
 
-def _available_actions(resource: str, status_value: str | None) -> list[dict[str, object]]:
+def _available_actions(
+    resource: str,
+    resource_id: int,
+    status_value: str | None,
+) -> list[dict[str, object]]:
     if status_value is None:
         return []
+    allowed: list[str]
+    blocked: dict[str, str]
     if status_value in _TERMINAL_STATES:
         if status_value in {"failed", "partial_failed", "partially_completed"}:
-            return [
-                {"action": "read", "allowed": True},
-                {"action": "retry", "allowed": True},
-                {"action": "wait", "allowed": False, "reason": "对象已结束"},
-            ]
-        return [
-            {"action": "read", "allowed": True},
-            {"action": "archive", "allowed": True},
-            {"action": "wait", "allowed": False, "reason": "对象已进入终态"},
-            {"action": "cancel", "allowed": False, "reason": "对象已进入终态"},
-        ]
-    actions = [{"action": "wait", "allowed": True}]
-    if status_value in {"queued", "running"}:
-        actions.extend(
-            [
-                {"action": "cancel", "allowed": True},
-                {
-                    "action": "pause",
-                    "allowed": resource == "crawler.jobs",
-                    "reason": None if resource == "crawler.jobs" else "当前资源不支持暂停",
-                },
-            ],
-        )
-    if status_value == "paused":
-        return [
-            {"action": "read", "allowed": True},
-            {"action": "resume", "allowed": True},
-            {"action": "cancel", "allowed": True},
-            {"action": "wait", "allowed": False, "reason": "对象已暂停，请先恢复"},
-        ]
-    return [
-        {"action": "read", "allowed": True},
-        {"action": "wait", "allowed": False, "reason": f"状态 {status_value} 未声明为可等待状态"},
-    ]
+            allowed = ["read", "retry"]
+            blocked = {"wait": "对象已结束"}
+        else:
+            allowed = ["read", "archive"]
+            blocked = {"wait": "对象已进入终态", "cancel": "对象已进入终态"}
+    elif status_value in {"queued", "running"}:
+        allowed = ["read", "wait", "cancel"]
+        blocked = {}
+        if resource == "crawler.jobs":
+            allowed.append("pause")
+        else:
+            blocked["pause"] = "当前资源不支持暂停"
+    elif status_value == "paused":
+        allowed = ["read", "resume", "cancel"]
+        blocked = {"wait": "对象已暂停，请先恢复"}
+    else:
+        allowed = ["read"]
+        blocked = {"wait": f"状态 {status_value} 未声明为可等待状态"}
+
+    links, _ = resolve_action_links(
+        f"{resource}.get",
+        {"id": resource_id},
+        actions=allowed,
+        blocked_actions=blocked,
+    )
+    return links

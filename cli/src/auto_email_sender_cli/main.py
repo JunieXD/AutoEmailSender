@@ -49,9 +49,11 @@ from auto_email_sender_cli.describe import (
     description_sections,
 )
 from auto_email_sender_cli.guide import GUIDE_TOPICS, get_guide
+from auto_email_sender_cli.invoke import invoke_json_command
 from auto_email_sender_cli.output import (
     CliContext,
     OutputFormat,
+    ResultProjection,
     emit_error,
     emit_success,
 )
@@ -160,6 +162,20 @@ def root(
             help="集合结构化筛选 JSON，例如 '{\"status\":{\"eq\":\"review_required\"}}'。",
         ),
     ] = None,
+    projection: Annotated[
+        ResultProjection,
+        typer.Option(
+            "--projection",
+            help="业务结果输出：summary（默认，正文/日志/证据摘要）或 full（显式展开全部）。",
+        ),
+    ] = ResultProjection.SUMMARY,
+    expand: Annotated[
+        list[str],
+        typer.Option(
+            "--expand",
+            help="在 summary 中显式展开字段名或 JSON Pointer；可重复，例如 --expand body_text。",
+        ),
+    ] = [],
 ) -> None:
     ctx.obj = CliContext(
         output_format=OutputFormat.JSON if json_output else output_format,
@@ -168,6 +184,8 @@ def root(
         if_revision=if_revision,
         output_file=output_file,
         force_output=force_output,
+        projection=projection,
+        expand=tuple(expand),
     )
 
 
@@ -214,6 +232,34 @@ def guide_command(
         human_text=human,
         guide_topic=str(guide["topic"]),
     )
+
+
+@app.command(
+    "invoke",
+    help="以 JSON 对象调用一个已发布叶子命令；复用其真实参数解析、校验和确认保护。",
+)
+def invoke_command(
+    ctx: typer.Context,
+    command: Annotated[
+        str,
+        typer.Option("--command", help="要调用的叶子命令，可使用空格或点号。"),
+    ],
+    input_source: Annotated[
+        str,
+        typer.Option("--input", help="JSON 输入文件路径；使用 - 从 stdin 读取。"),
+    ],
+) -> None:
+    context = _context(ctx)
+    try:
+        invoke_json_command(
+            app,
+            ctx,
+            requested_command=command,
+            input_source=input_source,
+        )
+    except CliError as error:
+        emit_error(context, command="invoke", error=error)
+        raise typer.Exit(error.exit_code) from error
 
 
 @app.command("capabilities")

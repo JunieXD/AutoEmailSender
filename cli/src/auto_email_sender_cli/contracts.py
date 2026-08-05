@@ -24,8 +24,10 @@ from auto_email_sender_cli.capabilities import (
     supports_if_revision,
     supports_pagination,
     supports_structured_filter,
+    supports_dynamic_action_links,
 )
 from auto_email_sender_cli.operation_specs import get_operation_spec
+from auto_email_sender_cli.result_protocol import RESULT_PROTOCOL_FIELDS, is_business_result
 
 
 CONTRACT_REQUIRED_KEYS = (
@@ -217,7 +219,7 @@ def _input_contract(
             properties[name]["items"] = {"type": schema_type}
         if bool(parameter.get("required")):
             required.append(name)
-    return {
+    contract: dict[str, object] = {
         "schema": {
             "type": "object",
             "properties": properties,
@@ -267,12 +269,39 @@ def _input_contract(
                 "position": "before_command",
                 "description": "对集合应用白名单结构化筛选；不接受 SQL 或任意表达式。",
             },
+            "projection": {
+                "flags": ["--projection"],
+                "type": "enum",
+                "values": ["summary", "full"],
+                "required": False,
+                "supported": True,
+                "position": "before_command",
+                "description": "summary 默认摘要正文、日志和网页证据；full 仅在明确需要完整内容时使用。",
+            },
+            "expand": {
+                "flags": ["--expand"],
+                "type": "string",
+                "multiple": True,
+                "required": False,
+                "supported": True,
+                "position": "before_command",
+                "description": "在 summary 中按字段名或 JSON Pointer 显式展开内容；可重复。",
+            },
         },
         "clear_semantics": (
             "omitted=preserve; supplied value=set; explicit --clear-* or clear=true=clear"
         ),
         "file_and_stdin_examples": input_file_examples,
     }
+    if command == "invoke":
+        contract["json_invoke"] = {
+            "target": "--command 指向 capabilities 中的已发布叶子命令，不能递归调用 invoke。",
+            "input": "--input 使用 JSON 对象；键名和类型以目标命令 describe --section input 返回的 input.schema 为准。",
+            "stdin": "--input - 从 stdin 读取 JSON。",
+            "global_options": "--request-id、--if-revision、--projection 和 --expand 保持为 invoke 之前的根选项，不写入 JSON 对象。",
+            "execution": "复用目标命令的 Click/Typer 解析、业务校验、确认计划和幂等保护。",
+        }
+    return contract
 
 
 def _schema_type_for_parameter(type_info: object) -> object:
@@ -303,11 +332,16 @@ def _clear_semantics(name: str) -> str:
 
 def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
     output_fields = _known_output_fields(command) or _GENERIC_OUTPUT_FIELDS
+    # Paged contracts distinguish item fields from their top-level envelope.
+    # The result protocol is declared in that envelope below, while detail and
+    # mutation contracts expose it directly on their data object.
+    if is_business_result(command) and not supports_list:
+        output_fields = output_fields | RESULT_PROTOCOL_FIELDS
     if command not in _REVISION_EXCLUDED_COMMANDS and (supports_list or _has_revision_output(output_fields)):
         # ``run_read_command`` always exposes a revision on collection items,
         # and detail reads expose the same token on identified objects.
         output_fields = output_fields | {"revision"}
-    if capability_stateful(command) and (supports_list or "status" in output_fields):
+    if supports_dynamic_action_links(command) and (supports_list or "status" in output_fields):
         # ``augment_state_metadata`` adds these fields to every identified
         # stateful object, including collection items and nested task items.
         output_fields = output_fields | {"available_actions", "blocked_actions", "blocked_reason"}
@@ -332,6 +366,10 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                 "pagination": {"type": ["object", "null"]},
                 "summary": {"type": ["object", "null"]},
                 "model_options": {"type": "array"},
+                "projection": {"type": "object"},
+                "continuation": {"type": ["object", "null"]},
+                "truncated": {"type": "boolean"},
+                "omitted_paths": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["items", "next_cursor", "has_more"],
         }
@@ -380,11 +418,43 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         else [],
         "state_metadata": {
             "status": "string",
-            "available_actions": "array[string]",
+            "available_actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "action",
+                        "command",
+                        "arguments",
+                        "risk_level",
+                        "confirmation_required",
+                        "blocked_reason",
+                    ],
+                    "properties": {
+                        "action": {"type": "string"},
+                        "command": {"type": "string"},
+                        "arguments": {"type": "object"},
+                        "risk_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
+                        "confirmation_required": {"type": "boolean"},
+                        "blocked_reason": {"type": "null"},
+                        "required_input": {"type": "array", "items": {"type": "string"}},
+                        "execution_mode": {"type": "string", "enum": ["invoke", "poll"]},
+                    },
+                },
+            },
             "blocked_actions": "object[action -> reason]",
             "blocked_reason": "string|null",
         }
-        if capability_stateful(command)
+        if supports_dynamic_action_links(command)
+        else None,
+        "result_protocol": {
+            "version": "1",
+            "default_projection": "summary",
+            "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths"],
+            "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
+            "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据。",
+        }
+        if is_business_result(command)
         else None,
         "mutation_receipt": {
             "description": "写操作返回的统一变更回执；计划型操作返回 plan_id 和影响摘要。",
@@ -417,6 +487,10 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             "pagination",
             "summary",
             "model_options",
+            "projection",
+            "continuation",
+            "truncated",
+            "omitted_paths",
         ]
         if supports_list
         else [],
@@ -628,6 +702,14 @@ def _object_schema(
 
 def _field_schema(field: str, *, command: str | None = None) -> dict[str, object]:
     normalized = field.lower()
+    if normalized in {"projection", "continuation", "blocked_actions"}:
+        return {"type": ["object", "null"]}
+    if normalized in {"truncated"}:
+        return {"type": "boolean"}
+    if normalized in {"omitted_paths", "available_actions"}:
+        return {"type": "array"}
+    if normalized == "blocked_reason":
+        return {"type": ["string", "null"]}
     if command == "dashboard.overview" and normalized in {"mentor", "email"}:
         return {"type": ["object", "null"]}
     if normalized in {"id", "task_id", "job_id", "plan_id", "professor_id", "identity_id", "llm_profile_id", "template_id", "material_id", "thread_id", "email_task_id", "campaign_id"} or normalized.endswith("_id"):

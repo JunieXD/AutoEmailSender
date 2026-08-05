@@ -13,8 +13,8 @@ from auto_email_sender_cli.operation_specs import get_operation_spec
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
 Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
 
-CONTRACT_VERSION: Final = "2"
-CAPABILITY_CATALOG_VERSION: Final = "2"
+CONTRACT_VERSION: Final = "3"
+CAPABILITY_CATALOG_VERSION: Final = "3"
 
 
 # Discovery must be cheap enough to use at the start of every Agent turn.
@@ -47,7 +47,7 @@ _DISCOVERY_RESOURCE_SUMMARIES: Final[dict[str, str]] = {
 }
 
 _SYSTEM_DISCOVERY_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"version", "status", "doctor", "guide", "capabilities", "describe", "wait"},
+    {"version", "status", "doctor", "guide", "capabilities", "describe", "invoke", "wait"},
 )
 
 
@@ -434,6 +434,15 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("guide", "读取已废弃的兼容使用约定；命令契约请使用 describe", "L0", "available"),
     Capability("capabilities", "读取当前命令能力和风险信息", "L0", "available"),
     Capability("describe", "读取某个命令的机器可读操作说明", "L0", "available"),
+    Capability(
+        "invoke",
+        "以 JSON 对象调用一个已发布命令，并复用其真实参数解析与安全保护",
+        "L3",
+        "available",
+        mutates=True,
+        external_action=True,
+        requires_plan=True,
+    ),
     Capability("wait", "等待已运行的后台任务进入终态，不会启动桌面应用", "L0", "available", long_running=True),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
     Capability("professors.get", "按 ID 读取导师完整档案", "L0", "available"),
@@ -1732,6 +1741,22 @@ def collection_filter_operators(command: str) -> tuple[str, ...]:
 def capability_stateful(command: str) -> bool:
     spec = get_operation_spec(normalize_capability_command(command))
     return spec.stateful if spec is not None else False
+
+
+def supports_dynamic_action_links(command: str) -> bool:
+    """Whether a result can expose runtime-resolved executable actions."""
+
+    normalized = normalize_capability_command(command)
+    spec = get_operation_spec(normalized)
+    return bool(
+        normalized in {"plans.show", "wait"}
+        or (
+            normalized != "invoke"
+            and
+            spec is not None
+            and (spec.stateful or spec.effects.requires_confirmation_plan)
+        )
+    )
 
 
 def _require_operation_spec(command: str):

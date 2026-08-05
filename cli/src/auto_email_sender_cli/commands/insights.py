@@ -46,7 +46,7 @@ def read_dashboard_overview(
 def list_token_usage_records(
     ctx: typer.Context,
     page: Annotated[int, typer.Option("--page", min=1)] = 1,
-    page_size: Annotated[int, typer.Option("--page-size", min=1, max=100)] = 100,
+    page_size: Annotated[int, typer.Option("--page-size", min=1, max=100)] = 25,
     feature_type: Annotated[
         str,
         typer.Option("--feature-type", help="all、crawl、information_enrichment、match_analysis 或 draft_generation。"),

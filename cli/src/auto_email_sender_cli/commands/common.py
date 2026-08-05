@@ -9,11 +9,12 @@ from typing import Any
 
 import typer
 
+from auto_email_sender_cli.action_links import resolve_action_links
 from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.capabilities import (
-    capability_stateful,
     collection_filter_fields,
     collection_filter_operators,
+    supports_dynamic_action_links,
     supports_if_revision,
     supports_pagination,
 )
@@ -119,6 +120,11 @@ def run_read_command(
         # be rejected even when nobody changed the record.
         data = add_revisions(augment_state_metadata(data, command=command))
         data = project_fields(data, fields, command=command)
+        data = annotate_collection_limit(
+            data,
+            params=params,
+            fetched_all=fetch_everything,
+        )
         data, exported_file = export_collection_if_requested(data, context)
         human_text = human_formatter(data) if human_formatter else None
         emit_success(
@@ -133,6 +139,7 @@ def run_read_command(
             guide_topic=guide_topic,
             app_version=client.descriptor.app_version,
             request_id=getattr(client, "last_request_id", None),
+            continuation_input=_without_none(params),
         )
         return data
     except CliError as error:
@@ -658,10 +665,17 @@ def project_fields(data: Any, fields: str | None, *, command: str | None = None)
             projected_items.append(item)
             continue
         projected = {key: item.get(key) for key in selected}
-        # A revision is protocol metadata needed for safe follow-up writes. It
-        # remains available even when the Agent projects business fields.
-        if "revision" in item and "revision" not in projected:
-            projected["revision"] = item["revision"]
+        # These are protocol metadata needed for safe follow-up writes and
+        # executable state transitions. They remain available even when the
+        # Agent projects business fields down to a compact view.
+        for metadata_field in (
+            "revision",
+            "available_actions",
+            "blocked_actions",
+            "blocked_reason",
+        ):
+            if metadata_field in item and metadata_field not in projected:
+                projected[metadata_field] = item[metadata_field]
         projected_items.append(projected)
     result = {**data, collection_key: projected_items, "selected_fields": list(selected)}
     # Keep legacy aliases consistent when a page-shaped endpoint was normalized
@@ -765,7 +779,7 @@ def augment_state_metadata(data: Any, *, command: str) -> Any:
     # records (for example usage ``success``). Only lifecycle resources should
     # receive executable action metadata; otherwise a read-only record looks
     # like a task an Agent can cancel or retry.
-    if not capability_stateful(command):
+    if not supports_dynamic_action_links(command):
         return data
     return _augment_state_value(data, command=command)
 
@@ -814,17 +828,65 @@ def _augment_state_item(item: dict[str, object], *, command: str) -> dict[str, o
     status_value = str(result.get("status", "")).lower()
     if not status_value:
         return result
-    if "available_actions" not in result:
+    existing_actions = result.get("available_actions")
+    existing_blocked = result.get("blocked_actions")
+    if isinstance(existing_actions, list):
+        actions, blocked_actions = _normalize_existing_action_metadata(
+            existing_actions,
+            existing_blocked,
+        )
+    else:
         actions, blocked_actions = _state_actions_for_item(
             command,
             status_value,
             result,
         )
-        result["available_actions"] = actions
-        result["blocked_actions"] = blocked_actions
+    action_links, resolved_blocked_actions = resolve_action_links(
+        command,
+        result,
+        actions=actions,
+        blocked_actions=blocked_actions,
+    )
+    result["available_actions"] = action_links
+    result["blocked_actions"] = resolved_blocked_actions
     if "blocked_reason" not in result:
-        result["blocked_reason"] = None if result["available_actions"] else "当前状态没有可执行动作"
+        result["blocked_reason"] = (
+            None if result["available_actions"] else "当前状态没有可执行动作"
+        )
     return result
+
+
+def _normalize_existing_action_metadata(
+    actions: list[object],
+    blocked_actions: object,
+) -> tuple[list[str], dict[str, str]]:
+    """Accept legacy backend action tokens without trusting their arguments.
+
+    Some older desktop versions may still return ``[{action, allowed}]``. The
+    CLI uses only their declarative action names, then rebuilds target commands
+    and identifiers from its own manifest and the current structured DTO.
+    """
+
+    allowed: list[str] = []
+    blocked: dict[str, str] = {}
+    for raw_action in actions:
+        if isinstance(raw_action, str):
+            allowed.append(raw_action)
+            continue
+        if not isinstance(raw_action, dict):
+            continue
+        action = raw_action.get("action")
+        if not isinstance(action, str):
+            continue
+        if raw_action.get("allowed", True):
+            allowed.append(action)
+        else:
+            blocked[action] = str(raw_action.get("reason") or "当前状态不允许该动作。")
+    if isinstance(blocked_actions, dict):
+        for action, reason in blocked_actions.items():
+            if isinstance(action, str):
+                blocked[action] = str(reason or "当前状态不允许该动作。")
+    return allowed, blocked
 
 
 def _state_actions_for_item(
@@ -841,6 +903,8 @@ def _state_actions_for_item(
     """
 
     normalized = command.lower()
+    if "plan_id" in item:
+        return _plan_state_actions(status)
     if normalized.startswith(("drafts.", "tasks.", "workspaces.")) or any(
         key in item for key in ("task_id", "approved_body_text", "generated_body_text")
     ):
@@ -881,6 +945,8 @@ def _state_actions_for_item(
         actions = ["read"]
         if normalized.startswith("crawler.jobs."):
             actions.extend(["resume-review", "approve"])
+        if normalized.startswith("campaigns."):
+            actions.append("prepare-send")
         return actions, {
             "wait": "对象正在等待人工审核，不是后台执行中",
             "cancel": "请使用该资源声明的取消动作",
@@ -930,6 +996,42 @@ def _draft_state_actions(status: str, item: dict[str, object]) -> tuple[list[str
         "rewrite": f"状态 {status} 不允许 AI 改写",
         "prepare-send": f"状态 {status} 不允许准备发送计划",
     }
+
+
+def _plan_state_actions(status: str) -> tuple[list[str], dict[str, str]]:
+    if status in {"pending", "ready", "awaiting_confirmation", "confirmed"}:
+        return ["read", "execute", "cancel"], {
+            "retry": "计划尚未进入可重试终态",
+        }
+    if status in {"executed", "completed", "canceled", "cancelled", "expired", "failed"}:
+        return ["read"], {
+            "execute": "计划已进入终态，不能再次执行",
+            "cancel": "计划已进入终态，不能取消",
+        }
+    return ["read"], {
+        "execute": f"计划状态 {status} 未声明为可执行状态",
+        "cancel": f"计划状态 {status} 未声明为可取消状态",
+    }
+
+
+def annotate_collection_limit(
+    data: Any,
+    *,
+    params: dict[str, object] | None,
+    fetched_all: bool,
+) -> Any:
+    """Attach the effective page size before the shared result protocol runs."""
+
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return data
+    if isinstance(data.get("limit"), int):
+        return data
+    if fetched_all or bool(data.get("fetched_all")):
+        limit = len(data["items"])
+    else:
+        requested = (params or {}).get("limit", (params or {}).get("page_size"))
+        limit = requested if isinstance(requested, int) and not isinstance(requested, bool) else len(data["items"])
+    return {**data, "limit": limit}
 
 
 def _display_value(value: object) -> str:

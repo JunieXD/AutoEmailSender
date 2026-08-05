@@ -30,7 +30,7 @@ def list_match_analysis_jobs(
         typer.Option("--view", help="current 或 trash。"),
     ] = "current",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
@@ -107,7 +107,7 @@ def list_match_analysis_job_items(
     ctx: typer.Context,
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:

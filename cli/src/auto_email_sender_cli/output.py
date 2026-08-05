@@ -13,6 +13,10 @@ from auto_email_sender_cli.errors import (
     redact_error_details,
     sanitize_error_message,
 )
+from auto_email_sender_cli.result_protocol import (
+    prepare_result_data,
+    result_protocol_metadata,
+)
 from auto_email_sender_cli.version import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
@@ -26,6 +30,11 @@ class OutputFormat(StrEnum):
     JSONL = "jsonl"
 
 
+class ResultProjection(StrEnum):
+    SUMMARY = "summary"
+    FULL = "full"
+
+
 @dataclass(slots=True)
 class CliContext:
     output_format: OutputFormat
@@ -35,6 +44,10 @@ class CliContext:
     if_revision: str | None = None
     output_file: str | None = None
     force_output: bool = False
+    projection: ResultProjection = ResultProjection.SUMMARY
+    expand: tuple[str, ...] = ()
+    invoke_command: str | None = None
+    invoke_input: dict[str, object] | None = None
 
 
 def build_meta(
@@ -72,7 +85,20 @@ def emit_success(
     app_version: str | None = None,
     warnings: list[str] | None = None,
     request_id: str | None = None,
+    continuation_input: dict[str, object] | None = None,
 ) -> None:
+    emitted_data = prepare_result_data(
+        data,
+        command=command,
+        projection=context.projection.value,
+        expanded_paths=context.expand,
+        continuation_input=continuation_input,
+        invoke_input=(
+            context.invoke_input
+            if context.invoke_command == command
+            else None
+        ),
+    )
     meta = build_meta(
         command=command,
         guide_topic=guide_topic,
@@ -85,27 +111,43 @@ def emit_success(
     # the normalized pagination fields are present; otherwise metadata and
     # JSONL output would falsely advertise/flatten pagination.
     is_paged_collection = (
-        isinstance(data, dict)
-        and isinstance(data.get("items"), list)
-        and any(key in data for key in ("next_cursor", "has_more", "pagination_mode"))
+        isinstance(emitted_data, dict)
+        and isinstance(emitted_data.get("items"), list)
+        and any(key in emitted_data for key in ("next_cursor", "has_more", "pagination_mode"))
     )
-    page_items = data.get("items") if is_paged_collection else None
+    page_items = emitted_data.get("items") if is_paged_collection else None
     if is_paged_collection:
         meta["pagination"] = {
-            "next_cursor": data.get("next_cursor"),
-            "has_more": bool(data.get("has_more")),
+            "next_cursor": emitted_data.get("next_cursor"),
+            "has_more": bool(emitted_data.get("has_more")),
         }
     envelope = {
         "ok": True,
-        "data": data,
+        "data": emitted_data,
         "_meta": meta,
     }
     if context.output_format is OutputFormat.HUMAN:
-        typer.echo(_sanitize_terminal_text(human_text if human_text is not None else _pretty_json(data)))
+        result_metadata = result_protocol_metadata(emitted_data)
+        omitted_paths = result_metadata.get("omitted_paths", []) if result_metadata else []
+        has_summarized_content = any(
+            path != "/items/*"
+            for path in omitted_paths
+            if isinstance(path, str)
+        )
+        rendered = (
+            _pretty_json(emitted_data)
+            if has_summarized_content
+            else (human_text if human_text is not None else _pretty_json(emitted_data))
+        )
+        typer.echo(_sanitize_terminal_text(rendered))
         return
     if context.output_format is OutputFormat.JSONL:
-        typer.echo(json.dumps({"type": "meta", "meta": envelope["_meta"]}, ensure_ascii=False))
-        jsonl_items = page_items if isinstance(page_items, list) else data
+        meta_row: dict[str, object] = {"type": "meta", "meta": envelope["_meta"]}
+        result_metadata = result_protocol_metadata(emitted_data)
+        if result_metadata is not None:
+            meta_row["result"] = result_metadata
+        typer.echo(json.dumps(meta_row, ensure_ascii=False))
+        jsonl_items = page_items if isinstance(page_items, list) else emitted_data
         if isinstance(jsonl_items, list):
             for item in jsonl_items:
                 typer.echo(json.dumps({"type": "item", "data": item}, ensure_ascii=False))

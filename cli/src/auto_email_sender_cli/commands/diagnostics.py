@@ -26,7 +26,7 @@ diagnostics_app = typer.Typer(
 @diagnostics_app.command("logs")
 def list_diagnostics_logs(
     ctx: typer.Context,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     offset: Annotated[int, typer.Option("--offset", min=0)] = 0,
     level: Annotated[str | None, typer.Option("--level")] = None,
     category: Annotated[str | None, typer.Option("--category")] = None,

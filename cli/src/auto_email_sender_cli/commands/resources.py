@@ -32,7 +32,7 @@ def list_templates(
     ctx: typer.Context,
     include_archived: Annotated[bool, typer.Option("--include-archived")] = False,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
@@ -258,7 +258,7 @@ def list_materials(
     identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
     material_type: Annotated[str | None, typer.Option("--material-type")] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
@@ -452,7 +452,7 @@ def prepare_material_delete(
 def list_identities(
     ctx: typer.Context,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:
@@ -641,7 +641,7 @@ def test_identity_imap(
 def list_llm_profiles(
     ctx: typer.Context,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
-    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
     fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
 ) -> None:

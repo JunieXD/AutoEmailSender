@@ -4,9 +4,9 @@
   "source": "cli/src/auto_email_sender_cli/capabilities.py",
   "generated_at": "2026-08-05",
   "counts": {
-    "available_leaf_commands": 146,
-    "write_commands": 84,
-    "high_risk_commands": 30,
+    "available_leaf_commands": 147,
+    "write_commands": 85,
+    "high_risk_commands": 31,
     "paged_collection_commands": 21,
     "stateful_commands": 62,
     "gui_business_api_modules": 21,
@@ -19,6 +19,7 @@
     "guide",
     "capabilities",
     "describe",
+    "invoke",
     "wait",
     "professors.list",
     "professors.get",
@@ -161,6 +162,7 @@
     "plans.cancel"
   ],
   "write_commands": [
+    "invoke",
     "professors.create",
     "professors.update",
     "professors.archive",
@@ -247,6 +249,7 @@
     "plans.cancel"
   ],
   "high_risk_commands": [
+    "invoke",
     "professors.tags.prepare-bulk",
     "professors.prepare-bulk-archive",
     "professors.tags.prepare-delete",
