@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import hashlib
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ from auto_email_sender_cli.output import CliContext, OutputFormat, emit_error, e
 
 HumanFormatter = Callable[[Any], str]
 _MAX_FETCH_PAGES = 10_000
+_MAX_STDOUT_ALL_ITEMS = 10_000
+_MAX_STDOUT_ALL_BYTES = 16 * 1024 * 1024
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -39,6 +42,7 @@ def validate_context_options(
     supports_filter: bool,
     supports_output_file: bool,
     supports_if_revision: bool = False,
+    supports_projection: bool = True,
 ) -> None:
     """Reject root collection options a command cannot actually honor.
 
@@ -74,6 +78,14 @@ def validate_context_options(
             message="--output-file 只能用于集合读取命令。",
             exit_code=2,
         )
+    if not supports_projection and (
+        "projection" in context.specified_options or context.expand
+    ):
+        raise CliError(
+            code="PROJECTION_NOT_SUPPORTED",
+            message="当前命令不返回可展开的业务内容，不能使用 --projection 或 --expand。",
+            exit_code=2,
+        )
 
 
 def run_read_command(
@@ -97,6 +109,16 @@ def run_read_command(
             supports_output_file=supports_collection_options,
             supports_if_revision=False,
         )
+        if context.filter_expression:
+            # Filter syntax and the command's field/operator whitelist are
+            # fully local contracts. Validate them before runtime discovery or
+            # network I/O so an invalid invocation never depends on whether the
+            # desktop app happens to be running.
+            apply_structured_filter(
+                {"items": []},
+                context.filter_expression,
+                command=command,
+            )
         client = AgentApiClient(timeout=timeout)
         # A structured filter is evaluated locally after the complete
         # collection has been read, but only paged collection commands can be
@@ -106,8 +128,34 @@ def run_read_command(
         fetch_everything = fetch_all or (
             bool(context.filter_expression) and supports_pagination(command)
         )
+        if context.output_file and fetch_everything:
+            data, exported_file = stream_collection_pages_to_file(
+                client,
+                path,
+                params=params,
+                context=context,
+                command=command,
+                fields=fields,
+            )
+            emit_success(
+                context,
+                command=command,
+                data=data,
+                human_text=f"已将完整集合逐页导出到：{exported_file}",
+                guide_topic=guide_topic,
+                app_version=client.descriptor.app_version,
+                request_id=getattr(client, "last_request_id", None),
+                continuation_input=_without_none(params),
+            )
+            return data
         data = (
-            fetch_all_pages(client, path, params=params)
+            fetch_all_pages(
+                client,
+                path,
+                params=params,
+                max_items=_MAX_STDOUT_ALL_ITEMS,
+                max_bytes=_MAX_STDOUT_ALL_BYTES,
+            )
             if fetch_everything
             else client.request("GET", path, params=_without_none(params))
         )
@@ -169,12 +217,17 @@ def run_write_command(
             supports_output_file=False,
             supports_if_revision=supports_if_revision(command),
         )
-        client = AgentApiClient(timeout=timeout)
         request_id = (
             cli_context(ctx).request_id or f"cli_{secrets.token_urlsafe(24)}"
             if use_idempotency_key
             else None
         )
+        if request_id is not None:
+            # Persist the final generated identifier before any network I/O so
+            # every error path can return the exact key required for a safe
+            # retry, not only successful mutation receipts.
+            context.request_id = request_id
+        client = AgentApiClient(timeout=timeout)
         data = client.request(
             method,
             path,
@@ -214,6 +267,9 @@ def fetch_all_pages(
     path: str,
     *,
     params: dict[str, object] | None = None,
+    page_consumer: Callable[[dict[str, object]], int] | None = None,
+    max_items: int | None = None,
+    max_bytes: int | None = None,
 ) -> dict[str, object]:
     request_params = _without_none(params)
     page_mode = "page" in request_params or "page_size" in request_params
@@ -247,6 +303,8 @@ def fetch_all_pages(
     envelope: dict[str, object] = {}
     had_records_alias = False
     pagination_mode: str | None = None
+    consumed_item_count = 0
+    accumulated_bytes = 0
     while True:
         page_count += 1
         if page_count > _MAX_FETCH_PAGES:
@@ -285,7 +343,35 @@ def fetch_all_pages(
             had_records_alias = True
         if isinstance(payload.get("pagination_mode"), str):
             pagination_mode = str(payload["pagination_mode"])
-        items.extend(payload["items"])
+        if page_consumer is not None:
+            consumed_item_count += page_consumer(payload)
+        else:
+            for item in payload["items"]:
+                accumulated_bytes += len(
+                    json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                )
+                if (
+                    (max_items is not None and len(items) + 1 > max_items)
+                    or (max_bytes is not None and accumulated_bytes > max_bytes)
+                ):
+                    raise CliError(
+                        code="RESULT_TOO_LARGE",
+                        message=(
+                            "完整集合超过 stdout 安全上限；请使用 "
+                            "--output-file <path>.jsonl 逐页导出。"
+                        ),
+                        exit_code=8,
+                        details={
+                            "max_items": max_items,
+                            "max_bytes": max_bytes,
+                            "observed_items": len(items) + 1,
+                            "observed_bytes": accumulated_bytes,
+                        },
+                        suggested_command=(
+                            "在原命令的根选项中添加 --output-file <path>.jsonl"
+                        ),
+                    )
+                items.append(item)
         if not payload.get("has_more"):
             break
         next_cursor = payload.get("next_cursor")
@@ -343,7 +429,10 @@ def fetch_all_pages(
         "next_cursor": None,
         "has_more": False,
         "fetched_all": True,
+        "page_count": page_count,
     }
+    if page_consumer is not None:
+        result["item_count"] = consumed_item_count
     if had_records_alias:
         # Keep the legacy alias useful after an all-pages fetch instead of
         # returning only the first page's records array.
@@ -1138,6 +1227,142 @@ def _first_receipt_identifier(value: Any) -> object | None:
             if identifier is not None:
                 return identifier
     return None
+
+
+def stream_collection_pages_to_file(
+    client: AgentApiClient,
+    path: str,
+    *,
+    params: dict[str, object] | None,
+    context: CliContext,
+    command: str,
+    fields: str | None,
+) -> tuple[dict[str, object], str]:
+    """Transform and write each page without retaining the complete collection."""
+
+    destination_value = context.output_file
+    if not destination_value:
+        raise CliError(
+            code="OUTPUT_FILE_REQUIRES_COLLECTION",
+            message="缺少 --output-file 导出路径。",
+            exit_code=2,
+        )
+    destination = Path(destination_value).expanduser().resolve()
+    temporary = destination.with_name(
+        f".{destination.name}.{secrets.token_hex(8)}.tmp",
+    )
+    if destination.exists() and not context.force_output:
+        raise CliError(
+            code="OUTPUT_EXISTS",
+            message=f"输出文件已存在：{destination}；如确实要覆盖请加 --force-output。",
+            exit_code=2,
+        )
+
+    item_count = 0
+    selected_fields: list[str] | None = None
+    filtered_summary: dict[str, int] = {}
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with temporary.open("x", encoding="utf-8", newline="\n") as output:
+
+            def consume_page(page: dict[str, object]) -> int:
+                nonlocal item_count, selected_fields
+                transformed = apply_structured_filter(
+                    page,
+                    context.filter_expression,
+                    command=command,
+                )
+                transformed = add_revisions(
+                    augment_state_metadata(transformed, command=command),
+                )
+                transformed = project_fields(transformed, fields, command=command)
+                page_items = transformed.get("items")
+                if not isinstance(page_items, list):
+                    raise CliError(
+                        code="INVALID_API_RESPONSE",
+                        message="本地服务返回了无法识别的分页结果。",
+                        exit_code=8,
+                    )
+                page_selected_fields = transformed.get("selected_fields")
+                if isinstance(page_selected_fields, list):
+                    selected_fields = [
+                        str(field)
+                        for field in page_selected_fields
+                        if isinstance(field, str)
+                    ]
+                if context.filter_expression and command == "usage.records":
+                    summary = transformed.get("summary")
+                    if isinstance(summary, dict):
+                        for key, value in summary.items():
+                            if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool):
+                                filtered_summary[key] = filtered_summary.get(key, 0) + value
+                for item in page_items:
+                    output.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+                    output.write("\n")
+                item_count += len(page_items)
+                return len(page_items)
+
+            pagination = fetch_all_pages(
+                client,
+                path,
+                params=params,
+                page_consumer=consume_page,
+            )
+
+        if context.force_output:
+            os.replace(temporary, destination)
+        else:
+            # A hard link gives us an atomic, fail-if-exists publication step
+            # while keeping the potentially large write in the same directory.
+            os.link(temporary, destination)
+            temporary.unlink()
+    except FileExistsError as exc:
+        raise CliError(
+            code="OUTPUT_EXISTS",
+            message=f"输出文件已存在：{destination}；如确实要覆盖请加 --force-output。",
+            exit_code=2,
+        ) from exc
+    except CliError:
+        raise
+    except OSError as exc:
+        raise CliError(
+            code="OUTPUT_WRITE_FAILED",
+            message=f"无法写入输出文件：{destination}。",
+            exit_code=8,
+            details={"reason": type(exc).__name__},
+        ) from exc
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    if context.filter_expression:
+        # Only usage.records defines a summary that the local filter can
+        # safely recompute and add across pages. Other backend summaries
+        # describe the unfiltered source set, so replace them with an exact
+        # filtered record count instead of publishing misleading totals.
+        summary_value: object = (
+            filtered_summary
+            if command == "usage.records" and filtered_summary
+            else {"record_count": item_count}
+        )
+    else:
+        summary_value = pagination.get("summary")
+    result: dict[str, object] = {
+        "output_file": destination.as_posix(),
+        "item_count": item_count,
+        "source_total": pagination.get("total"),
+        "page_count": pagination.get("page_count"),
+        "next_cursor": None,
+        "has_more": False,
+        "fetched_all": True,
+        "selected_fields": selected_fields,
+        "filter_applied": bool(context.filter_expression),
+    }
+    if summary_value is not None:
+        result["summary"] = summary_value
+    return result, destination.as_posix()
 
 
 def export_collection_if_requested(

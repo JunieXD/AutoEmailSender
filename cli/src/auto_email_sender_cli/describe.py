@@ -15,6 +15,7 @@ from auto_email_sender_cli.capabilities import (
     suggest_capabilities,
 )
 from auto_email_sender_cli.contracts import build_command_contract
+from auto_email_sender_cli.operation_specs import get_operation_spec
 
 
 CommandDescription = dict[str, object]
@@ -69,7 +70,11 @@ JSON_FILE_EXAMPLES: dict[str, dict[str, object]] = {
 
 
 def describe_command(app: typer.Typer, requested_command: str) -> CommandDescription | None:
-    return _describe_command_from_root(get_command(app), requested_command)
+    normalized = normalize_capability_command(requested_command)
+    capability = get_capability(normalized)
+    if capability is not None and capability.availability != "available":
+        return _describe_unavailable_capability(capability)
+    return _describe_command_from_root(get_command(app), normalized)
 
 
 def describe_command_revisions(
@@ -145,6 +150,47 @@ def _describe_command_from_root(
     return description
 
 
+def _describe_unavailable_capability(capability: Capability) -> CommandDescription:
+    """Describe a published manual/UI-only capability without inventing a parser."""
+
+    manual_action = {
+        "type": "open_desktop_ui",
+        "location": capability.ui_location,
+        "instruction": capability.manual_action,
+    }
+    next_steps = [
+        capability.manual_action
+        or "请在 Auto Email Sender 桌面端完成该操作。",
+    ]
+    description: CommandDescription = {
+        "command": capability.command,
+        "kind": "unavailable",
+        "summary": capability.summary,
+        "usage": "该能力没有可执行的 CLI 命令。",
+        "example": None,
+        "parameters": [],
+        "children": [],
+        "input_file_examples": [],
+        "risk": _describe_risk(capability),
+        "next_steps": next_steps,
+        "suggestions": [],
+        "unavailability": {
+            "availability": capability.availability,
+            "reason": capability.unavailable_reason,
+            "manual_action": manual_action,
+        },
+    }
+    description.update(
+        build_command_contract(
+            command=capability.command,
+            parameters=[],
+            input_file_examples=[],
+            next_steps=next_steps,
+        ),
+    )
+    return description
+
+
 def compact_command_description(description: CommandDescription) -> dict[str, object]:
     """Return the execution facts an Agent needs before requesting details.
 
@@ -165,9 +211,10 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
                 continue
             compact_parameters[name] = _compact_parameter(parameter)
 
+    unavailable = description.get("kind") == "unavailable"
     input_contract = description.get("input")
     global_options: dict[str, object] = {}
-    if isinstance(input_contract, dict):
+    if isinstance(input_contract, dict) and not unavailable:
         raw_global_options = input_contract.get("global_options")
         if isinstance(raw_global_options, dict):
             for name, option in raw_global_options.items():
@@ -211,7 +258,7 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             "terminal_states": output_contract.get("terminal_states", []),
             "state_metadata": output_contract.get("state_metadata") is not None,
         },
-        "effects": description.get("effects"),
+        "effects": _compact_effects(description.get("effects")),
         "preconditions": description.get("preconditions"),
         "state_transitions": description.get("state_transitions", []),
         "errors": _compact_errors(description.get("errors")),
@@ -221,8 +268,26 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             "full_view": True,
         },
     }
+    if isinstance(description.get("unavailability"), dict):
+        summary["unavailability"] = description["unavailability"]
+        summary["input"] = {
+            "parameters": {},
+            "global_options": {},
+            "file_input_available": False,
+        }
+        summary["output"] = {
+            "shape": "none",
+            "field_count": 0,
+            "key_fields": [],
+            "pagination": False,
+            "field_selection": False,
+            "structured_filter": False,
+            "file_export": False,
+            "terminal_states": [],
+            "state_metadata": False,
+        }
     result_protocol = output_contract.get("result_protocol")
-    if isinstance(result_protocol, dict):
+    if isinstance(result_protocol, dict) and not unavailable:
         summary["output"]["result_protocol"] = {
             key: result_protocol[key]
             for key in ("version", "default_projection", "fields")
@@ -236,7 +301,11 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             if key in trust
         }
     idempotency = description.get("idempotency")
-    if isinstance(idempotency, dict) and idempotency.get("mode") != "not_applicable":
+    if (
+        isinstance(idempotency, dict)
+        and idempotency.get("mode") != "not_applicable"
+        and not unavailable
+    ):
         summary["idempotency"] = {
             key: idempotency[key]
             for key in ("mode", "supports_idempotent_retry", "retry_guidance")
@@ -302,9 +371,51 @@ def _compact_risk(value: object) -> dict[str, object]:
         return {}
     return {
         key: value[key]
-        for key in ("level", "availability", "mutates", "external_action", "requires_plan", "long_running")
+        for key in (
+            "level",
+            "availability",
+            "risk_mode",
+            "plan_role",
+            "mutates",
+            "external_action",
+            "requires_plan",
+            "confirmation_required_before_invocation",
+            "produces_confirmation_plan",
+            "long_running",
+        )
         if key in value
     }
+
+
+def _compact_effects(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    result = {
+        key: value[key]
+        for key in (
+            "mutates",
+            "external_services",
+            "cost_may_apply",
+            "requires_explicit_user_intent",
+            "confirmation_required_before_invocation",
+            "produces_confirmation_plan",
+            "plan_role",
+            "risk_mode",
+            "impact_scope",
+            "confirmation_rule",
+        )
+        if key in value
+    }
+    nested = value.get("downstream_effects")
+    if isinstance(nested, dict) and (
+        nested.get("external_services") or nested.get("cost_may_apply")
+    ):
+        result["downstream_effects"] = {
+            key: nested[key]
+            for key in ("external_services", "cost_may_apply")
+            if key in nested
+        }
+    return result
 
 
 def _key_output_fields(fields: list[str]) -> list[str]:
@@ -470,7 +581,12 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
             "requires_plan": False,
             "long_running": False,
             "availability": "available",
+            "risk_mode": "static",
+            "plan_role": "none",
+            "confirmation_required_before_invocation": False,
+            "produces_confirmation_plan": False,
         }
+    spec = get_operation_spec(capability.command)
     return {
         "level": capability.risk_level,
         "mutates": capability.mutates,
@@ -479,6 +595,14 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
         "long_running": capability.long_running,
         "availability": capability.availability,
         "unavailable_reason": capability.unavailable_reason,
+        "risk_mode": spec.effects.risk_mode if spec is not None else "static",
+        "plan_role": spec.effects.plan_role if spec is not None else "none",
+        "confirmation_required_before_invocation": (
+            spec.effects.requires_confirmation_plan if spec is not None else False
+        ),
+        "produces_confirmation_plan": (
+            spec.effects.produces_confirmation_plan if spec is not None else False
+        ),
     }
 
 

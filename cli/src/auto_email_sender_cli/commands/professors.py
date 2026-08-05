@@ -132,8 +132,9 @@ def prepare_professor_import(
         )
         mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         with file_path.open("rb") as import_file:
-            client = AgentApiClient(timeout=360.0)
             request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
+            context.request_id = request_id
+            client = AgentApiClient(timeout=360.0)
             data = client.request(
                 "POST",
                 "/api/agent/v1/professors/prepare-import",

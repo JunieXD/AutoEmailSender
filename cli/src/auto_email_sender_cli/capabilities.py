@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Final, Literal
 
 from auto_email_sender_cli.operation_specs import get_operation_spec
+from auto_email_sender_cli.version import get_build_identity
 
 
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
@@ -387,6 +388,8 @@ class Capability:
     # runtime protocol no longer advertises static prose-guide topics.
     guide_topic: str = "overview"
     unavailable_reason: str | None = None
+    manual_action: str | None = None
+    ui_location: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the single registry record consumed by discovery clients.
@@ -401,10 +404,12 @@ class Capability:
         spec = _require_operation_spec(self.command)
         result = asdict(self)
         result.pop("guide_topic", None)
+        manual_action = result.pop("manual_action", None)
+        ui_location = result.pop("ui_location", None)
         result.update(
             {
                 "contract_version": CONTRACT_VERSION,
-                "resource": capability_resource(self.command),
+                "resource": discovery_resource(self.command),
                 "operation": capability_operation(self.command),
                 "is_leaf": True,
                 "supports_pagination": supports_pagination(self.command),
@@ -418,12 +423,22 @@ class Capability:
                 "supports_wait": supports_wait(self.command),
                 "supports_if_revision": supports_if_revision(self.command),
                 "supports_idempotent_retry": spec.idempotency.supports_idempotent_retry,
+                "risk_mode": spec.effects.risk_mode,
+                "plan_role": spec.effects.plan_role,
+                "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
+                "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
                 "stateful": spec.stateful,
                 "introduced_in": spec.introduced_in,
                 "deprecated": spec.deprecated,
                 "replaced_by": list(spec.replaced_by),
             },
         )
+        if self.availability != "available":
+            result["manual_action"] = {
+                "type": "open_desktop_ui",
+                "location": ui_location,
+                "instruction": manual_action,
+            }
         return result
 
 
@@ -437,11 +452,8 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability(
         "invoke",
         "以 JSON 对象调用一个已发布命令，并复用其真实参数解析与安全保护",
-        "L3",
+        "L0",
         "available",
-        mutates=True,
-        external_action=True,
-        requires_plan=True,
     ),
     Capability("wait", "等待已运行的后台任务进入终态，不会启动桌面应用", "L0", "available", long_running=True),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
@@ -524,7 +536,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L2",
         "available",
         mutates=True,
-        external_action=True,
         requires_plan=True,
         guide_topic="community",
     ),
@@ -699,6 +710,8 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "ui_only",
         mutates=True,
         unavailable_reason="为避免密码出现在 Agent 对话、命令行历史或进程参数中，邮件服务器、账号和凭据只能在桌面端安全录入。",
+        manual_action="在桌面端创建或编辑发件身份，并在连接设置中录入 SMTP/IMAP 凭据。",
+        ui_location="个人中心 > 发件身份",
     ),
     Capability("llm-profiles.list", "查询模型配置的脱敏视图", "L0", "available"),
     Capability("llm-profiles.get", "按 ID 读取模型配置的脱敏视图", "L0", "available"),
@@ -742,6 +755,8 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "ui_only",
         mutates=True,
         unavailable_reason="为避免 API Key 出现在 Agent 对话、命令行历史或进程参数中，模型服务地址、提示词模板和凭据只能在桌面端安全录入。",
+        manual_action="在桌面端创建或编辑模型配置，并在安全表单中录入服务地址与 API Key。",
+        ui_location="个人中心 > 模型配置",
     ),
     Capability(
         "matching.jobs.list",
@@ -853,6 +868,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L3",
         "available",
         mutates=True,
+        external_action=True,
         requires_plan=True,
         guide_topic="sending",
     ),
@@ -1465,15 +1481,15 @@ def list_resource_catalog(
 
     selected = _select_capabilities(command, resource=resource)
     selected_resources = {
-        _discovery_resource(item.command)
+        discovery_resource(item.command)
         for item in selected
     }
     grouped: dict[str, list[Capability]] = {}
     for item in CAPABILITIES:
-        discovery_resource = _discovery_resource(item.command)
-        if discovery_resource not in selected_resources:
+        resource_name = discovery_resource(item.command)
+        if resource_name not in selected_resources:
             continue
-        grouped.setdefault(discovery_resource, []).append(item)
+        grouped.setdefault(resource_name, []).append(item)
 
     return [
         _resource_card(discovery_resource, capabilities)
@@ -1520,6 +1536,7 @@ def capability_catalog_revision(
         {
             "catalog_version": CAPABILITY_CATALOG_VERSION,
             "contract_version": CONTRACT_VERSION,
+            "build": get_build_identity(),
             "view": view,
             "items": snapshot,
         },
@@ -1549,8 +1566,8 @@ def _select_capabilities(
             item
             for item in items
             if (
-                capability_resource(item.command) == normalized_resource
-                or capability_resource(item.command).startswith(f"{normalized_resource}.")
+                discovery_resource(item.command) == normalized_resource
+                or discovery_resource(item.command).startswith(f"{normalized_resource}.")
             )
         )
     return items
@@ -1567,14 +1584,30 @@ def _capability_card(
     card: dict[str, object] = {
         "command": item.command,
         "summary": item.summary,
-        "resource": capability_resource(item.command),
+        "resource": discovery_resource(item.command),
         "operation": capability_operation(item.command),
         "availability": item.availability,
         "risk_level": item.risk_level,
+        "risk_mode": spec.effects.risk_mode,
+        "plan_role": spec.effects.plan_role,
         "effects": {
             "mutates": spec.effects.mutates,
-            "external_action": bool(spec.effects.external_services),
-            "confirmation_required": spec.effects.requires_confirmation_plan,
+            "external_action": bool(
+                spec.effects.external_services
+                or spec.effects.downstream_external_services
+            ),
+            "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
+            "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
+            "current": {
+                "mutates": spec.effects.mutates,
+                "external_services": list(spec.effects.external_services),
+                "cost_may_apply": spec.effects.cost_may_apply,
+            },
+            "downstream": {
+                "mutates": spec.effects.downstream_mutates,
+                "external_services": list(spec.effects.downstream_external_services),
+                "cost_may_apply": spec.effects.downstream_cost_may_apply,
+            },
             "long_running": item.long_running,
         },
         "contract_version": CONTRACT_VERSION,
@@ -1584,6 +1617,13 @@ def _capability_card(
     }
     if contract_revision is not None:
         card["contract_revision"] = contract_revision
+    if item.availability != "available":
+        card["unavailable_reason"] = item.unavailable_reason
+        card["manual_action"] = {
+            "type": "open_desktop_ui",
+            "location": item.ui_location,
+            "instruction": item.manual_action,
+        }
     return card
 
 
@@ -1606,12 +1646,13 @@ def _resource_card(
         "has_mutations": any(_require_operation_spec(item.command).effects.mutates for item in capabilities),
         "has_external_actions": any(
             _require_operation_spec(item.command).effects.external_services
+            or _require_operation_spec(item.command).effects.downstream_external_services
             for item in capabilities
         ),
     }
 
 
-def _discovery_resource(command: str) -> str:
+def discovery_resource(command: str) -> str:
     normalized = normalize_capability_command(command)
     if normalized in _SYSTEM_DISCOVERY_COMMANDS:
         return "system"
@@ -1754,7 +1795,11 @@ def supports_dynamic_action_links(command: str) -> bool:
             normalized != "invoke"
             and
             spec is not None
-            and (spec.stateful or spec.effects.requires_confirmation_plan)
+            and (
+                spec.stateful
+                or spec.effects.requires_confirmation_plan
+                or spec.effects.produces_confirmation_plan
+            )
         )
     )
 

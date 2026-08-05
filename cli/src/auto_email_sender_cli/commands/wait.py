@@ -77,6 +77,7 @@ def wait_for_resource(
             context,
             supports_filter=False,
             supports_output_file=False,
+            supports_projection=False,
         )
         client = AgentApiClient(timeout=max(30.0, interval_seconds + 5.0))
         started = time.monotonic()

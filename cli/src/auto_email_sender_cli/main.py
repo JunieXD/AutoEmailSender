@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import shutil
+import sys
+from pathlib import Path
 from typing import Annotated
 
 import httpx
 import typer
+from typer._click.core import ParameterSource
+from typer._click.exceptions import UsageError
+from typer.core import TyperGroup
 
 from auto_email_sender_cli.capabilities import (
     CAPABILITIES,
     CAPABILITY_CATALOG_VERSION,
+    CONTRACT_VERSION,
     capability_catalog_revision,
     list_capability_cards,
     list_capabilities,
@@ -40,6 +46,7 @@ from auto_email_sender_cli.commands import (
     workspaces_app,
 )
 from auto_email_sender_cli.commands.wait import wait_for_resource
+from auto_email_sender_cli.commands.common import validate_context_options
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.describe import (
     DESCRIPTION_VIEWS,
@@ -62,7 +69,93 @@ from auto_email_sender_cli.runtime import (
     load_runtime_descriptor,
     process_is_running,
 )
-from auto_email_sender_cli.version import PROTOCOL_VERSION, get_cli_version
+from auto_email_sender_cli.version import (
+    PROTOCOL_VERSION,
+    SCHEMA_VERSION,
+    get_build_identity,
+    get_cli_version,
+)
+
+
+class AgentTyperGroup(TyperGroup):
+    """Keep parser failures inside the structured Agent result protocol."""
+
+    def main(self, *args: object, **kwargs: object) -> object:
+        standalone_mode = bool(kwargs.pop("standalone_mode", True))
+        raw_args = kwargs.get("args")
+        try:
+            result = super().main(*args, standalone_mode=False, **kwargs)
+        except UsageError as exc:
+            _emit_usage_error(exc, raw_args)
+            if standalone_mode:
+                raise SystemExit(exc.exit_code) from None
+            raise typer.Exit(exc.exit_code) from exc
+        if standalone_mode:
+            raise SystemExit(int(result) if isinstance(result, int) else 0)
+        return result
+
+
+def _emit_usage_error(error: UsageError, raw_args: object) -> None:
+    arguments = (
+        [str(item) for item in raw_args]
+        if isinstance(raw_args, (list, tuple))
+        else list(sys.argv[1:])
+    )
+    context = CliContext(output_format=_output_format_from_arguments(arguments))
+    command = _command_from_usage_context(error)
+    details: dict[str, object] = {
+        "error_type": type(error).__name__,
+        "command": command,
+    }
+    parameter_hint = getattr(error, "param_hint", None)
+    if parameter_hint:
+        details["parameter"] = str(parameter_hint)
+    emit_error(
+        context,
+        command=command,
+        error=CliError(
+            code="INVALID_ARGUMENT",
+            message=error.format_message(),
+            exit_code=error.exit_code,
+            details=details,
+            suggested_command=(
+                f"auto-email-sender --format json describe --command {command}"
+                if command != "cli"
+                else "auto-email-sender --format json capabilities"
+            ),
+        ),
+    )
+
+
+def _output_format_from_arguments(arguments: list[str]) -> OutputFormat:
+    if "--json" in arguments:
+        return OutputFormat.JSON
+    for index, argument in enumerate(arguments):
+        if argument.startswith("--format="):
+            value = argument.split("=", 1)[1].strip().lower()
+            return _output_format_or_human(value)
+        if argument == "--format" and index + 1 < len(arguments):
+            return _output_format_or_human(arguments[index + 1].strip().lower())
+    return OutputFormat.HUMAN
+
+
+def _output_format_or_human(value: str) -> OutputFormat:
+    try:
+        return OutputFormat(value)
+    except ValueError:
+        # An invalid --format value is itself a parser error. JSON cannot be
+        # inferred safely in that case, so preserve the normal human channel.
+        return OutputFormat.HUMAN
+
+
+def _command_from_usage_context(error: UsageError) -> str:
+    names: list[str] = []
+    context = error.ctx
+    while context is not None:
+        if context.parent is not None and context.info_name:
+            names.append(str(context.info_name))
+        context = context.parent
+    return ".".join(reversed(names)) or "cli"
 
 
 app = typer.Typer(
@@ -74,6 +167,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
     pretty_exceptions_enable=False,
+    cls=AgentTyperGroup,
 )
 app.add_typer(professors_app, name="professors")
 app.add_typer(campaigns_app, name="campaigns")
@@ -98,7 +192,9 @@ app.add_typer(workspaces_app, name="workspaces")
 app.command("wait", help="等待一个已运行的后台任务进入终态；不会启动桌面应用。", no_args_is_help=True)(wait_for_resource)
 
 
-def _current_command_contract_revisions() -> dict[str, str]:
+def _current_command_contract_revisions(
+    commands: list[str] | None = None,
+) -> dict[str, str]:
     """Materialize parser-derived revisions for the published command set.
 
     This function deliberately runs against the live Typer tree.  A changed
@@ -107,13 +203,17 @@ def _current_command_contract_revisions() -> dict[str, str]:
     separately maintained version list.
     """
 
-    commands = [
-        capability.command
-        for capability in CAPABILITIES
-        if capability.availability == "available"
-    ]
-    revisions = describe_command_revisions(app, commands)
-    missing = sorted(set(commands) - set(revisions))
+    selected_commands = (
+        commands
+        if commands is not None
+        else [
+            capability.command
+            for capability in CAPABILITIES
+            if capability.availability == "available"
+        ]
+    )
+    revisions = describe_command_revisions(app, selected_commands)
+    missing = sorted(set(selected_commands) - set(revisions))
     if missing:
         raise RuntimeError(f"Published capability is not describable: {', '.join(missing)}")
     return revisions
@@ -177,6 +277,20 @@ def root(
         ),
     ] = [],
 ) -> None:
+    specified_options = frozenset(
+        name
+        for name in (
+            "request_id",
+            "if_revision",
+            "output_file",
+            "force_output",
+            "filter_expression",
+            "projection",
+            "expand",
+        )
+        if ctx.get_parameter_source(name)
+        not in {None, ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP}
+    )
     ctx.obj = CliContext(
         output_format=OutputFormat.JSON if json_output else output_format,
         request_id=request_id,
@@ -186,21 +300,35 @@ def root(
         force_output=force_output,
         projection=projection,
         expand=tuple(expand),
+        specified_options=specified_options,
     )
 
 
 @app.command("version")
 def version_command(ctx: typer.Context) -> None:
     context = _context(ctx)
+    _validate_system_context(context, "version")
     version = get_cli_version()
+    build = get_build_identity()
     emit_success(
         context,
         command="version",
         data={
             "cli_version": version,
             "protocol_version": PROTOCOL_VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "contract_version": CONTRACT_VERSION,
+            "catalog_version": CAPABILITY_CATALOG_VERSION,
+            "build_revision": build["revision"],
+            "build_kind": build["kind"],
+            "build_dirty": build["dirty"],
         },
-        human_text=f"Auto Email Sender CLI {version}\n协议版本 {PROTOCOL_VERSION}",
+        human_text=(
+            f"Auto Email Sender CLI {version}\n"
+            f"协议版本 {PROTOCOL_VERSION}\n"
+            f"Schema {SCHEMA_VERSION} / 合同 {CONTRACT_VERSION} / 目录 {CAPABILITY_CATALOG_VERSION}\n"
+            f"构建 {build['revision']}"
+        ),
     )
 
 
@@ -213,6 +341,7 @@ def guide_command(
     ] = None,
 ) -> None:
     context = _context(ctx)
+    _validate_system_context(context, "guide")
     try:
         guide = get_guide(topic)
     except KeyError as exc:
@@ -293,6 +422,7 @@ def capabilities_command(
     ] = None,
 ) -> None:
     context = _context(ctx)
+    _validate_system_context(context, "capabilities")
     requested_view = view.strip().lower() if view else None
     if requested_view is not None and requested_view not in {"catalog", "commands", "full"}:
         error = CliError(
@@ -332,13 +462,14 @@ def capabilities_command(
             or ("commands" if command or resource else "catalog")
         )
     )
-    contract_revisions = _current_command_contract_revisions()
-    catalog_revision = capability_catalog_revision(contract_revisions)
+    # The global catalog revision is tied to the embedded build and semantic
+    # manifests. Parser-derived leaf hashes are computed only for the selected
+    # command-card/full scope; the default resource catalog stays O(resources).
+    catalog_revision = capability_catalog_revision()
     try:
         full_items = list_capabilities(
             command,
             resource=resource,
-            contract_revisions=contract_revisions,
         )
         if (command or resource) and not full_items:
             requested = command or resource or ""
@@ -364,6 +495,22 @@ def capabilities_command(
         for item in full_items
         if isinstance(item.get("command"), str)
     ]
+    contract_revisions: dict[str, str] | None = None
+    if effective_view in {"commands", "full"}:
+        available_selected_commands = [
+            item["command"]
+            for item in full_items
+            if item.get("availability") == "available"
+            and isinstance(item.get("command"), str)
+        ]
+        contract_revisions = _current_command_contract_revisions(
+            available_selected_commands,
+        )
+        full_items = list_capabilities(
+            command,
+            resource=resource,
+            contract_revisions=contract_revisions,
+        )
     scope_revision = capability_catalog_revision(
         contract_revisions,
         commands=selected_commands,
@@ -378,6 +525,7 @@ def capabilities_command(
         data = {
             "catalog_version": CAPABILITY_CATALOG_VERSION,
             "catalog_revision": catalog_revision,
+            "build": get_build_identity(),
             "scope": scope,
             "scope_revision": scope_revision,
             "view": effective_view,
@@ -455,6 +603,7 @@ def capabilities_command(
     data = {
         "catalog_version": CAPABILITY_CATALOG_VERSION,
         "catalog_revision": catalog_revision,
+        "build": get_build_identity(),
         "scope": scope,
         "scope_revision": scope_revision,
         "view": effective_view,
@@ -464,6 +613,7 @@ def capabilities_command(
             "list_commands": "auto-email-sender --format json capabilities --resource <resource>",
             "describe_command": "auto-email-sender --format json describe --command <command>",
             "complete_catalog": "auto-email-sender --format json capabilities --view full",
+            "verify_installation": "auto-email-sender --format json doctor",
         },
     }
     if since is not None:
@@ -473,6 +623,11 @@ def capabilities_command(
         command="capabilities",
         data=data,
         human_text="\n".join(human_lines),
+        warnings=(
+            ["当前 CLI 构建来自未提交工作区；正式 Agent 安装请使用已发布构建。"]
+            if bool(get_build_identity()["dirty"])
+            else []
+        ),
     )
 
 
@@ -494,8 +649,16 @@ def describe_command_handler(
             help="按需展开 input、output、effects、preconditions、trust、states、errors、actions、idempotency 或 lifecycle；可重复。",
         ),
     ] = [],
+    since: Annotated[
+        str | None,
+        typer.Option(
+            "--since",
+            help="已知 contract_revision；相同则只返回 not_modified 响应。",
+        ),
+    ] = None,
 ) -> None:
     context = _context(ctx)
+    _validate_system_context(context, "describe")
     normalized_view = view.strip().lower()
     if normalized_view not in DESCRIPTION_VIEWS:
         error = CliError(
@@ -515,6 +678,14 @@ def describe_command_handler(
         )
         emit_error(context, command="describe", error=error)
         raise typer.Exit(error.exit_code)
+    if since is not None and not since.strip():
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--since 不能为空。",
+            exit_code=2,
+        )
+        emit_error(context, command="describe", error=error)
+        raise typer.Exit(error.exit_code)
     description = describe_command(app, command)
     if description is None:
         normalized = normalize_capability_command(command)
@@ -530,6 +701,22 @@ def describe_command_handler(
         )
         emit_error(context, command="describe", error=error)
         raise typer.Exit(error.exit_code)
+
+    contract_revision = description.get("contract_revision")
+    if since is not None and since == contract_revision:
+        emit_success(
+            context,
+            command="describe",
+            data={
+                "command": description["command"],
+                "contract_version": description.get("contract_version"),
+                "contract_revision": contract_revision,
+                "unchanged": True,
+                "cache": {"status": "not_modified", "refresh_required": False},
+            },
+            human_text="命令合同未变化，可继续使用缓存。",
+        )
+        return
 
     data: dict[str, object]
     if normalized_view == "full":
@@ -551,6 +738,8 @@ def describe_command_handler(
             raise typer.Exit(error.exit_code)
         if requested_details:
             data["details"] = requested_details
+    if since is not None:
+        data["cache"] = {"status": "stale", "refresh_required": True}
     emit_success(
         context,
         command="describe",
@@ -562,6 +751,7 @@ def describe_command_handler(
 @app.command("status")
 def status_command(ctx: typer.Context) -> None:
     context = _context(ctx)
+    _validate_system_context(context, "status")
     try:
         descriptor = load_runtime_descriptor()
         running = process_is_running(descriptor.desktop_pid)
@@ -632,14 +822,34 @@ def status_command(ctx: typer.Context) -> None:
 @app.command("doctor")
 def doctor_command(ctx: typer.Context) -> None:
     context = _context(ctx)
+    _validate_system_context(context, "doctor")
     command_path = shutil.which("auto-email-sender")
     runtime_path = get_runtime_file_path()
     agent_skill_installation = inspect_agent_skill_installation()
+    cli_installation = agent_skill_installation.get("cli")
+    cli_manifest_target = (
+        cli_installation.get("target")
+        if isinstance(cli_installation, dict)
+        else None
+    )
+    command_matches_manifest = (
+        True
+        if not isinstance(cli_manifest_target, str)
+        else _paths_resolve_to_same_file(command_path, cli_manifest_target)
+    )
     checks: list[dict[str, object]] = [
         {
             "id": "cli_command",
-            "ok": command_path is not None,
-            "message": command_path or "全局命令尚未注册；开发环境可继续使用 uv run。",
+            "ok": command_path is not None and command_matches_manifest,
+            "message": (
+                command_path
+                if command_path is not None and command_matches_manifest
+                else (
+                    f"PATH 中的命令与安装清单目标不一致：{command_path}"
+                    if command_path is not None
+                    else "全局命令尚未注册；开发环境可继续使用 uv run。"
+                )
+            ),
         },
         {
             "id": "agent_skills",
@@ -653,6 +863,16 @@ def doctor_command(ctx: typer.Context) -> None:
             "message": runtime_path.as_posix(),
         },
     ]
+    if isinstance(cli_installation, dict):
+        checks.insert(
+            1,
+            {
+                "id": "cli_installation",
+                "ok": bool(cli_installation.get("ok")),
+                "message": str(cli_installation.get("message") or "无法验证 CLI 安装。"),
+                "details": cli_installation,
+            },
+        )
     manual_open_required = not runtime_path.is_file()
     app_version: str | None = None
     if runtime_path.is_file():
@@ -686,11 +906,14 @@ def doctor_command(ctx: typer.Context) -> None:
                 },
             )
     healthy = all(bool(check["ok"]) for check in checks)
-    skill_needs_update = not bool(agent_skill_installation["ok"])
+    installation_needs_update = not bool(agent_skill_installation["ok"]) or (
+        isinstance(cli_installation, dict)
+        and not bool(cli_installation.get("ok"))
+    )
     recommended_action = None
     if manual_open_required:
         recommended_action = "请先手动打开 Auto Email Sender，等待加载完成后再执行需要本地服务的命令。"
-        if skill_needs_update:
+        if installation_needs_update:
             recommended_action += "此外，请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
     elif not healthy:
         recommended_action = "请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
@@ -721,11 +944,34 @@ def doctor_command(ctx: typer.Context) -> None:
     )
 
 
+def _paths_resolve_to_same_file(left: str | None, right: str) -> bool:
+    if left is None:
+        return False
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return False
+
+
 def _context(ctx: typer.Context) -> CliContext:
     value = ctx.obj
     if not isinstance(value, CliContext):
         return CliContext(output_format=OutputFormat.HUMAN)
     return value
+
+
+def _validate_system_context(context: CliContext, command: str) -> None:
+    try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+            supports_if_revision=False,
+            supports_projection=False,
+        )
+    except CliError as error:
+        emit_error(context, command=command, error=error)
+        raise typer.Exit(error.exit_code) from error
 
 
 def _format_guide_human(guide: dict[str, object]) -> str:

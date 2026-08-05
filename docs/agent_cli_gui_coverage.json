@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "scope": "frontend/src/lib/api/*.ts business-facing API modules",
+  "schema_version": 2,
+  "scope": "frontend/src/lib/api/*.ts business-facing exported actions",
   "excluded_sources": [
     "client.ts",
     "client.test.ts"
@@ -9,6 +9,43 @@
     {
       "id": "batch-tasks",
       "source": "batchTasksApi.ts",
+      "exported_actions": [
+        "listBatchTasks",
+        "createBatchTask",
+        "listBatchTaskItems",
+        "getBatchTaskResendContext",
+        "getBatchTaskItemThread",
+        "approveAllBatchTaskDrafts",
+        "regenerateBatchTaskItemDraft",
+        "approveBatchTaskItemDraft",
+        "approveAndSendBatchTaskItemDraft",
+        "deleteBatchTaskItem",
+        "retryBatchTaskItemDraft",
+        "cancelBatchTaskItemSend",
+        "restoreBatchTaskItemSend",
+        "pauseBatchTask",
+        "resumeBatchTask",
+        "stopBatchTask",
+        "deleteBatchTask",
+        "restoreBatchTask"
+      ],
+      "action_overrides": {
+        "getBatchTaskItemThread": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "CLI 尚无按活动项 ID 直接读取完整工作区线程的等价动作。"
+        },
+        "approveAllBatchTaskDrafts": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "CLI 的批量审核当前与发送计划绑定，尚无只批准而不生成发送计划的独立动作。"
+        },
+        "approveBatchTaskItemDraft": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "CLI 尚无单独批准活动草稿且不进入发送计划的动作。"
+        }
+      },
       "status": "available",
       "required_capabilities": [
         "campaigns.list",
@@ -32,6 +69,12 @@
     {
       "id": "communication-groups",
       "source": "communicationGroups.ts",
+      "exported_actions": [
+        "listCommunicationGroups",
+        "createCommunicationGroup",
+        "updateCommunicationGroup",
+        "deleteCommunicationGroup"
+      ],
       "status": "available",
       "required_capabilities": [
         "communication-groups.list",
@@ -45,6 +88,13 @@
     {
       "id": "community-mentors",
       "source": "communityMentorsApi.ts",
+      "exported_actions": [
+        "getCommunityMentorCatalog",
+        "listCommunityMentors",
+        "previewCommunityMentorImport",
+        "importCommunityMentors",
+        "downloadCommunitySharePackage"
+      ],
       "status": "available",
       "required_capabilities": [
         "professors.community.catalog",
@@ -58,6 +108,24 @@
     {
       "id": "crawl-jobs",
       "source": "crawlJobsApi.ts",
+      "exported_actions": [
+        "createCrawlJob",
+        "listCrawlJobs",
+        "getCrawlJob",
+        "listCrawlCandidates",
+        "listCrawlPages",
+        "getCrawlJobEvents",
+        "updateCrawlCandidate",
+        "approveCrawlCandidates",
+        "enrichCrawlCandidates",
+        "cancelCrawlJob",
+        "pauseCrawlJob",
+        "resumeCrawlJob",
+        "retryCrawlJob",
+        "resumeCrawlJobReview",
+        "deleteCrawlJob",
+        "restoreCrawlJob"
+      ],
       "status": "available",
       "required_capabilities": [
         "crawler.jobs.list",
@@ -82,6 +150,7 @@
     {
       "id": "create-task",
       "source": "createTask.ts",
+      "exported_actions": ["createTask"],
       "status": "planned",
       "required_capabilities": [],
       "reason": "当前前端仍是本地演示 stub（文件内明确标注 TODO），接入真实后端前不把它误报为 CLI 已覆盖。"
@@ -89,6 +158,7 @@
     {
       "id": "dashboard",
       "source": "dashboardApi.ts",
+      "exported_actions": ["getDashboardOverview"],
       "status": "available",
       "required_capabilities": ["dashboard.overview"],
       "reason": "仪表盘筛选和汇总通过 dashboard.overview 读取合同开放。"
@@ -96,6 +166,11 @@
     {
       "id": "diagnostics",
       "source": "diagnosticsApi.ts",
+      "exported_actions": [
+        "listOperationLogs",
+        "exportOperationLogs",
+        "exportCrawlerDebugLog"
+      ],
       "status": "available",
       "required_capabilities": [
         "diagnostics.logs",
@@ -107,6 +182,28 @@
     {
       "id": "email-tasks",
       "source": "emailTasksApi.ts",
+      "exported_actions": [
+        "regenerateDraft",
+        "calculateMatch",
+        "generateDraft",
+        "rewriteDraft",
+        "approveDraft",
+        "saveDraft",
+        "approveAndSend",
+        "approveAndSchedule",
+        "cancelScheduledTask",
+        "continueManually",
+        "startFollowUp",
+        "updateTaskPrimaryMaterial",
+        "updateTaskOutreachConfig"
+      ],
+      "action_overrides": {
+        "approveDraft": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "CLI 可保存草稿或生成发送计划，但尚无只批准草稿的独立状态动作。"
+        }
+      },
       "status": "available",
       "required_capabilities": [
         "drafts.get",
@@ -127,6 +224,34 @@
     {
       "id": "identities",
       "source": "identities.ts",
+      "exported_actions": [
+        "listIdentities",
+        "createIdentity",
+        "updateIdentity",
+        "updateIdentityDefaultOutreachTemplate",
+        "deleteIdentity",
+        "setDefaultIdentity",
+        "testIdentitySmtp",
+        "testIdentityImap",
+        "importIdentityTemplate"
+      ],
+      "action_overrides": {
+        "createIdentity": {
+          "status": "ui_only",
+          "required_capabilities": ["identities.credentials"],
+          "reason": "创建身份需要在桌面安全表单中录入邮箱凭据。"
+        },
+        "updateIdentity": {
+          "status": "ui_only",
+          "required_capabilities": ["identities.credentials"],
+          "reason": "GUI 的完整更新载荷含服务器与凭据；CLI 只开放非秘密设置更新。"
+        },
+        "deleteIdentity": {
+          "status": "ui_only",
+          "required_capabilities": ["identities.credentials"],
+          "reason": "身份删除保留在桌面凭据管理流程中。"
+        }
+      },
       "status": "available",
       "required_capabilities": [
         "identities.list",
@@ -144,6 +269,14 @@
     {
       "id": "llm-config",
       "source": "llmConfig.ts",
+      "exported_actions": [
+        "loadLLMConfig",
+        "saveLLMConfig",
+        "getLLMConfig",
+        "updateLLMConfig",
+        "testOpenAIConnection",
+        "testDeepseekConnection"
+      ],
       "status": "ui_only",
       "required_capabilities": ["llm-profiles.write"],
       "reason": "该旧配置模块直接接收 API Key；为防止秘密进入命令历史和 Agent 上下文，保留 GUI 安全录入。"
@@ -151,6 +284,44 @@
     {
       "id": "llm-profiles",
       "source": "llmProfiles.ts",
+      "exported_actions": [
+        "listLLMProfiles",
+        "createLLMProfile",
+        "updateLLMProfile",
+        "deleteLLMProfile",
+        "setDefaultLLMProfile",
+        "fetchLLMProfileModels",
+        "testLLMProfile",
+        "fetchLLMProfileModelsPreview",
+        "testLLMProfilePreview"
+      ],
+      "action_overrides": {
+        "createLLMProfile": {
+          "status": "ui_only",
+          "required_capabilities": ["llm-profiles.write"],
+          "reason": "创建模型配置需要录入 API Key。"
+        },
+        "updateLLMProfile": {
+          "status": "ui_only",
+          "required_capabilities": ["llm-profiles.write"],
+          "reason": "GUI 完整更新包含服务地址、提示词与 API Key；CLI 只开放非秘密设置。"
+        },
+        "deleteLLMProfile": {
+          "status": "ui_only",
+          "required_capabilities": ["llm-profiles.write"],
+          "reason": "模型配置删除保留在桌面凭据管理流程中。"
+        },
+        "fetchLLMProfileModelsPreview": {
+          "status": "ui_only",
+          "required_capabilities": ["llm-profiles.write"],
+          "reason": "预览接口直接接收尚未保存的 API Key，不能进入 Agent 参数。"
+        },
+        "testLLMProfilePreview": {
+          "status": "ui_only",
+          "required_capabilities": ["llm-profiles.write"],
+          "reason": "预览测试直接接收尚未保存的 API Key，不能进入 Agent 参数。"
+        }
+      },
       "status": "available",
       "required_capabilities": [
         "llm-profiles.list",
@@ -167,6 +338,16 @@
     {
       "id": "match-analysis",
       "source": "matchAnalysisJobsApi.ts",
+      "exported_actions": [
+        "listMatchAnalysisJobs",
+        "createMatchAnalysisJob",
+        "listMatchAnalysisJobItems",
+        "getMatchAnalysisJob",
+        "cancelMatchAnalysisJob",
+        "retryFailedMatchAnalysisJob",
+        "deleteMatchAnalysisJob",
+        "restoreMatchAnalysisJob"
+      ],
       "status": "available",
       "required_capabilities": [
         "matching.jobs.list",
@@ -183,6 +364,13 @@
     {
       "id": "materials",
       "source": "materials.ts",
+      "exported_actions": [
+        "uploadIdentityMaterial",
+        "setPrimaryMaterial",
+        "deleteMaterial",
+        "getMaterialOpenUrl",
+        "getMaterialDownloadUrl"
+      ],
       "status": "available",
       "required_capabilities": [
         "materials.list",
@@ -197,6 +385,16 @@
     {
       "id": "outreach-templates",
       "source": "outreachTemplates.ts",
+      "exported_actions": [
+        "listOutreachTemplates",
+        "getOutreachTemplate",
+        "createOutreachTemplate",
+        "updateOutreachTemplate",
+        "duplicateOutreachTemplate",
+        "setGlobalDefaultOutreachTemplate",
+        "archiveOutreachTemplate",
+        "restoreOutreachTemplate"
+      ],
       "status": "available",
       "required_capabilities": [
         "templates.list",
@@ -214,6 +412,18 @@
     {
       "id": "professor-information-enrichment",
       "source": "professorInformationEnrichmentApi.ts",
+      "exported_actions": [
+        "createSingleProfessorInformationEnrichment",
+        "getActiveProfessorInformationEnrichment",
+        "createProfessorInformationEnrichmentJob",
+        "listProfessorInformationEnrichmentJobs",
+        "getProfessorInformationEnrichmentJob",
+        "listProfessorInformationEnrichmentItems",
+        "cancelProfessorInformationEnrichmentJob",
+        "retryFailedProfessorInformationEnrichmentJob",
+        "deleteProfessorInformationEnrichmentJob",
+        "restoreProfessorInformationEnrichmentJob"
+      ],
       "status": "available",
       "required_capabilities": [
         "enrichment.jobs.list",
@@ -230,6 +440,45 @@
     {
       "id": "professors",
       "source": "professorsApi.ts",
+      "exported_actions": [
+        "listProfessors",
+        "listProfessorsForManagement",
+        "getProfessor",
+        "listProfessorTags",
+        "createProfessorTag",
+        "deleteProfessorTag",
+        "getProfessorTagUsage",
+        "createProfessor",
+        "updateProfessor",
+        "updateProfessorTags",
+        "updateProfessorNote",
+        "archiveProfessor",
+        "bulkArchiveProfessors",
+        "bulkUpdateProfessorTags",
+        "restoreProfessor",
+        "importSampleProfessors",
+        "triggerCrawler",
+        "importProfessorsFromFile",
+        "getProfessorTemplateDownloadUrl",
+        "getProfessorExportDownloadUrl"
+      ],
+      "action_overrides": {
+        "importSampleProfessors": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "样例数据注入是 GUI 辅助动作，CLI 尚未发布。"
+        },
+        "triggerCrawler": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "旧的一键抓取入口没有稳定输入合同；Agent 应使用 crawler.jobs.create。"
+        },
+        "getProfessorTemplateDownloadUrl": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "CLI 尚未开放空白导入模板下载。"
+        }
+      },
       "status": "available",
       "required_capabilities": [
         "professors.list",
@@ -258,6 +507,16 @@
     {
       "id": "profiles-legacy",
       "source": "profiles.ts",
+      "exported_actions": [
+        "loadProfiles",
+        "saveProfiles",
+        "getProfiles",
+        "getProfile",
+        "createProfile",
+        "updateProfile",
+        "deleteProfile",
+        "setDefaultProfile"
+      ],
       "status": "ui_only",
       "required_capabilities": [],
       "reason": "该模块使用 localStorage 的旧演示数据，不属于桌面端真实业务数据，不能伪装成 CLI 可操作资源。"
@@ -265,6 +524,13 @@
     {
       "id": "runtime-settings",
       "source": "runtimeSettings.ts",
+      "exported_actions": [
+        "getRuntimeSettings",
+        "updateRuntimeSettings"
+      ],
+      "excluded_exports": {
+        "defaultDraftRewritePreferences": "静态默认值对象，不会发起 API 操作。"
+      },
       "status": "available",
       "required_capabilities": ["settings.get", "settings.update"],
       "reason": "运行参数读取和非秘密更新通过 settings 合同开放。"
@@ -272,6 +538,13 @@
     {
       "id": "test-compose",
       "source": "testComposeApi.ts",
+      "exported_actions": [
+        "getTestComposeStatus",
+        "getTestComposeThread",
+        "generateTestComposeDraft",
+        "saveTestComposeDraft",
+        "sendTestComposeMessage"
+      ],
       "status": "available",
       "required_capabilities": [
         "test-email.status",
@@ -285,6 +558,11 @@
     {
       "id": "token-usage",
       "source": "tokenUsage.ts",
+      "exported_actions": [
+        "listTokenUsageRecords",
+        "getTokenUsageChart",
+        "getTokenUsageVisualization"
+      ],
       "status": "available",
       "required_capabilities": [
         "usage.records",
@@ -296,6 +574,11 @@
     {
       "id": "workspaces",
       "source": "workspacesApi.ts",
+      "exported_actions": [
+        "getWorkspaceThread",
+        "ensureWorkspaceTask",
+        "refreshWorkspaceReplies"
+      ],
       "status": "available",
       "required_capabilities": [
         "workspaces.get",

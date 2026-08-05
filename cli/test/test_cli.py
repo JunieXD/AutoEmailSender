@@ -13,9 +13,14 @@ from typer.testing import CliRunner
 
 from auto_email_sender_cli.main import app
 from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
-from auto_email_sender_cli.capabilities import CAPABILITIES
+from auto_email_sender_cli.capabilities import (
+    CAPABILITIES,
+    list_capability_cards,
+    list_resource_catalog,
+)
 from auto_email_sender_cli.describe import describe_command
-from auto_email_sender_cli.errors import redact_error_details
+from auto_email_sender_cli.errors import RuntimeUnavailableError, redact_error_details
+from auto_email_sender_cli.result_protocol import prepare_result_data
 
 
 class CliTests(unittest.TestCase):
@@ -30,7 +35,45 @@ class CliTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["_meta"]["schema_version"], "3")
         self.assertEqual(payload["_meta"]["command"], "version")
+        self.assertEqual(payload["data"]["schema_version"], payload["_meta"]["schema_version"])
+        self.assertEqual(payload["data"]["contract_version"], "3")
+        self.assertEqual(payload["data"]["catalog_version"], "3")
+        self.assertEqual(payload["data"]["build_revision"], payload["_meta"]["build_revision"])
+        self.assertIn(payload["data"]["build_kind"], {"development", "embedded", "override"})
         self.assertNotIn("agent_guide", payload["_meta"])
+
+    def test_parser_failures_always_use_the_json_error_envelope(self) -> None:
+        cases = (
+            (["--format", "json", "professors", "get"], "professors.get"),
+            (
+                [
+                    "--format",
+                    "json",
+                    "drafts",
+                    "generate",
+                    "--professor-id",
+                    "1",
+                    "--identity-id",
+                    "1",
+                    "--llm-profile-id",
+                    "1",
+                    "--generation-mode",
+                    "invalid",
+                ],
+                "drafts.generate",
+            ),
+            (["--format", "json", "version", "--unknown-option"], "version"),
+            (["--format", "json", "unknown-command"], "cli"),
+        )
+
+        for arguments, command in cases:
+            with self.subTest(arguments=arguments):
+                result = self.runner.invoke(app, arguments)
+                self.assertEqual(result.exit_code, 2, msg=result.output)
+                payload = json.loads(result.stdout)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+                self.assertEqual(payload["_meta"]["command"], command)
 
     def test_guide_version_matches_cli_version_metadata(self) -> None:
         guide = self.runner.invoke(app, ["--format", "json", "guide"])
@@ -103,7 +146,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         # Full discovery is opt-in, but it still must remain bounded. Detailed
         # input/output contracts belong behind per-command describe calls.
-        self.assertLess(len(result.stdout.encode("utf-8")), 120_000)
+        self.assertLess(len(result.stdout.encode("utf-8")), 140_000)
         items = json.loads(result.stdout)["data"]["items"]
         by_command = {item["command"]: item for item in items}
         self.assertEqual(by_command["professors.create"]["availability"], "available")
@@ -199,6 +242,68 @@ class CliTests(unittest.TestCase):
         # The old default emitted every leaf's detailed metadata.  This limit
         # protects the routine discovery path from consuming an Agent turn.
         self.assertLess(len(result.stdout.encode("utf-8")), 8_000)
+
+    def test_every_catalog_resource_can_be_selected_without_guessing_aliases(self) -> None:
+        catalog = list_resource_catalog()
+        self.assertTrue(catalog)
+        for resource_record in catalog:
+            resource = str(resource_record["resource"])
+            with self.subTest(resource=resource):
+                selected = list_capability_cards(resource=resource)
+                self.assertTrue(selected)
+                self.assertTrue(
+                    all(
+                        item["resource"] == resource
+                        or str(item["resource"]).startswith(f"{resource}.")
+                        for item in selected
+                    ),
+                )
+
+    def test_unavailable_capabilities_are_describable_manual_action_stubs(self) -> None:
+        unavailable = [item for item in CAPABILITIES if item.availability != "available"]
+        self.assertTrue(unavailable)
+        for capability in unavailable:
+            with self.subTest(command=capability.command):
+                cards = list_capability_cards(command=capability.command)
+                self.assertEqual(len(cards), 1)
+                self.assertTrue(cards[0]["unavailable_reason"])
+                self.assertTrue(cards[0]["manual_action"]["location"])
+
+                description = describe_command(app, capability.command)
+                self.assertIsNotNone(description)
+                assert description is not None
+                self.assertEqual(description["kind"], "unavailable")
+                self.assertEqual(
+                    description["unavailability"]["availability"],
+                    capability.availability,
+                )
+                self.assertTrue(
+                    description["unavailability"]["manual_action"]["instruction"],
+                )
+
+                result = self.runner.invoke(
+                    app,
+                    ["--format", "json", "describe", "--command", capability.command],
+                )
+                self.assertEqual(result.exit_code, 0, msg=result.output)
+                self.assertEqual(
+                    json.loads(result.stdout)["data"]["unavailability"]["availability"],
+                    capability.availability,
+                )
+
+    def test_unsupported_root_options_fail_closed_on_system_commands(self) -> None:
+        cases = (
+            (["--filter", '{"id":{"eq":1}}', "capabilities"], "FILTER_NOT_SUPPORTED"),
+            (["--if-revision", "arbitrary", "version"], "IF_REVISION_REQUIRES_WRITE"),
+            (["--expand", "body_text", "capabilities"], "PROJECTION_NOT_SUPPORTED"),
+            (["--projection", "summary", "version"], "PROJECTION_NOT_SUPPORTED"),
+            (["--output-file", "ignored.jsonl", "doctor"], "OUTPUT_FILE_REQUIRES_COLLECTION"),
+        )
+        for arguments, error_code in cases:
+            with self.subTest(arguments=arguments):
+                result = self.runner.invoke(app, ["--format", "json", *arguments])
+                self.assertEqual(result.exit_code, 2, msg=result.output)
+                self.assertEqual(json.loads(result.stdout)["error"]["code"], error_code)
 
     def test_capabilities_can_negotiate_an_unchanged_scope_without_repeating_catalog(self) -> None:
         initial = self.runner.invoke(app, ["--format", "json", "capabilities"])
@@ -329,6 +434,33 @@ class CliTests(unittest.TestCase):
         self.assertIn("trust", payload)
         self.assertLess(len(result.stdout.encode("utf-8")), 4_000)
 
+    def test_describe_since_returns_a_bounded_not_modified_response(self) -> None:
+        initial = self.runner.invoke(
+            app,
+            ["--format", "json", "describe", "--command", "plans.execute"],
+        )
+        self.assertEqual(initial.exit_code, 0, msg=initial.output)
+        revision = json.loads(initial.stdout)["data"]["contract_revision"]
+
+        cached = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "describe",
+                "--command",
+                "plans.execute",
+                "--since",
+                revision,
+            ],
+        )
+        self.assertEqual(cached.exit_code, 0, msg=cached.output)
+        payload = json.loads(cached.stdout)["data"]
+        self.assertTrue(payload["unchanged"])
+        self.assertEqual(payload["cache"]["status"], "not_modified")
+        self.assertEqual(payload["contract_revision"], revision)
+        self.assertLess(len(cached.stdout.encode("utf-8")), 800)
+
     def test_every_available_capability_has_a_describe_contract(self) -> None:
         missing = [
             capability.command
@@ -447,6 +579,48 @@ class CliTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["state"], "needs_update")
         self.assertIn("格式损坏", result["message"])
+
+    def test_installation_inspection_verifies_cli_source_target_and_manifest_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source-cli"
+            target = root / "target-cli"
+            source.write_bytes(b"official cli build")
+            target.write_bytes(b"official cli build")
+            expected_hash = hashlib.sha256(b"official cli build").hexdigest()
+            manifest_path = root / "installation.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 4,
+                        "enabled": True,
+                        "cli_source": source.as_posix(),
+                        "cli_target": target.as_posix(),
+                        "cli_sha256": expected_hash,
+                        "agents": {},
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE": manifest_path.as_posix()},
+            ):
+                healthy = inspect_agent_skill_installation()
+                target.write_bytes(b"outdated cli build")
+                outdated = inspect_agent_skill_installation()
+
+        self.assertTrue(healthy["cli"]["ok"])
+        self.assertEqual(healthy["cli"]["state"], "installed")
+        self.assertEqual(len(healthy["cli"]["checks"]), 3)
+        self.assertFalse(outdated["cli"]["ok"])
+        failed_checks = {
+            check["id"]
+            for check in outdated["cli"]["checks"]
+            if not check["ok"]
+        }
+        self.assertIn("cli_target_sha256", failed_checks)
+        self.assertIn("cli_source_target_match", failed_checks)
 
     def test_status_tells_user_to_manually_open_a_stopped_desktop_app(self) -> None:
         descriptor = SimpleNamespace(
@@ -601,6 +775,88 @@ class CliTests(unittest.TestCase):
         self.assertEqual(full_data["projection"]["mode"], "full")
         self.assertEqual(full_data["items"][0]["message"], long_message)
         self.assertNotIn("/items/0/message", full_data["omitted_paths"])
+
+    def test_json_and_jsonl_apply_the_same_projection_to_object_results(self) -> None:
+        long_body = "完整草稿正文" * 300
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/drafts/17": {
+                    "task_id": 17,
+                    "status": "review_required",
+                    "body_text": long_body,
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            json_result = self.runner.invoke(
+                app,
+                ["--format", "json", "drafts", "get", "17"],
+            )
+            jsonl_result = self.runner.invoke(
+                app,
+                ["--format", "jsonl", "drafts", "get", "17"],
+            )
+
+        self.assertEqual(json_result.exit_code, 0, msg=json_result.output)
+        self.assertEqual(jsonl_result.exit_code, 0, msg=jsonl_result.output)
+        json_data = json.loads(json_result.stdout)["data"]
+        jsonl_rows = [json.loads(line) for line in jsonl_result.stdout.splitlines()]
+        self.assertEqual(jsonl_rows[1]["data"], json_data)
+        self.assertEqual(json_data["body_text"]["kind"], "text_summary")
+        self.assertNotIn(long_body, jsonl_result.stdout)
+
+    def test_nested_json_pointer_expand_keeps_structured_parents_traversable(self) -> None:
+        long_body = "邮件正文" * 300
+        projected = prepare_result_data(
+            {
+                "messages": [
+                    {
+                        "id": 1,
+                        "body_text": long_body,
+                        "metadata": {"raw": "x" * 300},
+                    },
+                ],
+            },
+            command="communications.threads.get",
+            projection="summary",
+            expanded_paths=("/messages/0/body_text",),
+        )
+
+        self.assertEqual(projected["messages"][0]["body_text"], long_body)
+        self.assertEqual(projected["messages"][0]["metadata"]["kind"], "object_summary")
+
+    def test_retryable_write_error_returns_the_generated_request_id(self) -> None:
+        class FailingClient:
+            descriptor = SimpleNamespace(app_version="test")
+
+            def request(self, *_: object, **__: object) -> object:
+                raise RuntimeUnavailableError("本地服务暂时不可用。")
+
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=FailingClient(),
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "professors",
+                    "create",
+                    "--name",
+                    "测试导师",
+                    "--email",
+                    "test@example.edu",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 7, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["error"]["retryable"])
+        self.assertRegex(payload["_meta"]["request_id"], r"^cli_[A-Za-z0-9_-]+$")
 
     def test_invoke_reuses_target_parser_and_confirmation_gate(self) -> None:
         fake_client = _FakeAgentClient(

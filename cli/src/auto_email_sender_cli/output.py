@@ -20,6 +20,7 @@ from auto_email_sender_cli.result_protocol import (
 from auto_email_sender_cli.version import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
+    get_build_identity,
     get_cli_version,
 )
 
@@ -46,6 +47,7 @@ class CliContext:
     force_output: bool = False
     projection: ResultProjection = ResultProjection.SUMMARY
     expand: tuple[str, ...] = ()
+    specified_options: frozenset[str] = frozenset()
     invoke_command: str | None = None
     invoke_input: dict[str, object] | None = None
 
@@ -62,11 +64,15 @@ def build_meta(
     # command handlers migrate.  Repeating a prose guide hint in every result
     # wastes context and makes a static manual appear authoritative.
     _ = guide_topic
+    build = get_build_identity()
     meta: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
         "command": command,
         "cli_version": get_cli_version(),
+        "build_revision": build["revision"],
+        "build_kind": build["kind"],
+        "build_dirty": build["dirty"],
         "app_version": app_version,
         "warnings": warnings or [],
     }
@@ -155,7 +161,7 @@ def emit_success(
                 json.dumps({"type": "summary", "data": {"total": len(jsonl_items)}}, ensure_ascii=False),
             )
         else:
-            typer.echo(json.dumps({"type": "item", "data": data}, ensure_ascii=False))
+            typer.echo(json.dumps({"type": "item", "data": emitted_data}, ensure_ascii=False))
         return
     typer.echo(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")))
 

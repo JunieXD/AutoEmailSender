@@ -29,6 +29,10 @@ if ((Clean)); then
 fi
 
 uv sync --dev
+BuildIdentityHook="$CliDir/build/generated/cli_build_identity_hook.py"
+uv run python "$RepoRoot/scripts/generate_cli_build_identity.py" \
+  --repo-root "$RepoRoot" \
+  --output "$BuildIdentityHook"
 uv run pyinstaller \
   --noconfirm \
   --clean \
@@ -40,6 +44,7 @@ uv run pyinstaller \
   --specpath "$CliDir/build" \
   --paths "$CliDir/src" \
   --copy-metadata auto-email-sender-cli \
+  --runtime-hook "$BuildIdentityHook" \
   "${TargetArchArgs[@]}" \
   "$CliDir/src/auto_email_sender_cli/__main__.py"
 

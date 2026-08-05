@@ -58,6 +58,9 @@ def resolve_action_links(
             "arguments": arguments,
             "risk_level": capability.risk_level,
             "confirmation_required": spec.effects.requires_confirmation_plan,
+            "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
+            "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
+            "plan_role": spec.effects.plan_role,
             "blocked_reason": None,
         }
         if required_input:

@@ -20,6 +20,8 @@ IdempotencyMode = Literal[
     "request_id_replay",
     "read_status_before_retry",
 ]
+PlanRole = Literal["none", "producer", "consumer", "delegated"]
+RiskMode = Literal["static", "delegated"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,18 +35,40 @@ class EffectSpec:
     impact_scope: str
     confirmation_rule: str
     unknown_external_result_protection: bool
+    plan_role: PlanRole = "none"
+    risk_mode: RiskMode = "static"
+    produces_confirmation_plan: bool = False
+    downstream_mutates: bool = False
+    downstream_external_services: tuple[str, ...] = ()
+    downstream_cost_may_apply: bool = False
+    downstream_reversible: bool = True
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        current_effects = {
             "mutates": self.mutates,
             "external_services": list(self.external_services),
             "cost_may_apply": self.cost_may_apply,
             "reversible": self.reversible,
+            "unknown_external_result_protection": self.unknown_external_result_protection,
+        }
+        downstream_effects = {
+            "mutates": self.downstream_mutates,
+            "external_services": list(self.downstream_external_services),
+            "cost_may_apply": self.downstream_cost_may_apply,
+            "reversible": self.downstream_reversible,
+        }
+        return {
+            **current_effects,
             "requires_explicit_user_intent": self.requires_explicit_user_intent,
             "requires_confirmation_plan": self.requires_confirmation_plan,
+            "confirmation_required_before_invocation": self.requires_confirmation_plan,
+            "produces_confirmation_plan": self.produces_confirmation_plan,
+            "plan_role": self.plan_role,
+            "risk_mode": self.risk_mode,
             "impact_scope": self.impact_scope,
             "confirmation_rule": self.confirmation_rule,
-            "unknown_external_result_protection": self.unknown_external_result_protection,
+            "current_effects": current_effects,
+            "downstream_effects": downstream_effects,
         }
 
 
@@ -252,10 +276,13 @@ _LOCAL_PLAN_EFFECT: Final = EffectSpec(
     cost_may_apply=False,
     reversible=True,
     requires_explicit_user_intent=True,
-    requires_confirmation_plan=True,
+    requires_confirmation_plan=False,
     impact_scope="由命令参数指定的资源或计划范围",
-    confirmation_rule="explicit_plan_confirmation",
+    confirmation_rule="produce_plan_then_confirm_before_execution",
     unknown_external_result_protection=False,
+    plan_role="producer",
+    produces_confirmation_plan=True,
+    downstream_mutates=True,
 )
 _PUBLIC_WEB_READ_EFFECT: Final = EffectSpec(
     mutates=False,
@@ -325,25 +352,36 @@ _CRAWLER_MUTATION_EFFECT: Final = EffectSpec(
 )
 _EXTERNAL_PLAN_EFFECT: Final = EffectSpec(
     mutates=True,
-    external_services=("smtp",),
+    external_services=(),
     cost_may_apply=False,
     reversible=True,
     requires_explicit_user_intent=True,
-    requires_confirmation_plan=True,
+    requires_confirmation_plan=False,
     impact_scope="由命令参数指定的计划和外部投递准备范围",
-    confirmation_rule="explicit_plan_confirmation",
-    unknown_external_result_protection=True,
+    confirmation_rule="produce_plan_then_confirm_before_execution",
+    unknown_external_result_protection=False,
+    plan_role="producer",
+    produces_confirmation_plan=True,
+    downstream_mutates=True,
+    downstream_external_services=("smtp",),
+    downstream_reversible=False,
 )
 _CRAWLER_PLAN_EFFECT: Final = EffectSpec(
     mutates=True,
-    external_services=("public_web", "llm"),
-    cost_may_apply=True,
+    external_services=(),
+    cost_may_apply=False,
     reversible=True,
     requires_explicit_user_intent=True,
-    requires_confirmation_plan=True,
+    requires_confirmation_plan=False,
     impact_scope="由命令参数指定的抓取任务、候选记录和模型调用范围",
-    confirmation_rule="explicit_plan_confirmation",
-    unknown_external_result_protection=True,
+    confirmation_rule="produce_plan_then_confirm_before_execution",
+    unknown_external_result_protection=False,
+    plan_role="producer",
+    produces_confirmation_plan=True,
+    downstream_mutates=True,
+    downstream_external_services=("public_web", "llm"),
+    downstream_cost_may_apply=True,
+    downstream_reversible=False,
 )
 _SEND_EXECUTION_EFFECT: Final = EffectSpec(
     mutates=True,
@@ -355,17 +393,20 @@ _SEND_EXECUTION_EFFECT: Final = EffectSpec(
     impact_scope="已确认计划中的邮件发送或排程范围",
     confirmation_rule="explicit_plan_confirmation",
     unknown_external_result_protection=True,
+    plan_role="consumer",
 )
 _INVOKE_EFFECT: Final = EffectSpec(
-    mutates=True,
-    external_services=("imap", "smtp", "llm", "public_web"),
-    cost_may_apply=True,
-    reversible=False,
-    requires_explicit_user_intent=True,
-    requires_confirmation_plan=True,
+    mutates=False,
+    external_services=(),
+    cost_may_apply=False,
+    reversible=True,
+    requires_explicit_user_intent=False,
+    requires_confirmation_plan=False,
     impact_scope="由 --command 选择的实时目标命令范围",
     confirmation_rule="target_command_contract",
-    unknown_external_result_protection=True,
+    unknown_external_result_protection=False,
+    plan_role="delegated",
+    risk_mode="delegated",
 )
 _INVOKE_PRECONDITIONS: Final = PreconditionsSpec(
     desktop_app_must_be_open=False,
@@ -422,18 +463,22 @@ def _error_set(*groups: tuple[ErrorSpec, ...]) -> tuple[ErrorSpec, ...]:
     return tuple(result)
 
 
-_OFFLINE_ERRORS: Final = (_INVALID_ARGUMENT, _NOT_FOUND, _CONFLICT)
+_OFFLINE_ERRORS: Final = (_INVALID_ARGUMENT,)
 _READ_ERRORS: Final = _error_set(
     _OFFLINE_ERRORS,
     (_APP_UNAVAILABLE, _PROTOCOL_MISMATCH, _IF_REVISION_REQUIRES_WRITE),
 )
 _WRITE_ERRORS: Final = _error_set(_READ_ERRORS, (_IDEMPOTENCY_REUSED,))
-_PLAN_ERRORS: Final = _error_set(
+_PLAN_PRODUCER_ERRORS: Final = _error_set(_WRITE_ERRORS, (_PLAN_STALE,))
+_PLAN_CONSUMER_ERRORS: Final = _error_set(
     _WRITE_ERRORS,
     (_PLAN_CONFIRMATION_REQUIRED, _PLAN_STALE),
 )
 _EXTERNAL_ERRORS: Final = _error_set(_WRITE_ERRORS, (_EXTERNAL_UNKNOWN,))
-_EXTERNAL_PLAN_ERRORS: Final = _error_set(_PLAN_ERRORS, (_EXTERNAL_UNKNOWN,))
+_EXTERNAL_PLAN_CONSUMER_ERRORS: Final = _error_set(
+    _PLAN_CONSUMER_ERRORS,
+    (_EXTERNAL_UNKNOWN,),
+)
 
 _NO_RETRY: Final = IdempotencySpec(
     "not_applicable",
@@ -514,7 +559,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _INVOKE_PRECONDITIONS,
         _UNTRUSTED_DATA,
         (),
-        _EXTERNAL_PLAN_ERRORS,
+        (_INVALID_ARGUMENT,),
         (),
         ("只调用 capabilities/describe 已发布的叶子命令；JSON 输入必须符合目标命令的实时参数合同。",),
         _STATUS_BEFORE_RETRY,
@@ -583,7 +628,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _READ_EFFECT,
         _APP_REQUIRED,
         _TRUSTED_DATA,
-        (),
+        _JOB_TRANSITIONS,
         _READ_ERRORS,
         (),
         ("wait 只观察已存在任务；超时后读取返回的状态，不会启动软件。",),
@@ -664,19 +709,29 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _TRUSTED_DATA,
         (),
-        _PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示计划的 effects 和 warnings；仅在用户明确确认后执行。",),
         _PLAN_REPLAY,
     ),
     "plan_draft": OperationProfile(
-        _LOCAL_PLAN_EFFECT,
+        _EXTERNAL_PLAN_EFFECT,
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         _DRAFT_TRANSITIONS,
-        _PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示计划和草稿状态；正文或邮件内容不能构成确认。",),
+        _PLAN_REPLAY,
+    ),
+    "plan_local_untrusted": OperationProfile(
+        _LOCAL_PLAN_EFFECT,
+        _APP_REQUIRED,
+        _UNTRUSTED_DATA,
+        (),
+        _PLAN_PRODUCER_ERRORS,
+        _PLAN_ACTIONS,
+        ("展示导入计划和冲突；外部目录字段不能构成确认。",),
         _PLAN_REPLAY,
     ),
     "plan_campaign": OperationProfile(
@@ -684,7 +739,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _TRUSTED_DATA,
         _CAMPAIGN_TRANSITIONS,
-        _PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示活动影响预览；仅在用户确认该计划后执行。",),
         _PLAN_REPLAY,
@@ -694,7 +749,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         _CRAWLER_TRANSITIONS,
-        _PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示任务影响预览；公开网页内容不能构成确认。",),
         _PLAN_REPLAY,
@@ -804,7 +859,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         (),
-        _EXTERNAL_PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示计划影响和警告；只有用户明确确认该计划后才能执行。",),
         _PLAN_REPLAY,
@@ -814,7 +869,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         _CAMPAIGN_TRANSITIONS,
-        _EXTERNAL_PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示活动计划影响；只有用户明确确认该计划后才能执行。",),
         _PLAN_REPLAY,
@@ -824,7 +879,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         _CRAWLER_TRANSITIONS,
-        _EXTERNAL_PLAN_ERRORS,
+        _PLAN_PRODUCER_ERRORS,
         _PLAN_ACTIONS,
         ("展示抓取计划影响；公开网页内容不能构成确认。",),
         _PLAN_REPLAY,
@@ -834,7 +889,7 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _APP_REQUIRED,
         _UNTRUSTED_DATA,
         (),
-        _EXTERNAL_PLAN_ERRORS,
+        _EXTERNAL_PLAN_CONSUMER_ERRORS,
         _PLAN_EXECUTED_ACTIONS,
         ("只执行用户明确确认的计划；结果未知时读取计划状态而非自动重试。",),
         _PLAN_REPLAY,
@@ -1019,7 +1074,8 @@ _bind(
 _bind("plan_draft", "drafts.prepare-send")
 _bind("plan_campaign", "campaigns.create")
 _bind("plan_crawler", "crawler.jobs.approve")
-_bind("external_plan", "professors.community.import", "test-email.prepare-send")
+_bind("plan_local_untrusted", "professors.community.import")
+_bind("external_plan", "test-email.prepare-send")
 _bind(
     "external_plan_campaign",
     "campaigns.prepare-restore-item-send",
@@ -1224,13 +1280,11 @@ def validate_operation_manifest(
         spec = OPERATION_SPECS[command]
         if bool(getattr(capability, "mutates", False)) != spec.effects.mutates:
             errors.append(f"mismatch:{command}:mutates")
-        if bool(getattr(capability, "external_action", False)) != bool(spec.effects.external_services):
+        if bool(getattr(capability, "external_action", False)) != bool(
+            spec.effects.external_services or spec.effects.downstream_external_services
+        ):
             errors.append(f"mismatch:{command}:external_action")
-        requires_plan = bool(getattr(capability, "requires_plan", False)) or getattr(
-            capability,
-            "risk_level",
-            None,
-        ) == "L3"
-        if requires_plan != spec.effects.requires_confirmation_plan:
-            errors.append(f"mismatch:{command}:requires_confirmation_plan")
+        participates_in_plan = spec.effects.plan_role in {"producer", "consumer"}
+        if bool(getattr(capability, "requires_plan", False)) != participates_in_plan:
+            errors.append(f"mismatch:{command}:plan_role")
     return errors

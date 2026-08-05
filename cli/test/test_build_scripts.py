@@ -12,6 +12,8 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--onefile", script)
         self.assertIn("--target-arch arm64", script)
         self.assertIn("--copy-metadata auto-email-sender-cli", script)
+        self.assertIn("generate_cli_build_identity.py", script)
+        self.assertIn('--runtime-hook "$BuildIdentityHook"', script)
         self.assertIn('"$CliExecutable" --format json version', script)
         self.assertIn('"$CliExecutable" --format json capabilities', script)
 
@@ -21,6 +23,8 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("uv run pyinstaller", script)
         self.assertIn("--onefile", script)
         self.assertIn("auto-email-sender.exe", script)
+        self.assertIn("generate_cli_build_identity.py", script)
+        self.assertIn("--runtime-hook $BuildIdentityHook", script)
         self.assertIn("& $CliExecutable --format json version", script)
         self.assertIn("& $CliExecutable --format json capabilities", script)
 

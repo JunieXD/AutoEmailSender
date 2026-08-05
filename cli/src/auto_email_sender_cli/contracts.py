@@ -14,7 +14,7 @@ from typing import Any
 from auto_email_sender_cli.capabilities import (
     CONTRACT_VERSION,
     capability_operation,
-    capability_resource,
+    discovery_resource,
     capability_stateful,
     collection_output_fields,
     collection_filter_fields,
@@ -87,7 +87,7 @@ def build_command_contract(
     contract: dict[str, object] = {
         "command": normalized,
         "contract_version": CONTRACT_VERSION,
-        "resource": capability_resource(normalized),
+        "resource": discovery_resource(normalized),
         "operation": capability_operation(normalized),
         "input": _input_contract(normalized, parameters, input_file_examples),
         "output": _output_contract(normalized, supports_list),
@@ -151,9 +151,26 @@ def _fallback_effects() -> dict[str, object]:
         "reversible": True,
         "requires_explicit_user_intent": False,
         "requires_confirmation_plan": False,
+        "confirmation_required_before_invocation": False,
+        "produces_confirmation_plan": False,
+        "plan_role": "none",
+        "risk_mode": "static",
         "impact_scope": "当前命令的读取范围",
         "confirmation_rule": "none",
         "unknown_external_result_protection": False,
+        "current_effects": {
+            "mutates": False,
+            "external_services": [],
+            "cost_may_apply": False,
+            "reversible": True,
+            "unknown_external_result_protection": False,
+        },
+        "downstream_effects": {
+            "mutates": False,
+            "external_services": [],
+            "cost_may_apply": False,
+            "reversible": True,
+        },
     }
 
 
@@ -428,6 +445,9 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                         "arguments",
                         "risk_level",
                         "confirmation_required",
+                        "confirmation_required_before_invocation",
+                        "produces_confirmation_plan",
+                        "plan_role",
                         "blocked_reason",
                     ],
                     "properties": {
@@ -436,6 +456,9 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                         "arguments": {"type": "object"},
                         "risk_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
                         "confirmation_required": {"type": "boolean"},
+                        "confirmation_required_before_invocation": {"type": "boolean"},
+                        "produces_confirmation_plan": {"type": "boolean"},
+                        "plan_role": {"type": "string", "enum": ["none", "producer", "consumer", "delegated"]},
                         "blocked_reason": {"type": "null"},
                         "required_input": {"type": "array", "items": {"type": "string"}},
                         "execution_mode": {"type": "string", "enum": ["invoke", "poll"]},
@@ -589,11 +612,11 @@ _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
 
 
 _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
-    "version": frozenset({"cli_version", "protocol_version"}),
+    "version": frozenset({"cli_version", "protocol_version", "schema_version", "contract_version", "catalog_version", "build_revision", "build_kind", "build_dirty"}),
     "status": frozenset({"state", "desktop_process_running", "backend_ready", "app_version", "protocol_version", "protocol_compatible", "runtime_file", "message"}),
     "guide": frozenset({"version", "topic", "title", "deprecated", "rules", "replacement"}),
-    "capabilities": frozenset({"catalog_version", "catalog_revision", "scope", "scope_revision", "view", "items", "summary", "cache", "next"}),
-    "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "contract_version", "contract_revision", "resource", "operation", "input", "output", "effects", "trust", "state_transitions", "errors", "next_actions", "idempotency", "lifecycle", "details_available", "details"}),
+    "capabilities": frozenset({"catalog_version", "catalog_revision", "build", "scope", "scope_revision", "view", "items", "summary", "cache", "next"}),
+    "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "unavailability", "unchanged", "cache", "contract_version", "contract_revision", "resource", "operation", "input", "output", "effects", "trust", "state_transitions", "errors", "next_actions", "idempotency", "lifecycle", "details_available", "details"}),
     "doctor": frozenset({"healthy", "checks", "recommended_action", "repair_command"}),
     "wait": frozenset({"resource", "id", "status", "terminal", "timed_out", "poll_count", "elapsed_seconds", "result", "available_actions"}),
     "professors.tags.usage": frozenset({"tag", "professors"}),

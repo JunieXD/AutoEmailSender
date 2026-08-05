@@ -176,6 +176,8 @@ def _should_summarize(
     if key in _TEXT_FIELDS:
         return isinstance(value, str)
     if key in _STRUCTURED_FIELDS:
+        if _selector_targets_descendant(path, value, selectors):
+            return False
         return isinstance(value, dict | list)
     return False
 
@@ -196,6 +198,49 @@ def _is_expanded(key: str, path: str, selectors: tuple[str, ...]) -> bool:
             ):
                 return True
             _ = expected
+    return False
+
+
+def _selector_targets_descendant(
+    path: str,
+    value: Any,
+    selectors: tuple[str, ...],
+) -> bool:
+    """Keep a summarized container traversable when a requested child exists.
+
+    Bare selectors (for example ``--expand message``) apply at any depth, but
+    should not prevent unrelated structured fields from being summarized.  We
+    therefore inspect the small JSON-like subtree before deciding to descend.
+    Pointer selectors can be matched from path components without walking the
+    value, including ``*`` list wildcards.
+    """
+
+    path_parts = path.strip("/").split("/")
+    for selector in selectors:
+        if not selector.startswith("/"):
+            if _contains_field(value, selector):
+                return True
+            continue
+        selector_parts = selector.strip("/").split("/")
+        if len(selector_parts) <= len(path_parts):
+            continue
+        if all(
+            expected == "*" or expected == actual
+            for expected, actual in zip(selector_parts, path_parts, strict=False)
+        ):
+            return True
+    return False
+
+
+def _contains_field(value: Any, field: str) -> bool:
+    """Return whether a bare expansion field occurs in a JSON-like subtree."""
+
+    if isinstance(value, dict):
+        if field in value:
+            return True
+        return any(_contains_field(child, field) for child in value.values())
+    if isinstance(value, list):
+        return any(_contains_field(child, field) for child in value)
     return False
 
 

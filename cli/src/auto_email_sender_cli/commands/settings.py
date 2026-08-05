@@ -143,6 +143,8 @@ def update_runtime_settings(
             supports_output_file=False,
             supports_if_revision=True,
         )
+        request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
+        context.request_id = request_id
         client = AgentApiClient()
         current = client.request("GET", "/api/agent/v1/settings")
         if not isinstance(current, dict):
@@ -153,7 +155,6 @@ def update_runtime_settings(
             )
         payload = _runtime_settings_payload(current)
         payload.update(requested_updates)
-        request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
         data = client.request(
             "PATCH",
             "/api/agent/v1/settings",

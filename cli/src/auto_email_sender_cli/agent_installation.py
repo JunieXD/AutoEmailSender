@@ -58,8 +58,10 @@ def inspect_agent_skill_installation() -> dict[str, object]:
             "manifest_path": manifest_path.as_posix(),
             "message": "Agent 使用说明来自旧版本，需要在个人中心重新安装。",
             "items": [],
+            "cli": _cli_needs_update("安装清单版本过旧，无法验证 CLI 文件。"),
         }
 
+    cli_installation = _inspect_cli_installation(manifest)
     agents = manifest.get("agents")
     if not isinstance(agents, dict) or not agents:
         return {
@@ -68,6 +70,7 @@ def inspect_agent_skill_installation() -> dict[str, object]:
             "manifest_path": manifest_path.as_posix(),
             "message": "尚未为任何 Agent 安装 Skill。",
             "items": [],
+            "cli": cli_installation,
         }
 
     skill_source = manifest.get("skill_source")
@@ -104,6 +107,7 @@ def inspect_agent_skill_installation() -> dict[str, object]:
             "manifest_path": manifest_path.as_posix(),
             "message": "Agent 安装信息格式损坏，需要在个人中心重新安装。",
             "items": items,
+            "cli": cli_installation,
         }
     if any(item["state"] == "needs_update" for item in items):
         return {
@@ -112,6 +116,7 @@ def inspect_agent_skill_installation() -> dict[str, object]:
             "manifest_path": manifest_path.as_posix(),
             "message": "检测到 Agent 使用说明已过期或被修改，需要在个人中心重新安装。",
             "items": items,
+            "cli": cli_installation,
         }
     return {
         "ok": True,
@@ -119,6 +124,7 @@ def inspect_agent_skill_installation() -> dict[str, object]:
         "manifest_path": manifest_path.as_posix(),
         "message": "已安装的 Agent 使用说明为当前官方版本。",
         "items": items,
+        "cli": cli_installation,
     }
 
 
@@ -129,7 +135,106 @@ def _not_configured(manifest_path: Path, message: str, *, ok: bool = True) -> di
         "manifest_path": manifest_path.as_posix(),
         "message": message,
         "items": [],
+        "cli": {
+            "ok": True,
+            "state": "not_configured",
+            "message": "尚无已启用的 CLI 安装清单。",
+            "source": None,
+            "target": None,
+            "expected_sha256": None,
+            "checks": [],
+        },
     }
+
+
+def _inspect_cli_installation(manifest: dict[str, object]) -> dict[str, object]:
+    source_value = manifest.get("cli_source")
+    target_value = manifest.get("cli_target")
+    expected_hash = manifest.get("cli_sha256")
+    if (
+        not isinstance(source_value, str)
+        or not source_value.strip()
+        or not isinstance(target_value, str)
+        or not target_value.strip()
+        or not isinstance(expected_hash, str)
+        or not _is_sha256(expected_hash)
+    ):
+        return _cli_needs_update(
+            "安装清单缺少有效的 cli_source、cli_target 或 cli_sha256。",
+            source=source_value if isinstance(source_value, str) else None,
+            target=target_value if isinstance(target_value, str) else None,
+            expected_hash=expected_hash if isinstance(expected_hash, str) else None,
+        )
+
+    source = Path(source_value).expanduser()
+    target = Path(target_value).expanduser()
+    source_hash = _safe_sha256_file(source)
+    target_hash = _safe_sha256_file(target)
+    checks = [
+        {
+            "id": "cli_source_sha256",
+            "ok": source_hash == expected_hash,
+            "path": source.as_posix(),
+            "actual_sha256": source_hash,
+        },
+        {
+            "id": "cli_target_sha256",
+            "ok": target_hash == expected_hash,
+            "path": target.as_posix(),
+            "actual_sha256": target_hash,
+        },
+        {
+            "id": "cli_source_target_match",
+            "ok": source_hash is not None and source_hash == target_hash,
+            "source": source.as_posix(),
+            "target": target.as_posix(),
+        },
+    ]
+    healthy = all(bool(check["ok"]) for check in checks)
+    return {
+        "ok": healthy,
+        "state": "installed" if healthy else "needs_update",
+        "message": (
+            "CLI 源文件、安装目标与清单 SHA-256 一致。"
+            if healthy
+            else "CLI 源文件、安装目标或清单 SHA-256 不一致，需要重新安装。"
+        ),
+        "source": source.as_posix(),
+        "target": target.as_posix(),
+        "expected_sha256": expected_hash,
+        "checks": checks,
+    }
+
+
+def _cli_needs_update(
+    message: str,
+    *,
+    source: str | None = None,
+    target: str | None = None,
+    expected_hash: str | None = None,
+) -> dict[str, object]:
+    return {
+        "ok": False,
+        "state": "needs_update",
+        "message": message,
+        "source": source,
+        "target": target,
+        "expected_sha256": expected_hash,
+        "checks": [],
+    }
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdefABCDEF" for character in value)
+
+
+def _safe_sha256_file(file_path: Path) -> str | None:
+    try:
+        if not file_path.is_file():
+            return None
+        return _sha256_file(file_path)
+    except OSError:
+        return None
 
 
 def _sha256_directory(directory: Path) -> str | None:

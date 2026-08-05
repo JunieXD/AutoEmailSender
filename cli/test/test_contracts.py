@@ -20,6 +20,7 @@ from auto_email_sender_cli.capabilities import (
 )
 from auto_email_sender_cli.contracts import command_contract_revision, validate_command_contract
 from auto_email_sender_cli.describe import describe_command, describe_command_revisions
+from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.main import app
 from auto_email_sender_cli.operation_specs import OPERATION_SPECS, validate_operation_manifest
 from auto_email_sender_cli.commands.common import (
@@ -58,13 +59,18 @@ class ContractTests(unittest.TestCase):
             spec = OPERATION_SPECS[capability.command]
             self.assertEqual(spec.effects.mutates, capability.mutates, capability.command)
             self.assertEqual(
-                bool(spec.effects.external_services),
+                bool(spec.effects.external_services or spec.effects.downstream_external_services),
                 capability.external_action,
                 capability.command,
             )
             self.assertEqual(
+                spec.effects.plan_role in {"producer", "consumer"},
+                capability.requires_plan,
+                capability.command,
+            )
+            self.assertEqual(
                 spec.effects.requires_confirmation_plan,
-                capability.requires_plan or capability.risk_level == "L3",
+                spec.effects.plan_role == "consumer",
                 capability.command,
             )
 
@@ -158,7 +164,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(description["risk"]["requires_plan"], capability.requires_plan)
             self.assertEqual(
                 description["effects"]["requires_confirmation_plan"],
-                capability.requires_plan or capability.risk_level == "L3",
+                description["effects"]["plan_role"] == "consumer",
             )
         self.assertEqual(failures, [])
 
@@ -176,8 +182,14 @@ class ContractTests(unittest.TestCase):
                 "risk": description["risk"]["level"] == advertised["risk_level"],
                 "availability": description["risk"]["availability"] == advertised["availability"],
                 "mutates": description["effects"]["mutates"] == advertised["mutates"],
-                "requires_plan": description["effects"]["requires_confirmation_plan"]
-                == advertised["requires_plan"],
+                "plan_role": description["effects"]["plan_role"]
+                == advertised["plan_role"],
+                "confirmation_before_invocation": (
+                    description["effects"]["confirmation_required_before_invocation"]
+                    == advertised["confirmation_required_before_invocation"]
+                ),
+                "produces_plan": description["effects"]["produces_confirmation_plan"]
+                == advertised["produces_confirmation_plan"],
                 "long_running": description["risk"]["long_running"] == advertised["long_running"],
                 "field_selection": description["output"]["field_selection"]
                 == advertised["supports_field_selection"],
@@ -606,8 +618,44 @@ class ContractTests(unittest.TestCase):
             self.assertIn("unknown_external_result_protection", effects, capability.command)
             self.assertEqual(
                 effects["requires_confirmation_plan"],
-                capability.requires_plan or capability.risk_level == "L3",
+                effects["plan_role"] == "consumer",
             )
+            self.assertIn(effects["plan_role"], {"none", "producer", "consumer", "delegated"})
+            self.assertIn("current_effects", effects)
+            self.assertIn("downstream_effects", effects)
+
+    def test_plan_producers_consumers_and_delegated_invoke_have_distinct_semantics(self) -> None:
+        producer = describe_command(app, "drafts.prepare-send")
+        consumer = describe_command(app, "plans.execute")
+        delegated = describe_command(app, "invoke")
+        assert producer is not None
+        assert consumer is not None
+        assert delegated is not None
+
+        self.assertEqual(producer["effects"]["plan_role"], "producer")
+        self.assertTrue(producer["effects"]["produces_confirmation_plan"])
+        self.assertFalse(producer["effects"]["confirmation_required_before_invocation"])
+        self.assertEqual(producer["effects"]["current_effects"]["external_services"], [])
+        self.assertEqual(producer["effects"]["downstream_effects"]["external_services"], ["smtp"])
+
+        self.assertEqual(consumer["effects"]["plan_role"], "consumer")
+        self.assertFalse(consumer["effects"]["produces_confirmation_plan"])
+        self.assertTrue(consumer["effects"]["confirmation_required_before_invocation"])
+
+        self.assertEqual(delegated["risk"]["risk_mode"], "delegated")
+        self.assertEqual(delegated["effects"]["risk_mode"], "delegated")
+        self.assertEqual(delegated["effects"]["plan_role"], "delegated")
+        self.assertFalse(delegated["effects"]["mutates"])
+        self.assertEqual(delegated["effects"]["external_services"], [])
+
+    def test_offline_and_wait_error_lifecycle_contracts_are_precise(self) -> None:
+        version = describe_command(app, "version")
+        wait = describe_command(app, "wait")
+        assert version is not None
+        assert wait is not None
+        self.assertEqual([item["code"] for item in version["errors"]], ["INVALID_ARGUMENT"])
+        self.assertTrue(wait["output"]["terminal_states"])
+        self.assertTrue(wait["state_transitions"])
 
     def test_plan_previews_do_not_claim_an_llm_call(self) -> None:
         for command in (
@@ -684,6 +732,160 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(first["id"], 1)
             self.assertEqual(first["name"], "A")
             self.assertRegex(first["revision"], r"^[0-9a-f]{20}$")
+
+    def test_all_output_file_streams_multiple_pages_and_preserves_summary(self) -> None:
+        class StreamingClient:
+            descriptor = type("Descriptor", (), {"app_version": "test"})()
+            last_request_id = "request-stream"
+
+            def __init__(self) -> None:
+                self.cursors: list[object] = []
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                params = kwargs.get("params") or {}
+                cursor = params.get("cursor")
+                self.cursors.append(cursor)
+                if cursor is None:
+                    return {
+                        "items": [
+                            {"id": 1, "name": "A", "email": "a@example.edu"},
+                            {"id": 2, "name": "B", "email": "b@example.edu"},
+                        ],
+                        "next_cursor": "2",
+                        "has_more": True,
+                        "total": 3,
+                        "summary": {"record_count": 3},
+                    }
+                return {
+                    "items": [{"id": 3, "name": "C", "email": "c@example.edu"}],
+                    "next_cursor": None,
+                    "has_more": False,
+                    "total": 3,
+                }
+
+        client = StreamingClient()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "all-professors.jsonl"
+            with patch(
+                "auto_email_sender_cli.commands.common.AgentApiClient",
+                return_value=client,
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                        "--fields",
+                        "id,name",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            payload = json.loads(result.stdout)["data"]
+            self.assertEqual(payload["item_count"], 3)
+            self.assertEqual(payload["page_count"], 2)
+            self.assertEqual(payload["source_total"], 3)
+            self.assertEqual(payload["summary"], {"record_count": 3})
+            self.assertEqual(payload["selected_fields"], ["id", "name"])
+            self.assertNotIn("items", payload)
+            lines = [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([item["id"] for item in lines], [1, 2, 3])
+            self.assertTrue(all("email" not in item for item in lines))
+            self.assertEqual(client.cursors, [None, "2"])
+
+    def test_all_output_file_applies_filter_across_streamed_pages(self) -> None:
+        class StreamingClient:
+            descriptor = type("Descriptor", (), {"app_version": "test"})()
+            last_request_id = "request-filter-stream"
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                params = kwargs.get("params") or {}
+                if params.get("cursor") is None:
+                    return {
+                        "items": [
+                            {"id": 1, "name": "Keep Alpha"},
+                            {"id": 2, "name": "Drop Beta"},
+                        ],
+                        "next_cursor": "2",
+                        "has_more": True,
+                        "total": 4,
+                        "summary": {"record_count": 4},
+                    }
+                return {
+                    "items": [
+                        {"id": 3, "name": "Drop Gamma"},
+                        {"id": 4, "name": "Keep Delta"},
+                    ],
+                    "next_cursor": None,
+                    "has_more": False,
+                    "total": 4,
+                }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "filtered-professors.jsonl"
+            with patch(
+                "auto_email_sender_cli.commands.common.AgentApiClient",
+                return_value=StreamingClient(),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--filter",
+                        '{"name":{"contains":"keep"}}',
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            payload = json.loads(result.stdout)["data"]
+            self.assertEqual(payload["item_count"], 2)
+            self.assertEqual(payload["source_total"], 4)
+            self.assertEqual(payload["page_count"], 2)
+            self.assertTrue(payload["filter_applied"])
+            self.assertEqual(payload["summary"], {"record_count": 2})
+            lines = [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([item["id"] for item in lines], [1, 4])
+
+    def test_streaming_export_does_not_overwrite_an_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "existing.jsonl"
+            destination.write_text("keep me\n", encoding="utf-8")
+            with patch(
+                "auto_email_sender_cli.commands.common.AgentApiClient",
+                return_value=_FakeClient(),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                    ],
+                )
+            self.assertEqual(result.exit_code, 2, msg=result.output)
+            self.assertEqual(json.loads(result.stdout)["error"]["code"], "OUTPUT_EXISTS")
+            self.assertEqual(destination.read_text(encoding="utf-8"), "keep me\n")
+
+    def test_all_stdout_limit_fails_with_an_output_file_recovery_action(self) -> None:
+        with self.assertRaises(CliError) as raised:
+            fetch_all_pages(_FakeClient(), "/api/agent/v1/professors", max_items=1)
+        self.assertEqual(raised.exception.code, "RESULT_TOO_LARGE")
+        self.assertIn("--output-file", raised.exception.suggested_command or "")
 
     def test_field_projection_preserves_full_record_revision_and_rejects_unknown_empty_field(self) -> None:
         full_record = {"id": 1, "name": "A", "email": "a@example.edu"}
@@ -968,7 +1170,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(prepare_send["command"], "campaigns.prepare-send")
         self.assertEqual(prepare_send["arguments"], {"campaign_id": 42, "item_ids": [99]})
         self.assertEqual(prepare_send["risk_level"], "L3")
-        self.assertTrue(prepare_send["confirmation_required"])
+        self.assertFalse(prepare_send["confirmation_required"])
+        self.assertFalse(prepare_send["confirmation_required_before_invocation"])
+        self.assertTrue(prepare_send["produces_confirmation_plan"])
+        self.assertEqual(prepare_send["plan_role"], "producer")
         self.assertIsNone(prepare_send["blocked_reason"])
 
         plan = augment_state_metadata(
@@ -979,6 +1184,11 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(plan_actions["execute"]["command"], "plans.execute")
         self.assertEqual(plan_actions["execute"]["arguments"], {"plan_id": "plan-7"})
         self.assertTrue(plan_actions["execute"]["confirmation_required"])
+        self.assertTrue(
+            plan_actions["execute"]["confirmation_required_before_invocation"],
+        )
+        self.assertFalse(plan_actions["execute"]["produces_confirmation_plan"])
+        self.assertEqual(plan_actions["execute"]["plan_role"], "consumer")
         self.assertEqual(plan_actions["execute"]["required_input"], ["confirm"])
 
     def test_read_only_status_fields_do_not_gain_lifecycle_actions(self) -> None:
