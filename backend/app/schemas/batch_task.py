@@ -67,6 +67,7 @@ class BatchTaskItemRead(ApiSchema):
     professor_email: str | None
     professor_title: str | None
     professor_school: str | None
+    professor_research_direction: str | None
     status: str
     cancellation_reason: str | None
     batch_send_canceled_at: datetime | None

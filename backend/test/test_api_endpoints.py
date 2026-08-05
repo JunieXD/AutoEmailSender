@@ -9462,6 +9462,7 @@ class ApiEndpointTests(unittest.TestCase):
         item = items.json()[0]
         self.assertEqual(item["status"], "review_required")
         self.assertEqual(item["next_action"], "review_draft")
+        self.assertIsNone(item["professor_research_direction"])
         self.assertEqual(item["draft_generation_source"], "template_fallback")
         self.assertEqual(item["draft_fallback_reason"], "missing_research_direction")
 

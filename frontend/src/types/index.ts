@@ -983,6 +983,7 @@ export interface BatchTaskItemDTO {
   professor_email: string | null;
   professor_title: string | null;
   professor_school: string | null;
+  professor_research_direction?: string | null;
   status: WorkspaceTaskStatus;
   cancellation_reason?: WorkspaceTaskCancellationReason | null;
   batch_send_canceled_at: string | null;

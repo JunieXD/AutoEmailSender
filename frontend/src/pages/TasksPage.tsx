@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -38,6 +39,7 @@ import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliver
 import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { Pagination } from "@/components/molecules/Pagination";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
+import { ProfessorEditDialog } from "@/components/molecules/ProfessorEditDialog";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
@@ -95,6 +97,7 @@ import {
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
 } from "@/lib/api/professorInformationEnrichmentApi";
+import { getProfessor } from "@/lib/api/professorsApi";
 import {
   cancelCrawlJob,
   approveCrawlCandidates,
@@ -138,6 +141,7 @@ import {
   getOutreachTemplateSourceLabel,
   getBatchTaskItemCancellationText,
   getBatchTaskWaitingSendCount,
+  isBatchTaskItemMissingResearchDirection,
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { formatApiDateTime, parseApiDateTime } from "@/lib/dateTime";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
@@ -172,6 +176,8 @@ import {
   type ProfessorInformationEnrichmentItemStatus,
   type ProfessorInformationEnrichmentJobDTO,
   type ProfessorInformationEnrichmentJobStatus,
+  type ProfessorDTO,
+  type ProfessorManagementItemDTO,
   type TaskListView,
   type WorkspaceTaskStatus,
   type WorkspaceThreadDTO,
@@ -980,6 +986,10 @@ export const TasksPage = () => {
   const [selectedBatchTaskItems, setSelectedBatchTaskItems] = useState<
     BatchTaskItemDTO[]
   >([]);
+  const [professorEditDialogOpen, setProfessorEditDialogOpen] = useState(false);
+  const [professorEditLoading, setProfessorEditLoading] = useState(false);
+  const [professorEditProfessor, setProfessorEditProfessor] =
+    useState<ProfessorDTO | null>(null);
   const [batchTaskDetailsLoading, setBatchTaskDetailsLoading] = useState(false);
   const [resendContext, setResendContext] = useState<BatchTaskResendContextDTO | null>(null);
   const [resendLoading, setResendLoading] = useState(false);
@@ -1210,6 +1220,7 @@ export const TasksPage = () => {
   const latestTasksRequestIdRef = useRef(0);
   const latestBatchTaskDetailsRequestIdRef = useRef(0);
   const latestBatchReviewRequestIdRef = useRef(0);
+  const latestProfessorEditRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
   const latestMatchJobDetailsRequestIdRef = useRef(0);
   const latestInformationEnrichmentJobsRequestIdRef = useRef(0);
@@ -1966,6 +1977,77 @@ export const TasksPage = () => {
       }
     },
     [notifyError],
+  );
+
+  const closeProfessorEditDialog = useCallback(() => {
+    latestProfessorEditRequestIdRef.current += 1;
+    setProfessorEditDialogOpen(false);
+    setProfessorEditLoading(false);
+    setProfessorEditProfessor(null);
+  }, []);
+
+  const openProfessorEditDialog = useCallback(
+    async (item: BatchTaskItemDTO) => {
+      const requestId = latestProfessorEditRequestIdRef.current + 1;
+      latestProfessorEditRequestIdRef.current = requestId;
+      setProfessorEditDialogOpen(true);
+      setProfessorEditLoading(true);
+      setProfessorEditProfessor(null);
+      try {
+        const professor = await getProfessor(item.professor_id);
+        if (latestProfessorEditRequestIdRef.current !== requestId) {
+          return;
+        }
+        setProfessorEditProfessor(professor);
+      } catch (error) {
+        if (latestProfessorEditRequestIdRef.current !== requestId) {
+          return;
+        }
+        notifyError(
+          "加载导师资料失败",
+          error instanceof Error ? error.message : "加载导师资料失败",
+        );
+        closeProfessorEditDialog();
+      } finally {
+        if (latestProfessorEditRequestIdRef.current === requestId) {
+          setProfessorEditLoading(false);
+        }
+      }
+    },
+    [closeProfessorEditDialog, notifyError],
+  );
+
+  const refreshAfterProfessorEdit = useCallback(
+    async (professor: ProfessorManagementItemDTO) => {
+      setBatchReviewThread((currentThread) => {
+        if (!currentThread || currentThread.professor.id !== professor.id) {
+          return currentThread;
+        }
+        return {
+          ...currentThread,
+          professor: {
+            ...currentThread.professor,
+            name: professor.name,
+            email: professor.email,
+            title: professor.title,
+            university: professor.university,
+            school: professor.school,
+            department: professor.department,
+            research_direction: professor.research_direction,
+            recent_papers: professor.recent_papers,
+            profile_url: professor.profile_url,
+          },
+        };
+      });
+      if (!selectedBatchTask) {
+        return;
+      }
+      await Promise.all([
+        loadBatchTaskDetails(selectedBatchTask.id),
+        loadTasks(),
+      ]);
+    },
+    [loadBatchTaskDetails, loadTasks, selectedBatchTask],
   );
 
   const loadCrawlJobDetails = useCallback(
@@ -3550,15 +3632,17 @@ export const TasksPage = () => {
       return null;
     }
     const action = buildBatchPendingItemAction(item, selectedBatchTask);
+    const missingResearchDirection =
+      isBatchTaskItemMissingResearchDirection(item);
+    let actionContent: ReactNode = null;
     if (action?.kind === "message") {
-      return (
+      actionContent = (
         <span className="font-medium text-stone-600">
           {action.text}
         </span>
       );
-    }
-    if (action?.kind === "review") {
-      return (
+    } else if (action?.kind === "review") {
+      actionContent = (
         <button
           type="button"
           onClick={() => void openBatchDraftReview(item)}
@@ -3567,19 +3651,20 @@ export const TasksPage = () => {
           {action.text}
         </button>
       );
-    }
-    if (action?.kind === "professor" || action?.kind === "profile") {
-      return (
-        <Link
-          to={action.href}
-          className="font-medium text-primary"
-        >
+    } else if (action?.kind === "professor" && !missingResearchDirection) {
+      actionContent = (
+        <Link to={action.href} className="font-medium text-primary">
           {action.text}
         </Link>
       );
-    }
-    if (action?.kind === "retry") {
-      return (
+    } else if (action?.kind === "profile") {
+      actionContent = (
+        <Link to={action.href} className="font-medium text-primary">
+          {action.text}
+        </Link>
+      );
+    } else if (action?.kind === "retry") {
+      actionContent = (
         <button
           type="button"
           onClick={() => void handleRetryBatchTaskItemDraft(item)}
@@ -3592,11 +3677,28 @@ export const TasksPage = () => {
         </button>
       );
     }
-    return null;
+    if (!missingResearchDirection) {
+      return actionContent;
+    }
+
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void openProfessorEditDialog(item)}
+          className="inline-flex items-center gap-1.5 font-medium text-primary"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          补充资料
+        </button>
+        {actionContent}
+      </div>
+    );
   };
 
   const closeBatchTaskDetails = () => {
     latestBatchTaskDetailsRequestIdRef.current += 1;
+    closeProfessorEditDialog();
     resetBatchDraftReview();
     setSelectedBatchTask(null);
     setSelectedBatchTaskItems([]);
@@ -3906,17 +4008,13 @@ export const TasksPage = () => {
     batchReviewThread?.current_task.draft_generation_source ===
       "template_fallback" ||
     activeBatchReviewItem?.draft_generation_source === "template_fallback";
+  const batchReviewProfessorMissingResearchDirection =
+    !batchReviewThread?.professor.research_direction?.trim();
   const batchReviewTemplateReferencesResearchDirection = [
     batchReviewThread?.current_task.outreach_template_subject,
     batchReviewThread?.current_task.outreach_template_body_text,
     batchReviewThread?.current_task.outreach_template_body_html,
   ].some((value) => /\{\{\s*research_direction\s*\}\}/.test(value ?? ""));
-  const batchReviewProfessorHref = activeBatchReviewItem
-    ? `/professors?keyword=${encodeURIComponent(
-        activeBatchReviewItem.professor_email ||
-          activeBatchReviewItem.professor_name,
-      )}`
-    : "/professors";
   const canSendBatchReviewImmediately =
     selectedBatchTask?.schedule_type === "immediate";
 
@@ -4807,23 +4905,38 @@ export const TasksPage = () => {
                                 当前草稿未进行 AI 改写
                               </div>
                               <p className="mt-1">
-                                该导师缺少研究方向，系统已直接使用
+                                {batchReviewProfessorMissingResearchDirection
+                                  ? "该导师缺少研究方向，系统已直接使用"
+                                  : "该草稿生成时导师缺少研究方向，系统已直接使用"}
                                 {selectedBatchTask
                                   ? `「${getOutreachTemplateSourceLabel(selectedBatchTask)}」`
                                   : "本次所选"}
-                                模板生成草稿。你可以编辑并审核通过。
+                                模板生成草稿。
+                                {batchReviewProfessorMissingResearchDirection
+                                  ? "你可以编辑并审核通过。"
+                                  : "导师资料现已补充，你可以使用 AI 改写或继续审核模板草稿。"}
                               </p>
                               {batchReviewTemplateReferencesResearchDirection ? (
                                 <p className="mt-1 font-medium">
                                   模板中的研究方向变量为空，请重点检查相关语句。
                                 </p>
                               ) : null}
-                              <Link
-                                to={batchReviewProfessorHref}
-                                className="mt-2 inline-flex font-medium text-amber-900 underline underline-offset-4"
-                              >
-                                补全导师资料
-                              </Link>
+                              {batchReviewProfessorMissingResearchDirection ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (activeBatchReviewItem) {
+                                      void openProfessorEditDialog(
+                                        activeBatchReviewItem,
+                                      );
+                                    }
+                                  }}
+                                  disabled={!activeBatchReviewItem}
+                                  className="mt-2 inline-flex font-medium text-amber-900 underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  补充资料
+                                </button>
+                              ) : null}
                             </section>
                           ) : null}
                           <div className="mb-5 rounded-2xl border border-primary/10 bg-primary/5 px-4 py-3">
@@ -5233,6 +5346,9 @@ export const TasksPage = () => {
                     visiblePendingBatchTaskItems.map((item) => {
                       const cancellationText = getBatchTaskItemCancellationText(item);
                       const sendCanceled = item.batch_send_canceled_at !== null;
+                      const missingResearchDirection =
+                        !sendCanceled &&
+                        isBatchTaskItemMissingResearchDirection(item);
                       const restoreWindowExpired =
                         sendCanceled &&
                         !isBatchItemScheduledInFuture(
@@ -5254,6 +5370,19 @@ export const TasksPage = () => {
                               <p className="text-sm font-medium text-stone-900">
                                 {item.professor_name}
                               </p>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                {missingResearchDirection ? (
+                                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                                    缺少研究方向
+                                  </span>
+                                ) : null}
+                                {!sendCanceled &&
+                                item.draft_generation_source === "template_fallback" ? (
+                                  <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+                                    未进行 AI 改写
+                                  </span>
+                                ) : null}
+                              </div>
                               <p className="mt-1 text-xs text-stone-500">
                                 {[
                                   item.professor_title,
@@ -7032,6 +7161,13 @@ export const TasksPage = () => {
           </section>
         </div>
       ) : null}
+      <ProfessorEditDialog
+        open={professorEditDialogOpen}
+        professor={professorEditProfessor}
+        loading={professorEditLoading}
+        onClose={closeProfessorEditDialog}
+        onSaved={refreshAfterProfessorEdit}
+      />
       {confirmDialog}
     </main>
   );

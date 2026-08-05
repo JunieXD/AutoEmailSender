@@ -10,6 +10,8 @@ import type {
   CrawlJobSummaryDTO,
   MatchAnalysisJobDTO,
   MatchAnalysisJobItemDTO,
+  ProfessorDTO,
+  ProfessorManagementItemDTO,
   ProfessorInformationEnrichmentItemDTO,
   ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
@@ -18,6 +20,7 @@ import {
   buildBatchPendingItemAction,
   getBatchTaskItemCancellationText,
   getBatchTaskWaitingSendCount,
+  isBatchTaskItemMissingResearchDirection,
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { getCrawlEventFailureReason } from "@/features/crawl-review/client/crawlJobEvents";
 import {
@@ -70,6 +73,8 @@ const apiMocks = vi.hoisted(() => ({
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),
   restoreProfessorInformationEnrichmentJob: vi.fn(),
+  getProfessor: vi.fn(),
+  updateProfessor: vi.fn(),
   getWorkspaceThread: vi.fn(),
   regenerateDraft: vi.fn(),
   approveDraft: vi.fn(),
@@ -185,6 +190,11 @@ vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
     apiMocks.deleteProfessorInformationEnrichmentJob,
   restoreProfessorInformationEnrichmentJob:
     apiMocks.restoreProfessorInformationEnrichmentJob,
+}));
+
+vi.mock("@/lib/api/professorsApi", () => ({
+  getProfessor: apiMocks.getProfessor,
+  updateProfessor: apiMocks.updateProfessor,
 }));
 
 vi.mock("@/lib/api/workspacesApi", () => ({
@@ -680,6 +690,7 @@ const buildBatchItem = (
   professor_email: "mentor@example.edu",
   professor_title: "Professor",
   professor_school: "School of Computing",
+  professor_research_direction: "Human-centered AI",
   status: "approved",
   cancellation_reason: null,
   batch_send_canceled_at: null,
@@ -697,6 +708,41 @@ const buildBatchItem = (
   next_action: "waiting_send",
   ...overrides,
 });
+
+const buildProfessor = (
+  overrides: Partial<ProfessorDTO> = {},
+): ProfessorDTO => ({
+  id: 21,
+  name: "模板直通导师",
+  email: "mentor@example.edu",
+  title: "Professor",
+  university: "Example University",
+  school: "School of Computing",
+  department: "Computer Science",
+  research_direction: "Human-centered AI",
+  personal_note: null,
+  recent_papers: ["Recent AI paper"],
+  profile_url: "https://example.edu/mentor",
+  source_url: "https://example.edu/faculty",
+  crawl_status: "completed",
+  skip_reason: null,
+  archived_at: null,
+  created_at: "2026-05-08T00:00:00",
+  updated_at: "2026-05-08T00:00:00",
+  tags: [],
+  ...overrides,
+});
+
+const buildProfessorManagementItem = (
+  overrides: Partial<ProfessorManagementItemDTO> = {},
+): ProfessorManagementItemDTO => {
+  const professor = buildProfessor();
+  return {
+    ...professor,
+    recent_papers: professor.recent_papers ?? [],
+    ...overrides,
+  };
+};
 
 const buildWorkspaceThread = (
   overrides: Partial<WorkspaceThreadDTO> = {},
@@ -829,6 +875,8 @@ beforeEach(() => {
   apiMocks.listMatchAnalysisJobItems.mockResolvedValue([]);
   apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([]);
   apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([]);
+  apiMocks.getProfessor.mockResolvedValue(buildProfessor());
+  apiMocks.updateProfessor.mockResolvedValue(buildProfessorManagementItem());
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
@@ -1837,6 +1885,13 @@ describe("TasksPage batch draft review", () => {
     apiMocks.listBatchTasks.mockResolvedValue([task]);
     apiMocks.listBatchTaskItems.mockResolvedValue([item]);
     apiMocks.getBatchTaskItemThread.mockResolvedValue(fallbackThread);
+    apiMocks.getProfessor.mockResolvedValue(
+      buildProfessor({
+        name: "缺研究方向导师",
+        email: "mentor@example.edu",
+        research_direction: null,
+      }),
+    );
     apiMocks.approveBatchTaskItemDraft.mockResolvedValue(
       buildWorkspaceThread({
         ...fallbackThread,
@@ -1871,11 +1926,17 @@ describe("TasksPage batch draft review", () => {
       "模板中的研究方向变量为空，请重点检查相关语句",
     );
     expect(
-      within(fallbackNotice).getByRole("link", { name: "补全导师资料" }),
-    ).toHaveAttribute(
-      "href",
-      "/professors?keyword=mentor%40example.edu",
+      within(fallbackNotice).getByRole("button", { name: "补充资料" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(fallbackNotice).getByRole("button", { name: "补充资料" }),
     );
+    const editDialog = await screen.findByRole("dialog", {
+      name: "补充导师资料：缺研究方向导师",
+    });
+    expect(within(editDialog).getByLabelText("研究方向")).toHaveValue("");
+    fireEvent.click(within(editDialog).getByRole("button", { name: "取消" }));
 
     confirmMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
@@ -1900,6 +1961,111 @@ describe("TasksPage batch draft review", () => {
         }),
       );
     });
+  });
+
+  it("allows AI rewrite immediately after completing research direction inline", async () => {
+    const task = buildBatchTask({
+      name: "AI 模板补充资料任务",
+      schedule_type: "immediate",
+      outreach_generation_mode: "llm",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 62,
+      professor_name: "待补充导师",
+      professor_research_direction: null,
+      status: "review_required",
+      next_action: "review_draft",
+      draft_generation_source: "template_fallback",
+      draft_fallback_reason: "missing_research_direction",
+    });
+    const fallbackThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        name: item.professor_name,
+        research_direction: null,
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+        draft_generation_source: "template_fallback",
+        draft_fallback_reason: "missing_research_direction",
+      },
+    });
+    const completedProfessor = buildProfessorManagementItem({
+      name: item.professor_name,
+      research_direction: "Machine Learning Systems",
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(fallbackThread);
+    apiMocks.getProfessor.mockResolvedValue(
+      buildProfessor({
+        name: item.professor_name,
+        research_direction: null,
+      }),
+    );
+    apiMocks.updateProfessor.mockResolvedValue(completedProfessor);
+    apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(
+      buildWorkspaceThread({
+        professor: {
+          ...fallbackThread.professor,
+          research_direction: completedProfessor.research_direction,
+        },
+        current_task: {
+          ...fallbackThread.current_task,
+          draft_generation_source: "llm",
+          draft_fallback_reason: null,
+          generated_subject: "AI 改写后的主题",
+          generated_content_text: "AI 改写后的正文",
+          generated_content_html: "<p>AI 改写后的正文</p>",
+        },
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    const fallbackNotice = await screen.findByRole("region", {
+      name: "未进行 AI 改写提示",
+    });
+    fireEvent.click(
+      within(fallbackNotice).getByRole("button", { name: "补充资料" }),
+    );
+
+    const editDialog = await screen.findByRole("dialog", {
+      name: `补充导师资料：${item.professor_name}`,
+    });
+    fireEvent.change(within(editDialog).getByLabelText("研究方向"), {
+      target: { value: "Machine Learning Systems" },
+    });
+    fireEvent.click(within(editDialog).getByRole("button", { name: "保存导师" }));
+
+    expect(
+      await within(fallbackNotice).findByText(/导师资料现已补充/),
+    ).toBeInTheDocument();
+    expect(
+      within(fallbackNotice).queryByRole("button", { name: "补充资料" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
+    await waitFor(() => {
+      expect(apiMocks.regenerateBatchTaskItemDraft).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+      );
+    });
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "确认使用 AI 改写？" }),
+    );
   });
 
   it("keeps the current draft visible until the next professor is ready", async () => {
@@ -2623,6 +2789,25 @@ describe("batch task send queue copy", () => {
     });
   });
 
+  it("uses the current research direction over a historical fallback reason", () => {
+    expect(
+      isBatchTaskItemMissingResearchDirection(
+        buildBatchItem({
+          professor_research_direction: "Newly completed direction",
+          draft_fallback_reason: "missing_research_direction",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isBatchTaskItemMissingResearchDirection(
+        buildBatchItem({
+          professor_research_direction: null,
+          draft_fallback_reason: "missing_research_direction",
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("routes profile completion to professor management instead of workspace", () => {
     const action = buildBatchPendingItemAction(
       buildBatchItem({
@@ -2655,21 +2840,34 @@ describe("batch task send queue copy", () => {
 });
 
 describe("batch task expiration display", () => {
-  it("shows professor profile completion link instead of workspace fallback", async () => {
+  it("opens professor profile completion inline instead of workspace fallback", async () => {
     const task = buildBatchTask({
       pending_generation_count: 1,
       approved_count: 0,
       scheduled_count: 0,
     });
+    const item = buildBatchItem({
+      professor_name: "缺资料导师",
+      professor_email: "missing-profile@example.edu",
+      professor_research_direction: null,
+      status: "discovered",
+      next_action: "complete_professor_profile",
+    });
+    const professor = buildProfessor({
+      name: item.professor_name,
+      email: item.professor_email,
+      research_direction: null,
+    });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
-    apiMocks.listBatchTaskItems.mockResolvedValue([
-      buildBatchItem({
-        professor_name: "缺资料导师",
-        professor_email: "missing-profile@example.edu",
-        status: "discovered",
-        next_action: "complete_professor_profile",
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getProfessor.mockResolvedValue(professor);
+    apiMocks.updateProfessor.mockResolvedValue(
+      buildProfessorManagementItem({
+        name: item.professor_name,
+        email: item.professor_email,
+        research_direction: "Machine Learning",
       }),
-    ]);
+    );
 
     render(
       <MemoryRouter>
@@ -2680,12 +2878,36 @@ describe("batch task expiration display", () => {
     expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
 
-    const profileLink = await screen.findByRole("link", { name: "补全导师资料" });
-    expect(profileLink).toHaveAttribute(
-      "href",
-      "/professors?keyword=missing-profile%40example.edu",
-    );
-    expect(screen.queryByRole("link", { name: "去处理" })).not.toBeInTheDocument();
+    expect(await screen.findByText("缺少研究方向")).toBeInTheDocument();
+    const profileButton = await screen.findByRole("button", { name: "补充资料" });
+    expect(screen.queryByRole("link", { name: "补全导师资料" })).not.toBeInTheDocument();
+
+    fireEvent.click(profileButton);
+    const editDialog = await screen.findByRole("dialog", {
+      name: "补充导师资料：缺资料导师",
+    });
+    expect(apiMocks.getProfessor).toHaveBeenCalledWith(item.professor_id);
+    expect(within(editDialog).getByLabelText("研究方向")).toHaveValue("");
+
+    fireEvent.change(within(editDialog).getByLabelText("研究方向"), {
+      target: { value: "Machine Learning" },
+    });
+    fireEvent.click(within(editDialog).getByRole("button", { name: "保存导师" }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateProfessor).toHaveBeenCalledWith(
+        item.professor_id,
+        expect.objectContaining({
+          name: item.professor_name,
+          email: item.professor_email,
+          research_direction: "Machine Learning",
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "补充导师资料：缺资料导师" })).not.toBeInTheDocument();
+    });
+    expect(apiMocks.listBatchTaskItems).toHaveBeenCalledTimes(2);
   });
 
   it("uses next actions for draft failed items instead of workspace fallback", async () => {
@@ -2700,6 +2922,7 @@ describe("batch task expiration display", () => {
       buildBatchItem({
         professor_name: "失败导师",
         professor_email: "failed-profile@example.edu",
+        professor_research_direction: null,
         status: "draft_failed",
         last_error: "请先补充导师研究方向，再使用 AI 生成草稿",
         next_action: "complete_professor_profile",
@@ -2715,11 +2938,7 @@ describe("batch task expiration display", () => {
     expect(await screen.findByText("模板定时任务")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
 
-    const profileLink = await screen.findByRole("link", { name: "补全导师资料" });
-    expect(profileLink).toHaveAttribute(
-      "href",
-      "/professors?keyword=failed-profile%40example.edu",
-    );
+    expect(await screen.findByRole("button", { name: "补充资料" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "查看并处理" })).not.toBeInTheDocument();
   });
 

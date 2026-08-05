@@ -1173,6 +1173,7 @@ def _serialize_batch_task_item(
         professor_email=professor.email,
         professor_title=professor.title,
         professor_school=professor.school,
+        professor_research_direction=professor.research_direction,
         status=email_task.status,
         cancellation_reason=email_task.cancellation_reason,
         batch_send_canceled_at=email_task.batch_send_canceled_at,

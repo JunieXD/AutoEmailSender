@@ -50,6 +50,22 @@ export const getBatchTaskItemCancellationText = (item: BatchTaskItemDTO) => {
   return null;
 };
 
+export const isBatchTaskItemMissingResearchDirection = (
+  item: BatchTaskItemDTO,
+) => {
+  // The API now always includes the professor's current direction. Prefer it
+  // over a historical fallback reason so the badge disappears as soon as the
+  // profile is completed. The action/reason checks keep older responses
+  // backwards compatible while the new field is absent.
+  if (item.professor_research_direction !== undefined) {
+    return !item.professor_research_direction?.trim();
+  }
+  return (
+    item.next_action === "complete_professor_profile" ||
+    item.draft_fallback_reason === "missing_research_direction"
+  );
+};
+
 export const buildBatchPendingItemAction = (
   item: BatchTaskItemDTO,
   task: BatchTaskCardDTO,
