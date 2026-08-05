@@ -494,8 +494,8 @@ def _crawl_run_to_record(run: CrawlJobRun) -> TokenUsageRecordRead:
     return TokenUsageRecordRead(
         id=f"crawl:{run.id}",
         feature_type="crawl",
-        feature_label="智能爬取",
-        title=f"智能爬取 - {title_context or '未命名任务'}",
+        feature_label="智能抓取",
+        title=f"智能抓取 - {title_context or '未命名任务'}",
         input_tokens=run.input_tokens,
         output_tokens=run.output_tokens,
         cached_tokens=run.cached_tokens,

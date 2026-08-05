@@ -1941,7 +1941,7 @@ export const ProfessorsPage = () => {
 
   const handleCreateCrawlJob = async () => {
     if (!selectedLlmProfileId) {
-      notifyWarning("请先选择模型", "智能爬取会使用当前顶部栏选择的模型。");
+      notifyWarning("请先选择模型", "智能抓取会使用当前顶部栏选择的模型。");
       return;
     }
     const startUrls = normalizeCrawlerStartUrls(crawlerFormState.start_urls);

@@ -881,7 +881,7 @@ function TokenRecordFilters({
         onChange={(event) => onFeatureTypeChange(event.target.value as TokenUsageRecordFeatureFilterDTO)}
       >
         <option value="all">全部功能</option>
-        <option value="crawl">智能爬取</option>
+        <option value="crawl">智能抓取</option>
         <option value="information_enrichment">信息补全</option>
         <option value="match_analysis">匹配分析</option>
         <option value="draft_generation">AI 草稿</option>

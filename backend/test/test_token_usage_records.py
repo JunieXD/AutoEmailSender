@@ -540,7 +540,7 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
         self.assertEqual(result.records[1].cached_tokens, 24)
         self.assertEqual(result.records[2].status, "running")
         self.assertEqual(result.records[2].cached_tokens, 12)
-        self.assertEqual(result.records[2].title, "智能爬取 - 示例大学 · 计算机学院")
+        self.assertEqual(result.records[2].title, "智能抓取 - 示例大学 · 计算机学院")
         self.assertEqual(result.summary.record_count, 3)
         self.assertEqual(result.summary.input_tokens, 600)
         self.assertEqual(result.summary.output_tokens, 90)
