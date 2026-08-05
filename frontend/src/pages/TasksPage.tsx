@@ -11,6 +11,7 @@ import {
   Activity,
   Ban,
   Bot,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
@@ -34,6 +35,7 @@ import {
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { AttachmentSizeSummary } from "@/components/molecules/AttachmentSizeSummary";
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
+import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { Pagination } from "@/components/molecules/Pagination";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
@@ -115,10 +117,14 @@ import {
   getReviewableCandidateIdsWithoutEmail,
   getReviewableCandidateIds,
   hasActiveCrawlCandidateFilters,
+  normalizeCrawlCandidateSearchScopes,
   pruneSelectedCandidateIds,
   type CrawlCandidateFilters,
-  type CrawlCandidateInformationFilter,
+  type CrawlCandidateInformationCondition,
+  type CrawlCandidateInformationField,
+  type CrawlCandidateInformationMatchMode,
   type CrawlCandidateReviewStatusFilter,
+  type CrawlCandidateSearchScope,
 } from "@/features/crawl-review/client/reviewCandidates";
 import {
   getCandidateEnrichmentFailureMessage,
@@ -283,6 +289,93 @@ const CRAWL_CANDIDATE_REVIEW_STATUS_TONES: Record<
   rejected: "border-red-200 bg-red-50 text-red-700",
   merged: "border-sky-200 bg-sky-50 text-sky-700",
 };
+
+const CRAWL_CANDIDATE_SEARCH_SCOPE_OPTIONS: ReadonlyArray<{
+  value: CrawlCandidateSearchScope;
+  label: string;
+}> = [
+  { value: "name", label: "姓名" },
+  { value: "email", label: "邮箱" },
+  { value: "organization", label: "学校与任职" },
+  { value: "title", label: "职称" },
+  { value: "research_direction", label: "研究方向" },
+  { value: "recent_papers", label: "近期论文" },
+];
+
+const CRAWL_CANDIDATE_INFORMATION_FIELD_OPTIONS: ReadonlyArray<{
+  field: CrawlCandidateInformationField;
+  label: string;
+}> = [
+  { field: "email", label: "邮箱" },
+  { field: "title", label: "职称" },
+  { field: "department", label: "系所" },
+  { field: "profile_url", label: "个人主页" },
+  { field: "research_direction", label: "研究方向" },
+  { field: "recent_papers", label: "近期论文" },
+];
+
+const CRAWL_CANDIDATE_INFORMATION_FIELD_LABELS = Object.fromEntries(
+  CRAWL_CANDIDATE_INFORMATION_FIELD_OPTIONS.map(({ field, label }) => [
+    field,
+    label,
+  ]),
+) as Record<CrawlCandidateInformationField, string>;
+
+const getCrawlCandidateInformationConditionEntries = (
+  conditions: CrawlCandidateFilters["informationConditions"],
+) =>
+  Object.entries(conditions) as Array<
+    [CrawlCandidateInformationField, CrawlCandidateInformationCondition]
+  >;
+
+const getCrawlCandidateInformationConditionLabel = (
+  field: CrawlCandidateInformationField,
+  condition: CrawlCandidateInformationCondition,
+) =>
+  `${condition === "present" ? "有" : "无"}${
+    CRAWL_CANDIDATE_INFORMATION_FIELD_LABELS[field]
+  }`;
+
+const getCrawlCandidateInformationConditionsSummary = (
+  filters: CrawlCandidateFilters,
+) => {
+  const conditionLabels = getCrawlCandidateInformationConditionEntries(
+    filters.informationConditions,
+  ).map(([field, condition]) =>
+    getCrawlCandidateInformationConditionLabel(field, condition),
+  );
+  if (conditionLabels.length === 0) {
+    return "添加资料条件";
+  }
+
+  const connector =
+    filters.informationMatchMode === "all" ? " 且 " : " 或 ";
+  if (conditionLabels.length <= 2) {
+    return conditionLabels.join(connector);
+  }
+  return `${conditionLabels.slice(0, 2).join(connector)}等 ${
+    conditionLabels.length
+  } 项`;
+};
+
+const getCrawlCandidateSearchPlaceholder = (
+  scopes: CrawlCandidateSearchScope[],
+) => {
+  if (scopes.length !== 1) {
+    return "搜索所选字段";
+  }
+  return `搜索${
+    CRAWL_CANDIDATE_SEARCH_SCOPE_OPTIONS.find(
+      (option) => option.value === scopes[0],
+    )?.label ?? "所选字段"
+  }`;
+};
+
+const createDefaultCrawlCandidateFilters = (): CrawlCandidateFilters => ({
+  ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+  searchScopes: [...DEFAULT_CRAWL_CANDIDATE_FILTERS.searchScopes],
+  informationConditions: {},
+});
 
 const BATCH_ITEM_STATUS_TONES: Record<WorkspaceTaskStatus, string> = {
   discovered: "bg-stone-100 text-stone-700",
@@ -1059,7 +1152,9 @@ export const TasksPage = () => {
     CrawlCandidateDTO[]
   >([]);
   const [crawlCandidateFilters, setCrawlCandidateFilters] =
-    useState<CrawlCandidateFilters>({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
+    useState<CrawlCandidateFilters>(createDefaultCrawlCandidateFilters);
+  const [crawlCandidateInformationFiltersOpen, setCrawlCandidateInformationFiltersOpen] =
+    useState(false);
   const [crawlJobEvents, setCrawlJobEvents] = useState<CrawlJobEventDTO[]>([]);
   const [crawlJobDetailsLoading, setCrawlJobDetailsLoading] = useState(false);
   const [selectedCrawlCandidateIds, setSelectedCrawlCandidateIds] = useState<
@@ -1503,6 +1598,12 @@ export const TasksPage = () => {
   const crawlCandidateFiltersActive = hasActiveCrawlCandidateFilters(
     crawlCandidateFilters,
   );
+  const activeCrawlCandidateInformationConditionCount =
+    getCrawlCandidateInformationConditionEntries(
+      crawlCandidateFilters.informationConditions,
+    ).length;
+  const crawlCandidateInformationConditionsSummary =
+    getCrawlCandidateInformationConditionsSummary(crawlCandidateFilters);
 
   useEffect(() => {
     if (
@@ -2195,7 +2296,8 @@ export const TasksPage = () => {
     }
     previousSelectedCrawlJobIdRef.current = selectedCrawlJobId;
     setSelectedCrawlCandidateIds([]);
-    setCrawlCandidateFilters({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
+    setCrawlCandidateFilters(createDefaultCrawlCandidateFilters());
+    setCrawlCandidateInformationFiltersOpen(false);
     setCrawlJobApproveLoading(false);
     setCrawlJobEnrichLoading(false);
     setResumingCrawlJobReviewId(null);
@@ -2597,8 +2699,34 @@ export const TasksPage = () => {
     setCrawlCandidatePage(1);
   };
 
+  const updateCrawlCandidateInformationCondition = (
+    field: CrawlCandidateInformationField,
+    condition: CrawlCandidateInformationCondition | "any",
+  ) => {
+    setCrawlCandidateFilters((currentFilters) => {
+      const informationConditions = {
+        ...currentFilters.informationConditions,
+      };
+      if (condition === "any") {
+        delete informationConditions[field];
+      } else {
+        informationConditions[field] = condition;
+      }
+      return {
+        ...currentFilters,
+        informationConditions,
+        informationMatchMode:
+          Object.keys(informationConditions).length < 2
+            ? "all"
+            : currentFilters.informationMatchMode,
+      };
+    });
+    setCrawlCandidatePage(1);
+  };
+
   const resetCrawlCandidateFilters = () => {
-    setCrawlCandidateFilters({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
+    setCrawlCandidateFilters(createDefaultCrawlCandidateFilters());
+    setCrawlCandidateInformationFiltersOpen(false);
     setCrawlCandidatePage(1);
   };
 
@@ -2811,7 +2939,8 @@ export const TasksPage = () => {
     setCrawlJobCandidates([]);
     setCrawlJobEvents([]);
     setSelectedCrawlCandidateIds([]);
-    setCrawlCandidateFilters({ ...DEFAULT_CRAWL_CANDIDATE_FILTERS });
+    setCrawlCandidateFilters(createDefaultCrawlCandidateFilters());
+    setCrawlCandidateInformationFiltersOpen(false);
     setCrawlJobApproveLoading(false);
     setSelectedCandidateDetail(null);
     setCandidateEditForm(null);
@@ -6095,36 +6224,12 @@ export const TasksPage = () => {
                       data-testid="crawl-candidate-review-toolbar"
                       className="overflow-visible rounded-2xl border border-stone-200 bg-stone-50/70"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3 px-4 pb-3 pt-4">
-                        <div>
-                          <h4 className="text-sm font-semibold text-stone-900">
-                            {selectedCrawlJobCanReview
-                              ? "审核工作区"
-                              : "候选筛选"}
-                          </h4>
-                          <p className="mt-1 text-xs leading-5 text-stone-500">
-                            {selectedCrawlJobCanReview
-                              ? "先搜索或筛选候选，再选择全部筛选结果进行批量处理；缺邮箱时也可逐位手工填写。"
-                              : "可按关键词、资料完整度或审核状态快速定位候选导师。"}
-                          </p>
-                        </div>
-                        {crawlCandidateFiltersActive ? (
-                          <button
-                            type="button"
-                            onClick={resetCrawlCandidateFilters}
-                            className="text-xs font-medium text-stone-500 underline decoration-stone-300 underline-offset-2 hover:text-stone-800"
-                          >
-                            重置筛选
-                          </button>
-                        ) : null}
-                      </div>
-
-                      <div className="grid gap-3 px-4 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(18rem,2fr)_minmax(11rem,1fr)_minmax(11rem,1fr)]">
-                        <div className="min-w-0">
+                      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_minmax(11rem,1fr)]">
+                        <div className="min-w-0 md:col-span-2 xl:col-span-1">
                           <div className="mb-2 text-sm font-medium text-stone-800">
-                            搜索候选
+                            关键词
                           </div>
-                          <label className="ui-select-shell h-10 min-h-10 w-full py-0">
+                          <div className="ui-select-shell h-10 min-h-10 w-full py-0">
                             <Search className="h-4 w-4 shrink-0 text-stone-400" />
                             <input
                               type="search"
@@ -6135,38 +6240,59 @@ export const TasksPage = () => {
                                   keyword: event.target.value,
                                 })
                               }
-                              placeholder="姓名、邮箱、职称、学院或研究方向"
+                              placeholder={getCrawlCandidateSearchPlaceholder(
+                                crawlCandidateFilters.searchScopes,
+                              )}
                               className="w-full min-w-0 bg-transparent text-sm leading-5 outline-none placeholder:text-stone-400"
                             />
-                          </label>
+                            <KeywordSearchScopeSelect
+                              label="搜索范围"
+                              options={CRAWL_CANDIDATE_SEARCH_SCOPE_OPTIONS}
+                              selectedValues={crawlCandidateFilters.searchScopes}
+                              embedded
+                              onChange={(searchScopes) =>
+                                updateCrawlCandidateFilters({
+                                  searchScopes:
+                                    normalizeCrawlCandidateSearchScopes(
+                                      searchScopes,
+                                    ),
+                                })
+                              }
+                            />
+                          </div>
                         </div>
-                        <NativeSelectField
-                          label="资料状态"
-                          ariaLabel="候选导师资料状态"
-                          value={crawlCandidateFilters.information}
-                          onChange={(event) =>
-                            updateCrawlCandidateFilters({
-                              information: event.target
-                                .value as CrawlCandidateInformationFilter,
-                            })
-                          }
-                          shellClassName="h-10 min-h-10"
-                        >
-                          <option value="all">全部资料</option>
-                          <option value="missing_email">邮箱为空</option>
-                          <option value="has_email">已有邮箱</option>
-                          <option value="missing_title">职称为空</option>
-                          <option value="missing_department">系所为空</option>
-                          <option value="missing_profile_url">
-                            个人主页为空
-                          </option>
-                          <option value="missing_research_direction">
-                            研究方向为空
-                          </option>
-                          <option value="missing_recent_papers">
-                            近期论文为空
-                          </option>
-                        </NativeSelectField>
+                        <div className="min-w-0">
+                          <div className="mb-2 text-sm font-medium text-stone-800">
+                            资料条件
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={`资料条件：${crawlCandidateInformationConditionsSummary}`}
+                            aria-expanded={crawlCandidateInformationFiltersOpen}
+                            aria-controls="crawl-candidate-information-filters"
+                            onClick={() =>
+                              setCrawlCandidateInformationFiltersOpen(
+                                (currentOpen) => !currentOpen,
+                              )
+                            }
+                            className={`ui-select-shell h-10 min-h-10 w-full ${
+                              crawlCandidateInformationFiltersOpen
+                                ? "border-primary/45 bg-white ring-2 ring-primary/10"
+                                : ""
+                            }`}
+                          >
+                            <span className="flex-1 truncate text-left text-sm text-stone-700">
+                              {crawlCandidateInformationConditionsSummary}
+                            </span>
+                            <ChevronDown
+                              className={`ui-select-chevron ${
+                                crawlCandidateInformationFiltersOpen
+                                  ? "rotate-180 text-primary"
+                                  : ""
+                              }`}
+                            />
+                          </button>
+                        </div>
                         <NativeSelectField
                           label="审核状态"
                           ariaLabel="候选导师审核状态"
@@ -6187,6 +6313,89 @@ export const TasksPage = () => {
                         </NativeSelectField>
                       </div>
 
+                      {crawlCandidateInformationFiltersOpen ? (
+                        <div
+                          id="crawl-candidate-information-filters"
+                          data-testid="crawl-candidate-information-filters"
+                          className="border-t border-stone-200 bg-white px-4 py-4"
+                        >
+                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            {CRAWL_CANDIDATE_INFORMATION_FIELD_OPTIONS.map(
+                              ({ field, label }) => (
+                                <NativeSelectField
+                                  key={field}
+                                  label={label}
+                                  ariaLabel={`候选导师${label}条件`}
+                                  value={
+                                    crawlCandidateFilters
+                                      .informationConditions[field] ?? "any"
+                                  }
+                                  onChange={(event) =>
+                                    updateCrawlCandidateInformationCondition(
+                                      field,
+                                      event.target.value as
+                                        | CrawlCandidateInformationCondition
+                                        | "any",
+                                    )
+                                  }
+                                  shellClassName="h-10 min-h-10"
+                                >
+                                  <option value="any">不限</option>
+                                  <option value="present">有{label}</option>
+                                  <option value="missing">无{label}</option>
+                                </NativeSelectField>
+                              ),
+                            )}
+                          </div>
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
+                            <div>
+                              <div className="text-sm font-medium text-stone-800">
+                                多个资料条件之间
+                              </div>
+                              <div className="mt-1 text-xs text-stone-500">
+                                {activeCrawlCandidateInformationConditionCount < 2
+                                  ? "选择两个及以上条件后可切换关系"
+                                  : `当前有 ${activeCrawlCandidateInformationConditionCount} 个条件`}
+                              </div>
+                            </div>
+                            <div className="inline-flex gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1">
+                              {(
+                                ["all", "any"] as CrawlCandidateInformationMatchMode[]
+                              ).map((matchMode) => {
+                                const selected =
+                                  crawlCandidateFilters.informationMatchMode ===
+                                  matchMode;
+                                return (
+                                  <button
+                                    key={matchMode}
+                                    type="button"
+                                    aria-pressed={selected}
+                                    disabled={
+                                      activeCrawlCandidateInformationConditionCount <
+                                      2
+                                    }
+                                    onClick={() =>
+                                      updateCrawlCandidateFilters({
+                                        informationMatchMode: matchMode,
+                                      })
+                                    }
+                                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                      selected
+                                        ? "bg-primary text-white shadow-sm shadow-primary/20"
+                                        : "text-stone-600 hover:bg-white hover:text-stone-900"
+                                    }`}
+                                  >
+                                    {matchMode === "all"
+                                      ? "全部满足（且）"
+                                      : "任一满足（或）"}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
                       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white/80 px-4 py-3">
                         <div className="text-sm text-stone-600">
                           显示 {filteredCrawlJobCandidates.length} /{" "}
@@ -6200,38 +6409,57 @@ export const TasksPage = () => {
                             </>
                           ) : null}
                         </div>
-                        {selectedCrawlJobCanReview ? (
-                          <button
-                            type="button"
-                            aria-label={
-                              allFilteredCrawlCandidatesSelected
-                                ? "取消选择全部筛选结果"
-                                : "选择全部筛选结果"
-                            }
-                            aria-pressed={allFilteredCrawlCandidatesSelected}
-                            onClick={handleToggleFilteredCrawlCandidateSelection}
-                            disabled={
-                              filteredReviewableCrawlCandidateIds.length === 0 ||
-                              crawlJobApproveLoading ||
-                              crawlJobEnrichLoading
-                            }
-                            className={`inline-flex min-h-9 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                              allFilteredCrawlCandidatesSelected
-                                ? "border-primary/30 bg-primary/5 text-primary"
-                                : "border-stone-200 bg-white text-stone-700 hover:border-primary/40 hover:text-primary"
-                            }`}
-                          >
-                            {allFilteredCrawlCandidatesSelected ? (
-                              <SquareCheck className="h-4 w-4" />
-                            ) : someFilteredCrawlCandidatesSelected ? (
-                              <SquareMinus className="h-4 w-4" />
-                            ) : (
-                              <Square className="h-4 w-4" />
-                            )}
-                            {allFilteredCrawlCandidatesSelected
-                              ? "取消选择全部筛选结果"
-                              : "选择全部筛选结果"}
-                          </button>
+                        {crawlCandidateFiltersActive ||
+                        selectedCrawlJobCanReview ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {crawlCandidateFiltersActive ? (
+                              <button
+                                type="button"
+                                onClick={resetCrawlCandidateFilters}
+                                className="ui-btn-secondary min-h-9 px-3 py-1.5 text-sm"
+                              >
+                                重置筛选
+                              </button>
+                            ) : null}
+                            {selectedCrawlJobCanReview ? (
+                              <button
+                                type="button"
+                                aria-label={
+                                  allFilteredCrawlCandidatesSelected
+                                    ? "取消选择全部筛选结果"
+                                    : "选择全部筛选结果"
+                                }
+                                aria-pressed={
+                                  allFilteredCrawlCandidatesSelected
+                                }
+                                onClick={
+                                  handleToggleFilteredCrawlCandidateSelection
+                                }
+                                disabled={
+                                  filteredReviewableCrawlCandidateIds.length ===
+                                    0 ||
+                                  crawlJobApproveLoading ||
+                                  crawlJobEnrichLoading
+                                }
+                                className={`inline-flex min-h-9 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  allFilteredCrawlCandidatesSelected
+                                    ? "border-primary/30 bg-primary/5 text-primary"
+                                    : "border-stone-200 bg-white text-stone-700 hover:border-primary/40 hover:text-primary"
+                                }`}
+                              >
+                                {allFilteredCrawlCandidatesSelected ? (
+                                  <SquareCheck className="h-4 w-4" />
+                                ) : someFilteredCrawlCandidatesSelected ? (
+                                  <SquareMinus className="h-4 w-4" />
+                                ) : (
+                                  <Square className="h-4 w-4" />
+                                )}
+                                {allFilteredCrawlCandidatesSelected
+                                  ? "取消选择全部筛选结果"
+                                  : "选择全部筛选结果"}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
 
@@ -6347,10 +6575,10 @@ export const TasksPage = () => {
                                   ) : null}
                                 </div>
                                 <p
-                                  className={`mt-1 break-all text-sm ${
+                                  className={`mt-1 break-all ${
                                     candidateMissingEmail
-                                      ? "text-amber-700"
-                                      : "text-stone-600"
+                                      ? "text-xs text-amber-700"
+                                      : "text-sm text-stone-600"
                                   }`}
                                 >
                                   {candidate.email?.trim() ||
@@ -6426,13 +6654,6 @@ export const TasksPage = () => {
                       <p className="mt-3 text-sm font-medium text-stone-700">
                         没有符合筛选条件的候选导师
                       </p>
-                      <button
-                        type="button"
-                        onClick={resetCrawlCandidateFilters}
-                        className="mt-2 text-xs font-medium text-primary hover:underline"
-                      >
-                        重置筛选
-                      </button>
                     </div>
                   ) : (
                     <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">

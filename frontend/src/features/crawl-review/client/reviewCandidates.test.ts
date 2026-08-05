@@ -68,7 +68,7 @@ describe('reviewCandidates', () => {
     expect(pruneSelectedCandidateIds([4, 3, 2, 999, 1], candidates)).toEqual([4, 1]);
   });
 
-  it('searches candidate fields with normalized, multi-term matching', () => {
+  it('searches only the selected candidate fields', () => {
     const candidates = [
       buildCandidate({
         id: 1,
@@ -87,32 +87,75 @@ describe('reviewCandidates', () => {
     expect(
       filterCrawlCandidates(candidates, {
         ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
-        keyword: '张老师 多模态',
+        keyword: '多模态',
+        searchScopes: ['name'],
+      }).map((candidate) => candidate.id),
+    ).toEqual([]);
+    expect(
+      filterCrawlCandidates(candidates, {
+        ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+        keyword: '多模态',
+        searchScopes: ['research_direction'],
       }).map((candidate) => candidate.id),
     ).toEqual([1]);
   });
 
-  it('filters candidates by information completeness and review status', () => {
+  it('combines information conditions with all/any matching', () => {
     const candidates = [
-      buildCandidate({ id: 1, email: null, review_status: 'pending' }),
-      buildCandidate({ id: 2, email: ' ', review_status: 'accepted' }),
-      buildCandidate({ id: 3, email: 'li@example.edu', review_status: 'pending' }),
+      buildCandidate({
+        id: 1,
+        email: 'one@example.edu',
+        research_direction: null,
+        recent_papers: ['Paper A'],
+      }),
+      buildCandidate({
+        id: 2,
+        email: 'two@example.edu',
+        research_direction: '多模态学习',
+        recent_papers: [],
+      }),
+      buildCandidate({
+        id: 3,
+        email: null,
+        research_direction: '机器学习',
+        recent_papers: ['Paper B'],
+      }),
+      buildCandidate({
+        id: 4,
+        email: 'four@example.edu',
+        research_direction: '程序分析',
+        recent_papers: ['Paper C'],
+      }),
     ];
 
     expect(
       filterCrawlCandidates(candidates, {
-        keyword: '',
-        information: 'missing_email',
-        reviewStatus: 'pending',
+        ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+        informationConditions: {
+          research_direction: 'present',
+          recent_papers: 'present',
+        },
+      }).map((candidate) => candidate.id),
+    ).toEqual([3, 4]);
+    expect(
+      filterCrawlCandidates(candidates, {
+        ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+        informationConditions: {
+          email: 'present',
+          research_direction: 'missing',
+        },
       }).map((candidate) => candidate.id),
     ).toEqual([1]);
     expect(
       filterCrawlCandidates(candidates, {
-        keyword: '',
-        information: 'has_email',
-        reviewStatus: 'all',
+        ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
+        informationConditions: {
+          email: 'missing',
+          research_direction: 'missing',
+        },
+        informationMatchMode: 'any',
       }).map((candidate) => candidate.id),
-    ).toEqual([3]);
+    ).toEqual([1, 3]);
   });
 
   it('reports whether any candidate filter is active', () => {
@@ -120,7 +163,7 @@ describe('reviewCandidates', () => {
     expect(
       hasActiveCrawlCandidateFilters({
         ...DEFAULT_CRAWL_CANDIDATE_FILTERS,
-        information: 'missing_profile_url',
+        informationConditions: { profile_url: 'missing' },
       }),
     ).toBe(true);
   });

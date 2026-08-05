@@ -3,15 +3,24 @@ import type {
   CrawlCandidateReviewStatusDTO,
 } from '@/types';
 
-export type CrawlCandidateInformationFilter =
-  | 'all'
-  | 'missing_email'
-  | 'has_email'
-  | 'missing_title'
-  | 'missing_department'
-  | 'missing_profile_url'
-  | 'missing_research_direction'
-  | 'missing_recent_papers';
+export type CrawlCandidateSearchScope =
+  | 'name'
+  | 'email'
+  | 'organization'
+  | 'title'
+  | 'research_direction'
+  | 'recent_papers';
+
+export type CrawlCandidateInformationField =
+  | 'email'
+  | 'title'
+  | 'department'
+  | 'profile_url'
+  | 'research_direction'
+  | 'recent_papers';
+
+export type CrawlCandidateInformationCondition = 'present' | 'missing';
+export type CrawlCandidateInformationMatchMode = 'all' | 'any';
 
 export type CrawlCandidateReviewStatusFilter =
   | 'all'
@@ -19,13 +28,28 @@ export type CrawlCandidateReviewStatusFilter =
 
 export type CrawlCandidateFilters = {
   keyword: string;
-  information: CrawlCandidateInformationFilter;
+  searchScopes: CrawlCandidateSearchScope[];
+  informationConditions: Partial<
+    Record<CrawlCandidateInformationField, CrawlCandidateInformationCondition>
+  >;
+  informationMatchMode: CrawlCandidateInformationMatchMode;
   reviewStatus: CrawlCandidateReviewStatusFilter;
 };
 
+export const DEFAULT_CRAWL_CANDIDATE_SEARCH_SCOPES: CrawlCandidateSearchScope[] = [
+  'name',
+  'email',
+  'organization',
+  'title',
+  'research_direction',
+  'recent_papers',
+];
+
 export const DEFAULT_CRAWL_CANDIDATE_FILTERS: CrawlCandidateFilters = {
   keyword: '',
-  information: 'all',
+  searchScopes: [...DEFAULT_CRAWL_CANDIDATE_SEARCH_SCOPES],
+  informationConditions: {},
+  informationMatchMode: 'all',
   reviewStatus: 'all',
 };
 
@@ -34,28 +58,95 @@ const isBlank = (value: string | null | undefined) => !value?.trim();
 const normalizeSearchText = (value: string) =>
   value.normalize('NFKC').toLocaleLowerCase();
 
-const matchesInformationFilter = (
+const hasCandidateInformation = (
   candidate: CrawlCandidateDTO,
-  filter: CrawlCandidateInformationFilter,
+  field: CrawlCandidateInformationField,
 ) => {
-  switch (filter) {
-    case 'missing_email':
-      return isBlank(candidate.email);
-    case 'has_email':
+  switch (field) {
+    case 'email':
       return !isBlank(candidate.email);
-    case 'missing_title':
-      return isBlank(candidate.title);
-    case 'missing_department':
-      return isBlank(candidate.department);
-    case 'missing_profile_url':
-      return isBlank(candidate.profile_url);
-    case 'missing_research_direction':
-      return isBlank(candidate.research_direction);
-    case 'missing_recent_papers':
-      return candidate.recent_papers.length === 0;
-    default:
-      return true;
+    case 'title':
+      return !isBlank(candidate.title);
+    case 'department':
+      return !isBlank(candidate.department);
+    case 'profile_url':
+      return !isBlank(candidate.profile_url);
+    case 'research_direction':
+      return !isBlank(candidate.research_direction);
+    case 'recent_papers':
+      return candidate.recent_papers.some((paper) => !isBlank(paper));
   }
+};
+
+const getInformationConditionEntries = (
+  conditions: CrawlCandidateFilters['informationConditions'],
+) =>
+  Object.entries(conditions) as Array<
+    [CrawlCandidateInformationField, CrawlCandidateInformationCondition]
+  >;
+
+const matchesInformationConditions = (
+  candidate: CrawlCandidateDTO,
+  filters: CrawlCandidateFilters,
+) => {
+  const conditionEntries = getInformationConditionEntries(
+    filters.informationConditions,
+  );
+  if (conditionEntries.length === 0) {
+    return true;
+  }
+
+  const matchesCondition = ([field, condition]: (typeof conditionEntries)[number]) =>
+    hasCandidateInformation(candidate, field) === (condition === 'present');
+
+  return filters.informationMatchMode === 'any'
+    ? conditionEntries.some(matchesCondition)
+    : conditionEntries.every(matchesCondition);
+};
+
+const getCandidateSearchText = (
+  candidate: CrawlCandidateDTO,
+  scope: CrawlCandidateSearchScope,
+) => {
+  switch (scope) {
+    case 'name':
+      return candidate.name;
+    case 'email':
+      return candidate.email ?? '';
+    case 'organization':
+      return [
+        candidate.university,
+        candidate.school,
+        candidate.department,
+      ]
+        .filter(Boolean)
+        .join(' ');
+    case 'title':
+      return candidate.title ?? '';
+    case 'research_direction':
+      return candidate.research_direction ?? '';
+    case 'recent_papers':
+      return candidate.recent_papers.join(' ');
+  }
+};
+
+const CRAWL_CANDIDATE_SEARCH_SCOPE_SET = new Set<CrawlCandidateSearchScope>(
+  DEFAULT_CRAWL_CANDIDATE_SEARCH_SCOPES,
+);
+
+export const normalizeCrawlCandidateSearchScopes = (
+  scopes: CrawlCandidateSearchScope[] | null | undefined,
+) => {
+  const normalizedScopes = Array.from(
+    new Set(
+      (scopes ?? []).filter((scope) =>
+        CRAWL_CANDIDATE_SEARCH_SCOPE_SET.has(scope),
+      ),
+    ),
+  );
+  return normalizedScopes.length > 0
+    ? normalizedScopes
+    : [...DEFAULT_CRAWL_CANDIDATE_SEARCH_SCOPES];
 };
 
 export const filterCrawlCandidates = (
@@ -74,27 +165,19 @@ export const filterCrawlCandidates = (
     ) {
       return false;
     }
-    if (!matchesInformationFilter(candidate, filters.information)) {
+    if (!matchesInformationConditions(candidate, filters)) {
       return false;
     }
     if (keywordTerms.length === 0) {
       return true;
     }
 
+    const searchScopes = normalizeCrawlCandidateSearchScopes(
+      filters.searchScopes,
+    );
     const searchableText = normalizeSearchText(
-      [
-        candidate.name,
-        candidate.email,
-        candidate.title,
-        candidate.university,
-        candidate.school,
-        candidate.department,
-        candidate.research_direction,
-        candidate.recent_papers.join(' '),
-        candidate.profile_url,
-        candidate.source_url,
-      ]
-        .filter(Boolean)
+      searchScopes
+        .map((scope) => getCandidateSearchText(candidate, scope))
         .join(' '),
     );
 
@@ -106,7 +189,7 @@ export const hasActiveCrawlCandidateFilters = (
   filters: CrawlCandidateFilters,
 ) =>
   Boolean(filters.keyword.trim()) ||
-  filters.information !== 'all' ||
+  getInformationConditionEntries(filters.informationConditions).length > 0 ||
   filters.reviewStatus !== 'all';
 
 export const getReviewableCandidateIds = (

@@ -126,9 +126,12 @@ const renderPage = () =>
 
 const selectAllCandidatesWithoutEmail = (dialog: HTMLElement) => {
   fireEvent.click(
-    within(dialog).getByRole("button", { name: "候选导师资料状态" }),
+    within(dialog).getByRole("button", { name: /资料条件：/ }),
   );
-  fireEvent.click(within(dialog).getByRole("option", { name: "邮箱为空" }));
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "候选导师邮箱条件" }),
+  );
+  fireEvent.click(within(dialog).getByRole("option", { name: "无邮箱" }));
   fireEvent.click(
     within(dialog).getByRole("button", { name: "选择全部筛选结果" }),
   );
@@ -495,11 +498,15 @@ describe("TasksPage crawler jobs tab", () => {
         email: "li@example.edu",
         department: "软件工程系",
         research_direction: "多模态学习",
+        recent_papers: ["多模态导师检索"],
       },
       {
         ...baseCandidate,
         id: 23,
         name: "王教授",
+        email: "wang@example.edu",
+        research_direction: null,
+        recent_papers: ["程序分析实践"],
         review_status: "rejected",
       },
     ]);
@@ -517,11 +524,61 @@ describe("TasksPage crawler jobs tab", () => {
     expect(within(dialog).getByText("李教授")).toBeInTheDocument();
     expect(within(dialog).queryByText("张教授")).not.toBeInTheDocument();
 
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /搜索范围/ }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "全部取消" }));
+    fireEvent.click(within(dialog).getByRole("option", { name: "姓名" }));
+    expect(
+      within(dialog).getByText("没有符合筛选条件的候选导师"),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "全部取消" }));
+    fireEvent.click(
+      within(dialog).getByRole("option", { name: "研究方向" }),
+    );
+    expect(within(dialog).getByText("李教授")).toBeInTheDocument();
+    expect(searchInput).toHaveAttribute("placeholder", "搜索研究方向");
+
     fireEvent.change(searchInput, { target: { value: "" } });
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "候选导师资料状态" }),
+      within(dialog).getByRole("button", { name: /资料条件：/ }),
     );
-    fireEvent.click(within(dialog).getByRole("option", { name: "邮箱为空" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "候选导师邮箱条件" }),
+    );
+    fireEvent.click(within(dialog).getByRole("option", { name: "有邮箱" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "候选导师研究方向条件",
+      }),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("option", { name: "无研究方向" }),
+    );
+
+    expect(within(dialog).getByText("王教授")).toBeInTheDocument();
+    expect(within(dialog).queryByText("李教授")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", {
+        name: "资料条件：有邮箱 且 无研究方向",
+      }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "任一满足（或）" }),
+    );
+    expect(within(dialog).getByText("李教授")).toBeInTheDocument();
+    expect(within(dialog).getByText("王教授")).toBeInTheDocument();
+    expect(within(dialog).queryByText("张教授")).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "重置筛选" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /资料条件：/ }),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "候选导师邮箱条件" }),
+    );
+    fireEvent.click(within(dialog).getByRole("option", { name: "无邮箱" }));
     fireEvent.click(
       within(dialog).getByRole("button", { name: "候选导师审核状态" }),
     );
@@ -1158,7 +1215,8 @@ describe("TasksPage crawler jobs tab", () => {
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     expect(within(dialog).getByText(/可导入\s+2\s+位/)).toBeInTheDocument();
     expect(within(dialog).getByRole("searchbox", { name: "搜索候选导师" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "候选导师资料状态" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /搜索范围/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /资料条件：/ })).toBeInTheDocument();
 
     selectAllCandidatesWithoutEmail(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
