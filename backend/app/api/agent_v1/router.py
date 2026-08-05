@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.agent_api_errors import AgentApiError
+from app.core.agent_revisions import ensure_revision, revision_for
 from app.core.config import get_settings
 from app.core.database import get_async_session, get_session_factory
 from app.core.time import utc_now
@@ -214,7 +215,7 @@ from app.services.batch_task_resend_context import (
     BatchTaskResendContextError,
     build_batch_task_resend_context,
 )
-from app.services.agent_mutations import execute_agent_mutation
+from app.services.agent_mutations import execute_agent_factory_mutation, execute_agent_mutation
 from app.services.material_mutations import (
     MaterialMutationError,
     set_primary_material_record,
@@ -484,6 +485,7 @@ async def update_agent_professor(
     professor_id: int,
     payload: AgentProfessorUpdateRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentProfessorRead:
     if not payload.model_fields_set:
@@ -494,6 +496,7 @@ async def update_agent_professor(
         )
     request_data = {
         "professor_id": professor_id,
+        "if_revision": if_revision,
         **payload.model_dump(mode="json", exclude_unset=True),
     }
     try:
@@ -503,7 +506,12 @@ async def update_agent_professor(
             request_data=request_data,
             idempotency_key=idempotency_key,
             response_type=AgentProfessorRead,
-            mutation=lambda: _update_agent_professor(session, professor_id, payload),
+            mutation=lambda: _update_agent_professor_with_revision(
+                session,
+                professor_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except ProfessorMutationError as exc:
         raise _agent_professor_error(exc) from exc
@@ -513,16 +521,21 @@ async def update_agent_professor(
 async def archive_agent_professor(
     professor_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentProfessorRead:
     try:
         return await execute_agent_mutation(
             session,
             command="professors.archive",
-            request_data={"professor_id": professor_id},
+            request_data={"professor_id": professor_id, "if_revision": if_revision},
             idempotency_key=idempotency_key,
             response_type=AgentProfessorRead,
-            mutation=lambda: _archive_agent_professor(session, professor_id),
+            mutation=lambda: _archive_agent_professor_with_revision(
+                session,
+                professor_id,
+                if_revision=if_revision,
+            ),
         )
     except ProfessorMutationError as exc:
         raise _agent_professor_error(exc) from exc
@@ -532,16 +545,21 @@ async def archive_agent_professor(
 async def restore_agent_professor(
     professor_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentProfessorRead:
     try:
         return await execute_agent_mutation(
             session,
             command="professors.restore",
-            request_data={"professor_id": professor_id},
+            request_data={"professor_id": professor_id, "if_revision": if_revision},
             idempotency_key=idempotency_key,
             response_type=AgentProfessorRead,
-            mutation=lambda: _restore_agent_professor(session, professor_id),
+            mutation=lambda: _restore_agent_professor_with_revision(
+                session,
+                professor_id,
+                if_revision=if_revision,
+            ),
         )
     except ProfessorMutationError as exc:
         raise _agent_professor_error(exc) from exc
@@ -552,9 +570,14 @@ async def set_agent_professor_tags(
     professor_id: int,
     payload: AgentProfessorTagSetRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentProfessorRead:
-    request_data = {"professor_id": professor_id, **payload.model_dump(mode="json")}
+    request_data = {
+        "professor_id": professor_id,
+        "if_revision": if_revision,
+        **payload.model_dump(mode="json"),
+    }
     try:
         return await execute_agent_mutation(
             session,
@@ -562,7 +585,12 @@ async def set_agent_professor_tags(
             request_data=request_data,
             idempotency_key=idempotency_key,
             response_type=AgentProfessorRead,
-            mutation=lambda: _set_agent_professor_tags(session, professor_id, payload),
+            mutation=lambda: _set_agent_professor_tags_with_revision(
+                session,
+                professor_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except ProfessorMutationError as exc:
         raise _agent_professor_error(exc) from exc
@@ -994,6 +1022,7 @@ async def read_agent_message(
 @router.post("/communications/sync", response_model=AgentCommunicationSyncRead)
 async def sync_agent_communications(
     payload: AgentCommunicationSyncRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentCommunicationSyncRead:
     identity = await session.get(IdentityProfile, payload.identity_id)
@@ -1005,11 +1034,44 @@ async def sync_agent_communications(
             code="IMAP_NOT_CONFIGURED",
             message="该发件身份尚未配置 IMAP，无法同步邮箱通信记录。",
         )
-    try:
+    async def mutation() -> AgentCommunicationSyncRead:
         detected_count = await sync_identity_history_poll_once(
             get_session_factory(),
             identity.id,
         )
+        async with get_session_factory()() as mutation_session:
+            await record_operation_log(
+                mutation_session,
+                category="agent_action",
+                event_name="agent_cli.communication_synced",
+                entity_type="identity_profile",
+                entity_id=str(identity.id),
+                metadata={
+                    "actor": "agent_cli",
+                    "identity_id": identity.id,
+                    "detected_count": detected_count,
+                },
+            )
+            await mutation_session.commit()
+        return AgentCommunicationSyncRead(
+            identity_id=identity.id,
+            detected_count=detected_count,
+            completed_at=utc_now(),
+            message=f"已完成一次邮箱同步检查，新增 {detected_count} 条通信记录。",
+        )
+
+    try:
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
+            command="communications.sync",
+            request_data=payload.model_dump(mode="json"),
+            idempotency_key=idempotency_key,
+            response_type=AgentCommunicationSyncRead,
+            mutation=mutation,
+            external_execution=True,
+        )
+    except AgentApiError:
+        raise
     except Exception as exc:
         message = sanitize_user_visible_error(exc)
         await record_operation_log(
@@ -1028,26 +1090,6 @@ async def sync_agent_communications(
             message=f"邮箱同步失败：{message}",
             retryable=True,
         ) from exc
-
-    await record_operation_log(
-        session,
-        category="agent_action",
-        event_name="agent_cli.communication_synced",
-        entity_type="identity_profile",
-        entity_id=str(identity.id),
-        metadata={
-            "actor": "agent_cli",
-            "identity_id": identity.id,
-            "detected_count": detected_count,
-        },
-    )
-    await session.commit()
-    return AgentCommunicationSyncRead(
-        identity_id=identity.id,
-        detected_count=detected_count,
-        completed_at=utc_now(),
-        message=f"已完成一次邮箱同步检查，新增 {detected_count} 条通信记录。",
-    )
 
 
 @router.get("/workspaces/{professor_id}", response_model=AgentWorkspaceThreadRead)
@@ -1104,82 +1146,98 @@ async def refresh_agent_workspace_replies(
     professor_id: int,
     identity_id: int = Query(..., ge=1),
     llm_profile_id: int = Query(..., ge=1),
-    session: AsyncSession = Depends(get_async_session),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> AgentWorkspaceThreadRead:
-    # Validate the requested workspace before opening any configured mailbox.
-    await build_workspace_thread(
-        session,
-        professor_id=professor_id,
-        identity_id=identity_id,
-        llm_profile_id=llm_profile_id,
-    )
-    communication_scope = await resolve_identity_communication_scope(
-        session,
-        active_identity_id=identity_id,
-    )
-    sync_identities = [
-        identity
-        for identity in communication_scope.identities
-        if _identity_has_imap_config(identity)
-    ]
-    if not sync_identities:
-        raise AgentApiError(
-            status_code=409,
-            code="IMAP_NOT_CONFIGURED",
-            message="当前通信范围内没有已配置 IMAP 的发件身份，无法同步回信。",
-        )
-
-    results = await asyncio.gather(
-        *[
-            sync_workspace_professor_replies(
-                get_session_factory(),
-                identity.id,
-                professor_id,
+    async def mutation() -> AgentWorkspaceThreadRead:
+        async with get_session_factory()() as session:
+            # Validate the requested workspace before opening any configured mailbox.
+            await build_workspace_thread(
+                session,
+                professor_id=professor_id,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
             )
-            for identity in sync_identities
-        ],
-        return_exceptions=True,
-    )
-    warnings = [
-        WorkspaceSyncWarningRead(
-            identity_id=identity.id,
-            identity_name=identity.profile_name or identity.name,
-            message=sanitize_user_visible_error(result),
-        )
-        for identity, result in zip(sync_identities, results, strict=True)
-        if isinstance(result, BaseException)
-    ]
-    detected_count = sum(
-        result
-        for result in results
-        if isinstance(result, int) and not isinstance(result, bool)
-    )
-    await record_operation_log(
-        session,
-        category="agent_action",
-        event_name="agent_cli.workspace_replies_refreshed",
-        level="warning" if warnings else "info",
-        entity_type="professor",
-        entity_id=str(professor_id),
-        metadata={
-            "actor": "agent_cli",
+            communication_scope = await resolve_identity_communication_scope(
+                session,
+                active_identity_id=identity_id,
+            )
+            sync_identities = [
+                identity
+                for identity in communication_scope.identities
+                if _identity_has_imap_config(identity)
+            ]
+            if not sync_identities:
+                raise AgentApiError(
+                    status_code=409,
+                    code="IMAP_NOT_CONFIGURED",
+                    message="当前通信范围内没有已配置 IMAP 的发件身份，无法同步回信。",
+                )
+
+            results = await asyncio.gather(
+                *[
+                    sync_workspace_professor_replies(
+                        get_session_factory(),
+                        identity.id,
+                        professor_id,
+                    )
+                    for identity in sync_identities
+                ],
+                return_exceptions=True,
+            )
+            warnings = [
+                WorkspaceSyncWarningRead(
+                    identity_id=identity.id,
+                    identity_name=identity.profile_name or identity.name,
+                    message=sanitize_user_visible_error(result),
+                )
+                for identity, result in zip(sync_identities, results, strict=True)
+                if isinstance(result, BaseException)
+            ]
+            detected_count = sum(
+                result
+                for result in results
+                if isinstance(result, int) and not isinstance(result, bool)
+            )
+            await record_operation_log(
+                session,
+                category="agent_action",
+                event_name="agent_cli.workspace_replies_refreshed",
+                level="warning" if warnings else "info",
+                entity_type="professor",
+                entity_id=str(professor_id),
+                metadata={
+                    "actor": "agent_cli",
+                    "professor_id": professor_id,
+                    "identity_id": identity_id,
+                    "llm_profile_id": llm_profile_id,
+                    "sync_identity_ids": [identity.id for identity in sync_identities],
+                    "detected_count": detected_count,
+                    "warning_count": len(warnings),
+                },
+            )
+            await session.commit()
+            workspace = await build_workspace_thread(
+                session,
+                professor_id=professor_id,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                sync_warnings=warnings,
+            )
+            return _serialize_agent_workspace_thread(workspace)
+
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
+        command="workspaces.refresh-replies",
+        request_data={
             "professor_id": professor_id,
             "identity_id": identity_id,
             "llm_profile_id": llm_profile_id,
-            "sync_identity_ids": [identity.id for identity in sync_identities],
-            "detected_count": detected_count,
-            "warning_count": len(warnings),
         },
+        idempotency_key=idempotency_key,
+        response_type=AgentWorkspaceThreadRead,
+        mutation=mutation,
+        external_execution=True,
     )
-    await session.commit()
-    workspace = await build_workspace_thread(
-        session,
-        professor_id=professor_id,
-        identity_id=identity_id,
-        llm_profile_id=llm_profile_id,
-        sync_warnings=warnings,
-    )
-    return _serialize_agent_workspace_thread(workspace)
 
 
 @router.post("/tasks/{task_id}/cancel-schedule", response_model=AgentWorkspaceThreadRead)
@@ -1252,22 +1310,29 @@ async def update_agent_task_primary_material(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentWorkspaceThreadRead:
-    return await execute_agent_mutation(
-        session,
+    async def mutation() -> AgentWorkspaceThreadRead:
+        async with get_session_factory()() as mutation_session:
+            result = await _run_agent_task_workspace_action(
+                mutation_session,
+                task_id=task_id,
+                command="tasks.set-primary-material",
+                action=lambda: update_task_primary_material(
+                    get_session_factory(),
+                    task_id,
+                    payload.primary_material_id,
+                ),
+            )
+            await mutation_session.commit()
+            return result
+
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
         command="tasks.set-primary-material",
         request_data={"task_id": task_id, **payload.model_dump(mode="json")},
         idempotency_key=idempotency_key,
         response_type=AgentWorkspaceThreadRead,
-        mutation=lambda: _run_agent_task_workspace_action(
-            session,
-            task_id=task_id,
-            command="tasks.set-primary-material",
-            action=lambda: update_task_primary_material(
-                get_session_factory(),
-                task_id,
-                payload.primary_material_id,
-            ),
-        ),
+        mutation=mutation,
+        external_execution=True,
     )
 
 
@@ -1313,17 +1378,24 @@ async def calculate_agent_task_match(
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentTaskMatchCalculationRead:
     request_payload = payload.model_dump(mode="json") if payload is not None else None
-    return await execute_agent_mutation(
-        session,
+    async def mutation() -> AgentTaskMatchCalculationRead:
+        async with get_session_factory()() as mutation_session:
+            result = await _calculate_agent_task_match(
+                mutation_session,
+                task_id=task_id,
+                llm_profile_id=payload.llm_profile_id if payload is not None else None,
+            )
+            await mutation_session.commit()
+            return result
+
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
         command="tasks.calculate-match",
         request_data={"task_id": task_id, "payload": request_payload},
         idempotency_key=idempotency_key,
         response_type=AgentTaskMatchCalculationRead,
-        mutation=lambda: _calculate_agent_task_match(
-            session,
-            task_id=task_id,
-            llm_profile_id=payload.llm_profile_id if payload is not None else None,
-        ),
+        mutation=mutation,
+        external_execution=True,
     )
 
 
@@ -1424,6 +1496,7 @@ async def update_agent_template(
     template_id: int,
     payload: AgentTemplateUpdateRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentTemplateRead:
     if not payload.model_fields_set:
@@ -1438,11 +1511,17 @@ async def update_agent_template(
             command="templates.update",
             request_data={
                 "template_id": template_id,
+                "if_revision": if_revision,
                 **payload.model_dump(mode="json", exclude_unset=True),
             },
             idempotency_key=idempotency_key,
             response_type=AgentTemplateRead,
-            mutation=lambda: _update_agent_template(session, template_id, payload),
+            mutation=lambda: _update_agent_template_with_revision(
+                session,
+                template_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except OutreachTemplateMutationError as exc:
         raise _agent_template_error(exc) from exc
@@ -1475,16 +1554,21 @@ async def duplicate_agent_template(
 async def set_agent_template_default(
     template_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentTemplateRead:
     try:
         return await execute_agent_mutation(
             session,
             command="templates.set-default",
-            request_data={"template_id": template_id},
+            request_data={"template_id": template_id, "if_revision": if_revision},
             idempotency_key=idempotency_key,
             response_type=AgentTemplateRead,
-            mutation=lambda: _set_agent_template_default(session, template_id),
+            mutation=lambda: _set_agent_template_default_with_revision(
+                session,
+                template_id,
+                if_revision=if_revision,
+            ),
         )
     except OutreachTemplateMutationError as exc:
         raise _agent_template_error(exc) from exc
@@ -1494,16 +1578,21 @@ async def set_agent_template_default(
 async def restore_agent_template(
     template_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentTemplateRead:
     try:
         return await execute_agent_mutation(
             session,
             command="templates.restore",
-            request_data={"template_id": template_id},
+            request_data={"template_id": template_id, "if_revision": if_revision},
             idempotency_key=idempotency_key,
             response_type=AgentTemplateRead,
-            mutation=lambda: _restore_agent_template(session, template_id),
+            mutation=lambda: _restore_agent_template_with_revision(
+                session,
+                template_id,
+                if_revision=if_revision,
+            ),
         )
     except OutreachTemplateMutationError as exc:
         raise _agent_template_error(exc) from exc
@@ -1709,10 +1798,12 @@ async def update_agent_identity_settings(
     identity_id: int,
     payload: AgentIdentitySettingsUpdateRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentIdentityRead:
     request_data = {
         "identity_id": identity_id,
+        "if_revision": if_revision,
         **payload.model_dump(mode="json", exclude_unset=True),
     }
     try:
@@ -1722,7 +1813,12 @@ async def update_agent_identity_settings(
             request_data=request_data,
             idempotency_key=idempotency_key,
             response_type=AgentIdentityRead,
-            mutation=lambda: _update_agent_identity_settings(session, identity_id, payload),
+            mutation=lambda: _update_agent_identity_settings_with_revision(
+                session,
+                identity_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except ValueError as exc:
         raise _agent_identity_error(exc) from exc
@@ -1732,16 +1828,21 @@ async def update_agent_identity_settings(
 async def set_agent_default_identity(
     identity_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentIdentityRead:
     try:
         return await execute_agent_mutation(
             session,
             command="identities.set-default",
-            request_data={"identity_id": identity_id},
+            request_data={"identity_id": identity_id, "if_revision": if_revision},
             idempotency_key=idempotency_key,
             response_type=AgentIdentityRead,
-            mutation=lambda: _set_agent_default_identity(session, identity_id),
+            mutation=lambda: _set_agent_default_identity_with_revision(
+                session,
+                identity_id,
+                if_revision=if_revision,
+            ),
         )
     except ValueError as exc:
         raise _agent_identity_error(exc) from exc
@@ -1755,16 +1856,26 @@ async def set_agent_identity_default_template(
     identity_id: int,
     payload: IdentityDefaultOutreachTemplateUpdate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentIdentityRead:
     try:
         return await execute_agent_mutation(
             session,
             command="identities.set-default-template",
-            request_data={"identity_id": identity_id, **payload.model_dump(mode="json")},
+            request_data={
+                "identity_id": identity_id,
+                "if_revision": if_revision,
+                **payload.model_dump(mode="json"),
+            },
             idempotency_key=idempotency_key,
             response_type=AgentIdentityRead,
-            mutation=lambda: _set_agent_identity_default_template(session, identity_id, payload),
+            mutation=lambda: _set_agent_identity_default_template_with_revision(
+                session,
+                identity_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except ValueError as exc:
         raise _agent_identity_error(exc) from exc
@@ -1777,13 +1888,20 @@ async def test_agent_identity_smtp(
     session: AsyncSession = Depends(get_async_session),
 ) -> ConnectionTestResult:
     try:
-        return await execute_agent_mutation(
-            session,
+        async def mutation() -> ConnectionTestResult:
+            async with get_session_factory()() as mutation_session:
+                result = await _test_agent_identity_smtp(mutation_session, identity_id)
+                await mutation_session.commit()
+                return result
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
             command="identities.test-smtp",
             request_data={"identity_id": identity_id},
             idempotency_key=idempotency_key,
             response_type=ConnectionTestResult,
-            mutation=lambda: _test_agent_identity_smtp(session, identity_id),
+            mutation=mutation,
+            external_execution=True,
         )
     except ValueError as exc:
         raise _agent_identity_error(exc) from exc
@@ -1796,13 +1914,20 @@ async def test_agent_identity_imap(
     session: AsyncSession = Depends(get_async_session),
 ) -> ConnectionTestResult:
     try:
-        return await execute_agent_mutation(
-            session,
+        async def mutation() -> ConnectionTestResult:
+            async with get_session_factory()() as mutation_session:
+                result = await _test_agent_identity_imap(mutation_session, identity_id)
+                await mutation_session.commit()
+                return result
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
             command="identities.test-imap",
             request_data={"identity_id": identity_id},
             idempotency_key=idempotency_key,
             response_type=ConnectionTestResult,
-            mutation=lambda: _test_agent_identity_imap(session, identity_id),
+            mutation=mutation,
+            external_execution=True,
         )
     except ValueError as exc:
         raise _agent_identity_error(exc) from exc
@@ -1849,10 +1974,12 @@ async def update_agent_llm_profile_settings(
     profile_id: int,
     payload: AgentLLMProfileSettingsUpdateRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentLLMProfileRead:
     request_data = {
         "profile_id": profile_id,
+        "if_revision": if_revision,
         **payload.model_dump(mode="json", exclude_unset=True),
     }
     try:
@@ -1862,7 +1989,12 @@ async def update_agent_llm_profile_settings(
             request_data=request_data,
             idempotency_key=idempotency_key,
             response_type=AgentLLMProfileRead,
-            mutation=lambda: _update_agent_llm_profile_settings(session, profile_id, payload),
+            mutation=lambda: _update_agent_llm_profile_settings_with_revision(
+                session,
+                profile_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except ValueError as exc:
         raise _agent_llm_profile_error(exc) from exc
@@ -1875,16 +2007,21 @@ async def update_agent_llm_profile_settings(
 async def set_agent_default_llm_profile(
     profile_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentLLMProfileRead:
     try:
         return await execute_agent_mutation(
             session,
             command="llm-profiles.set-default",
-            request_data={"profile_id": profile_id},
+            request_data={"profile_id": profile_id, "if_revision": if_revision},
             idempotency_key=idempotency_key,
             response_type=AgentLLMProfileRead,
-            mutation=lambda: _set_agent_default_llm_profile(session, profile_id),
+            mutation=lambda: _set_agent_default_llm_profile_with_revision(
+                session,
+                profile_id,
+                if_revision=if_revision,
+            ),
         )
     except ValueError as exc:
         raise _agent_llm_profile_error(exc) from exc
@@ -1932,13 +2069,20 @@ async def test_agent_llm_profile(
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentLLMProfileTestRead:
     try:
-        return await execute_agent_mutation(
-            session,
+        async def mutation() -> AgentLLMProfileTestRead:
+            async with get_session_factory()() as mutation_session:
+                result = await _test_agent_llm_profile(mutation_session, profile_id)
+                await mutation_session.commit()
+                return result
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
             command="llm-profiles.test",
             request_data={"profile_id": profile_id},
             idempotency_key=idempotency_key,
             response_type=AgentLLMProfileTestRead,
-            mutation=lambda: _test_agent_llm_profile(session, profile_id),
+            mutation=mutation,
+            external_execution=True,
         )
     except ValueError as exc:
         raise _agent_llm_profile_error(exc) from exc
@@ -2003,16 +2147,26 @@ async def update_agent_communication_group(
     group_id: int,
     payload: IdentityCommunicationGroupWrite,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> IdentityCommunicationGroupRead:
     try:
         return await execute_agent_mutation(
             session,
             command="communication-groups.update",
-            request_data={"group_id": group_id, **payload.model_dump(mode="json")},
+            request_data={
+                "group_id": group_id,
+                "if_revision": if_revision,
+                **payload.model_dump(mode="json"),
+            },
             idempotency_key=idempotency_key,
             response_type=IdentityCommunicationGroupRead,
-            mutation=lambda: _update_agent_communication_group(session, group_id, payload),
+            mutation=lambda: _update_agent_communication_group_with_revision(
+                session,
+                group_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except CommunicationGroupMutationError as exc:
         raise _agent_communication_group_error(exc) from exc
@@ -2548,7 +2702,7 @@ async def list_agent_faculty_crawl_candidates(
         raise _agent_crawl_job_error(exc) from exc
     page, next_cursor, has_more = _slice_page(candidates, cursor=cursor, limit=limit)
     return AgentPage(
-        items=[AgentCrawlCandidateRead.model_validate(item) for item in page],
+        items=[_serialize_crawl_candidate(item) for item in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
@@ -2626,16 +2780,26 @@ async def update_agent_faculty_crawl_candidate(
     candidate_id: int,
     payload: AgentCrawlCandidateUpdateRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentCrawlCandidateRead:
     try:
         return await execute_agent_mutation(
             session,
             command="crawler.candidates.update",
-            request_data={"candidate_id": candidate_id, **payload.model_dump(mode="json", exclude_unset=True)},
+            request_data={
+                "candidate_id": candidate_id,
+                "if_revision": if_revision,
+                **payload.model_dump(mode="json", exclude_unset=True),
+            },
             idempotency_key=idempotency_key,
             response_type=AgentCrawlCandidateRead,
-            mutation=lambda: _update_agent_faculty_crawl_candidate(session, candidate_id, payload),
+            mutation=lambda: _update_agent_faculty_crawl_candidate(
+                session,
+                candidate_id,
+                payload,
+                if_revision=if_revision,
+            ),
         )
     except CrawlJobRecordError as exc:
         raise _agent_crawl_job_error(exc) from exc
@@ -2772,15 +2936,23 @@ async def read_agent_runtime_settings(
 async def update_agent_runtime_settings(
     payload: RuntimeSettingsUpdate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
     session: AsyncSession = Depends(get_async_session),
 ) -> RuntimeSettingsRead:
     return await execute_agent_mutation(
         session,
         command="settings.update",
-        request_data=payload.model_dump(mode="json"),
+        request_data={
+            "if_revision": if_revision,
+            **payload.model_dump(mode="json"),
+        },
         idempotency_key=idempotency_key,
         response_type=RuntimeSettingsRead,
-        mutation=lambda: _update_agent_runtime_settings(session, payload),
+        mutation=lambda: _update_agent_runtime_settings_with_revision(
+            session,
+            payload,
+            if_revision=if_revision,
+        ),
     )
 
 
@@ -3327,9 +3499,24 @@ async def read_agent_draft(
     response_model=AgentDraftRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_agent_draft(payload: AgentDraftGenerateRequest) -> AgentDraftRead:
+async def create_agent_draft(
+    payload: AgentDraftGenerateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentDraftRead:
     try:
-        task = await generate_agent_draft(get_session_factory(), payload)
+        async def mutation() -> AgentDraftRead:
+            task = await generate_agent_draft(get_session_factory(), payload)
+            return _serialize_draft(task)
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
+            command="drafts.generate",
+            request_data=payload.model_dump(mode="json"),
+            idempotency_key=idempotency_key,
+            response_type=AgentDraftRead,
+            mutation=mutation,
+            external_execution=True,
+        )
     except HTTPException as exc:
         raise AgentApiError(
             status_code=exc.status_code,
@@ -3342,55 +3529,107 @@ async def create_agent_draft(payload: AgentDraftGenerateRequest) -> AgentDraftRe
             code="DRAFT_OPERATION_REJECTED",
             message=str(exc),
         ) from exc
-    return _serialize_draft(task)
 
 
 @router.put("/drafts/{task_id}", response_model=AgentDraftRead)
 async def save_agent_draft_content(
     task_id: int,
     payload: AgentDraftSaveRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
 ) -> AgentDraftRead:
     try:
-        task = await save_agent_draft(get_session_factory(), task_id, payload)
+        async def mutation() -> AgentDraftRead:
+            await _ensure_draft_revision(task_id, if_revision)
+            task = await save_agent_draft(get_session_factory(), task_id, payload)
+            return _serialize_draft(task)
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
+            command="drafts.save",
+            request_data={
+                "task_id": task_id,
+                "if_revision": if_revision,
+                **payload.model_dump(mode="json", exclude_unset=True),
+            },
+            idempotency_key=idempotency_key,
+            response_type=AgentDraftRead,
+            mutation=mutation,
+        )
     except ValueError as exc:
         raise AgentApiError(
             status_code=409,
             code="DRAFT_OPERATION_REJECTED",
             message=str(exc),
         ) from exc
-    return _serialize_draft(task)
 
 
 @router.post("/drafts/{task_id}/regenerate", response_model=AgentDraftRead)
 async def regenerate_agent_draft_content(
     task_id: int,
     payload: AgentDraftRegenerateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
 ) -> AgentDraftRead:
     try:
-        task = await regenerate_agent_draft(get_session_factory(), task_id, payload)
+        async def mutation() -> AgentDraftRead:
+            await _ensure_draft_revision(task_id, if_revision)
+            task = await regenerate_agent_draft(get_session_factory(), task_id, payload)
+            return _serialize_draft(task)
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
+            command="drafts.regenerate",
+            request_data={
+                "task_id": task_id,
+                "if_revision": if_revision,
+                **payload.model_dump(mode="json", exclude_unset=True),
+            },
+            idempotency_key=idempotency_key,
+            response_type=AgentDraftRead,
+            mutation=mutation,
+            external_execution=True,
+        )
     except ValueError as exc:
         raise AgentApiError(
             status_code=409,
             code="DRAFT_OPERATION_REJECTED",
             message=str(exc),
         ) from exc
-    return _serialize_draft(task)
 
 
 @router.post("/drafts/{task_id}/rewrite", response_model=AgentDraftRead)
 async def rewrite_agent_draft_content(
     task_id: int,
     payload: AgentDraftRewriteRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
 ) -> AgentDraftRead:
     try:
-        task = await rewrite_agent_draft(get_session_factory(), task_id, payload)
+        async def mutation() -> AgentDraftRead:
+            await _ensure_draft_revision(task_id, if_revision)
+            task = await rewrite_agent_draft(get_session_factory(), task_id, payload)
+            return _serialize_draft(task)
+
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
+            command="drafts.rewrite",
+            request_data={
+                "task_id": task_id,
+                "if_revision": if_revision,
+                **payload.model_dump(mode="json", exclude_unset=True),
+            },
+            idempotency_key=idempotency_key,
+            response_type=AgentDraftRead,
+            mutation=mutation,
+            external_execution=True,
+        )
     except ValueError as exc:
         raise AgentApiError(
             status_code=409,
             code="DRAFT_OPERATION_REJECTED",
             message=str(exc),
         ) from exc
-    return _serialize_draft(task)
 
 
 @router.post(
@@ -3460,15 +3699,11 @@ async def generate_agent_test_email_draft(
         "llm_profile_id": llm_profile_id,
         "payload": payload.model_dump(mode="json", exclude_unset=True) if payload else {},
     }
-    return await _run_agent_test_email_action(
-        lambda: execute_agent_mutation(
-            session,
-            command="test-email.generate",
-            request_data=request_data,
-            idempotency_key=idempotency_key,
-            response_type=TestComposeThreadRead,
-            mutation=lambda: generate_test_compose_draft(
-                session,
+
+    async def mutation() -> TestComposeThreadRead:
+        async with get_session_factory()() as mutation_session:
+            result = await generate_test_compose_draft(
+                mutation_session,
                 identity_id=identity_id,
                 llm_profile_id=llm_profile_id,
                 outreach_template_id=(payload.outreach_template_id if payload else None),
@@ -3480,14 +3715,24 @@ async def generate_agent_test_email_draft(
                 body_html_template=(payload.body_html if payload else None),
                 template_content_explicit=(
                     payload is not None
-                    and bool(
-                        {"subject", "body_text", "body_html"} & payload.model_fields_set,
-                    )
+                    and bool({"subject", "body_text", "body_html"} & payload.model_fields_set)
                 ),
                 commit=False,
                 event_name="agent_cli.test_email.draft_generated",
                 actor="agent_cli",
-            ),
+            )
+            await mutation_session.commit()
+            return result
+
+    return await _run_agent_test_email_action(
+        lambda: execute_agent_factory_mutation(
+            get_session_factory(),
+            command="test-email.generate",
+            request_data=request_data,
+            idempotency_key=idempotency_key,
+            response_type=TestComposeThreadRead,
+            mutation=mutation,
+            external_execution=True,
         ),
     )
 
@@ -3561,28 +3806,62 @@ async def read_agent_action_plan(plan_id: str) -> AgentActionPlanRead | AgentCha
 async def execute_agent_action_plan(
     plan_id: str,
     payload: AgentPlanExecuteRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     community_service_factory: Callable[[], CommunityMentorDataService] = Depends(
         get_agent_community_mentor_data_service_factory,
     ),
 ) -> AgentActionPlanRead | AgentChangePlanRead:
     if plan_id.startswith("change_"):
-        return await execute_change_plan(
+        return await execute_agent_factory_mutation(
             get_session_factory(),
-            plan_id,
-            payload,
-            community_service_factory=community_service_factory,
+            command="plans.execute",
+            request_data={"plan_id": plan_id, **payload.model_dump(mode="json")},
+            idempotency_key=idempotency_key,
+            response_type=AgentChangePlanRead,
+            mutation=lambda: execute_change_plan(
+                get_session_factory(),
+                plan_id,
+                payload,
+                community_service_factory=community_service_factory,
+            ),
+            external_execution=True,
         )
-    return await execute_email_action_plan(get_session_factory(), plan_id, payload)
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
+        command="plans.execute",
+        request_data={"plan_id": plan_id, **payload.model_dump(mode="json")},
+        idempotency_key=idempotency_key,
+        response_type=AgentActionPlanRead,
+        mutation=lambda: execute_email_action_plan(get_session_factory(), plan_id, payload),
+        external_execution=True,
+    )
 
 
 @router.post(
     "/plans/{plan_id}/cancel",
     response_model=AgentActionPlanRead | AgentChangePlanRead,
 )
-async def cancel_agent_action_plan(plan_id: str) -> AgentActionPlanRead | AgentChangePlanRead:
+async def cancel_agent_action_plan(
+    plan_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentActionPlanRead | AgentChangePlanRead:
     if plan_id.startswith("change_"):
-        return await cancel_change_plan(get_session_factory(), plan_id)
-    return await cancel_email_action_plan(get_session_factory(), plan_id)
+        return await execute_agent_factory_mutation(
+            get_session_factory(),
+            command="plans.cancel",
+            request_data={"plan_id": plan_id},
+            idempotency_key=idempotency_key,
+            response_type=AgentChangePlanRead,
+            mutation=lambda: cancel_change_plan(get_session_factory(), plan_id),
+        )
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
+        command="plans.cancel",
+        request_data={"plan_id": plan_id},
+        idempotency_key=idempotency_key,
+        response_type=AgentActionPlanRead,
+        mutation=lambda: cancel_email_action_plan(get_session_factory(), plan_id),
+    )
 
 
 async def _run_agent_test_email_action(
@@ -3595,6 +3874,7 @@ async def _run_agent_test_email_action(
             status_code=502,
             code="TEST_EMAIL_LLM_FAILED",
             message=str(exc),
+            external_execution_unknown=True,
         ) from exc
     except ValueError as exc:
         message = str(exc)
@@ -3620,6 +3900,7 @@ async def _run_agent_task_workspace_action(
             code="TASK_LLM_OPERATION_FAILED",
             message=sanitize_user_visible_error(exc),
             retryable=True,
+            external_execution_unknown=True,
         ) from exc
     except ValueError as exc:
         raise _agent_task_error(exc) from exc
@@ -3674,6 +3955,7 @@ async def _calculate_agent_task_match(
             code="TASK_MATCH_ANALYSIS_FAILED",
             message=sanitize_user_visible_error(exc),
             retryable=True,
+            external_execution_unknown=True,
         ) from exc
     except ValueError as exc:
         raise _agent_task_error(exc) from exc
@@ -3928,6 +4210,25 @@ async def _update_agent_communication_group(
     return await get_communication_group_record(session, group.id)
 
 
+async def _update_agent_communication_group_with_revision(
+    session: AsyncSession,
+    group_id: int,
+    payload: IdentityCommunicationGroupWrite,
+    *,
+    if_revision: str | None,
+) -> IdentityCommunicationGroupRead:
+    if if_revision:
+        current = await get_communication_group_record(session, group_id)
+        ensure_revision(
+            if_revision,
+            current.revision,
+            resource="communication-groups",
+            resource_id=group_id,
+            latest=current.model_dump(mode="json"),
+        )
+    return await _update_agent_communication_group(session, group_id, payload)
+
+
 async def _delete_agent_communication_group(
     session: AsyncSession,
     group_id: int,
@@ -3972,6 +4273,16 @@ async def _set_agent_default_llm_profile(
     return _serialize_llm_profile(profile)
 
 
+async def _set_agent_default_llm_profile_with_revision(
+    session: AsyncSession,
+    profile_id: int,
+    *,
+    if_revision: str | None,
+) -> AgentLLMProfileRead:
+    await _ensure_llm_profile_revision(session, profile_id, if_revision)
+    return await _set_agent_default_llm_profile(session, profile_id)
+
+
 async def _update_agent_llm_profile_settings(
     session: AsyncSession,
     profile_id: int,
@@ -4001,6 +4312,17 @@ async def _update_agent_llm_profile_settings(
         },
     )
     return _serialize_llm_profile(profile)
+
+
+async def _update_agent_llm_profile_settings_with_revision(
+    session: AsyncSession,
+    profile_id: int,
+    payload: AgentLLMProfileSettingsUpdateRequest,
+    *,
+    if_revision: str | None,
+) -> AgentLLMProfileRead:
+    await _ensure_llm_profile_revision(session, profile_id, if_revision)
+    return await _update_agent_llm_profile_settings(session, profile_id, payload)
 
 
 async def _test_agent_llm_profile(
@@ -4194,6 +4516,16 @@ async def _set_agent_default_identity(
     return _serialize_identity(identity)
 
 
+async def _set_agent_default_identity_with_revision(
+    session: AsyncSession,
+    identity_id: int,
+    *,
+    if_revision: str | None,
+) -> AgentIdentityRead:
+    await _ensure_identity_revision(session, identity_id, if_revision)
+    return await _set_agent_default_identity(session, identity_id)
+
+
 async def _update_agent_identity_settings(
     session: AsyncSession,
     identity_id: int,
@@ -4245,6 +4577,17 @@ async def _update_agent_identity_settings(
     return _serialize_identity(identity)
 
 
+async def _update_agent_identity_settings_with_revision(
+    session: AsyncSession,
+    identity_id: int,
+    payload: AgentIdentitySettingsUpdateRequest,
+    *,
+    if_revision: str | None,
+) -> AgentIdentityRead:
+    await _ensure_identity_revision(session, identity_id, if_revision)
+    return await _update_agent_identity_settings(session, identity_id, payload)
+
+
 async def _set_agent_identity_default_template(
     session: AsyncSession,
     identity_id: int,
@@ -4267,6 +4610,17 @@ async def _set_agent_identity_default_template(
         metadata={"default_outreach_template_id": identity.default_outreach_template_id},
     )
     return _serialize_identity(identity)
+
+
+async def _set_agent_identity_default_template_with_revision(
+    session: AsyncSession,
+    identity_id: int,
+    payload: IdentityDefaultOutreachTemplateUpdate,
+    *,
+    if_revision: str | None,
+) -> AgentIdentityRead:
+    await _ensure_identity_revision(session, identity_id, if_revision)
+    return await _set_agent_identity_default_template(session, identity_id, payload)
 
 
 async def _test_agent_identity_smtp(
@@ -4499,8 +4853,17 @@ async def _update_agent_faculty_crawl_candidate(
     session: AsyncSession,
     candidate_id: int,
     payload: AgentCrawlCandidateUpdateRequest,
+    if_revision: str | None = None,
 ) -> AgentCrawlCandidateRead:
     candidate = await get_faculty_crawl_candidate_or_raise(session, candidate_id)
+    current_read = _serialize_crawl_candidate(candidate)
+    ensure_revision(
+        if_revision,
+        current_read.revision,
+        resource="crawler.candidates",
+        resource_id=candidate_id,
+        latest=current_read.model_dump(mode="json"),
+    )
     current = {
         "name": candidate.name,
         "email": candidate.email,
@@ -4522,7 +4885,7 @@ async def _update_agent_faculty_crawl_candidate(
         event_name="agent_cli.crawl_candidate.updated",
         actor="agent_cli",
     )
-    return AgentCrawlCandidateRead.model_validate(updated)
+    return _serialize_crawl_candidate(updated)
 
 
 async def _pause_agent_faculty_crawl_job(
@@ -4626,6 +4989,25 @@ async def _update_agent_runtime_settings(
     return serialize_runtime_settings(settings)
 
 
+async def _update_agent_runtime_settings_with_revision(
+    session: AsyncSession,
+    payload: RuntimeSettingsUpdate,
+    *,
+    if_revision: str | None,
+) -> RuntimeSettingsRead:
+    if if_revision:
+        settings = await get_runtime_settings(session)
+        current = serialize_runtime_settings(settings)
+        ensure_revision(
+            if_revision,
+            current.revision,
+            resource="settings",
+            resource_id="1",
+            latest=current.model_dump(mode="json"),
+        )
+    return await _update_agent_runtime_settings(session, payload)
+
+
 def _agent_material_error(error: MaterialMutationError) -> AgentApiError:
     return AgentApiError(
         status_code=error.status_code,
@@ -4665,6 +5047,35 @@ async def _update_agent_professor(
     return _serialize_professor(professor)
 
 
+async def _ensure_professor_revision(
+    session: AsyncSession,
+    professor_id: int,
+    if_revision: str | None,
+) -> None:
+    if not if_revision:
+        return
+    current = await get_professor_with_tags_or_raise(session, professor_id)
+    current_read = _serialize_professor(current)
+    ensure_revision(
+        if_revision,
+        current_read.revision,
+        resource="professors",
+        resource_id=professor_id,
+        latest=current_read.model_dump(mode="json"),
+    )
+
+
+async def _update_agent_professor_with_revision(
+    session: AsyncSession,
+    professor_id: int,
+    payload: AgentProfessorUpdateRequest,
+    *,
+    if_revision: str | None,
+) -> AgentProfessorRead:
+    await _ensure_professor_revision(session, professor_id, if_revision)
+    return await _update_agent_professor(session, professor_id, payload)
+
+
 async def _archive_agent_professor(
     session: AsyncSession,
     professor_id: int,
@@ -4676,6 +5087,16 @@ async def _archive_agent_professor(
         actor="agent_cli",
     )
     return _serialize_professor(professor)
+
+
+async def _archive_agent_professor_with_revision(
+    session: AsyncSession,
+    professor_id: int,
+    *,
+    if_revision: str | None,
+) -> AgentProfessorRead:
+    await _ensure_professor_revision(session, professor_id, if_revision)
+    return await _archive_agent_professor(session, professor_id)
 
 
 async def _restore_agent_professor(
@@ -4691,6 +5112,16 @@ async def _restore_agent_professor(
     return _serialize_professor(professor)
 
 
+async def _restore_agent_professor_with_revision(
+    session: AsyncSession,
+    professor_id: int,
+    *,
+    if_revision: str | None,
+) -> AgentProfessorRead:
+    await _ensure_professor_revision(session, professor_id, if_revision)
+    return await _restore_agent_professor(session, professor_id)
+
+
 async def _set_agent_professor_tags(
     session: AsyncSession,
     professor_id: int,
@@ -4704,6 +5135,17 @@ async def _set_agent_professor_tags(
         actor="agent_cli",
     )
     return _serialize_professor(professor)
+
+
+async def _set_agent_professor_tags_with_revision(
+    session: AsyncSession,
+    professor_id: int,
+    payload: AgentProfessorTagSetRequest,
+    *,
+    if_revision: str | None,
+) -> AgentProfessorRead:
+    await _ensure_professor_revision(session, professor_id, if_revision)
+    return await _set_agent_professor_tags(session, professor_id, payload)
 
 
 async def _create_agent_professor_tag(
@@ -4797,6 +5239,37 @@ async def _update_agent_template(
     return _serialize_template(template)
 
 
+async def _ensure_template_revision(
+    session: AsyncSession,
+    template_id: int,
+    if_revision: str | None,
+) -> None:
+    if not if_revision:
+        return
+    template = await session.get(OutreachTemplate, template_id)
+    if template is None:
+        raise OutreachTemplateMutationError(404, "TEMPLATE_NOT_FOUND", "未找到邮件模板")
+    current = _serialize_template(template)
+    ensure_revision(
+        if_revision,
+        current.revision,
+        resource="templates",
+        resource_id=template_id,
+        latest=current.model_dump(mode="json"),
+    )
+
+
+async def _update_agent_template_with_revision(
+    session: AsyncSession,
+    template_id: int,
+    payload: AgentTemplateUpdateRequest,
+    *,
+    if_revision: str | None,
+) -> AgentTemplateRead:
+    await _ensure_template_revision(session, template_id, if_revision)
+    return await _update_agent_template(session, template_id, payload)
+
+
 async def _duplicate_agent_template(
     session: AsyncSession,
     template_id: int,
@@ -4823,6 +5296,16 @@ async def _set_agent_template_default(
     return _serialize_template(template)
 
 
+async def _set_agent_template_default_with_revision(
+    session: AsyncSession,
+    template_id: int,
+    *,
+    if_revision: str | None,
+) -> AgentTemplateRead:
+    await _ensure_template_revision(session, template_id, if_revision)
+    return await _set_agent_template_default(session, template_id)
+
+
 async def _restore_agent_template(
     session: AsyncSession,
     template_id: int,
@@ -4834,6 +5317,16 @@ async def _restore_agent_template(
         actor="agent_cli",
     )
     return _serialize_template(template)
+
+
+async def _restore_agent_template_with_revision(
+    session: AsyncSession,
+    template_id: int,
+    *,
+    if_revision: str | None,
+) -> AgentTemplateRead:
+    await _ensure_template_revision(session, template_id, if_revision)
+    return await _restore_agent_template(session, template_id)
 
 
 def _agent_template_error(error: OutreachTemplateMutationError) -> AgentApiError:
@@ -5002,8 +5495,13 @@ def _serialize_tag(tag: ProfessorTag) -> AgentProfessorTagRead:
     )
 
 
+def _serialize_crawl_candidate(candidate: CrawlCandidate | object) -> AgentCrawlCandidateRead:
+    result = AgentCrawlCandidateRead.model_validate(candidate)
+    return result.model_copy(update={"revision": revision_for(result)})
+
+
 def _serialize_professor(professor: Professor) -> AgentProfessorRead:
-    return AgentProfessorRead(
+    result = AgentProfessorRead(
         id=professor.id,
         name=professor.name,
         email=professor.email,
@@ -5023,6 +5521,7 @@ def _serialize_professor(professor: Professor) -> AgentProfessorRead:
         updated_at=professor.updated_at,
         tags=[_serialize_tag(tag) for tag in professor.tags],
     )
+    return result.model_copy(update={"revision": revision_for(result)})
 
 
 def _serialize_thread_row(row: object) -> AgentCommunicationThreadRead:
@@ -5216,7 +5715,7 @@ def _serialize_message(message: EmailLog, *, include_body: bool) -> AgentMessage
 
 
 def _serialize_identity(identity: IdentityProfile) -> AgentIdentityRead:
-    return AgentIdentityRead(
+    result = AgentIdentityRead(
         id=identity.id,
         name=identity.name,
         profile_name=identity.profile_name,
@@ -5240,6 +5739,7 @@ def _serialize_identity(identity: IdentityProfile) -> AgentIdentityRead:
         created_at=identity.created_at,
         updated_at=identity.updated_at,
     )
+    return result.model_copy(update={"revision": revision_for(result)})
 
 
 def _identity_has_imap_config(identity: IdentityProfile) -> bool:
@@ -5254,7 +5754,7 @@ def _identity_has_imap_config(identity: IdentityProfile) -> bool:
 
 
 def _serialize_llm_profile(profile: LLMProfile) -> AgentLLMProfileRead:
-    return AgentLLMProfileRead(
+    result = AgentLLMProfileRead(
         id=profile.id,
         name=profile.name,
         provider=profile.provider,
@@ -5266,6 +5766,7 @@ def _serialize_llm_profile(profile: LLMProfile) -> AgentLLMProfileRead:
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
+    return result.model_copy(update={"revision": revision_for(result)})
 
 
 def _serialize_match_analysis_job(job: MatchAnalysisJob) -> AgentMatchAnalysisJobRead:
@@ -5332,7 +5833,7 @@ def _serialize_material(
         if primary_material_id is not None
         else material.identity.current_primary_material_id
     )
-    return AgentMaterialRead(
+    result = AgentMaterialRead(
         id=material.id,
         identity_id=material.identity_id,
         display_name=material.display_name,
@@ -5345,10 +5846,11 @@ def _serialize_material(
         extracted_text=material.extracted_text if include_text else None,
         created_at=material.created_at,
     )
+    return result.model_copy(update={"revision": revision_for(result)})
 
 
 def _serialize_template(template: OutreachTemplate) -> AgentTemplateRead:
-    return AgentTemplateRead(
+    result = AgentTemplateRead(
         id=template.id,
         name=template.name,
         recommended_generation_mode=template.recommended_generation_mode,
@@ -5360,6 +5862,7 @@ def _serialize_template(template: OutreachTemplate) -> AgentTemplateRead:
         created_at=template.created_at,
         updated_at=template.updated_at,
     )
+    return result.model_copy(update={"revision": revision_for(result)})
 
 
 def _serialize_draft(task: EmailTask) -> AgentDraftRead:
@@ -5371,7 +5874,7 @@ def _serialize_draft(task: EmailTask) -> AgentDraftRead:
         generation_mode = "manual"
     else:
         generation_mode = "ai_rewrite"
-    return AgentDraftRead(
+    result = AgentDraftRead(
         task_id=task.id,
         source=task.source,
         batch_task_id=task.batch_task_id,
@@ -5398,4 +5901,67 @@ def _serialize_draft(task: EmailTask) -> AgentDraftRead:
         last_error=task.last_error,
         created_at=task.created_at,
         updated_at=task.updated_at,
+    )
+    return result.model_copy(update={"revision": revision_for(result)})
+
+
+async def _ensure_draft_revision(task_id: int, if_revision: str | None) -> None:
+    if not if_revision:
+        return
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        task = await session.scalar(
+            select(EmailTask)
+            .options(selectinload(EmailTask.professor))
+            .where(EmailTask.id == task_id),
+        )
+        if task is None:
+            raise AgentApiError(
+                status_code=404,
+                code="DRAFT_NOT_FOUND",
+                message="未找到邮件任务。",
+            )
+        current = _serialize_draft(task)
+    ensure_revision(
+        if_revision,
+        current.revision,
+        resource="drafts",
+        resource_id=task_id,
+        latest=current.model_dump(mode="json"),
+    )
+
+
+async def _ensure_identity_revision(
+    session: AsyncSession,
+    identity_id: int,
+    if_revision: str | None,
+) -> None:
+    if not if_revision:
+        return
+    identity = await _get_agent_identity_or_raise(session, identity_id)
+    current = _serialize_identity(identity)
+    ensure_revision(
+        if_revision,
+        current.revision,
+        resource="identities",
+        resource_id=identity_id,
+        latest=current.model_dump(mode="json"),
+    )
+
+
+async def _ensure_llm_profile_revision(
+    session: AsyncSession,
+    profile_id: int,
+    if_revision: str | None,
+) -> None:
+    if not if_revision:
+        return
+    profile = await _get_agent_llm_profile_or_raise(session, profile_id)
+    current = _serialize_llm_profile(profile)
+    ensure_revision(
+        if_revision,
+        current.revision,
+        resource="llm-profiles",
+        resource_id=profile_id,
+        latest=current.model_dump(mode="json"),
     )

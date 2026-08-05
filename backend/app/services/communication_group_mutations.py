@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.time import utc_now
+from app.core.agent_revisions import revision_for
 from app.models import IdentityCommunicationGroup, IdentityProfile
 from app.schemas.communication_group import (
     IdentityCommunicationGroupMemberRead,
@@ -314,7 +315,7 @@ def serialize_communication_group(
 
 
 def _serialize_group(group: IdentityCommunicationGroup) -> IdentityCommunicationGroupRead:
-    return IdentityCommunicationGroupRead(
+    result = IdentityCommunicationGroupRead(
         id=group.id,
         members=[
             IdentityCommunicationGroupMemberRead(
@@ -328,3 +329,4 @@ def _serialize_group(group: IdentityCommunicationGroup) -> IdentityCommunication
         created_at=group.created_at,
         updated_at=group.updated_at,
     )
+    return result.model_copy(update={"revision": revision_for(result)})

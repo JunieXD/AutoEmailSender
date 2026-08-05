@@ -23,6 +23,7 @@ def list_communication_groups(
     ctx: typer.Context,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
 ) -> None:
     run_read_command(
@@ -31,6 +32,7 @@ def list_communication_groups(
         path="/api/agent/v1/communication-groups",
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
+        fields=fields,
         guide_topic="communication-groups",
         human_formatter=lambda data: format_page(
             data,

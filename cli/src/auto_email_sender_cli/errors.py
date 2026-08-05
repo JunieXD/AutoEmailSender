@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 
@@ -17,6 +19,91 @@ class CliError(Exception):
         return self.message
 
 
+_SECRET_MESSAGE_PATTERN = re.compile(
+    r"(?P<key>\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|"
+    r"auth[_-]?token|bearer[_-]?token|password|secret|credential|authorization|cookie|"
+    r"smtp[_-]?password|imap[_-]?password)\b)"
+    r"(?P<quote>[\"']?)(?P<separator>\s*[:=]\s*)"
+    r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_BEARER_PATTERN = re.compile(
+    r"(?P<prefix>\bAuthorization\s*:\s*Bearer\s+)(?P<value>[^\s,;]+)",
+    re.IGNORECASE,
+)
+_SENSITIVE_KEY_NAMES = {
+    "password",
+    "apikey",
+    "accesstoken",
+    "refreshtoken",
+    "idtoken",
+    "authtoken",
+    "bearertoken",
+    "secret",
+    "credential",
+    "authorization",
+    "cookie",
+    "smtppassword",
+    "imappassword",
+}
+_SAFE_TOKEN_KEY_NAMES = {
+    "comparison_token",
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+}
+
+
+def sanitize_error_message(message: object) -> str:
+    """Redact key/value-shaped credentials before an error reaches an Agent."""
+
+    sanitized = _BEARER_PATTERN.sub(r"\g<prefix>[REDACTED]", str(message))
+
+    def replace_secret(match: re.Match[str]) -> str:
+        return f"{match.group('key')}{match.group('quote')}{match.group('separator')}[REDACTED]"
+
+    return _SECRET_MESSAGE_PATTERN.sub(replace_secret, sanitized)
+
+
+def redact_error_details(details: object) -> dict[str, Any]:
+    """Recursively redact credential-shaped fields in structured error data."""
+
+    value = _redact_error_value(details)
+    return value if isinstance(value, dict) else {}
+
+
+def _redact_error_value(value: object) -> object:
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        return sanitize_error_message(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): (
+                "[REDACTED]"
+                if _is_sensitive_key(str(key))
+                else _redact_error_value(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray | str):
+        return [_redact_error_value(item) for item in value]
+    return "[UNSERIALIZABLE]"
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    if normalized in _SAFE_TOKEN_KEY_NAMES:
+        return False
+    compact = normalized.replace("_", "")
+    if compact in _SENSITIVE_KEY_NAMES:
+        return True
+    return compact.endswith("password") or compact.endswith("token")
+
+
 class RuntimeUnavailableError(CliError):
     def __init__(
         self,
@@ -31,6 +118,26 @@ class RuntimeUnavailableError(CliError):
             exit_code=7,
             retryable=True,
             suggested_command="auto-email-sender --format json doctor",
+        )
+
+
+class ExternalExecutionUnknownError(CliError):
+    """A non-idempotent external request may have reached its provider."""
+
+    def __init__(self, *, command: str, request_id: str | None = None) -> None:
+        details: dict[str, Any] = {"command": command}
+        if request_id:
+            details["request_id"] = request_id
+        super().__init__(
+            code="EXTERNAL_EXECUTION_UNKNOWN",
+            message=(
+                "外部服务执行结果未知；为避免重复副作用，CLI 不会自动重试。"
+                "请先读取对应对象或任务状态，确认实际结果后再决定下一步。"
+            ),
+            exit_code=9,
+            retryable=False,
+            details=details,
+            suggested_command="auto-email-sender --format json status",
         )
 
 

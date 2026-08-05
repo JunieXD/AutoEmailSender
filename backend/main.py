@@ -18,9 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routers import API_ROUTERS
 from app.core.config import get_settings
 from app.core.api_auth import ApiAuthMiddleware
+from app.core.agent_mutation_headers import AgentMutationHeadersMiddleware
 from app.core.agent_api_errors import (
     AgentApiError,
     agent_api_error_handler,
+    http_exception_handler,
     request_validation_error_handler,
 )
 from app.core.database import dispose_engine, get_session_factory
@@ -253,6 +255,7 @@ def create_app() -> FastAPI:
     write_startup_phase_log("main.create_app.start")
     app = FastAPI(title="Auto Email Agent API", version="3.0", lifespan=lifespan)
     app.add_exception_handler(AgentApiError, agent_api_error_handler)
+    app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 
     app.add_middleware(
@@ -260,6 +263,7 @@ def create_app() -> FastAPI:
         ui_token=os.getenv("AUTO_EMAIL_SENDER_UI_TOKEN"),
         agent_token=os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN"),
     )
+    app.add_middleware(AgentMutationHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,

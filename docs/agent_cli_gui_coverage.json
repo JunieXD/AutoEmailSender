@@ -1,0 +1,308 @@
+{
+  "schema_version": 1,
+  "scope": "frontend/src/lib/api/*.ts business-facing API modules",
+  "excluded_sources": [
+    "client.ts",
+    "client.test.ts"
+  ],
+  "actions": [
+    {
+      "id": "batch-tasks",
+      "source": "batchTasksApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "campaigns.list",
+        "campaigns.get",
+        "campaigns.items",
+        "campaigns.create",
+        "campaigns.start-drafts",
+        "campaigns.pause",
+        "campaigns.stop",
+        "campaigns.archive",
+        "campaigns.restore",
+        "campaigns.remove-item",
+        "campaigns.cancel-item-send",
+        "campaigns.prepare-restore-item-send",
+        "campaigns.retry-item-draft",
+        "campaigns.prepare-resume",
+        "campaigns.prepare-send"
+      ],
+      "reason": "批量任务的查询、草稿、暂停/恢复、逐项处理和发送均通过 campaigns 与计划合同开放。"
+    },
+    {
+      "id": "communication-groups",
+      "source": "communicationGroups.ts",
+      "status": "available",
+      "required_capabilities": [
+        "communication-groups.list",
+        "communication-groups.get",
+        "communication-groups.create",
+        "communication-groups.update",
+        "communication-groups.delete"
+      ],
+      "reason": "通信共享组的读取、创建、修改和删除均有受控 Agent API。"
+    },
+    {
+      "id": "community-mentors",
+      "source": "communityMentorsApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "professors.community.catalog",
+        "professors.community.records",
+        "professors.community.preview",
+        "professors.community.import",
+        "professors.community.export-package"
+      ],
+      "reason": "社区导师目录、比对、预览、导入和分享包均使用 Agent 计划/证据合同。"
+    },
+    {
+      "id": "crawl-jobs",
+      "source": "crawlJobsApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "crawler.jobs.list",
+        "crawler.jobs.get",
+        "crawler.jobs.pages",
+        "crawler.jobs.events",
+        "crawler.jobs.candidates",
+        "crawler.jobs.create",
+        "crawler.candidates.update",
+        "crawler.jobs.pause",
+        "crawler.jobs.resume",
+        "crawler.jobs.cancel",
+        "crawler.jobs.resume-review",
+        "crawler.jobs.delete",
+        "crawler.jobs.restore",
+        "crawler.jobs.retry",
+        "crawler.jobs.approve",
+        "crawler.jobs.enrich"
+      ],
+      "reason": "抓取、候选审核、补全、暂停/恢复和重试都能通过长任务和计划协议观察。"
+    },
+    {
+      "id": "create-task",
+      "source": "createTask.ts",
+      "status": "planned",
+      "required_capabilities": [],
+      "reason": "当前前端仍是本地演示 stub（文件内明确标注 TODO），接入真实后端前不把它误报为 CLI 已覆盖。"
+    },
+    {
+      "id": "dashboard",
+      "source": "dashboardApi.ts",
+      "status": "available",
+      "required_capabilities": ["dashboard.overview"],
+      "reason": "仪表盘筛选和汇总通过 dashboard.overview 读取合同开放。"
+    },
+    {
+      "id": "diagnostics",
+      "source": "diagnosticsApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "diagnostics.logs",
+        "diagnostics.export",
+        "diagnostics.crawler-debug"
+      ],
+      "reason": "诊断日志和抓取调试导出均为脱敏的 Agent 读取能力。"
+    },
+    {
+      "id": "email-tasks",
+      "source": "emailTasksApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "drafts.get",
+        "drafts.generate",
+        "drafts.save",
+        "drafts.regenerate",
+        "drafts.rewrite",
+        "drafts.prepare-send",
+        "tasks.cancel-schedule",
+        "tasks.continue-manually",
+        "tasks.start-follow-up",
+        "tasks.set-primary-material",
+        "tasks.set-outreach-config",
+        "tasks.calculate-match"
+      ],
+      "reason": "单封任务的草稿、改写、匹配、审核、排程和跟进均映射到通用任务/计划原语。"
+    },
+    {
+      "id": "identities",
+      "source": "identities.ts",
+      "status": "available",
+      "required_capabilities": [
+        "identities.list",
+        "identities.get",
+        "identities.update-settings",
+        "identities.set-default",
+        "identities.set-default-template",
+        "identities.test-smtp",
+        "identities.test-imap",
+        "identities.credentials"
+      ],
+      "ui_only_capabilities": ["identities.credentials"],
+      "reason": "身份非秘密设置和连接测试可由 CLI 处理；credentials 在能力注册中保持 ui_only，凭据仍只能在 GUI 录入。"
+    },
+    {
+      "id": "llm-config",
+      "source": "llmConfig.ts",
+      "status": "ui_only",
+      "required_capabilities": ["llm-profiles.write"],
+      "reason": "该旧配置模块直接接收 API Key；为防止秘密进入命令历史和 Agent 上下文，保留 GUI 安全录入。"
+    },
+    {
+      "id": "llm-profiles",
+      "source": "llmProfiles.ts",
+      "status": "available",
+      "required_capabilities": [
+        "llm-profiles.list",
+        "llm-profiles.get",
+        "llm-profiles.update-settings",
+        "llm-profiles.set-default",
+        "llm-profiles.models",
+        "llm-profiles.test",
+        "llm-profiles.write"
+      ],
+      "ui_only_capabilities": ["llm-profiles.write"],
+      "reason": "非秘密模型设置、模型列表和测试可由 CLI 操作；write 能力显式标记 ui_only，不开放凭据写入。"
+    },
+    {
+      "id": "match-analysis",
+      "source": "matchAnalysisJobsApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "matching.jobs.list",
+        "matching.jobs.get",
+        "matching.jobs.items",
+        "matching.jobs.create",
+        "matching.jobs.cancel",
+        "matching.jobs.retry-failed",
+        "matching.jobs.delete",
+        "matching.jobs.restore"
+      ],
+      "reason": "匹配分析任务提供统一状态、逐项结果、取消和重试。"
+    },
+    {
+      "id": "materials",
+      "source": "materials.ts",
+      "status": "available",
+      "required_capabilities": [
+        "materials.list",
+        "materials.get",
+        "materials.upload",
+        "materials.set-primary",
+        "materials.download",
+        "materials.prepare-delete"
+      ],
+      "reason": "材料上传、主材料切换、下载和删除预览均有受控能力；文件内容仍按不可信数据处理。"
+    },
+    {
+      "id": "outreach-templates",
+      "source": "outreachTemplates.ts",
+      "status": "available",
+      "required_capabilities": [
+        "templates.list",
+        "templates.get",
+        "templates.import-file",
+        "templates.create",
+        "templates.update",
+        "templates.duplicate",
+        "templates.set-default",
+        "templates.restore",
+        "templates.prepare-archive"
+      ],
+      "reason": "模板读取、编辑、导入和归档均有对应 CLI 合同，归档使用计划预览。"
+    },
+    {
+      "id": "professor-information-enrichment",
+      "source": "professorInformationEnrichmentApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "enrichment.jobs.list",
+        "enrichment.jobs.get",
+        "enrichment.jobs.items",
+        "enrichment.jobs.create",
+        "enrichment.jobs.cancel",
+        "enrichment.jobs.retry-failed",
+        "enrichment.jobs.delete",
+        "enrichment.jobs.restore"
+      ],
+      "reason": "信息补全是可观察的长任务，CLI 提供逐项结果和审核前的受控写回。"
+    },
+    {
+      "id": "professors",
+      "source": "professorsApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "professors.list",
+        "professors.get",
+        "professors.tags.list",
+        "professors.tags.usage",
+        "professors.create",
+        "professors.update",
+        "professors.archive",
+        "professors.restore",
+        "professors.tags.create",
+        "professors.tags.set",
+        "professors.tags.prepare-bulk",
+        "professors.prepare-bulk-archive",
+        "professors.tags.prepare-delete",
+        "professors.import",
+        "professors.export",
+        "professors.community.catalog",
+        "professors.community.records",
+        "professors.community.preview",
+        "professors.community.import",
+        "professors.community.export-package"
+      ],
+      "reason": "导师档案、标签、导入导出和审核所需的字段编辑均有 Agent 能力；批量高影响动作使用计划。"
+    },
+    {
+      "id": "profiles-legacy",
+      "source": "profiles.ts",
+      "status": "ui_only",
+      "required_capabilities": [],
+      "reason": "该模块使用 localStorage 的旧演示数据，不属于桌面端真实业务数据，不能伪装成 CLI 可操作资源。"
+    },
+    {
+      "id": "runtime-settings",
+      "source": "runtimeSettings.ts",
+      "status": "available",
+      "required_capabilities": ["settings.get", "settings.update"],
+      "reason": "运行参数读取和非秘密更新通过 settings 合同开放。"
+    },
+    {
+      "id": "test-compose",
+      "source": "testComposeApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "test-email.status",
+        "test-email.get",
+        "test-email.generate",
+        "test-email.save",
+        "test-email.prepare-send"
+      ],
+      "reason": "测试邮件草稿和发送同样遵循计划与确认边界。"
+    },
+    {
+      "id": "token-usage",
+      "source": "tokenUsage.ts",
+      "status": "available",
+      "required_capabilities": [
+        "usage.records",
+        "usage.chart",
+        "usage.visualization"
+      ],
+      "reason": "Token 用量、趋势和可视化均为只读统计。"
+    },
+    {
+      "id": "workspaces",
+      "source": "workspacesApi.ts",
+      "status": "available",
+      "required_capabilities": [
+        "workspaces.get",
+        "workspaces.ensure-task",
+        "workspaces.refresh-replies"
+      ],
+      "reason": "工作区读取、创建任务和回信同步均有稳定 ID、长任务和外部服务说明。"
+    }
+  ]
+}

@@ -34,6 +34,7 @@ from auto_email_sender_cli.commands import (
     usage_app,
     workspaces_app,
 )
+from auto_email_sender_cli.commands.wait import wait_for_resource
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.describe import describe_command
 from auto_email_sender_cli.guide import GUIDE_TOPICS, get_guide
@@ -81,6 +82,7 @@ app.add_typer(tasks_app, name="tasks")
 app.add_typer(test_email_app, name="test-email")
 app.add_typer(usage_app, name="usage")
 app.add_typer(workspaces_app, name="workspaces")
+app.command("wait", help="等待一个已运行的后台任务进入终态；不会启动桌面应用。", no_args_is_help=True)(wait_for_resource)
 
 
 @app.callback()
@@ -94,9 +96,46 @@ def root(
         bool,
         typer.Option("--json", help="等同于 --format json。"),
     ] = False,
+    request_id: Annotated[
+        str | None,
+        typer.Option(
+            "--request-id",
+            help="可复用的操作标识；网络超时后用同一值重试不会重复本地副作用。",
+        ),
+    ] = None,
+    if_revision: Annotated[
+        str | None,
+        typer.Option(
+            "--if-revision",
+            help="只在对象版本仍与读取结果一致时写入；冲突会返回结构化错误。",
+        ),
+    ] = None,
+    output_file: Annotated[
+        str | None,
+        typer.Option(
+            "--output-file",
+            help="把集合结果写入 JSONL 文件；stdout 只返回导出摘要。",
+        ),
+    ] = None,
+    force_output: Annotated[
+        bool,
+        typer.Option("--force-output", help="允许覆盖 --output-file 指定的已有文件。"),
+    ] = False,
+    filter_expression: Annotated[
+        str | None,
+        typer.Option(
+            "--filter",
+            help="集合结构化筛选 JSON，例如 '{\"status\":{\"eq\":\"review_required\"}}'。",
+        ),
+    ] = None,
 ) -> None:
     ctx.obj = CliContext(
         output_format=OutputFormat.JSON if json_output else output_format,
+        request_id=request_id,
+        filter_expression=filter_expression,
+        if_revision=if_revision,
+        output_file=output_file,
+        force_output=force_output,
     )
 
 
@@ -152,18 +191,23 @@ def capabilities_command(
         str | None,
         typer.Option("--command", help="只查看某个命令或命令组。"),
     ] = None,
+    resource: Annotated[
+        str | None,
+        typer.Option("--resource", help="按资源族筛选，例如 professors、communications、campaigns。"),
+    ] = None,
 ) -> None:
     context = _context(ctx)
     try:
-        items = list_capabilities(command)
-        if command and not items:
-            normalized = normalize_capability_command(command)
+        items = list_capabilities(command, resource=resource)
+        if (command or resource) and not items:
+            requested = command or resource or ""
+            normalized = normalize_capability_command(requested)
             error = CliError(
                 code="CAPABILITY_NOT_FOUND",
-                message=f"没有找到能力：{command}",
+                message=f"没有找到能力：{command or resource}",
                 exit_code=4,
                 details={
-                    "command": command,
+                "command": requested,
                     "normalized_command": normalized,
                     "suggestions": suggest_capabilities(normalized),
                 },

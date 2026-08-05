@@ -8,7 +8,11 @@ from typing import Any
 
 import typer
 
-from auto_email_sender_cli.errors import CliError
+from auto_email_sender_cli.errors import (
+    CliError,
+    redact_error_details,
+    sanitize_error_message,
+)
 from auto_email_sender_cli.version import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
@@ -25,6 +29,12 @@ class OutputFormat(StrEnum):
 @dataclass(slots=True)
 class CliContext:
     output_format: OutputFormat
+    request_id: str | None = None
+    fields: tuple[str, ...] = ()
+    filter_expression: str | None = None
+    if_revision: str | None = None
+    output_file: str | None = None
+    force_output: bool = False
 
 
 def guide_metadata(topic: str = "overview") -> dict[str, str]:
@@ -41,8 +51,9 @@ def build_meta(
     guide_topic: str = "overview",
     app_version: str | None = None,
     warnings: list[str] | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    meta: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
         "command": command,
@@ -51,6 +62,9 @@ def build_meta(
         "agent_guide": guide_metadata(guide_topic),
         "warnings": warnings or [],
     }
+    if request_id:
+        meta["request_id"] = request_id
+    return meta
 
 
 def emit_success(
@@ -62,15 +76,26 @@ def emit_success(
     guide_topic: str = "overview",
     app_version: str | None = None,
     warnings: list[str] | None = None,
+    request_id: str | None = None,
 ) -> None:
     meta = build_meta(
         command=command,
         guide_topic=guide_topic,
         app_version=app_version,
         warnings=warnings,
+        request_id=request_id or context.request_id,
     )
-    page_items = data.get("items") if isinstance(data, dict) else None
-    if isinstance(page_items, list):
+    # Some non-paged envelopes (for example campaigns.resend-context) contain
+    # an ``items`` field for business data. Only treat it as a collection when
+    # the normalized pagination fields are present; otherwise metadata and
+    # JSONL output would falsely advertise/flatten pagination.
+    is_paged_collection = (
+        isinstance(data, dict)
+        and isinstance(data.get("items"), list)
+        and any(key in data for key in ("next_cursor", "has_more", "pagination_mode"))
+    )
+    page_items = data.get("items") if is_paged_collection else None
+    if is_paged_collection:
         meta["pagination"] = {
             "next_cursor": data.get("next_cursor"),
             "has_more": bool(data.get("has_more")),
@@ -110,21 +135,35 @@ def emit_error(
 ) -> None:
     payload: dict[str, Any] = {
         "code": error.code,
-        "message": error.message,
+        "message": sanitize_error_message(error.message),
         "retryable": error.retryable,
-        "details": error.details,
+        "details": redact_error_details(error.details),
     }
     if error.suggested_command:
-        payload["suggested_action"] = {"command": error.suggested_command}
+        payload["suggested_action"] = {"command": sanitize_error_message(error.suggested_command)}
     envelope = {
         "ok": False,
         "error": payload,
-        "_meta": build_meta(command=command, guide_topic=guide_topic),
+        "_meta": build_meta(
+            command=command,
+            guide_topic=guide_topic,
+            request_id=context.request_id,
+        ),
     }
     if context.output_format is OutputFormat.HUMAN:
-        typer.echo(_sanitize_terminal_text(f"错误 [{error.code}]：{error.message}"), err=True)
+        typer.echo(
+            _sanitize_terminal_text(
+                f"错误 [{error.code}]：{sanitize_error_message(error.message)}",
+            ),
+            err=True,
+        )
         if error.suggested_command:
-            typer.echo(_sanitize_terminal_text(f"建议：{error.suggested_command}"), err=True)
+            typer.echo(
+                _sanitize_terminal_text(
+                    f"建议：{sanitize_error_message(error.suggested_command)}",
+                ),
+                err=True,
+            )
         return
     typer.echo(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")))
 

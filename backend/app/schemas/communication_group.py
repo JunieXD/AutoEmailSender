@@ -16,6 +16,7 @@ class IdentityCommunicationGroupMemberRead(ApiSchema):
 
 class IdentityCommunicationGroupRead(ApiSchema):
     id: int
+    revision: str | None = None
     members: list[IdentityCommunicationGroupMemberRead]
     created_at: datetime
     updated_at: datetime

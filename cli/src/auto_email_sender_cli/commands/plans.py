@@ -67,7 +67,6 @@ def execute_plan(
         json_body={"confirm": True},
         guide_topic="sending",
         human_formatter=format_detail,
-        use_idempotency_key=False,
     )
 
 
@@ -82,5 +81,4 @@ def cancel_plan(
         path=f"/api/agent/v1/plans/{plan_id}/cancel",
         guide_topic="sending",
         human_formatter=format_detail,
-        use_idempotency_key=False,
     )

@@ -15,6 +15,7 @@ from auto_email_sender_cli.commands.common import (
     optional_bool,
     run_read_command,
     run_write_command,
+    validate_context_options,
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
@@ -39,7 +40,7 @@ def sync_communications(
         json_body={"identity_id": identity_id},
         guide_topic="communications",
         human_formatter=format_detail,
-        use_idempotency_key=False,
+        use_idempotency_key=True,
     )
 
 
@@ -52,6 +53,7 @@ def list_threads(
     replied: Annotated[str | None, typer.Option("--replied", help="true 或 false。") ] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all")] = False,
 ) -> None:
     run_read_command(
@@ -68,6 +70,7 @@ def list_threads(
         },
         guide_topic="communications",
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -115,6 +118,7 @@ def list_messages(
     order: Annotated[str, typer.Option("--order", help="asc 或 desc。") ] = "desc",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 100,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
     all_items: Annotated[bool, typer.Option("--all")] = False,
 ) -> None:
     run_read_command(
@@ -133,6 +137,7 @@ def list_messages(
         },
         guide_topic="communications",
         fetch_all=all_items,
+        fields=fields,
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -177,6 +182,11 @@ def export_messages(
     context = cli_context(ctx)
     command = "communications.messages.export"
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
         client = AgentApiClient()
         payload = fetch_all_pages(
             client,

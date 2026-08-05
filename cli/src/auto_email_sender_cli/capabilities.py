@@ -6,7 +6,331 @@ from typing import Final, Literal
 
 
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
-Availability = Literal["available", "planned", "ui_only"]
+Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
+
+CONTRACT_VERSION: Final = "1"
+
+
+# Collection behavior is deliberately explicit instead of inferred from a
+# command's suffix.  A few endpoints contain a bounded nested list (for
+# example community comparison records) but do not expose the common cursor
+# contract; advertising them as paged would make an Agent send unsupported
+# flags.  Keeping the sets here also makes protocol changes reviewable.
+_PAGED_COLLECTION_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "professors.list",
+        "professors.tags.list",
+        "communications.threads.list",
+        "communications.messages.list",
+        "templates.list",
+        "materials.list",
+        "identities.list",
+        "llm-profiles.list",
+        "matching.jobs.list",
+        "matching.jobs.items",
+        "enrichment.jobs.list",
+        "enrichment.jobs.items",
+        "crawler.jobs.list",
+        "crawler.jobs.pages",
+        "crawler.jobs.events",
+        "crawler.jobs.candidates",
+        "communication-groups.list",
+        "campaigns.list",
+        "campaigns.items",
+        "usage.records",
+        "diagnostics.logs",
+    },
+)
+
+
+# These endpoints return a bounded ``records`` array inside a comparison
+# envelope rather than the common cursor page.  They still support the CLI's
+# safe local projection flag; keeping the set separate prevents us from
+# advertising pagination or structured filtering they do not implement.
+_FIELD_SELECTION_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "professors.community.records",
+        "professors.community.preview",
+    },
+)
+
+
+_FILE_EXPORT_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "professors.export",
+        "professors.community.export-package",
+        "communications.messages.export",
+        "diagnostics.export",
+        "diagnostics.crawler-debug",
+    }
+    | _PAGED_COLLECTION_COMMANDS
+)
+
+
+# ``wait`` is useful only when the command returns or observes a resource with
+# a background lifecycle.  Keeping this allow-list explicit avoids suggesting
+# a poll after ordinary list, pause, archive, or plan-preview operations.
+_WAIT_CAPABILITY_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "matching.jobs.create",
+        "matching.jobs.get",
+        "matching.jobs.items",
+        "matching.jobs.retry-failed",
+        "enrichment.jobs.create",
+        "enrichment.jobs.get",
+        "enrichment.jobs.items",
+        "enrichment.jobs.retry-failed",
+        "crawler.jobs.create",
+        "crawler.jobs.get",
+        "crawler.jobs.pages",
+        "crawler.jobs.events",
+        "crawler.jobs.candidates",
+        "crawler.jobs.resume",
+        "crawler.jobs.enrich",
+        "campaigns.get",
+        "campaigns.items",
+        "campaigns.start-drafts",
+        "campaigns.retry-item-draft",
+    }
+)
+
+
+# Optimistic concurrency is deliberately advertised only for routes that
+# actually consume the ``If-Revision`` header in the Agent API.  Accepting the
+# global flag on every POST would make an Agent believe a write was protected
+# even when the endpoint simply ignored the header.
+_IF_REVISION_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "professors.update",
+        "professors.archive",
+        "professors.restore",
+        "professors.tags.set",
+        "templates.update",
+        "templates.set-default",
+        "templates.restore",
+        "identities.update-settings",
+        "identities.set-default",
+        "identities.set-default-template",
+        "llm-profiles.update-settings",
+        "llm-profiles.set-default",
+        "communication-groups.update",
+        "crawler.candidates.update",
+        "settings.update",
+        "drafts.save",
+        "drafts.regenerate",
+        "drafts.rewrite",
+    },
+)
+
+
+_COMMON_FILTER_OPERATORS: Final[tuple[str, ...]] = (
+    "eq",
+    "ne",
+    "in",
+    "contains",
+    "empty",
+    "exists",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+)
+
+
+# The field names form part of the public contract.  They are intentionally
+# limited to safe, user-visible DTO fields; an Agent cannot turn --filter into
+# SQL or probe private database columns.
+_COLLECTION_FILTER_FIELDS: Final[dict[str, frozenset[str]]] = {
+    "professors.list": frozenset(
+        {
+            "id",
+            "name",
+            "email",
+            "title",
+            "university",
+            "school",
+            "department",
+            "research_direction",
+            "profile_url",
+            "source_url",
+            "recent_papers",
+            "skip_reason",
+            "crawl_status",
+            "archived_at",
+            "personal_note",
+            "created_at",
+            "updated_at",
+            "tags",
+        },
+    ),
+    "professors.tags.list": frozenset({"id", "name", "text_color", "background_color"}),
+    "communications.threads.list": frozenset(
+        {
+            "id",
+            "identity_id",
+            "identity_name",
+            "identity_email_address",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "sent_count",
+            "received_count",
+            "has_sent",
+            "has_reply",
+            "last_message_at",
+        },
+    ),
+    "communications.messages.list": frozenset(
+        {
+            "id",
+            "thread_id",
+            "email_task_id",
+            "identity_id",
+            "professor_id",
+            "direction",
+            "subject",
+            "content",
+            "content_html",
+            "body_included",
+            "from_email",
+            "to_emails",
+            "cc_emails",
+            "bcc_emails",
+            "rfc_message_id",
+            "failure_summary",
+            "created_at",
+            "trust_level",
+        },
+    ),
+    "templates.list": frozenset(
+        {
+            "id",
+            "revision",
+            "name",
+            "recommended_generation_mode",
+            "subject",
+            "body_text",
+            "body_html",
+            "is_default",
+            "archived_at",
+            "created_at",
+            "updated_at",
+        },
+    ),
+    "materials.list": frozenset(
+        {
+            "id",
+            "identity_id",
+            "display_name",
+            "original_filename",
+            "mime_type",
+            "size_bytes",
+            "material_type",
+            "is_primary",
+            "has_extracted_text",
+            "extracted_text",
+            "created_at",
+        },
+    ),
+    "identities.list": frozenset(
+        {
+            "id",
+            "name",
+            "profile_name",
+            "sender_name",
+            "email_address",
+            "default_language",
+            "outreach_generation_mode",
+            "default_outreach_template_id",
+            "current_primary_material_id",
+            "communication_group_id",
+            "match_threshold",
+            "daily_send_limit",
+            "send_interval_min",
+            "send_interval_max",
+            "same_domain_cooldown_minutes",
+            "smtp_configured",
+            "imap_configured",
+            "is_default",
+            "created_at",
+            "updated_at",
+        },
+    ),
+    "llm-profiles.list": frozenset(
+        {
+            "id",
+            "name",
+            "provider",
+            "model_name",
+            "temperature",
+            "max_tokens",
+            "credential_configured",
+            "is_default",
+            "created_at",
+            "updated_at",
+        },
+    ),
+    "matching.jobs.list": frozenset(
+        {
+            "id",
+            "name",
+            "status",
+            "target_count",
+            "succeeded_count",
+            "failed_count",
+            "skipped_count",
+            "total_prompt_tokens",
+            "total_completion_tokens",
+            "total_cached_tokens",
+            "total_tokens",
+            "identity_id",
+            "llm_profile_id",
+            "cancel_requested_at",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "last_error",
+        },
+    ),
+    "matching.jobs.items": frozenset(
+        {
+            "id",
+            "job_id",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "professor_title",
+            "professor_university",
+            "professor_school",
+            "email_task_id",
+            "status",
+            "match_score",
+            "match_analysis_run_id",
+            "error_message",
+            "skip_reason",
+            "prompt_tokens",
+            "completion_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "started_at",
+            "finished_at",
+            "updated_at",
+        },
+    ),
+    "enrichment.jobs.list": frozenset({"id", "name", "trigger_mode", "status", "target_count", "completed_count", "queued_count", "running_count", "succeeded_count", "failed_count", "skipped_count", "canceled_count", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "llm_profile_id", "started_at", "finished_at", "duration_seconds", "created_at", "updated_at", "last_error", "deleted_at"}),
+    "enrichment.jobs.items": frozenset({"id", "job_id", "professor_id", "professor_name", "professor_email", "professor_title", "professor_university", "professor_school", "professor_department", "profile_url", "status", "enriched_fields", "error_message", "skip_reason", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "attempt_count", "started_at", "finished_at", "created_at", "updated_at"}),
+    "crawler.jobs.list": frozenset({"id", "university", "school", "start_url", "start_urls", "entry_type", "runtime_version", "llm_profile_id", "status", "progress_current", "progress_total", "error_message", "page_count", "candidate_count", "latest_event_message", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "duration_seconds", "created_at", "updated_at", "deleted_at"}),
+    "crawler.jobs.pages": frozenset({"id", "job_id", "url", "parent_url", "fetch_method", "page_type", "status", "title", "text_excerpt", "error_message", "created_at", "trust_level"}),
+    "crawler.jobs.events": frozenset({"id", "job_id", "event_type", "message", "created_at", "raw", "trust_level"}),
+    "crawler.jobs.candidates": frozenset({"id", "revision", "job_id", "professor_id", "name", "email", "title", "university", "school", "department", "research_direction", "recent_papers", "profile_url", "source_url", "confidence", "field_confidence", "evidence", "review_status", "created_at", "updated_at", "trust_level"}),
+    "communication-groups.list": frozenset({"id", "revision", "members", "created_at", "updated_at"}),
+    "campaigns.list": frozenset({"id", "name", "status", "generation_mode", "schedule_type", "target_count", "pending_generation_count", "generating_draft_count", "draft_failed_count", "review_required_count", "approved_count", "scheduled_count", "sending_count", "sent_count", "failed_count", "canceled_count", "canceled_send_count", "can_start_draft_generation", "created_at", "updated_at"}),
+    "campaigns.items": frozenset({"id", "campaign_id", "professor_id", "professor_name", "professor_email", "status", "generation_mode", "subject", "has_final_content", "attachment_material_ids", "scheduled_at", "send_canceled_at", "sent_at", "last_error", "can_remove", "can_cancel_send", "can_restore_send", "can_retry_draft", "updated_at"}),
+    "usage.records": frozenset({"id", "feature_type", "feature_label", "title", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "model_name", "identity_name", "created_at", "status"}),
+    "diagnostics.logs": frozenset({"id", "request_id", "category", "event_name", "level", "message", "entity_type", "entity_id", "metadata", "created_at"}),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +347,37 @@ class Capability:
     unavailable_reason: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+        """Return the single registry record consumed by discovery clients.
+
+        The original protocol fields are kept intact.  The additional contract
+        metadata is derived here so a new command cannot accidentally appear in
+        ``describe`` and ``capabilities`` with different resource semantics.
+        Detailed input/output schemas are supplied by ``describe``; these fields
+        let an Agent decide which commands are worth describing first.
+        """
+
+        result = asdict(self)
+        result.update(
+            {
+                "contract_version": CONTRACT_VERSION,
+                "resource": capability_resource(self.command),
+                "operation": capability_operation(self.command),
+                "is_leaf": True,
+                "supports_pagination": supports_pagination(self.command),
+                "supports_field_selection": supports_field_selection(self.command),
+                "supports_structured_filter": supports_structured_filter(self.command),
+                "supports_file_export": supports_file_export(self.command),
+                "filter_fields": sorted(collection_filter_fields(self.command)),
+                "filter_operators": list(_COMMON_FILTER_OPERATORS)
+                if supports_structured_filter(self.command)
+                else [],
+                "supports_wait": supports_wait(self.command),
+                "supports_if_revision": supports_if_revision(self.command),
+                "supports_idempotent_retry": self.mutates,
+                "stateful": capability_stateful(self.command),
+            },
+        )
+        return result
 
 
 CAPABILITIES: Final[tuple[Capability, ...]] = (
@@ -33,6 +387,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("guide", "读取 Agent 使用说明", "L0", "available"),
     Capability("capabilities", "读取当前命令能力和风险信息", "L0", "available"),
     Capability("describe", "读取某个命令的机器可读操作说明", "L0", "available"),
+    Capability("wait", "等待已运行的后台任务进入终态，不会启动桌面应用", "L0", "available", long_running=True),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
     Capability("professors.get", "按 ID 读取导师完整档案", "L0", "available"),
     Capability("professors.tags.list", "读取导师标签", "L0", "available"),
@@ -1008,7 +1363,11 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
 )
 
 
-def list_capabilities(command: str | None = None) -> list[dict[str, object]]:
+def list_capabilities(
+    command: str | None = None,
+    *,
+    resource: str | None = None,
+) -> list[dict[str, object]]:
     items = CAPABILITIES
     if command:
         normalized = normalize_capability_command(command)
@@ -1017,6 +1376,16 @@ def list_capabilities(command: str | None = None) -> list[dict[str, object]]:
             for item in CAPABILITIES
             if item.command == normalized or item.command.startswith(f"{normalized}.")
         )
+    if resource:
+        normalized_resource = normalize_capability_command(resource)
+        items = tuple(
+            item
+            for item in items
+            if (
+                capability_resource(item.command) == normalized_resource
+                or capability_resource(item.command).startswith(f"{normalized_resource}.")
+            )
+        )
     return [item.to_dict() for item in items]
 
 
@@ -1024,6 +1393,135 @@ def normalize_capability_command(command: str) -> str:
     """Accept both CLI-style spaces and capability-style dotted identifiers."""
 
     return re.sub(r"\.+", ".", re.sub(r"\s+", ".", command.strip().lower())).strip(".")
+
+
+def capability_resource(command: str) -> str:
+    """Return the stable resource family for a capability.
+
+    Resource names intentionally remain product-level concepts (``professors``,
+    ``communications`` and so on), not database table names.  Nested command
+    groups such as ``professors.tags`` are kept together so an Agent can filter
+    discovery without guessing an internal route.
+    """
+
+    normalized = normalize_capability_command(command)
+    if normalized.startswith("communications."):
+        return "communications"
+    if normalized.startswith("communication-groups."):
+        return "communication-groups"
+    if normalized.startswith("professors.community."):
+        return "professors.community"
+    if normalized.startswith("professors.tags."):
+        return "professors.tags"
+    if normalized.startswith("campaigns."):
+        return "campaigns"
+    if normalized.startswith("crawler."):
+        return "crawler"
+    if normalized.startswith("matching."):
+        return "matching"
+    if normalized.startswith("enrichment."):
+        return "enrichment"
+    if normalized.startswith("llm-profiles."):
+        return "llm-profiles"
+    if normalized.startswith("test-email."):
+        return "test-email"
+    if normalized.startswith("workspaces."):
+        return "workspaces"
+    return normalized.split(".", 1)[0]
+
+
+def capability_operation(command: str) -> str:
+    normalized = normalize_capability_command(command)
+    return normalized.rsplit(".", 1)[-1]
+
+
+def supports_pagination(command: str) -> bool:
+    return normalize_capability_command(command) in _PAGED_COLLECTION_COMMANDS
+
+
+def supports_field_selection(command: str) -> bool:
+    # Collection reads use the same CLI-side projection contract.  The actual
+    # backend remains responsible for filtering and pagination.
+    normalized = normalize_capability_command(command)
+    return normalized in _PAGED_COLLECTION_COMMANDS or normalized in _FIELD_SELECTION_COMMANDS
+
+
+def supports_structured_filter(command: str) -> bool:
+    return normalize_capability_command(command) in _PAGED_COLLECTION_COMMANDS
+
+
+def supports_file_export(command: str) -> bool:
+    normalized = normalize_capability_command(command)
+    return normalized in _FILE_EXPORT_COMMANDS or normalized.endswith((".export", ".export-package"))
+
+
+def supports_wait(command: str) -> bool:
+    """Whether the registered generic ``wait`` command can poll this result.
+
+    Some operations are potentially slow because they call an LLM, but they
+    complete inside the command and have no standalone job route (for example
+    ``drafts.generate`` and ``tasks.calculate-match``).  Only resources with a
+    stable ``get`` endpoint and a background lifecycle belong here.
+    """
+
+    return normalize_capability_command(command) in _WAIT_CAPABILITY_COMMANDS | {"wait"}
+
+
+def supports_if_revision(command: str) -> bool:
+    return normalize_capability_command(command) in _IF_REVISION_COMMANDS
+
+
+def collection_filter_fields(command: str) -> frozenset[str]:
+    return _COLLECTION_FILTER_FIELDS.get(normalize_capability_command(command), frozenset())
+
+
+def collection_output_fields(command: str) -> frozenset[str]:
+    """Return the stable, user-visible fields for a command's result.
+
+    Collection commands publish their fields directly in
+    ``_COLLECTION_FILTER_FIELDS``.  Detail and mutation commands use the same
+    resource DTO, so resolving their longest matching collection prefix keeps
+    ``describe`` useful without duplicating a second field inventory.
+    """
+
+    normalized = normalize_capability_command(command)
+    direct = collection_filter_fields(normalized)
+    if direct:
+        return direct
+    matches = [
+        (candidate, fields, candidate.rsplit(".", 1)[0])
+        for candidate, fields in _COLLECTION_FILTER_FIELDS.items()
+        if normalized.startswith(candidate.rsplit(".", 1)[0])
+    ]
+    if not matches:
+        return frozenset()
+    _, fields, _ = max(
+        matches,
+        key=lambda item: (
+            len(item[2]),
+            1 if item[0].endswith(".list") else 0,
+        ),
+    )
+    return fields
+
+
+def collection_filter_operators(command: str) -> tuple[str, ...]:
+    return _COMMON_FILTER_OPERATORS if supports_structured_filter(command) else ()
+
+
+def capability_stateful(command: str) -> bool:
+    normalized = normalize_capability_command(command)
+    return normalized.startswith(
+        (
+            "campaigns.",
+            "crawler.jobs.",
+            "matching.jobs.",
+            "enrichment.jobs.",
+            "drafts.",
+            "tasks.",
+            "workspaces.",
+        ),
+    )
 
 
 def get_capability(command: str) -> Capability | None:

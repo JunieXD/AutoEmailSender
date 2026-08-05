@@ -15,6 +15,7 @@ from auto_email_sender_cli.main import app
 from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
 from auto_email_sender_cli.capabilities import CAPABILITIES
 from auto_email_sender_cli.describe import describe_command
+from auto_email_sender_cli.errors import redact_error_details
 
 
 class CliTests(unittest.TestCase):
@@ -30,6 +31,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["_meta"]["schema_version"], "1")
         self.assertEqual(payload["_meta"]["command"], "version")
         self.assertIn("agent_guide", payload["_meta"])
+
+    def test_guide_version_matches_cli_version_metadata(self) -> None:
+        guide = self.runner.invoke(app, ["--format", "json", "guide"])
+        version = self.runner.invoke(app, ["--format", "json", "version"])
+
+        self.assertEqual(guide.exit_code, 0, msg=guide.output)
+        self.assertEqual(version.exit_code, 0, msg=version.output)
+        guide_payload = json.loads(guide.stdout)
+        version_payload = json.loads(version.stdout)
+        self.assertEqual(guide_payload["data"]["version"], version_payload["data"]["cli_version"])
+        self.assertEqual(
+            guide_payload["_meta"]["agent_guide"]["version"],
+            version_payload["data"]["cli_version"],
+        )
 
     def test_json_alias_is_supported(self) -> None:
         result = self.runner.invoke(app, ["--json", "guide", "--topic", "sending"])
@@ -49,6 +64,25 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], "INVALID_GUIDE_TOPIC")
+
+    def test_error_output_redacts_credentials_in_messages_and_details(self) -> None:
+        result = self.runner.invoke(
+            app,
+            ["--format", "json", "guide", "--topic", "password=known-secret"],
+        )
+
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertNotIn("known-secret", result.stdout)
+        redacted = redact_error_details(
+            {
+                "api_key": "api-secret",
+                "nested": [{"access_token": "token-secret"}],
+                "comparison_token": "keep-for-retry",
+            },
+        )
+        self.assertNotIn("api-secret", json.dumps(redacted))
+        self.assertNotIn("token-secret", json.dumps(redacted))
+        self.assertEqual(redacted["comparison_token"], "keep-for-retry")
 
     def test_capabilities_report_available_and_planned_commands_honestly(self) -> None:
         result = self.runner.invoke(
@@ -269,6 +303,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual(healthy["items"][0]["state"], "installed")
         self.assertFalse(outdated["ok"])
         self.assertEqual(outdated["items"][0]["state"], "needs_update")
+
+    def test_skill_inspection_does_not_treat_malformed_agent_manifest_as_healthy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "installation.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 4,
+                        "enabled": True,
+                        "skill_source": Path(temp_dir).as_posix(),
+                        "agents": {"codex": "not-an-agent-record"},
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE": manifest_path.as_posix()},
+            ):
+                result = inspect_agent_skill_installation()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["state"], "needs_update")
+        self.assertIn("格式损坏", result["message"])
 
     def test_status_tells_user_to_manually_open_a_stopped_desktop_app(self) -> None:
         descriptor = SimpleNamespace(
@@ -2841,6 +2899,8 @@ class CliTests(unittest.TestCase):
             fake_client.calls[0][:2],
             ("GET", "/api/agent/v1/campaigns/9/resend-context"),
         )
+        payload = json.loads(result.stdout)
+        self.assertNotIn("pagination", payload["_meta"])
 
     def test_plan_execute_requires_local_confirm_flag_before_calling_api(self) -> None:
         result = self.runner.invoke(

@@ -16,6 +16,7 @@ DraftTemplatePreservation = Literal["structure_first", "balanced", "content_firs
 
 
 class RuntimeSettingsRead(ApiSchema):
+    revision: str | None = None
     match_analysis_job_worker_count: int
     match_analysis_job_item_concurrency: int
     match_analysis_job_interval_seconds: int

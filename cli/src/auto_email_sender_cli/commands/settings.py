@@ -6,7 +6,13 @@ from typing import Annotated, Any
 import typer
 
 from auto_email_sender_cli.client import AgentApiClient
-from auto_email_sender_cli.commands.common import cli_context, format_detail, run_read_command
+from auto_email_sender_cli.commands.common import (
+    add_mutation_receipt,
+    cli_context,
+    format_detail,
+    run_read_command,
+    validate_context_options,
+)
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
 
@@ -131,6 +137,12 @@ def update_runtime_settings(
         raise typer.Exit(error.exit_code)
 
     try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+            supports_if_revision=True,
+        )
         client = AgentApiClient()
         current = client.request("GET", "/api/agent/v1/settings")
         if not isinstance(current, dict):
@@ -141,11 +153,20 @@ def update_runtime_settings(
             )
         payload = _runtime_settings_payload(current)
         payload.update(requested_updates)
+        request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
         data = client.request(
             "PATCH",
             "/api/agent/v1/settings",
             json_body=payload,
-            idempotency_key=f"cli_{secrets.token_urlsafe(24)}",
+            idempotency_key=request_id,
+            if_revision=context.if_revision,
+        )
+        data = add_mutation_receipt(
+            data,
+            command="settings.update",
+            request_id=request_id,
+            json_body=payload,
+            response_headers=getattr(client, "last_response_headers", {}),
         )
         emit_success(
             context,
@@ -154,6 +175,7 @@ def update_runtime_settings(
             human_text=format_detail(data),
             guide_topic="settings",
             app_version=client.descriptor.app_version,
+            request_id=getattr(client, "last_request_id", None) or request_id,
         )
     except CliError as error:
         emit_error(context, command="settings.update", error=error, guide_topic="settings")

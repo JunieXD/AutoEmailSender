@@ -14,6 +14,7 @@ from auto_email_sender_cli.capabilities import (
     normalize_capability_command,
     suggest_capabilities,
 )
+from auto_email_sender_cli.contracts import build_command_contract
 
 
 CommandDescription = dict[str, object]
@@ -58,7 +59,8 @@ def describe_command(app: typer.Typer, requested_command: str) -> CommandDescrip
     parameters = [_describe_parameter(parameter) for parameter in command.params]
     children = _describe_children(command, normalized) if is_group else []
     usage = _build_usage(command_path, parameters, is_group)
-    return {
+    next_steps = _next_steps(capability)
+    description: CommandDescription = {
         "command": normalized,
         "kind": "group" if is_group else "command",
         "summary": _summary(command, capability, is_group),
@@ -69,9 +71,22 @@ def describe_command(app: typer.Typer, requested_command: str) -> CommandDescrip
         "input_file_examples": _input_file_examples(normalized),
         "risk": _describe_risk(capability),
         "preconditions": _describe_preconditions(normalized),
-        "next_steps": _next_steps(capability),
+        "next_steps": next_steps,
         "suggestions": suggest_capabilities(normalized),
     }
+    # The contract fields are generated from the same Click parameters and
+    # Capability registry used above.  Keep the legacy fields in the response
+    # so existing protocol-v2 callers remain compatible.
+    description.update(
+        build_command_contract(
+            command=normalized,
+            parameters=parameters,
+            input_file_examples=_input_file_examples(normalized),
+            capability=capability,
+            next_steps=next_steps,
+        ),
+    )
+    return description
 
 
 def _describe_parameter(parameter: Any) -> dict[str, object]:

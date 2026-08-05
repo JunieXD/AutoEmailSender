@@ -54,6 +54,8 @@ def list_token_usage_records(
     model_name: Annotated[str | None, typer.Option("--model-name")] = None,
     start_at: Annotated[str | None, typer.Option("--start-at", help="带时区的 ISO 8601 时间。")]=None,
     end_at: Annotated[str | None, typer.Option("--end-at", help="带时区的 ISO 8601 时间。")]=None,
+    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")]=None,
+    all_items: Annotated[bool, typer.Option("--all", help="读取全部分页记录。")]=False,
 ) -> None:
     run_read_command(
         ctx,
@@ -68,6 +70,8 @@ def list_token_usage_records(
             "end_at": end_at,
         },
         guide_topic="insights",
+        fetch_all=all_items,
+        fields=fields,
         human_formatter=format_detail,
     )
 

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Final
 
+from auto_email_sender_cli.version import get_cli_version
 
-GUIDE_VERSION: Final = "2.20.0"
+GUIDE_VERSION: Final = get_cli_version()
 
 GUIDE_TOPICS: Final[dict[str, dict[str, object]]] = {
     "overview": {
@@ -14,6 +15,9 @@ GUIDE_TOPICS: Final[dict[str, dict[str, object]]] = {
             "按稳定 ID 操作对象；名称有歧义时先列出候选项。",
             "自然语言和邮件语义由 Agent 分析，软件只保存用户明确要求写入的业务数据。",
             "所有结果都应向用户报告成功、失败、跳过和待确认数量。",
+            "可分页的集合读取命令统一支持分页、--fields、白名单 JSON --filter；结果很多时使用 --all 和 --output-file 导出 JSONL，避免把全量数据塞进上下文。社区比对 records/preview 是有界结果，只支持它们说明中列出的字段投影；专用文件导出命令使用自己的 --output。",
+            "写操作保留并复用同一个 --request-id；读取对象得到 revision 后，只在支持版本保护的写入命令上带 --if-revision，发生冲突就重新读取，不要静默覆盖。",
+            "网络中断后若返回 EXTERNAL_EXECUTION_UNKNOWN，先读取任务或对象状态，不能自动再次执行外部动作。",
         ],
         "topics": [
             "campaigns",

@@ -83,5 +83,5 @@ def refresh_workspace_replies(
         },
         guide_topic="workspaces",
         human_formatter=format_detail,
-        use_idempotency_key=False,
+        use_idempotency_key=True,
     )
