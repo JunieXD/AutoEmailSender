@@ -3,15 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Final, Literal
+
+from auto_email_sender_cli.operation_specs import get_operation_spec
 
 
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
 Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
 
-CONTRACT_VERSION: Final = "1"
-CAPABILITY_CATALOG_VERSION: Final = "1"
+CONTRACT_VERSION: Final = "2"
+CAPABILITY_CATALOG_VERSION: Final = "2"
 
 
 # Discovery must be cheap enough to use at the start of every Agent turn.
@@ -395,6 +398,7 @@ class Capability:
         let an Agent decide which commands are worth describing first.
         """
 
+        spec = _require_operation_spec(self.command)
         result = asdict(self)
         result.pop("guide_topic", None)
         result.update(
@@ -413,8 +417,11 @@ class Capability:
                 else [],
                 "supports_wait": supports_wait(self.command),
                 "supports_if_revision": supports_if_revision(self.command),
-                "supports_idempotent_retry": self.mutates,
-                "stateful": capability_stateful(self.command),
+                "supports_idempotent_retry": spec.idempotency.supports_idempotent_retry,
+                "stateful": spec.stateful,
+                "introduced_in": spec.introduced_in,
+                "deprecated": spec.deprecated,
+                "replaced_by": list(spec.replaced_by),
             },
         )
         return result
@@ -1407,6 +1414,7 @@ def list_capabilities(
     command: str | None = None,
     *,
     resource: str | None = None,
+    contract_revisions: Mapping[str, str] | None = None,
 ) -> list[dict[str, object]]:
     """Return the complete records for an explicit full-capability request.
 
@@ -1415,17 +1423,28 @@ def list_capabilities(
     compatibility callers, and contract tests.
     """
 
-    return [item.to_dict() for item in _select_capabilities(command, resource=resource)]
+    records: list[dict[str, object]] = []
+    for item in _select_capabilities(command, resource=resource):
+        record = item.to_dict()
+        revision = _contract_revision_for(item, contract_revisions)
+        if revision is not None:
+            record["contract_revision"] = revision
+        records.append(record)
+    return records
 
 
 def list_capability_cards(
     command: str | None = None,
     *,
     resource: str | None = None,
+    contract_revisions: Mapping[str, str] | None = None,
 ) -> list[dict[str, object]]:
     """Return compact command cards suitable for routine Agent discovery."""
 
-    return [_capability_card(item) for item in _select_capabilities(command, resource=resource)]
+    return [
+        _capability_card(item, contract_revision=_contract_revision_for(item, contract_revisions))
+        for item in _select_capabilities(command, resource=resource)
+    ]
 
 
 def list_resource_catalog(
@@ -1453,26 +1472,46 @@ def list_resource_catalog(
     ]
 
 
-def capability_catalog_revision() -> str:
-    """Return a stable short revision so clients can cache discovery safely."""
+def capability_catalog_revision(
+    contract_revisions: Mapping[str, str] | None = None,
+    *,
+    commands: Iterable[str] | None = None,
+    view: str | None = None,
+) -> str:
+    """Return a stable short revision for a catalog or selected discovery scope.
 
-    snapshot = [
-        {
-            "command": item.command,
-            "summary": item.summary,
-            "risk_level": item.risk_level,
-            "availability": item.availability,
-            "mutates": item.mutates,
-            "external_action": item.external_action,
-            "requires_plan": item.requires_plan,
-            "long_running": item.long_running,
-        }
-        for item in CAPABILITIES
-    ]
+    Callers that have the real Click-derived command revisions must pass them
+    here.  The manifest revision fallback keeps lower-level library callers
+    deterministic, while the public CLI always supplies complete contracts.
+    ``view`` is included only for a cacheable presentation scope, so a cached
+    resource catalog cannot be mistaken for cached command cards or full data.
+    """
+
+    selected_commands = set(commands) if commands is not None else None
+    snapshot: list[dict[str, object]] = []
+    for item in CAPABILITIES:
+        if selected_commands is not None and item.command not in selected_commands:
+            continue
+        spec = _require_operation_spec(item.command)
+        snapshot.append(
+            {
+                "command": item.command,
+                "summary": item.summary,
+                "risk_level": item.risk_level,
+                "availability": item.availability,
+                "mutates": item.mutates,
+                "external_action": item.external_action,
+                "requires_plan": item.requires_plan,
+                "long_running": item.long_running,
+                "semantic_revision": spec.manifest_revision(),
+                "contract_revision": _contract_revision_for(item, contract_revisions),
+            },
+        )
     encoded = json.dumps(
         {
             "catalog_version": CAPABILITY_CATALOG_VERSION,
             "contract_version": CONTRACT_VERSION,
+            "view": view,
             "items": snapshot,
         },
         ensure_ascii=False,
@@ -1508,10 +1547,15 @@ def _select_capabilities(
     return items
 
 
-def _capability_card(item: Capability) -> dict[str, object]:
+def _capability_card(
+    item: Capability,
+    *,
+    contract_revision: str | None,
+) -> dict[str, object]:
     """Keep the routing facts while omitting detailed schema duplicates."""
 
-    return {
+    spec = _require_operation_spec(item.command)
+    card: dict[str, object] = {
         "command": item.command,
         "summary": item.summary,
         "resource": capability_resource(item.command),
@@ -1519,13 +1563,19 @@ def _capability_card(item: Capability) -> dict[str, object]:
         "availability": item.availability,
         "risk_level": item.risk_level,
         "effects": {
-            "mutates": item.mutates,
-            "external_action": item.external_action,
-            "confirmation_required": item.requires_plan or item.risk_level == "L3",
+            "mutates": spec.effects.mutates,
+            "external_action": bool(spec.effects.external_services),
+            "confirmation_required": spec.effects.requires_confirmation_plan,
             "long_running": item.long_running,
         },
         "contract_version": CONTRACT_VERSION,
+        "introduced_in": spec.introduced_in,
+        "deprecated": spec.deprecated,
+        "replaced_by": list(spec.replaced_by),
     }
+    if contract_revision is not None:
+        card["contract_revision"] = contract_revision
+    return card
 
 
 def _resource_card(
@@ -1544,8 +1594,11 @@ def _resource_card(
         "available_count": available_count,
         "unavailable_count": len(capabilities) - available_count,
         "risk_levels": risk_levels,
-        "has_mutations": any(item.mutates for item in capabilities),
-        "has_external_actions": any(item.external_action for item in capabilities),
+        "has_mutations": any(_require_operation_spec(item.command).effects.mutates for item in capabilities),
+        "has_external_actions": any(
+            _require_operation_spec(item.command).effects.external_services
+            for item in capabilities
+        ),
     }
 
 
@@ -1677,18 +1730,29 @@ def collection_filter_operators(command: str) -> tuple[str, ...]:
 
 
 def capability_stateful(command: str) -> bool:
-    normalized = normalize_capability_command(command)
-    return normalized.startswith(
-        (
-            "campaigns.",
-            "crawler.jobs.",
-            "matching.jobs.",
-            "enrichment.jobs.",
-            "drafts.",
-            "tasks.",
-            "workspaces.",
-        ),
-    )
+    spec = get_operation_spec(normalize_capability_command(command))
+    return spec.stateful if spec is not None else False
+
+
+def _require_operation_spec(command: str):
+    spec = get_operation_spec(command)
+    if spec is None:
+        raise RuntimeError(f"Missing operation manifest for capability: {command}")
+    return spec
+
+
+def _contract_revision_for(
+    item: Capability,
+    contract_revisions: Mapping[str, str] | None,
+) -> str | None:
+    if contract_revisions is None:
+        return None
+    revision = contract_revisions.get(item.command)
+    if revision is None:
+        if item.availability != "available":
+            return None
+        raise RuntimeError(f"Missing command contract revision: {item.command}")
+    return revision
 
 
 def get_capability(command: str) -> Capability | None:

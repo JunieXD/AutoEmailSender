@@ -7,6 +7,7 @@ import httpx
 import typer
 
 from auto_email_sender_cli.capabilities import (
+    CAPABILITIES,
     CAPABILITY_CATALOG_VERSION,
     capability_catalog_revision,
     list_capability_cards,
@@ -44,6 +45,7 @@ from auto_email_sender_cli.describe import (
     DESCRIPTION_VIEWS,
     compact_command_description,
     describe_command,
+    describe_command_revisions,
     description_sections,
 )
 from auto_email_sender_cli.guide import GUIDE_TOPICS, get_guide
@@ -92,6 +94,27 @@ app.add_typer(test_email_app, name="test-email")
 app.add_typer(usage_app, name="usage")
 app.add_typer(workspaces_app, name="workspaces")
 app.command("wait", help="等待一个已运行的后台任务进入终态；不会启动桌面应用。", no_args_is_help=True)(wait_for_resource)
+
+
+def _current_command_contract_revisions() -> dict[str, str]:
+    """Materialize parser-derived revisions for the published command set.
+
+    This function deliberately runs against the live Typer tree.  A changed
+    flag, argument type, output schema, semantic manifest, or state transition
+    therefore invalidates a cached discovery catalog without relying on a
+    separately maintained version list.
+    """
+
+    commands = [
+        capability.command
+        for capability in CAPABILITIES
+        if capability.availability == "available"
+    ]
+    revisions = describe_command_revisions(app, commands)
+    missing = sorted(set(commands) - set(revisions))
+    if missing:
+        raise RuntimeError(f"Published capability is not describable: {', '.join(missing)}")
+    return revisions
 
 
 @app.callback()
@@ -215,6 +238,13 @@ def capabilities_command(
         bool,
         typer.Option("--all", help="等同于 --view full；仅在确实需要完整能力清单时使用。"),
     ] = False,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            "--since",
+            help="相同选择和视图的已知 revision；相同则只返回 not_modified 响应。",
+        ),
+    ] = None,
 ) -> None:
     context = _context(ctx)
     requested_view = view.strip().lower() if view else None
@@ -236,6 +266,15 @@ def capabilities_command(
         )
         emit_error(context, command="capabilities", error=error)
         raise typer.Exit(error.exit_code)
+    if since is not None and not since.strip():
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--since 不能为空。",
+            exit_code=2,
+            details={"since": since},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
 
     # A selector already narrows the universe, so its useful default is a
     # command-card list.  The root default is a bounded resource catalog.
@@ -247,8 +286,14 @@ def capabilities_command(
             or ("commands" if command or resource else "catalog")
         )
     )
+    contract_revisions = _current_command_contract_revisions()
+    catalog_revision = capability_catalog_revision(contract_revisions)
     try:
-        full_items = list_capabilities(command, resource=resource)
+        full_items = list_capabilities(
+            command,
+            resource=resource,
+            contract_revisions=contract_revisions,
+        )
         if (command or resource) and not full_items:
             requested = command or resource or ""
             normalized = normalize_capability_command(requested)
@@ -257,7 +302,7 @@ def capabilities_command(
                 message=f"没有找到能力：{command or resource}",
                 exit_code=4,
                 details={
-                "command": requested,
+                    "command": requested,
                     "normalized_command": normalized,
                     "suggestions": suggest_capabilities(normalized),
                 },
@@ -267,6 +312,41 @@ def capabilities_command(
     except CliError as error:
         emit_error(context, command="capabilities", error=error)
         raise typer.Exit(error.exit_code) from error
+
+    selected_commands = [
+        item["command"]
+        for item in full_items
+        if isinstance(item.get("command"), str)
+    ]
+    scope_revision = capability_catalog_revision(
+        contract_revisions,
+        commands=selected_commands,
+        view=effective_view,
+    )
+    scope = {
+        "command": normalize_capability_command(command) if command else None,
+        "resource": normalize_capability_command(resource) if resource else None,
+        "view": effective_view,
+    }
+    if since is not None and since == scope_revision:
+        data = {
+            "catalog_version": CAPABILITY_CATALOG_VERSION,
+            "catalog_revision": catalog_revision,
+            "scope": scope,
+            "scope_revision": scope_revision,
+            "view": effective_view,
+            "items": [],
+            "summary": {"commands": len(full_items), "unchanged": True},
+            "cache": {"status": "not_modified", "refresh_required": False},
+            "next": {"reuse_cached_result": True},
+        }
+        emit_success(
+            context,
+            command="capabilities",
+            data=data,
+            human_text="CLI 能力目录未变化；可继续使用当前 scope 的缓存结果。",
+        )
+        return
 
     if effective_view == "catalog":
         items = list_resource_catalog(command, resource=resource)
@@ -285,7 +365,11 @@ def capabilities_command(
                 f"（{item['available_count']}/{item['command_count']} 个可用命令）",
             )
     elif effective_view == "commands":
-        items = list_capability_cards(command, resource=resource)
+        items = list_capability_cards(
+            command,
+            resource=resource,
+            contract_revisions=contract_revisions,
+        )
         summary = {
             "commands": len(items),
             "available_commands": sum(
@@ -324,7 +408,9 @@ def capabilities_command(
             )
     data = {
         "catalog_version": CAPABILITY_CATALOG_VERSION,
-        "catalog_revision": capability_catalog_revision(),
+        "catalog_revision": catalog_revision,
+        "scope": scope,
+        "scope_revision": scope_revision,
         "view": effective_view,
         "items": items,
         "summary": summary,
@@ -334,6 +420,8 @@ def capabilities_command(
             "complete_catalog": "auto-email-sender --format json capabilities --view full",
         },
     }
+    if since is not None:
+        data["cache"] = {"status": "stale", "refresh_required": True}
     emit_success(
         context,
         command="capabilities",
@@ -357,7 +445,7 @@ def describe_command_handler(
         list[str],
         typer.Option(
             "--section",
-            help="按需展开 input、output、effects、preconditions、states、errors 或 actions；可重复。",
+            help="按需展开 input、output、effects、preconditions、trust、states、errors、actions、idempotency 或 lifecycle；可重复。",
         ),
     ] = [],
 ) -> None:

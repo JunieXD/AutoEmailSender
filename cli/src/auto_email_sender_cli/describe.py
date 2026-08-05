@@ -26,9 +26,12 @@ DESCRIPTION_SECTIONS: Final[tuple[str, ...]] = (
     "output",
     "effects",
     "preconditions",
+    "trust",
     "states",
     "errors",
     "actions",
+    "idempotency",
+    "lifecycle",
 )
 
 _DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
@@ -36,9 +39,12 @@ _DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
     "output": "output",
     "effects": "effects",
     "preconditions": "preconditions",
+    "trust": "trust",
     "states": "state_transitions",
     "errors": "errors",
     "actions": "next_actions",
+    "idempotency": "idempotency",
+    "lifecycle": "lifecycle",
 }
 
 
@@ -63,11 +69,42 @@ JSON_FILE_EXAMPLES: dict[str, dict[str, object]] = {
 
 
 def describe_command(app: typer.Typer, requested_command: str) -> CommandDescription | None:
+    return _describe_command_from_root(get_command(app), requested_command)
+
+
+def describe_command_revisions(
+    app: typer.Typer,
+    commands: Iterable[str],
+) -> dict[str, str]:
+    """Return complete parser-derived revisions with one Click tree build.
+
+    ``capabilities`` needs all leaf hashes to negotiate a cache safely.  Calling
+    ``get_command`` once per leaf made routine discovery needlessly slow, so a
+    single live command tree is shared for this batch without caching any
+    contract across process launches.
+    """
+
+    root = get_command(app)
+    revisions: dict[str, str] = {}
+    for command in commands:
+        description = _describe_command_from_root(root, command)
+        if description is None:
+            continue
+        revision = description.get("contract_revision")
+        if isinstance(revision, str):
+            revisions[command] = revision
+    return revisions
+
+
+def _describe_command_from_root(
+    root: Command,
+    requested_command: str,
+) -> CommandDescription | None:
     normalized = normalize_capability_command(requested_command)
     if not normalized:
         return None
     command_path = normalized.split(".")
-    command: Command = get_command(app)
+    command: Command = root
     for segment in command_path:
         if not isinstance(command, TyperGroup):
             return None
@@ -92,19 +129,16 @@ def describe_command(app: typer.Typer, requested_command: str) -> CommandDescrip
         "children": children,
         "input_file_examples": _input_file_examples(normalized),
         "risk": _describe_risk(capability),
-        "preconditions": _describe_preconditions(normalized),
         "next_steps": next_steps,
         "suggestions": suggest_capabilities(normalized),
     }
-    # The contract fields are generated from the same Click parameters and
-    # Capability registry used above.  Keep the legacy fields in the response
-    # so existing protocol-v2 callers remain compatible.
+    # The contract combines live Click parameters with the explicit operation
+    # manifest. Keep the legacy fields in the response for protocol-v2 callers.
     description.update(
         build_command_contract(
             command=normalized,
             parameters=parameters,
             input_file_examples=_input_file_examples(normalized),
-            capability=capability,
             next_steps=next_steps,
         ),
     )
@@ -158,6 +192,8 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
         "summary": description.get("summary"),
         "usage": description.get("usage"),
         "example": description.get("example"),
+        "contract_version": description.get("contract_version"),
+        "contract_revision": description.get("contract_revision"),
         "risk": _compact_risk(description.get("risk")),
         "input": {
             "parameters": compact_parameters,
@@ -185,6 +221,23 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             "full_view": True,
         },
     }
+    trust = description.get("trust")
+    if isinstance(trust, dict) and trust.get("external_content") != "none":
+        summary["trust"] = {
+            key: trust[key]
+            for key in ("external_content", "instruction_policy", "untrusted_fields")
+            if key in trust
+        }
+    idempotency = description.get("idempotency")
+    if isinstance(idempotency, dict) and idempotency.get("mode") != "not_applicable":
+        summary["idempotency"] = {
+            key: idempotency[key]
+            for key in ("mode", "supports_idempotent_retry", "retry_guidance")
+            if key in idempotency
+        }
+    lifecycle = description.get("lifecycle")
+    if isinstance(lifecycle, dict) and lifecycle.get("deprecated"):
+        summary["lifecycle"] = lifecycle
     children = description.get("children")
     if isinstance(children, list) and children:
         summary["children"] = children
@@ -422,32 +475,9 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
     }
 
 
-def _describe_preconditions(command: str) -> dict[str, object]:
-    offline_commands = {"version", "guide", "capabilities", "describe", "doctor"}
-    return {
-        "desktop_app_must_be_open": command not in offline_commands,
-        "manual_app_open_required": command not in offline_commands,
-        "note": (
-            "请先手动打开 Auto Email Sender 并等待加载完成。"
-            if command not in offline_commands
-            else "此说明命令可在桌面软件未打开时使用。"
-        ),
-    }
-
-
 def _next_steps(capability: Capability | None) -> list[str]:
-    if capability is None:
-        return ["使用 capabilities --resource <resource> 查看具体子命令。"]
-    steps: list[str] = []
-    if capability.requires_plan:
-        steps.append("展示返回的计划；只有用户明确确认后，才能运行 plans execute <plan-id> --confirm。")
-    elif capability.mutates:
-        steps.append("读取或报告返回结果，确认实际变更和后续待处理项。")
-    else:
-        steps.append("使用返回的稳定 ID 继续下一步查询或操作。")
-    if capability.long_running:
-        steps.append("这是异步或耗时操作；轮询对应 get/list 命令后再报告最终结果。")
-    return steps
+    _ = capability
+    return ["使用 capabilities --resource <resource> 查看具体子命令。"]
 
 
 def _json_value(value: Any) -> object:

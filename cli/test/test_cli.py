@@ -101,6 +101,9 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
+        # Full discovery is opt-in, but it still must remain bounded. Detailed
+        # input/output contracts belong behind per-command describe calls.
+        self.assertLess(len(result.stdout.encode("utf-8")), 120_000)
         items = json.loads(result.stdout)["data"]["items"]
         by_command = {item["command"]: item for item in items}
         self.assertEqual(by_command["professors.create"]["availability"], "available")
@@ -197,6 +200,48 @@ class CliTests(unittest.TestCase):
         # protects the routine discovery path from consuming an Agent turn.
         self.assertLess(len(result.stdout.encode("utf-8")), 8_000)
 
+    def test_capabilities_can_negotiate_an_unchanged_scope_without_repeating_catalog(self) -> None:
+        initial = self.runner.invoke(app, ["--format", "json", "capabilities"])
+        self.assertEqual(initial.exit_code, 0, msg=initial.output)
+        initial_data = json.loads(initial.stdout)["data"]
+
+        cached = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "capabilities",
+                "--since",
+                initial_data["scope_revision"],
+            ],
+        )
+        self.assertEqual(cached.exit_code, 0, msg=cached.output)
+        cached_data = json.loads(cached.stdout)["data"]
+        self.assertEqual(cached_data["catalog_revision"], initial_data["catalog_revision"])
+        self.assertEqual(cached_data["scope_revision"], initial_data["scope_revision"])
+        self.assertEqual(cached_data["items"], [])
+        self.assertTrue(cached_data["summary"]["unchanged"])
+        self.assertEqual(cached_data["cache"]["status"], "not_modified")
+        self.assertLess(len(cached.stdout.encode("utf-8")), 1_000)
+
+        different_view = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "capabilities",
+                "--view",
+                "commands",
+                "--since",
+                initial_data["scope_revision"],
+            ],
+        )
+        self.assertEqual(different_view.exit_code, 0, msg=different_view.output)
+        different_view_data = json.loads(different_view.stdout)["data"]
+        self.assertNotEqual(different_view_data["scope_revision"], initial_data["scope_revision"])
+        self.assertTrue(different_view_data["items"])
+        self.assertEqual(different_view_data["cache"]["status"], "stale")
+
     def test_capabilities_are_available_without_a_running_desktop_app(self) -> None:
         result = self.runner.invoke(app, ["--format", "json", "capabilities"])
 
@@ -271,6 +316,19 @@ class CliTests(unittest.TestCase):
         self.assertIn("output", full_payload)
         self.assertLess(len(result.stdout.encode("utf-8")), len(full.stdout.encode("utf-8")))
 
+    def test_compact_describe_exposes_contract_revision_and_bounds_default_output(self) -> None:
+        result = self.runner.invoke(
+            app,
+            ["--format", "json", "describe", "--command", "plans.execute"],
+        )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(len(payload["contract_revision"]), 16)
+        self.assertIn("idempotency", payload)
+        self.assertIn("trust", payload)
+        self.assertLess(len(result.stdout.encode("utf-8")), 4_000)
+
     def test_every_available_capability_has_a_describe_contract(self) -> None:
         missing = [
             capability.command
@@ -319,6 +377,7 @@ class CliTests(unittest.TestCase):
 
         self.assertLess(len(skill.encode("utf-8")), 5_000)
         self.assertIn("capabilities --resource", skill)
+        self.assertIn("scope_revision", skill)
         self.assertIn("describe --command", skill)
         self.assertIn("untrusted", skill)
         self.assertIn("APP_UNAVAILABLE", skill)

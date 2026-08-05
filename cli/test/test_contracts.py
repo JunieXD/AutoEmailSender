@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,15 +11,17 @@ from typer.testing import CliRunner
 
 from auto_email_sender_cli.capabilities import (
     CAPABILITIES,
+    capability_catalog_revision,
     capability_stateful,
     collection_filter_fields,
     supports_if_revision,
     supports_pagination,
     supports_wait,
 )
-from auto_email_sender_cli.contracts import validate_command_contract
-from auto_email_sender_cli.describe import describe_command
+from auto_email_sender_cli.contracts import command_contract_revision, validate_command_contract
+from auto_email_sender_cli.describe import describe_command, describe_command_revisions
 from auto_email_sender_cli.main import app
+from auto_email_sender_cli.operation_specs import OPERATION_SPECS, validate_operation_manifest
 from auto_email_sender_cli.commands.common import (
     _redact_receipt_value,
     _with_revision,
@@ -48,6 +51,58 @@ class _FakeClient:
 
 
 class ContractTests(unittest.TestCase):
+    def test_operation_manifest_covers_every_capability_without_legacy_drift(self) -> None:
+        self.assertEqual(validate_operation_manifest(CAPABILITIES), [])
+        self.assertEqual({item.command for item in CAPABILITIES}, set(OPERATION_SPECS))
+        for capability in CAPABILITIES:
+            spec = OPERATION_SPECS[capability.command]
+            self.assertEqual(spec.effects.mutates, capability.mutates, capability.command)
+            self.assertEqual(
+                bool(spec.effects.external_services),
+                capability.external_action,
+                capability.command,
+            )
+            self.assertEqual(
+                spec.effects.requires_confirmation_plan,
+                capability.requires_plan or capability.risk_level == "L3",
+                capability.command,
+            )
+
+    def test_contract_revision_hashes_full_parser_and_semantic_contract(self) -> None:
+        description = describe_command(app, "plans.execute")
+        assert description is not None
+        revision = description["contract_revision"]
+        self.assertIsInstance(revision, str)
+        self.assertEqual(revision, command_contract_revision(description))
+
+        changed = deepcopy(description)
+        changed["effects"]["impact_scope"] = "different explicit scope"
+        self.assertNotEqual(revision, command_contract_revision(changed))
+
+        changed_input = deepcopy(description)
+        changed_input["input"]["schema"]["properties"]["confirm"]["required"] = True
+        self.assertNotEqual(revision, command_contract_revision(changed_input))
+
+        guide = describe_command(app, "guide")
+        assert guide is not None
+        self.assertTrue(guide["lifecycle"]["deprecated"])
+        self.assertEqual(guide["lifecycle"]["replaced_by"], ["capabilities", "describe"])
+
+    def test_catalog_revision_includes_each_live_command_contract_revision(self) -> None:
+        commands = [
+            capability.command
+            for capability in CAPABILITIES
+            if capability.availability == "available"
+        ]
+        revisions = describe_command_revisions(app, commands)
+        self.assertEqual(set(revisions), set(commands))
+        self.assertTrue(all(len(value) == 16 for value in revisions.values()))
+
+        baseline = capability_catalog_revision(revisions)
+        changed = dict(revisions)
+        changed["plans.execute"] = "0" * 16
+        self.assertNotEqual(baseline, capability_catalog_revision(changed))
+
     def test_versioned_baseline_lists_match_the_live_capability_registry(self) -> None:
         baseline_path = Path(__file__).resolve().parents[2] / "docs" / "agent_cli_baseline.json"
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
