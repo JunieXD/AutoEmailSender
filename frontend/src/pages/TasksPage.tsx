@@ -37,6 +37,7 @@ import { AttachmentSizeSummary } from "@/components/molecules/AttachmentSizeSumm
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
 import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { Pagination } from "@/components/molecules/Pagination";
+import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
@@ -1223,6 +1224,7 @@ export const TasksPage = () => {
   const crawlEventsStartRef = useRef<HTMLElement | null>(null);
   const crawlPagesStartRef = useRef<HTMLElement | null>(null);
   const crawlCandidatesStartRef = useRef<HTMLElement | null>(null);
+  const crawlCandidateFirstItemRef = useRef<HTMLDivElement | null>(null);
   const activeTaskListView = taskListViews[activeTab];
   const tasksRequestKey =
     selectedIdentityId
@@ -2726,7 +2728,6 @@ export const TasksPage = () => {
 
   const resetCrawlCandidateFilters = () => {
     setCrawlCandidateFilters(createDefaultCrawlCandidateFilters());
-    setCrawlCandidateInformationFiltersOpen(false);
     setCrawlCandidatePage(1);
   };
 
@@ -6525,7 +6526,7 @@ export const TasksPage = () => {
                     </div>
                   ) : null}
                   {filteredCrawlJobCandidates.length > 0 ? (
-                    visibleCrawlJobCandidates.map((candidate) => {
+                    visibleCrawlJobCandidates.map((candidate, index) => {
                       const candidateMissingEmail = !candidate.email?.trim();
                       const candidateCanEdit =
                         selectedCrawlJobCanReview &&
@@ -6534,29 +6535,35 @@ export const TasksPage = () => {
                       return (
                         <div
                           key={candidate.id}
-                          className="rounded-2xl border border-stone-100 bg-white px-4 py-3"
+                          ref={
+                            index === 0
+                              ? crawlCandidateFirstItemRef
+                              : undefined
+                          }
+                          tabIndex={index === 0 ? -1 : undefined}
+                          className="scroll-mt-6 rounded-2xl border border-stone-100 bg-white px-4 py-3 focus:outline-none"
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-3">
                               {selectedCrawlJobCanReview ? (
-                                <input
-                                  type="checkbox"
-                                  checked={selectedReviewableCrawlCandidateIds.includes(
-                                    candidate.id,
-                                  )}
-                                  disabled={
-                                    candidate.review_status !== "pending" ||
-                                    crawlJobApproveLoading ||
-                                    crawlJobEnrichLoading
-                                  }
-                                  onChange={() =>
-                                    handleToggleCrawlCandidateSelection(
+                                <div className="mt-1 shrink-0">
+                                  <SelectionToggleButton
+                                    label={`选择候选导师 ${candidate.name}`}
+                                    selected={selectedReviewableCrawlCandidateIds.includes(
                                       candidate.id,
-                                    )
-                                  }
-                                  aria-label={`选择候选导师 ${candidate.name}`}
-                                  className="mt-1 h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/30"
-                                />
+                                    )}
+                                    disabled={
+                                      candidate.review_status !== "pending" ||
+                                      crawlJobApproveLoading ||
+                                      crawlJobEnrichLoading
+                                    }
+                                    onToggle={() =>
+                                      handleToggleCrawlCandidateSelection(
+                                        candidate.id,
+                                      )
+                                    }
+                                  />
+                                </div>
                               ) : null}
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
@@ -6582,7 +6589,7 @@ export const TasksPage = () => {
                                   }`}
                                 >
                                   {candidate.email?.trim() ||
-                                    "暂无邮箱（可手工填写或尝试补全）"}
+                                    "暂无邮箱（可手工填写或选中后尝试使用补全功能）"}
                                 </p>
                                 {[candidate.school, candidate.department]
                                   .filter(Boolean)
@@ -6674,7 +6681,7 @@ export const TasksPage = () => {
                     unitLabel="位"
                     itemLabel="位导师"
                     summary={`共 ${filteredCrawlJobCandidates.length} 位符合筛选条件，已选 ${selectedReviewableCrawlCandidateIds.length} 位`}
-                    focusTargetRef={crawlCandidatesStartRef}
+                    focusTargetRef={crawlCandidateFirstItemRef}
                     menuPlacement="popover"
                     className="mt-3 border-t border-stone-100 pt-3"
                   />

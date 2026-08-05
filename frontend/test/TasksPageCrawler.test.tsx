@@ -22,6 +22,7 @@ const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn());
 const notifyError = vi.hoisted(() => vi.fn());
 const notifySuccess = vi.hoisted(() => vi.fn());
+const scrollIntoView = vi.hoisted(() => vi.fn());
 const backgroundTaskNotificationMocks = vi.hoisted(() => ({
   stopTrackingInformationEnrichmentJob: vi.fn(),
   trackCrawlCandidateEnrichment: vi.fn(),
@@ -142,6 +143,11 @@ describe("TasksPage crawler jobs tab", () => {
     clearDiagnosticEvents();
     Reflect.deleteProperty(window, "autoEmailSender");
     vi.clearAllMocks();
+    scrollIntoView.mockReset();
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
     mockedUseSelectionContext.mockReturnValue({
       selectedIdentityId: 1,
       selectedLlmProfileId: 2,
@@ -450,7 +456,7 @@ describe("TasksPage crawler jobs tab", () => {
       within(candidateDialog).getByRole("button", { name: "关闭候选导师详情" }),
     );
     fireEvent.click(
-      within(crawlDialog).getByRole("checkbox", { name: "选择候选导师 张教授" }),
+      within(crawlDialog).getByRole("button", { name: "选择候选导师 张教授" }),
     );
     fireEvent.click(
       within(crawlDialog).getByRole("button", { name: "补全缺失信息" }),
@@ -572,9 +578,9 @@ describe("TasksPage crawler jobs tab", () => {
     expect(within(dialog).queryByText("张教授")).not.toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "重置筛选" }));
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: /资料条件：/ }),
-    );
+    expect(
+      within(dialog).getByTestId("crawl-candidate-information-filters"),
+    ).toBeInTheDocument();
     fireEvent.click(
       within(dialog).getByRole("button", { name: "候选导师邮箱条件" }),
     );
@@ -825,7 +831,9 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
-    expect(crawlDialog).toHaveTextContent("暂无邮箱（可手工填写或尝试补全）");
+    expect(crawlDialog).toHaveTextContent(
+      "暂无邮箱（可手工填写或选中后尝试使用补全功能）",
+    );
     fireEvent.click(within(crawlDialog).getByRole("button", { name: "查看详情" }));
 
     const candidateDialog = await screen.findByRole("dialog", { name: "候选导师详情" });
@@ -973,6 +981,56 @@ describe("TasksPage crawler jobs tab", () => {
     expect(pageSection?.querySelector("[data-monitor-section-list]")).toHaveClass("flex-1");
   });
 
+  it("scrolls the first candidate on the new page into the detail window", async () => {
+    window.localStorage.removeItem("tasks:crawl-details:candidates:page-size");
+    vi.mocked(listCrawlCandidates).mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: 21 + index,
+        job_id: 7,
+        professor_id: null,
+        name: `候选导师 ${index + 1}`,
+        email: `candidate-${index + 1}@example.edu`,
+        title: "教授",
+        university: "示例大学",
+        school: "计算机学院",
+        department: "人工智能系",
+        research_direction: "机器学习",
+        recent_papers: [],
+        profile_url: `https://example.edu/faculty/${index + 1}`,
+        source_url: "https://example.edu/faculty",
+        confidence: 0.86,
+        field_confidence: null,
+        evidence: null,
+        review_status: "pending" as const,
+        created_at: "2026-04-26T10:02:00Z",
+        updated_at: "2026-04-26T10:02:00Z",
+      })),
+    );
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    expect(await within(dialog).findByText("候选导师 1")).toBeInTheDocument();
+    scrollIntoView.mockReset();
+
+    const pagination = within(dialog).getByRole("navigation", {
+      name: "候选导师分页",
+    });
+    fireEvent.click(within(pagination).getByRole("button", { name: "下一页" }));
+
+    const firstCandidate = await within(dialog).findByText("候选导师 6");
+    const firstCandidateCard = firstCandidate.closest("[tabindex='-1']");
+    expect(firstCandidateCard).not.toBeNull();
+    expect(firstCandidateCard).toHaveClass("scroll-mt-6");
+    expect(firstCandidateCard).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "start",
+    });
+  });
+
   it("paginates crawl job cards", async () => {
     vi.mocked(listCrawlJobs).mockResolvedValue(
       Array.from({ length: 9 }, (_, index) => buildCrawlJob(index + 1)),
@@ -1080,7 +1138,7 @@ describe("TasksPage crawler jobs tab", () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText("张教授")).toBeInTheDocument();
     expect(
-      within(dialog).queryByRole("checkbox", {
+      within(dialog).queryByRole("button", {
         name: "选择候选导师 张教授",
       }),
     ).not.toBeInTheDocument();
@@ -1135,7 +1193,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     fireEvent.click(
-      within(dialog).getByRole("checkbox", { name: "选择候选导师 张教授" }),
+      within(dialog).getByRole("button", { name: "选择候选导师 张教授" }),
     );
     fireEvent.click(
       within(dialog).getByRole("button", { name: "审核通过并导入" }),
@@ -1227,8 +1285,11 @@ describe("TasksPage crawler jobs tab", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "清空选择" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "重置筛选" }));
+    expect(
+      within(dialog).getByTestId("crawl-candidate-information-filters"),
+    ).toBeInTheDocument();
     fireEvent.click(
-      within(dialog).getByRole("checkbox", { name: "选择候选导师 李教授" }),
+      within(dialog).getByRole("button", { name: "选择候选导师 李教授" }),
     );
     fireEvent.click(
       within(dialog).getByRole("button", { name: "审核通过并导入" }),
