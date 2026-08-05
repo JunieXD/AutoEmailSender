@@ -959,7 +959,12 @@ const getBatchReviewDraft = (thread: WorkspaceThreadDTO) => {
 
 export const TasksPage = () => {
   const navigate = useNavigate();
-  const { selectedIdentityId, selectedLlmProfileId, setSelectedIdentityId } = useSelectionContext();
+  const {
+    identities = [],
+    selectedIdentityId,
+    selectedLlmProfileId,
+    setSelectedIdentityId,
+  } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
   const {
     stopTrackingInformationEnrichmentJob,
@@ -4393,6 +4398,18 @@ export const TasksPage = () => {
                     </div>
                     <p className="mt-1 text-sm text-stone-500">
                       成功 {job.succeeded_count} / 失败 {job.failed_count} / 跳过 {job.skipped_count} / 共 {job.target_count}
+                    </p>
+                    <p className="mt-1 text-xs text-stone-500">
+                      {job.match_source_identity_id &&
+                      job.match_source_identity_id !== job.identity_id
+                        ? '组内统一匹配依据'
+                        : '匹配依据'}{' '}
+                      {identities.find(
+                        (identity) =>
+                          identity.id ===
+                          (job.match_source_identity_id ?? job.identity_id),
+                      )?.profile_name ??
+                        `身份 #${job.match_source_identity_id ?? job.identity_id}`}
                     </p>
                   </div>
                   <div className="min-w-0 space-y-2">

@@ -215,6 +215,119 @@ class IdentityCommunicationGroupTests(unittest.TestCase):
         self.assertEqual([error.status_code for error in errors], [422, 422])
         self.assertEqual(errors[1].detail["identity_ids"], [999])
 
+    def test_match_source_can_be_switched_cleared_and_is_cleared_when_removed(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                identities = [
+                    self._identity("身份 A", "match-source-a@example.com"),
+                    self._identity("身份 B", "match-source-b@example.com"),
+                    self._identity("身份 C", "match-source-c@example.com"),
+                ]
+                session.add_all(identities)
+                await session.commit()
+
+                created = await create_communication_group(
+                    IdentityCommunicationGroupWrite(
+                        identity_ids=[identities[0].id, identities[1].id],
+                        match_source_identity_id=identities[0].id,
+                    ),
+                    session=session,
+                )
+                created_source_id = created.match_source_identity_id
+                preserved = await update_communication_group(
+                    created.id,
+                    IdentityCommunicationGroupWrite(
+                        identity_ids=[identity.id for identity in identities],
+                    ),
+                    session=session,
+                )
+                preserved_source_id = preserved.match_source_identity_id
+                cleared_explicitly = await update_communication_group(
+                    created.id,
+                    IdentityCommunicationGroupWrite(
+                        identity_ids=[identity.id for identity in identities],
+                        match_source_identity_id=None,
+                    ),
+                    session=session,
+                )
+                explicit_source_id = cleared_explicitly.match_source_identity_id
+                switched = await update_communication_group(
+                    created.id,
+                    IdentityCommunicationGroupWrite(
+                        identity_ids=[identity.id for identity in identities],
+                        match_source_identity_id=identities[2].id,
+                    ),
+                    session=session,
+                )
+                switched_source_id = switched.match_source_identity_id
+                cleared_by_member_removal = await update_communication_group(
+                    created.id,
+                    IdentityCommunicationGroupWrite(
+                        identity_ids=[identities[0].id, identities[1].id],
+                    ),
+                    session=session,
+                )
+                removed_source_id = cleared_by_member_removal.match_source_identity_id
+                try:
+                    await update_communication_group(
+                        created.id,
+                        IdentityCommunicationGroupWrite(
+                            identity_ids=[identities[0].id, identities[1].id],
+                            match_source_identity_id=identities[2].id,
+                        ),
+                        session=session,
+                    )
+                except HTTPException as exc:
+                    invalid_source_error = exc
+                else:
+                    self.fail("非组成员不应被允许作为匹配依据")
+
+                update_logs = list(
+                    await session.scalars(
+                        select(OperationLog)
+                        .where(OperationLog.event_name == "communication_group.updated")
+                        .order_by(OperationLog.id.asc()),
+                    ),
+                )
+                return (
+                    created_source_id,
+                    preserved_source_id,
+                    explicit_source_id,
+                    switched_source_id,
+                    removed_source_id,
+                    invalid_source_error,
+                    update_logs,
+                )
+
+        (
+            created_source_id,
+            preserved_source_id,
+            explicit_source_id,
+            switched_source_id,
+            removed_source_id,
+            invalid_source_error,
+            update_logs,
+        ) = self._run_async(scenario())
+
+        self.assertEqual(created_source_id, 1)
+        self.assertEqual(preserved_source_id, 1)
+        self.assertIsNone(explicit_source_id)
+        self.assertEqual(switched_source_id, 3)
+        self.assertIsNone(removed_source_id)
+        self.assertEqual(invalid_source_error.status_code, 422)
+        self.assertEqual(
+            invalid_source_error.detail["message"],
+            "匹配依据身份必须属于当前共享组",
+        )
+        self.assertEqual(invalid_source_error.detail["match_source_identity_id"], 3)
+        self.assertEqual(
+            update_logs[-1].event_metadata["before_match_source_identity_id"],
+            3,
+        )
+        self.assertIsNone(
+            update_logs[-1].event_metadata["after_match_source_identity_id"],
+        )
+
     def test_scope_order_and_identity_deletion_cleanup(self) -> None:
         async def scenario():
             async with self.session_factory() as session:

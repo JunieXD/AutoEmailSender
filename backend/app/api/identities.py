@@ -8,14 +8,21 @@ from app.core.time import utc_now
 from time import perf_counter
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.identity_serializers import serialize_identity
 from app.core.database import get_async_session
-from app.models import IdentityProfile
+from app.models import (
+    IdentityCommunicationGroup,
+    IdentityProfessorMatchResult,
+    IdentityProfile,
+    MatchAnalysisJob,
+    MatchAnalysisJobItem,
+    MatchAnalysisRun,
+)
 from app.schemas.identity import (
     ConnectionTestResult,
     IdentityProfileCreate,
@@ -206,6 +213,19 @@ async def delete_identity(
     identity = await _get_identity(session, identity_id)
     was_default = identity.is_default
     communication_group_id = identity.communication_group_id
+    cleared_match_source = False
+    if communication_group_id is not None:
+        communication_group = await session.get(
+            IdentityCommunicationGroup,
+            communication_group_id,
+        )
+        if (
+            communication_group is not None
+            and communication_group.match_source_identity_id == identity_id
+        ):
+            communication_group.match_source_identity_id = None
+            communication_group.updated_at = utc_now()
+            cleared_match_source = True
 
     for material in identity.materials:
         delete_file(material.file_path)
@@ -214,8 +234,12 @@ async def delete_identity(
         session,
         identity,
         "identity.deleted",
-        metadata={"was_default": was_default},
+        metadata={
+            "was_default": was_default,
+            "cleared_group_match_source": cleared_match_source,
+        },
     )
+    await _delete_identity_match_artifacts(session, identity_id)
     await session.delete(identity)
     await session.flush()
     group_cleanup = None
@@ -244,6 +268,7 @@ async def delete_identity(
                     else list(group_cleanup.member_ids)
                 ),
                 "removed_identity_id": identity_id,
+                "cleared_match_source": cleared_match_source,
             },
         )
     await session.commit()
@@ -258,6 +283,48 @@ async def delete_identity(
             remaining.is_default = True
             remaining.updated_at = utc_now()
             await session.commit()
+
+
+async def _delete_identity_match_artifacts(
+    session: AsyncSession,
+    identity_id: int,
+) -> None:
+    """Remove canonical match data owned by a deleted source identity.
+
+    SQLite does not enforce ``ON DELETE`` actions in the desktop runtime, so
+    cross-identity analysis records must be cleaned explicitly. Task snapshots
+    intentionally retain ``match_source_identity_id`` as historical provenance.
+    """
+
+    now = utc_now()
+    run_ids = select(MatchAnalysisRun.id).where(
+        MatchAnalysisRun.identity_id == identity_id,
+    )
+    await session.execute(
+        update(MatchAnalysisJobItem)
+        .where(MatchAnalysisJobItem.match_analysis_run_id.in_(run_ids))
+        .values(match_analysis_run_id=None, updated_at=now),
+    )
+    await session.execute(
+        update(IdentityProfessorMatchResult)
+        .where(IdentityProfessorMatchResult.latest_analysis_run_id.in_(run_ids))
+        .values(latest_analysis_run_id=None, updated_at=now),
+    )
+    await session.execute(
+        delete(IdentityProfessorMatchResult).where(
+            IdentityProfessorMatchResult.identity_id == identity_id,
+        ),
+    )
+    await session.execute(
+        delete(MatchAnalysisRun).where(
+            MatchAnalysisRun.identity_id == identity_id,
+        ),
+    )
+    await session.execute(
+        update(MatchAnalysisJob)
+        .where(MatchAnalysisJob.match_source_identity_id == identity_id)
+        .values(match_source_identity_id=None, updated_at=now),
+    )
 
 
 @router.post("/{identity_id}/default", response_model=IdentityProfileRead)

@@ -1564,6 +1564,433 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(index_names.count("ix_batch_tasks_outreach_template_id"), 1)
 
+    def test_identity_professor_match_result_migration_backfills_latest_task_once(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "legacy_identity_match_results.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
+            self._run_alembic(
+                legacy_env,
+                "upgrade",
+                "20260804_merge_agent_change_recent_papers",
+            )
+
+            connection = sqlite3.connect(legacy_db_path)
+            connection.execute("PRAGMA foreign_keys = ON")
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="legacy-match-result@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="匹配结果迁移模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "legacy-match-result-professor@example.edu",
+            )
+            material_id = DatabaseSchemaTests._insert_identity_material_into(
+                connection,
+                identity_id,
+                display_name="迁移默认简历",
+                original_filename="migration-resume.txt",
+            )
+            connection.execute(
+                "UPDATE identity_profiles SET current_primary_material_id = ? WHERE id = ?",
+                (material_id, identity_id),
+            )
+            older_task_id = DatabaseSchemaTests._insert_email_task_with_material_into(
+                connection,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                primary_material_id=material_id,
+                updated_at="2026-08-01 08:00:00",
+            )
+            latest_task_id = DatabaseSchemaTests._insert_manual_child_task_into(
+                connection,
+                parent_task_id=older_task_id,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_id=professor_id,
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET match_score = ?, match_reason = ?, fit_points = ?,
+                    risk_points = ?, match_keywords = ?
+                WHERE id = ?
+                """,
+                (
+                    71,
+                    "旧任务结果",
+                    json.dumps(["旧契合点"]),
+                    json.dumps([]),
+                    json.dumps(["old"]),
+                    older_task_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET primary_material_id = ?, match_score = ?, match_reason = ?,
+                    fit_points = ?, risk_points = ?, match_keywords = ?,
+                    created_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    material_id,
+                    92,
+                    "最新任务结果",
+                    json.dumps(["最新契合点"]),
+                    json.dumps(["最新风险点"]),
+                    json.dumps(["latest"]),
+                    "2026-08-02 08:00:00",
+                    "2026-08-02 08:00:00",
+                    latest_task_id,
+                ),
+            )
+            run_cursor = connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    primary_material_id, status, success, match_score, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'succeeded', 1, 92, ?)
+                """,
+                (
+                    latest_task_id,
+                    professor_id,
+                    identity_id,
+                    llm_profile_id,
+                    material_id,
+                    "2026-08-02 08:01:00",
+                ),
+            )
+            latest_run_id = int(run_cursor.lastrowid)
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            rows = upgraded.execute(
+                """
+                SELECT identity_id, professor_id, source_email_task_id,
+                       latest_analysis_run_id, primary_material_id,
+                       match_score, match_reason, fit_points, risk_points,
+                       match_keywords
+                FROM identity_professor_match_results
+                """,
+            ).fetchall()
+            run_details = upgraded.execute(
+                """
+                SELECT match_reason, fit_points, risk_points, match_keywords
+                FROM match_analysis_runs
+                WHERE id = ?
+                """,
+                (latest_run_id,),
+            ).fetchone()
+            task_match_source_identity_id = upgraded.execute(
+                "SELECT match_source_identity_id FROM email_tasks WHERE id = ?",
+                (latest_task_id,),
+            ).fetchone()[0]
+            upgraded.close()
+
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row[0], identity_id)
+            self.assertEqual(row[1], professor_id)
+            self.assertEqual(row[2], latest_task_id)
+            self.assertEqual(row[3], latest_run_id)
+            self.assertEqual(row[4], material_id)
+            self.assertEqual(row[5], 92)
+            self.assertEqual(row[6], "最新任务结果")
+            self.assertEqual(DatabaseSchemaTests._load_json(row[7]), ["最新契合点"])
+            self.assertEqual(DatabaseSchemaTests._load_json(row[8]), ["最新风险点"])
+            self.assertEqual(DatabaseSchemaTests._load_json(row[9]), ["latest"])
+            self.assertEqual(run_details[0], "最新任务结果")
+            self.assertEqual(
+                DatabaseSchemaTests._load_json(run_details[1]),
+                ["最新契合点"],
+            )
+            self.assertEqual(task_match_source_identity_id, identity_id)
+        finally:
+            legacy_dir.cleanup()
+
+    def test_identity_match_migration_normalizes_malformed_legacy_results(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "malformed_identity_matches.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
+            previous_revision = "20260804_merge_agent_change_recent_papers"
+            self._run_alembic(legacy_env, "upgrade", previous_revision)
+
+            connection = sqlite3.connect(legacy_db_path)
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="malformed-match@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="异常旧匹配迁移模型",
+            )
+            malformed_professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "malformed-match-professor@example.edu",
+            )
+            fallback_professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "fallback-match-professor@example.edu",
+            )
+            malformed_task_id = (
+                DatabaseSchemaTests._insert_email_task_with_material_into(
+                    connection,
+                    identity_id,
+                    llm_profile_id,
+                    malformed_professor_id,
+                    primary_material_id=None,
+                )
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET match_score = 145,
+                    match_reason = '异常旧结果',
+                    fit_points = 'not-json',
+                    risk_points = '{"unexpected": true}',
+                    match_keywords = '["有效关键词", 2]'
+                WHERE id = ?
+                """,
+                (malformed_task_id,),
+            )
+
+            fallback_task_id = (
+                DatabaseSchemaTests._insert_email_task_with_material_into(
+                    connection,
+                    identity_id,
+                    llm_profile_id,
+                    fallback_professor_id,
+                    primary_material_id=None,
+                    updated_at="2026-08-01 08:00:00",
+                )
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET match_score = 82,
+                    match_reason = '可用旧结果',
+                    fit_points = '["可靠契合点"]'
+                WHERE id = ?
+                """,
+                (fallback_task_id,),
+            )
+            invalid_latest_task_id = (
+                DatabaseSchemaTests._insert_manual_child_task_into(
+                    connection,
+                    parent_task_id=fallback_task_id,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    professor_id=fallback_professor_id,
+                )
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET match_score = 'not-a-number',
+                    match_reason = '不可用的最新结果',
+                    updated_at = '2026-08-02 08:00:00'
+                WHERE id = ?
+                """,
+                (invalid_latest_task_id,),
+            )
+            connection.commit()
+            connection.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            rows = upgraded.execute(
+                """
+                SELECT professor_id, source_email_task_id, match_score,
+                       match_reason, fit_points, risk_points, match_keywords
+                FROM identity_professor_match_results
+                ORDER BY professor_id ASC
+                """,
+            ).fetchall()
+            upgraded.close()
+
+            self.assertEqual(len(rows), 2)
+            malformed_row, fallback_row = rows
+            self.assertEqual(malformed_row[0], malformed_professor_id)
+            self.assertEqual(malformed_row[2], 100)
+            self.assertEqual(DatabaseSchemaTests._load_json(malformed_row[4]), [])
+            self.assertEqual(DatabaseSchemaTests._load_json(malformed_row[5]), [])
+            self.assertEqual(
+                DatabaseSchemaTests._load_json(malformed_row[6]),
+                ["有效关键词"],
+            )
+            self.assertEqual(fallback_row[0], fallback_professor_id)
+            self.assertEqual(fallback_row[1], fallback_task_id)
+            self.assertEqual(fallback_row[2], 82)
+            self.assertEqual(fallback_row[3], "可用旧结果")
+        finally:
+            legacy_dir.cleanup()
+
+    def test_identity_match_migration_recovers_partial_and_repeated_upgrade(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        try:
+            legacy_db_path = Path(legacy_dir.name) / "partial_identity_matches.db"
+            legacy_env = os.environ.copy()
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
+            previous_revision = "20260804_merge_agent_change_recent_papers"
+            self._run_alembic(legacy_env, "upgrade", previous_revision)
+
+            partial = sqlite3.connect(legacy_db_path)
+            partial.execute(
+                "ALTER TABLE email_tasks ADD COLUMN match_source_identity_id INTEGER"
+            )
+            partial.execute(
+                """
+                ALTER TABLE identity_communication_groups
+                ADD COLUMN match_source_identity_id INTEGER
+                """
+            )
+            partial.execute(
+                """
+                ALTER TABLE match_analysis_jobs
+                ADD COLUMN match_source_identity_id INTEGER
+                """
+            )
+            partial.execute(
+                "ALTER TABLE match_analysis_runs ADD COLUMN match_reason TEXT"
+            )
+            partial.commit()
+            partial.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            unstamped = sqlite3.connect(legacy_db_path)
+            unstamped.execute(
+                "DROP INDEX ix_identity_professor_match_results_identity_updated"
+            )
+            unstamped.execute(
+                "UPDATE alembic_version SET version_num = ?",
+                (previous_revision,),
+            )
+            unstamped.commit()
+            unstamped.close()
+
+            self._run_alembic(legacy_env, "upgrade", "head")
+
+            upgraded = sqlite3.connect(legacy_db_path)
+            version = upgraded.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+            result_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list('identity_professor_match_results')",
+                ).fetchall()
+            }
+            group_foreign_keys = upgraded.execute(
+                "PRAGMA foreign_key_list('identity_communication_groups')",
+            ).fetchall()
+            job_foreign_keys = upgraded.execute(
+                "PRAGMA foreign_key_list('match_analysis_jobs')",
+            ).fetchall()
+            run_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info('match_analysis_runs')",
+                ).fetchall()
+            }
+            upgraded.close()
+
+            self.assertEqual(version, HEAD_REVISION)
+            self.assertIn(
+                "ix_identity_professor_match_results_identity_updated",
+                result_indexes,
+            )
+            self.assertTrue(
+                any(
+                    row[2] == "identity_profiles"
+                    and row[3] == "match_source_identity_id"
+                    for row in group_foreign_keys
+                ),
+            )
+            self.assertTrue(
+                any(
+                    row[2] == "identity_profiles"
+                    and row[3] == "match_source_identity_id"
+                    for row in job_foreign_keys
+                ),
+            )
+            self.assertTrue(
+                {"match_reason", "fit_points", "risk_points", "match_keywords"}
+                .issubset(run_columns),
+            )
+        finally:
+            legacy_dir.cleanup()
+
+    def test_match_and_batch_fallback_merge_upgrades_from_each_parent(self) -> None:
+        parent_revisions = (
+            "20260805_batch_draft_fallback",
+            "20260805_identity_match_results",
+        )
+        for parent_revision in parent_revisions:
+            with self.subTest(parent_revision=parent_revision):
+                with tempfile.TemporaryDirectory() as legacy_dir:
+                    legacy_db_path = (
+                        Path(legacy_dir) / f"merge-from-{parent_revision}.db"
+                    )
+                    legacy_env = os.environ.copy()
+                    legacy_env["DATABASE_URL"] = (
+                        f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+                    )
+
+                    self._run_alembic(legacy_env, "upgrade", parent_revision)
+                    self._run_alembic(legacy_env, "upgrade", "head")
+
+                    upgraded = sqlite3.connect(legacy_db_path)
+                    version = upgraded.execute(
+                        "SELECT version_num FROM alembic_version",
+                    ).fetchone()[0]
+                    email_task_columns = {
+                        row[1]
+                        for row in upgraded.execute(
+                            "PRAGMA table_info('email_tasks')",
+                        ).fetchall()
+                    }
+                    table_names = {
+                        row[0]
+                        for row in upgraded.execute(
+                            "SELECT name FROM sqlite_master WHERE type = 'table'",
+                        ).fetchall()
+                    }
+                    upgraded.close()
+
+                    self.assertEqual(version, HEAD_REVISION)
+                    self.assertTrue(
+                        {
+                            "draft_generation_source",
+                            "draft_fallback_reason",
+                            "match_source_identity_id",
+                        }.issubset(email_task_columns),
+                    )
+                    self.assertIn(
+                        "identity_professor_match_results",
+                        table_names,
+                    )
+
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
         try:
             run_alembic_in_process(env, *args)
@@ -1630,6 +2057,7 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "test_compose_messages",
                 "operation_logs",
                 "match_analysis_runs",
+                "identity_professor_match_results",
                 "match_analysis_jobs",
                 "match_analysis_job_items",
                 "thinking_adaptation_cache",
@@ -1727,8 +2155,12 @@ class DatabaseSchemaTests(unittest.TestCase):
         settings_columns = self._get_columns("app_settings")
         operation_log_columns = self._get_columns("operation_logs")
         match_run_columns = self._get_columns("match_analysis_runs")
+        match_result_columns = self._get_columns("identity_professor_match_results")
         match_job_columns = self._get_columns("match_analysis_jobs")
         match_job_item_columns = self._get_columns("match_analysis_job_items")
+        communication_group_columns = self._get_columns(
+            "identity_communication_groups",
+        )
 
         self.assertIn("current_primary_material_id", identity_columns)
         self.assertNotIn("resume_file_path", identity_columns)
@@ -1756,6 +2188,7 @@ class DatabaseSchemaTests(unittest.TestCase):
         )
         self.assertNotIn("selected_attachment_ids", batch_columns)
         self.assertIn("primary_material_id", task_columns)
+        self.assertIn("match_source_identity_id", task_columns)
         self.assertIn("selected_material_ids", task_columns)
         self.assertIn("draft_generation_previous_status", task_columns)
         self.assertIn("draft_generation_source", task_columns)
@@ -1769,6 +2202,29 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("provider_payload", log_columns)
         self.assertIn("reply_headers", log_columns)
         self.assertNotIn("mail_delivery_mode", settings_columns)
+        self.assertTrue(
+            {
+                "identity_id",
+                "professor_id",
+                "llm_profile_id",
+                "primary_material_id",
+                "source_email_task_id",
+                "latest_analysis_run_id",
+                "match_score",
+                "match_reason",
+                "fit_points",
+                "risk_points",
+                "match_keywords",
+                "analyzed_at",
+            }.issubset(match_result_columns),
+        )
+        self.assertTrue(
+            {"match_reason", "fit_points", "risk_points", "match_keywords"}.issubset(
+                match_run_columns,
+            ),
+        )
+        self.assertIn("match_source_identity_id", match_job_columns)
+        self.assertIn("match_source_identity_id", communication_group_columns)
         self.assertTrue(
             {
                 "match_analysis_job_worker_count",
@@ -1905,7 +2361,25 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "ix_match_analysis_runs_primary_material_id",
                 "ix_match_analysis_runs_created_at",
                 "uq_match_analysis_runs_running_per_task",
+                "uq_match_analysis_runs_running_per_identity_professor",
             }.issubset(match_run_indexes),
+        )
+        match_result_indexes = {
+            row[1]
+            for row in self.connection.execute(
+                "PRAGMA index_list('identity_professor_match_results')"
+            ).fetchall()
+        }
+        self.assertTrue(
+            {
+                "ix_identity_professor_match_results_identity_id",
+                "ix_identity_professor_match_results_professor_id",
+                "ix_identity_professor_match_results_identity_updated",
+            }.issubset(match_result_indexes),
+        )
+        self.assertEqual(
+            self._get_unique_index_columns("identity_professor_match_results"),
+            ["identity_id", "professor_id"],
         )
         match_job_indexes = {
             row[1]
@@ -1917,6 +2391,7 @@ class DatabaseSchemaTests(unittest.TestCase):
             {
                 "ix_match_analysis_jobs_status",
                 "ix_match_analysis_jobs_identity_id",
+                "ix_match_analysis_jobs_match_source_identity_id",
                 "ix_match_analysis_jobs_llm_profile_id",
             }.issubset(match_job_indexes),
         )

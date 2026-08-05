@@ -85,6 +85,16 @@ class DashboardMentorFilterRead(ApiSchema):
     school: str | None = None
 
 
+class DashboardMatchContextRead(ApiSchema):
+    source_identity_id: int
+    source_identity_name: str
+    source_identity_email: str
+    source_material_id: int | None = None
+    source_material_name: str | None = None
+    uses_group_match_source: bool = False
+    stale_result_count: int = 0
+
+
 class DashboardProfileCompletenessBucketRead(ApiSchema):
     key: DashboardProfileCompletenessBucket
     label: str
@@ -109,6 +119,7 @@ class DashboardMentorActionItemRead(ApiSchema):
 
 class DashboardMentorSectionRead(ApiSchema):
     summary: DashboardMentorSummaryRead
+    match_context: DashboardMatchContextRead
     match_score_distribution: list[DashboardMentorMatchBucketRead] = Field(default_factory=list)
     profile_completeness: list[DashboardProfileCompletenessRead] = Field(default_factory=list)
     profile_completeness_distribution: list[DashboardProfileCompletenessBucketRead] = Field(default_factory=list)

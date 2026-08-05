@@ -4,6 +4,7 @@ import {
   normalizeExternalHttpUrl,
   openExternalHttpUrl,
 } from "@/lib/externalUrls";
+import { formatApiDateTime } from "@/lib/dateTime";
 import { normalizeProfessorTitleDisplay } from "@/lib/professorTitle";
 import type { WorkspaceThreadDTO } from "@/types";
 
@@ -143,6 +144,7 @@ const AnalysisList = ({
 
 const MatchAnalysisCard = ({ thread }: WorkspaceSidebarProps) => {
   const task = thread.current_task;
+  const matchSourceIdentity = thread.match_source_identity ?? thread.identity;
   const hasAnalysis =
     task.match_score !== null ||
     Boolean(task.match_reason?.trim()) ||
@@ -174,6 +176,26 @@ const MatchAnalysisCard = ({ thread }: WorkspaceSidebarProps) => {
       </div>
 
       <div className="space-y-4 px-5 py-4">
+        <div className="rounded-2xl border border-stone-200 bg-stone-50/80 px-3.5 py-3 text-xs leading-5 text-stone-600">
+          <div className="font-semibold text-stone-800">
+            {thread.match_uses_group_source
+              ? `组内统一依据 ${matchSourceIdentity.profile_name}`
+              : `匹配依据 ${matchSourceIdentity.profile_name}`}
+          </div>
+          <div className="mt-1">
+            分析材料：{thread.match_source_material_name || "尚未设置默认材料"}
+          </div>
+          {thread.match_analyzed_at ? (
+            <div className="mt-1">
+              最近分析：{formatApiDateTime(thread.match_analyzed_at)}
+            </div>
+          ) : null}
+        </div>
+        {thread.match_is_stale ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs leading-5 text-amber-800">
+            默认材料已变更或原分析材料已删除，当前结果可能过期，建议重新分析。
+          </div>
+        ) : null}
         {hasAnalysis ? (
           <>
             <div>

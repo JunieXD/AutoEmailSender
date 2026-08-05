@@ -135,6 +135,7 @@ class AgentMatchAnalysisJobRead(ApiSchema):
     total_cached_tokens: int
     total_tokens: int
     identity_id: int
+    match_source_identity_id: int
     llm_profile_id: int
     cancel_requested_at: datetime | None = None
     started_at: datetime | None = None
@@ -506,6 +507,13 @@ class AgentWorkspaceThreadRead(ApiSchema):
     llm_profile: AgentWorkspaceLLMRead
     material_options: list[AgentWorkspaceMaterialRead] = Field(default_factory=list)
     current_task: AgentWorkspaceTaskRead
+    match_source_identity: AgentWorkspaceIdentityRead
+    match_source_material_id: int | None = None
+    match_source_material_name: str | None = None
+    match_result_id: int | None = None
+    match_analyzed_at: datetime | None = None
+    match_uses_group_source: bool = False
+    match_is_stale: bool = False
     messages: list[AgentWorkspaceMessageRead] = Field(default_factory=list)
     communication_scope: list[AgentWorkspaceIdentityRead] = Field(default_factory=list)
     sync_warnings: list[AgentWorkspaceSyncWarningRead] = Field(default_factory=list)

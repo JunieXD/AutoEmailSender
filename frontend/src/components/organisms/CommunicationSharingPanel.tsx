@@ -1,6 +1,14 @@
 import { useMemo, useState, type TransitionEvent } from 'react';
 import clsx from 'clsx';
-import { ChevronDown, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  Loader2,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
 import {
@@ -25,6 +33,10 @@ const getGroupLabel = (group: IdentityCommunicationGroupDTO) => {
   return `${names.slice(0, 2).join('、')} 等 ${names.length} 个身份`;
 };
 
+const getGroupMatchSourceName = (group: IdentityCommunicationGroupDTO) =>
+  group.members.find((member) => member.id === group.match_source_identity_id)
+    ?.profile_name ?? null;
+
 export const CommunicationSharingPanel = () => {
   const {
     identities,
@@ -38,6 +50,8 @@ export const CommunicationSharingPanel = () => {
   const [renderContent, setRenderContent] = useState(false);
   const [editorId, setEditorId] = useState<GroupEditorId>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
+  const [selectedMatchSourceIdentityId, setSelectedMatchSourceIdentityId] =
+    useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null);
 
@@ -85,11 +99,13 @@ export const CommunicationSharingPanel = () => {
   const beginCreate = () => {
     setEditorId('new');
     setSelectedMemberIds(selectedIdentity ? [selectedIdentity.id] : []);
+    setSelectedMatchSourceIdentityId(null);
   };
 
   const beginEdit = (group: IdentityCommunicationGroupDTO) => {
     setEditorId(group.id);
     setSelectedMemberIds(group.members.map((member) => member.id));
+    setSelectedMatchSourceIdentityId(group.match_source_identity_id ?? null);
   };
 
   const closeEditor = () => {
@@ -98,9 +114,14 @@ export const CommunicationSharingPanel = () => {
     }
     setEditorId(null);
     setSelectedMemberIds([]);
+    setSelectedMatchSourceIdentityId(null);
   };
 
   const toggleIdentity = (identityId: number) => {
+    const removingIdentity = selectedMemberIds.includes(identityId);
+    if (removingIdentity && selectedMatchSourceIdentityId === identityId) {
+      setSelectedMatchSourceIdentityId(null);
+    }
     setSelectedMemberIds((current) =>
       current.includes(identityId)
         ? current.filter((id) => id !== identityId)
@@ -143,6 +164,7 @@ export const CommunicationSharingPanel = () => {
   const persistGroup = async (confirmMergeExistingGroups: boolean) => {
     const payload = {
       identity_ids: selectedMemberIds,
+      match_source_identity_id: selectedMatchSourceIdentityId,
       confirm_merge_existing_groups: confirmMergeExistingGroups,
     };
     return typeof editorId === 'number'
@@ -183,9 +205,10 @@ export const CommunicationSharingPanel = () => {
       await refreshSelections();
       setEditorId(null);
       setSelectedMemberIds([]);
+      setSelectedMatchSourceIdentityId(null);
       notifySuccess(
         editorId === 'new' ? '通信共享组已创建' : '通信共享组已更新',
-        '共享范围已经应用到首页、工作区和统计面板。',
+        '通信范围和匹配度口径已经应用到首页、工作区和统计面板。',
       );
     } catch (error) {
       notifyError(
@@ -216,6 +239,7 @@ export const CommunicationSharingPanel = () => {
       if (editorId === group.id) {
         setEditorId(null);
         setSelectedMemberIds([]);
+        setSelectedMatchSourceIdentityId(null);
       }
       notifySuccess('通信共享组已解散', '身份和原有通信记录均已保留。');
     } catch (error) {
@@ -247,7 +271,7 @@ export const CommunicationSharingPanel = () => {
               </span>
             </div>
             <p className="mt-2 text-sm leading-6 text-stone-600">
-              合并组内身份的真实收发记录和通信统计，发件配置与任务仍分别管理。
+              合并组内身份的真实收发记录，并可统一匹配度依据；发件配置与任务仍分别管理。
             </p>
           </div>
           <ChevronDown
@@ -301,6 +325,12 @@ export const CommunicationSharingPanel = () => {
                                 {member.profile_name} · {member.email_address}
                               </span>
                             ))}
+                          </div>
+                          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            {getGroupMatchSourceName(group)
+                              ? `匹配度统一依据 ${getGroupMatchSourceName(group)}`
+                              : '匹配度各身份独立'}
                           </div>
                         </div>
                         <div className="flex shrink-0 gap-2">
@@ -393,6 +423,69 @@ export const CommunicationSharingPanel = () => {
                         );
                       })}
                     </div>
+
+                    <fieldset className="mt-5 rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
+                      <legend className="px-1 text-sm font-semibold text-stone-900">
+                        匹配度口径
+                      </legend>
+                      <p className="mt-1 text-xs leading-5 text-stone-500">
+                        统一后，组内所有身份都显示所选身份的分数、理由、契合点、风险点和关键词。
+                      </p>
+                      <div className="mt-3 grid gap-2">
+                        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 bg-white px-3 py-3 transition hover:bg-stone-50">
+                          <input
+                            type="radio"
+                            name="communication-group-match-source"
+                            checked={selectedMatchSourceIdentityId === null}
+                            onChange={() => setSelectedMatchSourceIdentityId(null)}
+                            disabled={saving}
+                            className="mt-0.5 h-4 w-4 border-stone-300 text-primary focus:ring-primary/20"
+                          />
+                          <span>
+                            <span className="block text-sm font-medium text-stone-900">
+                              各身份独立
+                            </span>
+                            <span className="mt-0.5 block text-xs leading-5 text-stone-500">
+                              每个身份分别使用自己的默认材料和匹配结果。
+                            </span>
+                          </span>
+                        </label>
+                        {identities
+                          .filter((identity) => selectedMemberIdSet.has(identity.id))
+                          .map((identity) => (
+                            <label
+                              key={identity.id}
+                              className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 bg-white px-3 py-3 transition hover:bg-stone-50"
+                            >
+                              <input
+                                type="radio"
+                                name="communication-group-match-source"
+                                checked={selectedMatchSourceIdentityId === identity.id}
+                                onChange={() =>
+                                  setSelectedMatchSourceIdentityId(identity.id)
+                                }
+                                disabled={saving}
+                                className="mt-0.5 h-4 w-4 border-stone-300 text-primary focus:ring-primary/20"
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium text-stone-900">
+                                  统一使用 {getIdentityName(identity)}
+                                </span>
+                                <span className="mt-0.5 block text-xs leading-5 text-stone-500">
+                                  默认材料：
+                                  {identity.current_primary_material?.display_name ||
+                                    '尚未设置'}
+                                </span>
+                                {!identity.current_primary_material_id ? (
+                                  <span className="mt-1 block text-xs text-amber-700">
+                                    该身份缺少默认材料，设置前无法进行匹配分析。
+                                  </span>
+                                ) : null}
+                              </span>
+                            </label>
+                          ))}
+                      </div>
+                    </fieldset>
 
                     <div className="mt-4 flex flex-wrap items-center gap-3">
                       <button

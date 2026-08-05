@@ -34,6 +34,7 @@ from app.models.email_task import (
     EmailTaskStatus,
 )
 from app.models.identity_communication_group import IdentityCommunicationGroup
+from app.models.identity_professor_match_result import IdentityProfessorMatchResult
 from app.models.identity_profile import IdentityProfile
 from app.models.identity_material import IdentityMaterial, IdentityMaterialType
 from app.models.imap_sync import (
@@ -99,6 +100,7 @@ __all__ = [
     "EmailTaskSource",
     "EmailTaskStatus",
     "IdentityCommunicationGroup",
+    "IdentityProfessorMatchResult",
     "IdentityProfile",
     "IdentityMaterial",
     "IdentityMaterialType",

@@ -17,6 +17,7 @@ from app.models import (
     IdentityMaterial,
     IdentityMaterialType,
     IdentityProfile,
+    IdentityProfessorMatchResult,
     MatchAnalysisRun,
     TestComposeSession,
 )
@@ -75,6 +76,7 @@ class MaterialDeletionResult:
     detached_test_compose_session_ids: list[int]
     detached_batch_task_ids: list[int]
     detached_match_analysis_run_count: int
+    detached_match_result_count: int
     completed_batch_task_ids: list[int]
 
     def to_agent_result(self) -> dict[str, object]:
@@ -91,6 +93,7 @@ class MaterialDeletionResult:
                 "detached_test_compose_session_ids": self.detached_test_compose_session_ids,
                 "detached_batch_task_ids": self.detached_batch_task_ids,
                 "detached_match_analysis_run_count": self.detached_match_analysis_run_count,
+                "detached_match_result_count": self.detached_match_result_count,
                 "completed_batch_task_ids": self.completed_batch_task_ids,
             },
         }
@@ -103,6 +106,7 @@ class _MaterialDeletionState:
     batch_tasks: list[BatchTask]
     test_compose_sessions: list[TestComposeSession]
     match_analysis_runs: list[MatchAnalysisRun]
+    match_results: list[IdentityProfessorMatchResult]
 
 
 async def upload_identity_material_record(
@@ -311,6 +315,12 @@ async def delete_identity_material_record(
         match_run.primary_material_id = None
         detached_match_analysis_run_count += 1
 
+    detached_match_result_count = 0
+    for match_result in state.match_results:
+        match_result.primary_material_id = None
+        match_result.updated_at = utc_now()
+        detached_match_result_count += 1
+
     if is_current_primary:
         identity.current_primary_material_id = None
         identity.updated_at = utc_now()
@@ -328,6 +338,7 @@ async def delete_identity_material_record(
         detached_test_compose_session_ids=detached_test_compose_session_ids,
         detached_batch_task_ids=detached_batch_task_ids,
         detached_match_analysis_run_count=detached_match_analysis_run_count,
+        detached_match_result_count=detached_match_result_count,
         completed_batch_task_ids=completed_batch_task_ids,
     )
     await record_material_event(
@@ -343,6 +354,7 @@ async def delete_identity_material_record(
             "detached_test_compose_session_ids": result.detached_test_compose_session_ids,
             "detached_batch_task_ids": result.detached_batch_task_ids,
             "detached_match_analysis_run_count": result.detached_match_analysis_run_count,
+            "detached_match_result_count": result.detached_match_result_count,
         },
     )
     await session.delete(material)
@@ -391,12 +403,21 @@ async def _load_material_deletion_state(
             ),
         ),
     )
+    match_results = list(
+        await session.scalars(
+            select(IdentityProfessorMatchResult).where(
+                IdentityProfessorMatchResult.identity_id == material.identity_id,
+                IdentityProfessorMatchResult.primary_material_id == material.id,
+            ),
+        ),
+    )
     return _MaterialDeletionState(
         material=material,
         candidate_tasks=candidate_tasks,
         batch_tasks=batch_tasks,
         test_compose_sessions=test_compose_sessions,
         match_analysis_runs=match_analysis_runs,
+        match_results=match_results,
     )
 
 
@@ -508,6 +529,7 @@ def _build_material_deletion_snapshot(
         "detached_test_compose_session_ids": detached_test_compose_session_ids,
         "detached_batch_task_ids": detached_batch_task_ids,
         "detached_match_analysis_run_count": len(state.match_analysis_runs),
+        "detached_match_result_count": len(state.match_results),
         "completed_batch_task_ids": completed_batch_task_ids,
     }
     fingerprint_payload = {
@@ -544,6 +566,14 @@ def _build_material_deletion_snapshot(
                 "status": run.status,
             }
             for run in state.match_analysis_runs
+        ],
+        "match_results": [
+            {
+                "id": result.id,
+                "primary_material_id": result.primary_material_id,
+                "updated_at": _serialize_optional_datetime(result.updated_at),
+            }
+            for result in state.match_results
         ],
         "effects": effects,
     }

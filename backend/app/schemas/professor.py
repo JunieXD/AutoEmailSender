@@ -83,6 +83,11 @@ class ProfessorDashboardItemRead(ApiSchema):
     research_direction: str | None
     recent_papers: list[str]
     match_score: int | None
+    match_source_identity_id: int | None = None
+    match_source_identity_name: str | None = None
+    match_is_shared: bool = False
+    match_is_stale: bool = False
+    match_analyzed_at: datetime | None = None
     sent_count: int
     status: ProfessorDashboardStatus
     has_active_schedule: bool = False

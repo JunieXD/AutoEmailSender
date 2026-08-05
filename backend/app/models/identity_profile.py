@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.email_task import EmailTask
     from app.models.identity_communication_group import IdentityCommunicationGroup
     from app.models.identity_material import IdentityMaterial
+    from app.models.identity_professor_match_result import IdentityProfessorMatchResult
     from app.models.outreach_template import OutreachTemplate
 
 
@@ -122,6 +123,12 @@ class IdentityProfile(Base):
     email_tasks: Mapped[list["EmailTask"]] = relationship(
         back_populates="identity",
         cascade="all, delete-orphan",
+    )
+    professor_match_results: Mapped[list["IdentityProfessorMatchResult"]] = relationship(
+        back_populates="identity",
+        cascade="all, delete-orphan",
+        foreign_keys="IdentityProfessorMatchResult.identity_id",
+        passive_deletes=True,
     )
     batch_tasks: Mapped[list["BatchTask"]] = relationship(
         back_populates="identity",

@@ -40,6 +40,11 @@ from app.schemas.professor import (
 )
 from app.services.contact_status import build_contact_status_by_professor
 from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.services.match_results import (
+    ResolvedMatchResults,
+    load_resolved_match_results,
+    match_result_is_stale,
+)
 from app.services.operation_logs import record_operation_log
 from app.services.professor_schedule import load_active_scheduled_professor_ids
 from app.services.professor_management import (
@@ -93,6 +98,7 @@ async def list_professors(
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
     contact_status_by_professor = {}
     active_scheduled_professor_ids: set[int] = set()
+    resolved_matches: ResolvedMatchResults | None = None
 
     if identity_id is not None:
         try:
@@ -108,8 +114,8 @@ async def list_professors(
                 load_only(
                     EmailTask.professor_id,
                     EmailTask.status,
-                    EmailTask.created_at,
                     EmailTask.match_score,
+                    EmailTask.created_at,
                     EmailTask.sent_at,
                     EmailTask.is_replied,
                     EmailTask.updated_at,
@@ -140,17 +146,21 @@ async def list_professors(
             identity_id=identity_id,
             professor_ids=professor_ids,
         )
-
-    latest_match_task_by_professor: dict[int, EmailTask] = {}
-    for professor_id, tasks in tasks_by_professor.items():
-        latest_match = next((task for task in tasks if task.match_score is not None), None)
-        if latest_match is not None:
-            latest_match_task_by_professor[professor_id] = latest_match
+        resolved_matches = await load_resolved_match_results(
+            session,
+            active_identity_id=identity_id,
+            professor_ids=professor_ids,
+        )
 
     items: list[ProfessorDashboardItemRead] = []
     for professor in professors:
         contact_status = contact_status_by_professor.get(professor.id)
-        latest_match_task = latest_match_task_by_professor.get(professor.id)
+        match_result = (
+            resolved_matches.get(professor.id)
+            if resolved_matches is not None
+            else None
+        )
+        match_scope = resolved_matches.scope if resolved_matches is not None else None
         items.append(
             ProfessorDashboardItemRead(
                 id=professor.id,
@@ -162,7 +172,28 @@ async def list_professors(
                 department=professor.department,
                 research_direction=professor.research_direction,
                 recent_papers=professor.recent_papers or [],
-                match_score=latest_match_task.match_score if latest_match_task else None,
+                match_score=match_result.match_score if match_result else None,
+                match_source_identity_id=(
+                    match_scope.source_identity_id if match_scope is not None else None
+                ),
+                match_source_identity_name=(
+                    match_scope.source_identity.profile_name
+                    if match_scope is not None
+                    else None
+                ),
+                match_is_shared=(
+                    match_scope.uses_group_match_source
+                    if match_scope is not None
+                    else False
+                ),
+                match_is_stale=(
+                    match_result_is_stale(match_result, match_scope.source_identity)
+                    if match_scope is not None
+                    else False
+                ),
+                match_analyzed_at=(
+                    match_result.analyzed_at if match_result is not None else None
+                ),
                 sent_count=contact_status.sent_count if contact_status else 0,
                 status=contact_status.status if contact_status else "not_contacted",
                 has_active_schedule=professor.id in active_scheduled_professor_ids,

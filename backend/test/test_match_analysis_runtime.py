@@ -9,17 +9,27 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.api.identities import delete_identity
 from app.models import (
     AppSetting,
     Base,
     EmailTask,
+    IdentityCommunicationGroup,
     IdentityMaterial,
     IdentityProfile,
+    IdentityProfessorMatchResult,
     LLMProfile,
+    MatchAnalysisJob,
+    MatchAnalysisJobItem,
     MatchAnalysisRun,
     Professor,
 )
 from app.services import llm_runtime, task_runtime
+from app.services.match_results import (
+    load_resolved_match_result,
+    match_result_is_stale,
+)
+from app.services.material_mutations import delete_identity_material_record
 from app.services.task_runtime import (
     MatchAnalysisAlreadyRunningError,
     calculate_task_match_once,
@@ -157,9 +167,201 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertTrue(runs[0].success)
         self.assertEqual(runs[0].status, "succeeded")
         self.assertEqual(runs[0].match_score, 91)
+        self.assertEqual(runs[0].match_reason, "研究方向接近")
+        self.assertEqual(runs[0].fit_points, ["信息抽取"])
+        self.assertEqual(runs[0].risk_points, [])
+        self.assertEqual(runs[0].match_keywords, ["信息抽取"])
         self.assertEqual(runs[0].cached_tokens, 64)
         self.assertIsNotNone(runs[0].started_at)
         self.assertIsNotNone(runs[0].finished_at)
+
+        canonical_results = self._run_async(self._list_canonical_results())
+        self.assertEqual(len(canonical_results), 1)
+        self.assertEqual(canonical_results[0].match_score, 91)
+        self.assertEqual(canonical_results[0].match_reason, "研究方向接近")
+        self.assertEqual(canonical_results[0].latest_analysis_run_id, runs[0].id)
+
+    def test_recalculation_overwrites_one_canonical_identity_professor_result(self) -> None:
+        generations = [
+            llm_runtime.GeneratedMatchEvaluation(
+                result=llm_runtime.MatchEvaluationResult(
+                    match_score=91,
+                    match_reason="第一次分析",
+                    fit_points=["信息抽取"],
+                    risk_points=[],
+                    keywords=["IE"],
+                ),
+                usage=None,
+            ),
+            llm_runtime.GeneratedMatchEvaluation(
+                result=llm_runtime.MatchEvaluationResult(
+                    match_score=74,
+                    match_reason="材料更新后的分析",
+                    fit_points=["智能体"],
+                    risk_points=["论文证据有限"],
+                    keywords=["agent"],
+                ),
+                usage=None,
+            ),
+        ]
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(side_effect=generations),
+        ):
+            first = self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id),
+            )
+            second = self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id),
+            )
+
+        canonical_results = self._run_async(self._list_canonical_results())
+        self.assertEqual(len(canonical_results), 1)
+        self.assertEqual(canonical_results[0].match_score, 74)
+        self.assertEqual(canonical_results[0].match_reason, "材料更新后的分析")
+        self.assertEqual(canonical_results[0].fit_points, ["智能体"])
+        self.assertEqual(canonical_results[0].risk_points, ["论文证据有限"])
+        self.assertEqual(canonical_results[0].latest_analysis_run_id, second.run_id)
+        self.assertNotEqual(first.run_id, second.run_id)
+
+    def test_shared_group_analysis_uses_source_identity_and_stores_result_under_source(self) -> None:
+        (
+            source_identity_id,
+            active_identity_id,
+            source_material_id,
+        ) = self._run_async(self._configure_shared_match_source())
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=93,
+                match_reason="依据身份 A 的材料与导师方向高度匹配",
+                fit_points=["信息抽取"],
+                risk_points=["需补充论文"],
+                keywords=["IE"],
+            ),
+            usage=None,
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ) as mocked_generate:
+            action_result = self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id),
+            )
+
+        self.assertEqual(action_result.identity_id, active_identity_id)
+        self.assertEqual(action_result.match_source_identity_id, source_identity_id)
+        self.assertEqual(
+            mocked_generate.await_args.kwargs["identity"].id,
+            source_identity_id,
+        )
+        self.assertEqual(
+            mocked_generate.await_args.kwargs["primary_material"].id,
+            source_material_id,
+        )
+        self.assertTrue(
+            all(
+                material.identity_id == source_identity_id
+                for material in mocked_generate.await_args.kwargs["available_materials"]
+            ),
+        )
+
+        state = self._run_async(
+            self._load_shared_match_state(active_identity_id),
+        )
+        self.assertEqual(len(state["canonical_results"]), 1)
+        self.assertEqual(
+            state["canonical_results"][0].identity_id,
+            source_identity_id,
+        )
+        self.assertEqual(state["canonical_results"][0].match_score, 93)
+        self.assertEqual(state["task"].identity_id, active_identity_id)
+        self.assertEqual(
+            state["task"].match_source_identity_id,
+            source_identity_id,
+        )
+        self.assertEqual(state["task"].match_score, 93)
+        self.assertEqual(state["runs"][0].identity_id, source_identity_id)
+        self.assertEqual(state["resolved_scope_source_id"], source_identity_id)
+        self.assertEqual(state["resolved_match_reason"], generation.result.match_reason)
+        self.assertIsNone(
+            self._run_async(
+                self._clear_shared_source_and_load_match(active_identity_id),
+            ),
+        )
+
+    def test_deleting_shared_match_source_removes_canonical_result_and_runs(self) -> None:
+        source_identity_id, active_identity_id, _ = self._run_async(
+            self._configure_shared_match_source(),
+        )
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=93,
+                match_reason="删除依据身份前的共享结果",
+                fit_points=["信息抽取"],
+                risk_points=[],
+                keywords=["IE"],
+            ),
+            usage=None,
+        )
+
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ):
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id),
+            )
+        self._run_async(
+            self._link_latest_run_to_shared_match_job(
+                source_identity_id,
+                active_identity_id,
+            ),
+        )
+
+        state = self._run_async(
+            self._delete_shared_match_source_and_load_state(
+                source_identity_id,
+                active_identity_id,
+            ),
+        )
+
+        self.assertIsNone(state["source_identity"])
+        self.assertIsNone(state["active_communication_group_id"])
+        self.assertEqual(state["canonical_results"], [])
+        self.assertEqual(state["runs"], [])
+        self.assertEqual(state["job_match_source_identity_ids"], [None])
+        self.assertEqual(state["job_item_run_ids"], [None])
+        self.assertEqual(state["task_match_source_identity_id"], source_identity_id)
+        self.assertIsNone(state["resolved_match_reason"])
+
+    def test_deleting_analysis_material_keeps_result_but_marks_it_stale(self) -> None:
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=88,
+                match_reason="删除材料前的分析",
+                fit_points=["信息抽取"],
+                risk_points=[],
+                keywords=["IE"],
+            ),
+            usage=None,
+        )
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ):
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id),
+            )
+
+        deletion_state = self._run_async(self._delete_match_material())
+
+        self.assertEqual(deletion_state["detached_match_result_count"], 1)
+        self.assertIsNone(deletion_state["current_primary_material_id"])
+        self.assertIsNone(deletion_state["result_primary_material_id"])
+        self.assertTrue(deletion_state["is_stale"])
+        self.assertEqual(deletion_state["match_score"], 88)
 
     def test_calculate_match_passes_workflow_session_and_runtime_adaptation(self) -> None:
         adaptation = llm_runtime.LLMRuntimeAdaptation("responses", {"enable_thinking": False})
@@ -377,6 +579,211 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
     async def _list_runs(self) -> list[MatchAnalysisRun]:
         async with self.session_factory() as session:
             return list(await session.scalars(select(MatchAnalysisRun)))
+
+    async def _list_canonical_results(self) -> list[IdentityProfessorMatchResult]:
+        async with self.session_factory() as session:
+            return list(
+                await session.scalars(
+                    select(IdentityProfessorMatchResult).order_by(
+                        IdentityProfessorMatchResult.id.asc(),
+                    ),
+                ),
+            )
+
+    async def _configure_shared_match_source(self) -> tuple[int, int, int]:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            source_identity = await session.get(IdentityProfile, task.identity_id)
+            assert source_identity is not None
+            assert source_identity.current_primary_material_id is not None
+
+            active_identity = IdentityProfile(
+                name="身份 B",
+                profile_name="身份 B",
+                sender_name="身份 B",
+                email_address="sender-b@example.com",
+                smtp_host="smtp.example.com",
+                smtp_port=465,
+                smtp_username="sender-b@example.com",
+                smtp_password="secret",
+                default_language="zh-CN",
+                outreach_generation_mode="llm",
+            )
+            session.add(active_identity)
+            await session.flush()
+            active_material = IdentityMaterial(
+                identity_id=active_identity.id,
+                display_name="身份 B 简历",
+                file_path="data/materials/resume-b.txt",
+                original_filename="resume-b.txt",
+                material_type="resume",
+                sha256="c" * 64,
+                extracted_text="身份 B 的材料不应参与本次匹配。",
+            )
+            session.add(active_material)
+            await session.flush()
+            active_identity.current_primary_material_id = active_material.id
+
+            group = IdentityCommunicationGroup()
+            session.add(group)
+            await session.flush()
+            source_identity.communication_group_id = group.id
+            active_identity.communication_group_id = group.id
+            group.match_source_identity_id = source_identity.id
+            task.identity_id = active_identity.id
+            task.primary_material_id = active_material.id
+            await session.commit()
+            return (
+                source_identity.id,
+                active_identity.id,
+                source_identity.current_primary_material_id,
+            )
+
+    async def _load_shared_match_state(self, active_identity_id: int) -> dict[str, object]:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            scope, resolved = await load_resolved_match_result(
+                session,
+                active_identity_id=active_identity_id,
+                professor_id=task.professor_id,
+            )
+            canonical_results = list(
+                await session.scalars(select(IdentityProfessorMatchResult)),
+            )
+            runs = list(await session.scalars(select(MatchAnalysisRun)))
+            return {
+                "task": task,
+                "canonical_results": canonical_results,
+                "runs": runs,
+                "resolved_scope_source_id": scope.source_identity_id,
+                "resolved_match_reason": resolved.match_reason if resolved else None,
+            }
+
+    async def _delete_match_material(self) -> dict[str, object]:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            identity = await session.get(IdentityProfile, task.identity_id)
+            assert identity is not None
+            assert identity.current_primary_material_id is not None
+            deletion = await delete_identity_material_record(
+                session,
+                identity.current_primary_material_id,
+                event_name="identity_material.deleted",
+                actor="test",
+            )
+            await session.commit()
+            scope, result = await load_resolved_match_result(
+                session,
+                active_identity_id=identity.id,
+                professor_id=task.professor_id,
+                include_legacy_task_snapshots=False,
+            )
+            assert result is not None
+            return {
+                "detached_match_result_count": deletion.detached_match_result_count,
+                "current_primary_material_id": scope.source_identity.current_primary_material_id,
+                "result_primary_material_id": result.primary_material_id,
+                "is_stale": match_result_is_stale(result, scope.source_identity),
+                "match_score": result.match_score,
+            }
+
+    async def _delete_shared_match_source_and_load_state(
+        self,
+        source_identity_id: int,
+        active_identity_id: int,
+    ) -> dict[str, object]:
+        async with self.session_factory() as session:
+            await delete_identity(source_identity_id, session=session)
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            active_identity = await session.get(IdentityProfile, active_identity_id)
+            assert active_identity is not None
+            _, resolved = await load_resolved_match_result(
+                session,
+                active_identity_id=active_identity_id,
+                professor_id=task.professor_id,
+            )
+            return {
+                "source_identity": await session.get(
+                    IdentityProfile,
+                    source_identity_id,
+                ),
+                "active_communication_group_id": active_identity.communication_group_id,
+                "canonical_results": list(
+                    await session.scalars(select(IdentityProfessorMatchResult)),
+                ),
+                "runs": list(await session.scalars(select(MatchAnalysisRun))),
+                "job_match_source_identity_ids": list(
+                    await session.scalars(
+                        select(MatchAnalysisJob.match_source_identity_id),
+                    ),
+                ),
+                "job_item_run_ids": list(
+                    await session.scalars(
+                        select(MatchAnalysisJobItem.match_analysis_run_id),
+                    ),
+                ),
+                "task_match_source_identity_id": task.match_source_identity_id,
+                "resolved_match_reason": resolved.match_reason if resolved else None,
+            }
+
+    async def _link_latest_run_to_shared_match_job(
+        self,
+        source_identity_id: int,
+        active_identity_id: int,
+    ) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            run = await session.scalar(
+                select(MatchAnalysisRun).order_by(MatchAnalysisRun.id.desc()),
+            )
+            assert run is not None
+            job = MatchAnalysisJob(
+                name="共享依据身份删除测试",
+                identity_id=active_identity_id,
+                match_source_identity_id=source_identity_id,
+                llm_profile_id=task.llm_profile_id,
+            )
+            session.add(job)
+            await session.flush()
+            session.add(
+                MatchAnalysisJobItem(
+                    job_id=job.id,
+                    professor_id=task.professor_id,
+                    email_task_id=task.id,
+                    status="succeeded",
+                    match_analysis_run_id=run.id,
+                ),
+            )
+            await session.commit()
+
+    async def _clear_shared_source_and_load_match(
+        self,
+        active_identity_id: int,
+    ) -> str | None:
+        async with self.session_factory() as session:
+            active_identity = await session.get(IdentityProfile, active_identity_id)
+            assert active_identity is not None
+            assert active_identity.communication_group_id is not None
+            group = await session.get(
+                IdentityCommunicationGroup,
+                active_identity.communication_group_id,
+            )
+            assert group is not None
+            group.match_source_identity_id = None
+            await session.commit()
+            task = await session.get(EmailTask, self.email_task_id)
+            assert task is not None
+            _, resolved = await load_resolved_match_result(
+                session,
+                active_identity_id=active_identity_id,
+                professor_id=task.professor_id,
+            )
+            return resolved.match_reason if resolved is not None else None
 
     async def _clear_primary_material_text(self) -> None:
         async with self.session_factory() as session:

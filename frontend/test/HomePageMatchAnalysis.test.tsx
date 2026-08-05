@@ -348,4 +348,43 @@ describe("HomePage match analysis", () => {
       );
     });
   });
+
+  it("checks the configured shared source material before analyzing", async () => {
+    const activeIdentity = createIdentity({ communication_group_id: 7 });
+    const sourceIdentity = createIdentity({
+      id: 2,
+      name: "申请身份 A",
+      profile_name: "申请身份 A",
+      email_address: "source@example.com",
+      smtp_username: "source@example.com",
+      current_primary_material_id: null,
+      communication_group_id: 7,
+      is_default: false,
+    });
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: activeIdentity.id,
+      selectedLlmProfileId: 1,
+      selectedIdentity: activeIdentity,
+      selectedLlmProfile,
+      matchSourceIdentity: sourceIdentity,
+      matchSourceIdentityId: sourceIdentity.id,
+      matchUsesGroupSource: true,
+      matchScopeKey: `${activeIdentity.id}:${sourceIdentity.id}`,
+    });
+    renderPage();
+
+    expect(
+      await screen.findByText("组内匹配统一依据 申请身份 A"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "分析匹配度" })[0]);
+
+    await waitFor(() => {
+      expect(mockedNotifyWarning).toHaveBeenCalledWith(
+        "匹配依据身份缺少默认材料",
+        "申请身份 A 尚未设置默认材料，请先到个人页补充。",
+      );
+    });
+    expect(mockedEnsureWorkspaceTask).not.toHaveBeenCalled();
+    expect(mockedCalculateMatch).not.toHaveBeenCalled();
+  });
 });

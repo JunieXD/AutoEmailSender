@@ -120,6 +120,26 @@ const CommunicationScopeHarness = () => {
   );
 };
 
+const MatchScopeHarness = () => {
+  const {
+    matchSourceIdentity,
+    matchUsesGroupSource,
+    matchScopeKey,
+  } = useSelectionContext();
+
+  return (
+    <div>
+      <span data-testid="match-source-name">
+        {matchSourceIdentity?.profile_name ?? "no source"}
+      </span>
+      <span data-testid="match-uses-group-source">
+        {String(matchUsesGroupSource)}
+      </span>
+      <span data-testid="match-scope-key">{matchScopeKey}</span>
+    </div>
+  );
+};
+
 describe("SelectionContext notifications", () => {
   beforeEach(() => {
     listIdentities.mockReset();
@@ -373,6 +393,63 @@ describe("SelectionContext notifications", () => {
       expect(screen.getByTestId("communication-group-count")).toHaveTextContent("1");
       expect(screen.getByTestId("communication-identity-ids")).toHaveTextContent("1,2");
       expect(screen.getByTestId("communication-scope-key")).toHaveTextContent("1:2");
+    });
+  });
+
+  it("resolves the configured group member as the shared match source", async () => {
+    window.localStorage.setItem("selected_identity_id", "2");
+    listIdentities.mockResolvedValue([
+      makeIdentity({ id: 1, communication_group_id: 7 }),
+      makeIdentity({
+        id: 2,
+        name: "共享身份",
+        profile_name: "共享身份",
+        email_address: "shared@example.com",
+        smtp_username: "shared@example.com",
+        communication_group_id: 7,
+        is_default: false,
+      }),
+    ]);
+    listCommunicationGroups.mockResolvedValue([
+      {
+        id: 7,
+        match_source_identity_id: 1,
+        members: [
+          {
+            id: 1,
+            profile_name: "默认身份",
+            email_address: "default@example.com",
+            is_default: true,
+          },
+          {
+            id: 2,
+            profile_name: "共享身份",
+            email_address: "shared@example.com",
+            is_default: false,
+          },
+        ],
+        created_at: "2026-07-21T00:00:00Z",
+        updated_at: "2026-07-21T00:00:00Z",
+      },
+    ]);
+    listLLMProfiles.mockResolvedValue([]);
+
+    render(
+      <NotificationProvider>
+        <SelectionProvider>
+          <MatchScopeHarness />
+        </SelectionProvider>
+      </NotificationProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("match-source-name")).toHaveTextContent(
+        "默认身份",
+      );
+      expect(screen.getByTestId("match-uses-group-source")).toHaveTextContent(
+        "true",
+      );
+      expect(screen.getByTestId("match-scope-key")).toHaveTextContent("2:1");
     });
   });
 });

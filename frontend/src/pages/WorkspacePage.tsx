@@ -434,6 +434,8 @@ export const WorkspacePage = () => {
     selectedLlmProfileId,
     selectedIdentity,
     communicationScopeKey = '',
+    matchSourceIdentity,
+    matchScopeKey = '',
   } = useSelectionContext();
   const { registerWorkspaceDraftGuard } = useWorkspaceDraftGuard();
   const [thread, setThread] = useState<WorkspaceThreadDTO | null>(null);
@@ -475,7 +477,7 @@ export const WorkspacePage = () => {
   const captureNextRewriteActionRequestRef = useRef(false);
   const workspaceRequestKey =
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
-      ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}:${communicationScopeKey || selectedIdentityId}`
+      ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}:${communicationScopeKey || selectedIdentityId}:${matchScopeKey || selectedIdentityId}`
       : null;
   const currentTask = getCurrentTaskOrNull(thread);
   const currentTaskId = currentTask?.id ?? null;
@@ -746,11 +748,17 @@ export const WorkspacePage = () => {
 
   const statusLabel = getStatusLabel(currentTask, thread?.messages ?? []);
   const blocksDirectDraftActions = shouldBlockDirectDraftActions(currentTask);
+  const effectiveMatchSourceIdentity = matchSourceIdentity ?? selectedIdentity;
+  const resolvedMatchSourceIdentity =
+    thread?.match_source_identity ?? effectiveMatchSourceIdentity;
   const canCalculateMatch =
     Boolean(currentTaskId) &&
-    Boolean(selectedIdentity?.current_primary_material_id) &&
+    Boolean(effectiveMatchSourceIdentity?.current_primary_material_id) &&
     hasProfessorMatchEvidence(thread?.professor) &&
     !blocksDirectDraftActions;
+  const matchAnalysisDescription = thread?.match_uses_group_source
+    ? `匹配分析将统一使用 ${resolvedMatchSourceIdentity?.profile_name || '匹配依据身份'} 的默认材料。`
+    : `匹配分析将使用 ${resolvedMatchSourceIdentity?.profile_name || '当前身份'} 的默认材料。`;
   const preparedBodyText = deriveBodyTextFromDraft({ content, contentHtml });
   const hasDraftBody = hasMeaningfulBody({
     content: preparedBodyText,
@@ -1485,6 +1493,7 @@ export const WorkspacePage = () => {
                   isRewriting={isRewriting}
                   hasDraftBody={hasDraftBody}
                   canCalculateMatch={canCalculateMatch}
+                  matchAnalysisDescription={matchAnalysisDescription}
                   canGenerateDraft={canGenerateDraft}
                   canContinueManually={Boolean(currentTask.can_continue_manually)}
                   canStartFollowUp={Boolean(currentTask.can_write_follow_up)}

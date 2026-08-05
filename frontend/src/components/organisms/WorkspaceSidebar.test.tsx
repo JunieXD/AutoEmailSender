@@ -244,4 +244,33 @@ describe("WorkspaceSidebar", () => {
     expect(screen.getAllByText("暂无匹配分析")).toHaveLength(2);
     expect(screen.getAllByText("点击“分析匹配度”后，这里会显示分数、理由和建议。")).toHaveLength(2);
   });
+
+  it("shows the shared source material and stale-result warning", () => {
+    const thread = buildThread();
+    render(
+      <WorkspaceSidebar
+        thread={{
+          ...thread,
+          match_source_identity: {
+            id: 2,
+            name: "申请身份 A",
+            profile_name: "申请身份 A",
+            sender_name: "申请身份 A",
+            email_address: "source@example.com",
+          },
+          match_source_material_id: 9,
+          match_source_material_name: "身份 A 默认简历",
+          match_analyzed_at: "2026-08-05T08:30:00Z",
+          match_uses_group_source: true,
+          match_is_stale: true,
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("组内统一依据 申请身份 A")).toHaveLength(2);
+    expect(screen.getAllByText("分析材料：身份 A 默认简历")).toHaveLength(2);
+    expect(
+      screen.getAllByText(/默认材料已变更或原分析材料已删除/),
+    ).toHaveLength(2);
+  });
 });

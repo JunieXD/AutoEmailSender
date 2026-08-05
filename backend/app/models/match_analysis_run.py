@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -25,6 +25,15 @@ class MatchAnalysisRun(Base):
             "email_task_id",
             unique=True,
             sqlite_where=text("status = 'running'"),
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index(
+            "uq_match_analysis_runs_running_per_identity_professor",
+            "identity_id",
+            "professor_id",
+            unique=True,
+            sqlite_where=text("status = 'running'"),
+            postgresql_where=text("status = 'running'"),
         ),
     )
 
@@ -57,6 +66,10 @@ class MatchAnalysisRun(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'failed'"))
     success: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
     match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    match_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fit_points: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    risk_points: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    match_keywords: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

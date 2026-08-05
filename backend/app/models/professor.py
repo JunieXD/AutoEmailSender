@@ -14,6 +14,7 @@ from app.models.types import UTCDateTime
 if TYPE_CHECKING:
     from app.models.email_log import EmailLog
     from app.models.email_task import EmailTask
+    from app.models.identity_professor_match_result import IdentityProfessorMatchResult
     from app.models.professor_community_link import ProfessorCommunityLink
 
 
@@ -71,6 +72,12 @@ class Professor(Base):
     email_tasks: Mapped[list["EmailTask"]] = relationship(
         back_populates="professor",
         cascade="all, delete-orphan",
+    )
+    identity_match_results: Mapped[list["IdentityProfessorMatchResult"]] = relationship(
+        back_populates="professor",
+        cascade="all, delete-orphan",
+        foreign_keys="IdentityProfessorMatchResult.professor_id",
+        passive_deletes=True,
     )
     email_logs: Mapped[list["EmailLog"]] = relationship(
         back_populates="professor",

@@ -80,6 +80,7 @@ const makeIdentity = (
 const makeGroup = (
   id: number,
   identities: IdentityDTO[],
+  matchSourceIdentityId: number | null = null,
 ): IdentityCommunicationGroupDTO => ({
   id,
   members: identities.map((identity) => ({
@@ -88,6 +89,7 @@ const makeGroup = (
     email_address: identity.email_address,
     is_default: identity.is_default,
   })),
+  match_source_identity_id: matchSourceIdentityId,
   created_at: '2026-07-21T00:00:00Z',
   updated_at: '2026-07-21T00:00:00Z',
 });
@@ -146,6 +148,7 @@ describe('CommunicationSharingPanel', () => {
     await waitFor(() => {
       expect(apiMocks.createCommunicationGroup).toHaveBeenCalledWith({
         identity_ids: [1, 2],
+        match_source_identity_id: null,
         confirm_merge_existing_groups: false,
       });
       expect(refreshSelections).toHaveBeenCalledTimes(1);
@@ -185,9 +188,63 @@ describe('CommunicationSharingPanel', () => {
       );
       expect(apiMocks.updateCommunicationGroup).toHaveBeenCalledWith(10, {
         identity_ids: [1, 2, 3],
+        match_source_identity_id: null,
         confirm_merge_existing_groups: true,
       });
     });
+  });
+
+  it('lets the user choose one member as the shared match source', async () => {
+    const identityA = makeIdentity(1, 'A', 10);
+    const identityB = makeIdentity(2, 'B', 10);
+    const group = makeGroup(10, [identityA, identityB], identityA.id);
+    selectionState = {
+      identities: [identityA, identityB],
+      communicationGroups: [group],
+      selectedIdentity: identityB,
+      refreshSelections,
+    };
+    apiMocks.updateCommunicationGroup.mockResolvedValue(
+      makeGroup(10, [identityA, identityB], identityB.id),
+    );
+
+    render(<CommunicationSharingPanel />);
+    expandPanel();
+
+    expect(screen.getByText('匹配度统一依据 A')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑 A、B' }));
+    expect(screen.getByRole('radio', { name: /统一使用 A/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /统一使用 B/ }));
+    fireEvent.click(screen.getByRole('button', { name: '保存共享组' }));
+
+    await waitFor(() => {
+      expect(apiMocks.updateCommunicationGroup).toHaveBeenCalledWith(10, {
+        identity_ids: [1, 2],
+        match_source_identity_id: 2,
+        confirm_merge_existing_groups: false,
+      });
+    });
+  });
+
+  it('falls back to independent matching when the source member is removed', () => {
+    const identityA = makeIdentity(1, 'A', 10);
+    const identityB = makeIdentity(2, 'B', 10);
+    const identityC = makeIdentity(3, 'C', 10);
+    const group = makeGroup(10, [identityA, identityB, identityC], identityA.id);
+    selectionState = {
+      identities: [identityA, identityB, identityC],
+      communicationGroups: [group],
+      selectedIdentity: identityB,
+      refreshSelections,
+    };
+
+    render(<CommunicationSharingPanel />);
+    expandPanel();
+    fireEvent.click(screen.getByRole('button', { name: '编辑 A、B 等 3 个身份' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Aa@example\.com/ }));
+
+    expect(screen.getByRole('radio', { name: /各身份独立/ })).toBeChecked();
+    expect(screen.queryByRole('radio', { name: /统一使用 A/ })).not.toBeInTheDocument();
   });
 
   it('dissolves a group without deleting identities', async () => {

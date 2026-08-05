@@ -118,12 +118,14 @@ export interface IdentityCommunicationGroupMemberDTO {
 export interface IdentityCommunicationGroupDTO {
   id: number;
   members: IdentityCommunicationGroupMemberDTO[];
+  match_source_identity_id?: number | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface IdentityCommunicationGroupPayload {
   identity_ids: number[];
+  match_source_identity_id?: number | null;
   confirm_merge_existing_groups?: boolean;
 }
 
@@ -258,6 +260,11 @@ export interface ProfessorDashboardItemDTO {
   personal_note: string | null;
   recent_papers: string[];
   match_score: number | null;
+  match_source_identity_id?: number | null;
+  match_source_identity_name?: string | null;
+  match_is_shared?: boolean;
+  match_is_stale?: boolean;
+  match_analyzed_at?: string | null;
   sent_count: number;
   status: ProfessorDashboardStatus;
   has_active_schedule?: boolean;
@@ -775,6 +782,7 @@ export interface MatchAnalysisJobDTO {
   total_cached_tokens: number;
   total_tokens: number;
   identity_id: number;
+  match_source_identity_id?: number;
   llm_profile_id: number;
   cancel_requested_at: string | null;
   started_at: string | null;
@@ -1180,6 +1188,13 @@ export interface WorkspaceThreadDTO {
   llm_profile: WorkspaceLLMDTO;
   material_options: IdentityMaterialDTO[];
   current_task: WorkspaceTaskSummaryDTO;
+  match_source_identity?: WorkspaceIdentityDTO;
+  match_source_material_id?: number | null;
+  match_source_material_name?: string | null;
+  match_result_id?: number | null;
+  match_analyzed_at?: string | null;
+  match_uses_group_source?: boolean;
+  match_is_stale?: boolean;
   messages: WorkspaceMessageDTO[];
   communication_scope: WorkspaceIdentityDTO[];
   sync_warnings: WorkspaceSyncWarningDTO[];
@@ -1438,6 +1453,16 @@ export interface DashboardMentorFilterDTO {
   school: string | null;
 }
 
+export interface DashboardMatchContextDTO {
+  source_identity_id: number;
+  source_identity_name: string;
+  source_identity_email: string;
+  source_material_id: number | null;
+  source_material_name: string | null;
+  uses_group_match_source: boolean;
+  stale_result_count: number;
+}
+
 export interface DashboardMentorActionItemDTO {
   professor_id: number;
   name: string;
@@ -1454,6 +1479,7 @@ export interface DashboardMentorActionItemDTO {
 
 export interface DashboardMentorSectionDTO {
   summary: DashboardMentorSummaryDTO;
+  match_context?: DashboardMatchContextDTO;
   match_score_distribution: DashboardMentorMatchBucketCountDTO[];
   profile_completeness: DashboardProfileCompletenessDTO[];
   profile_completeness_distribution: DashboardProfileCompletenessBucketDTO[];

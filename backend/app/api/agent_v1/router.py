@@ -3978,6 +3978,7 @@ async def _calculate_agent_task_match(
             "task_id": task_id,
             "professor_id": result.professor_id,
             "identity_id": result.identity_id,
+            "match_source_identity_id": result.match_source_identity_id,
             "llm_profile_id": result.llm_profile_id,
             "match_analysis_run_id": result.run_id,
             "total_tokens": result.usage.total_tokens,
@@ -5657,6 +5658,15 @@ def _serialize_agent_workspace_thread(
                     "editable": draft.editable,
                 },
             },
+            "match_source_identity": serialize_identity(
+                workspace.match_source_identity,
+            ),
+            "match_source_material_id": workspace.match_source_material_id,
+            "match_source_material_name": workspace.match_source_material_name,
+            "match_result_id": workspace.match_result_id,
+            "match_analyzed_at": workspace.match_analyzed_at,
+            "match_uses_group_source": workspace.match_uses_group_source,
+            "match_is_stale": workspace.match_is_stale,
             "messages": [
                 {
                     "id": message.id,
@@ -5783,6 +5793,7 @@ def _serialize_match_analysis_job(job: MatchAnalysisJob) -> AgentMatchAnalysisJo
         total_cached_tokens=job.total_cached_tokens,
         total_tokens=job.total_tokens,
         identity_id=job.identity_id,
+        match_source_identity_id=job.match_source_identity_id or job.identity_id,
         llm_profile_id=job.llm_profile_id,
         cancel_requested_at=job.cancel_requested_at,
         started_at=job.started_at,

@@ -168,6 +168,14 @@ class EmailTask(Base):
     draft_rewrite_source_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_rewrite_source_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_rewrite_source_selected_material_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    # Historical compatibility snapshot. The canonical current result lives in
+    # identity_professor_match_results and is resolved by identity + professor.
+    # This plain integer intentionally preserves provenance even if the source
+    # identity is later deleted.
+    match_source_identity_id: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
     match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     match_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_subject: Mapped[str | None] = mapped_column(Text, nullable=True)

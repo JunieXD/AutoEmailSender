@@ -52,6 +52,7 @@ type WorkspaceComposerDockProps = {
   isRewriting: boolean;
   hasDraftBody: boolean;
   canCalculateMatch: boolean;
+  matchAnalysisDescription?: string;
   canGenerateDraft: boolean;
   canContinueManually: boolean;
   canStartFollowUp: boolean;
@@ -247,6 +248,7 @@ export const WorkspaceComposerDock = ({
   isRewriting,
   hasDraftBody,
   canCalculateMatch,
+  matchAnalysisDescription = '匹配分析将使用当前身份的默认材料。',
   canGenerateDraft,
   canContinueManually,
   canStartFollowUp,
@@ -485,6 +487,9 @@ export const WorkspaceComposerDock = ({
                           </div>
                           <div className="mt-3 w-fit max-w-full rounded-xl bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-500">
                             {draftTokenSummary}
+                          </div>
+                          <div className="mt-2 text-xs leading-5 text-primary">
+                            {matchAnalysisDescription}
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">

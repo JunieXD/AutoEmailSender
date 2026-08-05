@@ -29,6 +29,7 @@ from app.services.task_runtime import (
     calculate_task_match,
 )
 from app.services.operation_logs import record_operation_log
+from app.services.match_results import resolve_identity_match_scope
 from app.services.outreach_template_library import (
     get_default_outreach_template_for_identity,
 )
@@ -71,6 +72,7 @@ async def create_match_analysis_job_record(
     llm_profile_id: int,
     professor_ids: list[int],
     name: str | None = None,
+    match_source_identity_id: int | None = None,
     event_name: str = "match_analysis_job.created",
     actor: str | None = None,
 ) -> MatchAnalysisJob:
@@ -83,7 +85,12 @@ async def create_match_analysis_job_record(
     identity = await session.get(IdentityProfile, identity_id)
     if identity is None:
         raise ValueError("身份不存在")
-    if identity.current_primary_material_id is None:
+    match_scope = await resolve_identity_match_scope(
+        session,
+        active_identity_id=identity_id,
+        match_source_identity_id=match_source_identity_id,
+    )
+    if match_scope.source_identity.current_primary_material_id is None:
         raise ValueError("请到个人页设置默认材料")
 
     llm_profile = await session.get(LLMProfile, llm_profile_id)
@@ -114,6 +121,7 @@ async def create_match_analysis_job_record(
     job = MatchAnalysisJob(
         name=name or f"批量匹配分析 {now:%Y-%m-%d %H:%M}",
         identity_id=identity_id,
+        match_source_identity_id=match_scope.source_identity_id,
         llm_profile_id=llm_profile_id,
         status=MatchAnalysisJobStatus.QUEUED.value,
         target_count=0,
@@ -162,6 +170,7 @@ async def create_match_analysis_job_record(
     metadata: dict[str, object] = {
         "name": job.name,
         "identity_id": identity_id,
+        "match_source_identity_id": match_scope.source_identity_id,
         "llm_profile_id": llm_profile_id,
         "selected_count": len(professors),
         "target_count": queued_count,
@@ -194,6 +203,7 @@ def serialize_match_analysis_job(job: MatchAnalysisJob) -> MatchAnalysisJobRead:
         total_cached_tokens=job.total_cached_tokens,
         total_tokens=job.total_tokens,
         identity_id=job.identity_id,
+        match_source_identity_id=job.match_source_identity_id or job.identity_id,
         llm_profile_id=job.llm_profile_id,
         cancel_requested_at=job.cancel_requested_at,
         started_at=job.started_at,
@@ -355,6 +365,7 @@ async def retry_failed_match_analysis_job_record(
         llm_profile_id=job.llm_profile_id,
         professor_ids=professor_ids,
         name=f"{job.name} - 重试",
+        match_source_identity_id=job.match_source_identity_id or job.identity_id,
         event_name=event_name,
         actor=actor,
     )
@@ -678,6 +689,9 @@ async def _run_match_analysis_job_item(
             session_factory,
             job_id,
             item.email_task_id,
+            match_source_identity_id=(
+                job.match_source_identity_id or job.identity_id
+            ),
         )
     except (_MatchAnalysisJobCanceled, MatchCalculationCanceledError):
         await _mark_item_canceled(session_factory, item_id)
@@ -723,6 +737,8 @@ async def _calculate_task_match_until_canceled(
     session_factory: async_sessionmaker[AsyncSession],
     job_id: int,
     email_task_id: int,
+    *,
+    match_source_identity_id: int,
 ):
     async def cancel_requested() -> bool:
         return await _is_match_analysis_job_cancel_requested(session_factory, job_id)
@@ -734,6 +750,7 @@ async def _calculate_task_match_until_canceled(
             force=True,
             ignore_batch_status=True,
             cancel_requested=cancel_requested,
+            match_source_identity_id=match_source_identity_id,
         )
     )
     try:

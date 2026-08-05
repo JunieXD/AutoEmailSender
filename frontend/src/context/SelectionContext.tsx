@@ -29,6 +29,10 @@ interface SelectionContextValue {
   selectedLlmProfile: LLMProfileDTO | null;
   communicationIdentityIds: number[];
   communicationScopeKey: string;
+  matchSourceIdentity?: IdentityDTO | null;
+  matchSourceIdentityId?: number | null;
+  matchUsesGroupSource?: boolean;
+  matchScopeKey?: string;
   loading: boolean;
   setSelectedIdentityId: (value: number | null) => void;
   setSelectedLlmProfileId: (value: number | null) => void;
@@ -162,6 +166,20 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
         .map((identity) => identity.id)
         .sort((left, right) => left - right)
     : [];
+  const selectedCommunicationGroup = selectedIdentity?.communication_group_id
+    ? communicationGroups.find(
+        (group) => group.id === selectedIdentity.communication_group_id,
+      ) ?? null
+    : null;
+  const configuredMatchSourceIdentityId =
+    selectedCommunicationGroup?.match_source_identity_id ?? null;
+  const configuredMatchSourceIdentity = identities.find(
+    (identity) =>
+      identity.id === configuredMatchSourceIdentityId &&
+      identity.communication_group_id === selectedIdentity?.communication_group_id,
+  );
+  const matchSourceIdentity = configuredMatchSourceIdentity ?? selectedIdentity;
+  const matchSourceIdentityId = matchSourceIdentity?.id ?? null;
 
   const value: SelectionContextValue = {
     identities,
@@ -173,6 +191,12 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
     selectedLlmProfile: llmProfiles.find((item) => item.id === selectedLlmProfileId) ?? null,
     communicationIdentityIds,
     communicationScopeKey: communicationIdentityIds.join(':'),
+    matchSourceIdentity,
+    matchSourceIdentityId,
+    matchUsesGroupSource: configuredMatchSourceIdentity !== undefined,
+    matchScopeKey: `${selectedIdentityId ?? ''}:${
+      configuredMatchSourceIdentity?.id ?? 'independent'
+    }`,
     loading,
     setSelectedIdentityId,
     setSelectedLlmProfileId,

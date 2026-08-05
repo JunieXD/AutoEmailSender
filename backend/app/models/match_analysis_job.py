@@ -58,6 +58,11 @@ class MatchAnalysisJob(Base):
         index=True,
         nullable=False,
     )
+    match_source_identity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("identity_profiles.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     llm_profile_id: Mapped[int] = mapped_column(
         ForeignKey("llm_profiles.id"),
         index=True,
@@ -139,7 +144,12 @@ class MatchAnalysisJob(Base):
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    identity: Mapped["IdentityProfile"] = relationship()
+    identity: Mapped["IdentityProfile"] = relationship(
+        foreign_keys=[identity_id],
+    )
+    match_source_identity: Mapped["IdentityProfile | None"] = relationship(
+        foreign_keys=[match_source_identity_id],
+    )
     llm_profile: Mapped["LLMProfile"] = relationship()
     items: Mapped[list["MatchAnalysisJobItem"]] = relationship(
         back_populates="job",

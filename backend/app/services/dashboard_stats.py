@@ -20,6 +20,7 @@ from app.schemas.dashboard import (
     DashboardMentorActionItemRead,
     DashboardMentorFilterRead,
     DashboardMentorMatchBucketRead,
+    DashboardMatchContextRead,
     DashboardProfileCompletenessBucketRead,
     DashboardProfileCompletenessRead,
     DashboardMentorSectionRead,
@@ -36,6 +37,12 @@ from app.schemas.dashboard import (
 from app.services.contact_status import build_contact_status_by_professor
 from app.services.communication_events import CommunicationEvent, load_communication_events
 from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.services.match_results import (
+    MatchResultView,
+    ResolvedMatchResults,
+    load_resolved_match_results,
+    match_result_is_stale,
+)
 
 
 HIGH_SCORE_DEFAULT = 80
@@ -104,7 +111,6 @@ async def build_dashboard_overview(
                     EmailTask.professor_id,
                     EmailTask.status,
                     EmailTask.created_at,
-                    EmailTask.match_score,
                     EmailTask.sent_at,
                     EmailTask.is_replied,
                     EmailTask.updated_at,
@@ -137,8 +143,16 @@ async def build_dashboard_overview(
         for professor_id, professor_tasks in tasks_by_professor.items()
         if professor_tasks
     }
-    latest_match_score_by_professor = _build_latest_match_score_by_professor(tasks_by_professor)
     professor_ids = [professor.id for professor in professors]
+    resolved_matches = await load_resolved_match_results(
+        session,
+        active_identity_id=identity_id,
+        professor_ids=professor_ids,
+    )
+    latest_match_score_by_professor = {
+        professor_id: result.match_score
+        for professor_id, result in resolved_matches.by_professor_id.items()
+    }
     contact_status_by_professor = await build_contact_status_by_professor(
         session,
         identity_id=identity_id,
@@ -160,6 +174,7 @@ async def build_dashboard_overview(
         filtered_professors=filtered_professors,
         latest_task_by_professor=latest_task_by_professor,
         latest_match_score_by_professor=latest_match_score_by_professor,
+        resolved_matches=resolved_matches,
         professor_status_by_id=professor_status_by_id,
         threshold=identity.match_threshold or HIGH_SCORE_DEFAULT,
         active_university=_normalize_filter_value(university),
@@ -174,6 +189,7 @@ async def build_dashboard_overview(
         professors=professors,
         professor_status_by_id=professor_status_by_id,
         latest_task_by_professor=latest_task_by_professor,
+        match_results_by_professor=resolved_matches.by_professor_id,
         threshold=identity.match_threshold or HIGH_SCORE_DEFAULT,
         email_university=email_university,
         email_school=email_school,
@@ -190,6 +206,7 @@ def _build_mentor_section(
     filtered_professors: list[Professor],
     latest_task_by_professor: dict[int, EmailTask],
     latest_match_score_by_professor: dict[int, int],
+    resolved_matches: ResolvedMatchResults,
     professor_status_by_id: dict[int, str],
     threshold: int,
     active_university: str | None,
@@ -208,7 +225,8 @@ def _build_mentor_section(
     high_score_uncontacted = [
         _serialize_professor_action_item(
             professor,
-            task=latest_task_by_professor[professor.id],
+            task=latest_task_by_professor.get(professor.id),
+            match_result=resolved_matches.get(professor.id),
             status=professor_status_by_id.get(professor.id, "not_contacted"),
             reason=_build_mentor_follow_up_reason(
                 status=professor_status_by_id.get(professor.id, "not_contacted"),
@@ -216,8 +234,7 @@ def _build_mentor_section(
             threshold=threshold,
         )
         for professor in filtered_professors
-        if professor.id in latest_task_by_professor
-        and latest_match_score_by_professor.get(professor.id) is not None
+        if latest_match_score_by_professor.get(professor.id) is not None
         and latest_match_score_by_professor[professor.id] >= threshold
         and professor_status_by_id.get(professor.id) in {"not_contacted", "preparing", "ready_to_send"}
     ]
@@ -233,6 +250,7 @@ def _build_mentor_section(
         _serialize_professor_action_item(
             professor,
             task=latest_task_by_professor.get(professor.id),
+            match_result=resolved_matches.get(professor.id),
             status=professor_status_by_id.get(professor.id, "not_contacted"),
             reason="资料待补全",
             threshold=threshold,
@@ -265,6 +283,33 @@ def _build_mentor_section(
                 ]
             ),
             high_score_threshold=threshold,
+        ),
+        match_context=DashboardMatchContextRead(
+            source_identity_id=resolved_matches.scope.source_identity_id,
+            source_identity_name=(
+                resolved_matches.scope.source_identity.profile_name
+                or resolved_matches.scope.source_identity.name
+            ),
+            source_identity_email=resolved_matches.scope.source_identity.email_address,
+            source_material_id=(
+                resolved_matches.scope.source_identity.current_primary_material_id
+            ),
+            source_material_name=(
+                resolved_matches.scope.source_identity.current_primary_material.display_name
+                if resolved_matches.scope.source_identity.current_primary_material is not None
+                else None
+            ),
+            uses_group_match_source=(
+                resolved_matches.scope.uses_group_match_source
+            ),
+            stale_result_count=sum(
+                1
+                for result in resolved_matches.by_professor_id.values()
+                if match_result_is_stale(
+                    result,
+                    resolved_matches.scope.source_identity,
+                )
+            ),
         ),
         match_score_distribution=_build_match_score_distribution(
             professors=filtered_professors,
@@ -347,6 +392,7 @@ async def _build_email_section(
     professors: list[Professor],
     professor_status_by_id: dict[int, str],
     latest_task_by_professor: dict[int, EmailTask],
+    match_results_by_professor: dict[int, MatchResultView],
     threshold: int,
     email_university: str | None,
     email_school: str | None,
@@ -555,6 +601,7 @@ async def _build_email_section(
     status_distribution = _build_email_status_distribution(tasks)
     follow_ups = _build_email_follow_ups(
         latest_task_by_professor=latest_task_by_professor,
+        match_results_by_professor=match_results_by_professor,
         professor_status_by_id=professor_status_by_id,
         threshold=threshold,
     )
@@ -580,17 +627,6 @@ async def _build_email_section(
         status_distribution=status_distribution,
         follow_ups=follow_ups,
     )
-
-
-def _build_latest_match_score_by_professor(
-    tasks_by_professor: dict[int, list[EmailTask]],
-) -> dict[int, int]:
-    scores: dict[int, int] = {}
-    for professor_id, tasks in tasks_by_professor.items():
-        latest_score_task = next((task for task in tasks if task.match_score is not None), None)
-        if latest_score_task is not None and latest_score_task.match_score is not None:
-            scores[professor_id] = latest_score_task.match_score
-    return scores
 
 
 def _build_match_score_distribution(
@@ -756,6 +792,7 @@ def _serialize_professor_action_item(
     professor: Professor,
     *,
     task: EmailTask | None,
+    match_result: MatchResultView | None,
     status: str,
     reason: str,
     threshold: int,
@@ -768,10 +805,16 @@ def _serialize_professor_action_item(
         university=professor.university,
         school=professor.school,
         department=professor.department,
-        match_score=task.match_score if task is not None else None,
+        match_score=(
+            match_result.match_score if match_result is not None else None
+        ),
         status=status,
         status_label=PROFESSOR_STATUS_LABELS.get(status, status),
-        updated_at=(task.updated_at if task is not None else professor.updated_at),
+        updated_at=(
+            match_result.updated_at
+            if match_result is not None
+            else task.updated_at if task is not None else professor.updated_at
+        ),
         reason=reason,
         missing_fields=missing_fields,
     )
@@ -1175,6 +1218,7 @@ def _build_email_status_distribution(tasks: list[EmailTask]) -> list[DashboardEm
 def _build_email_follow_ups(
     *,
     latest_task_by_professor: dict[int, EmailTask],
+    match_results_by_professor: dict[int, MatchResultView],
     professor_status_by_id: dict[int, str],
     threshold: int,
 ) -> list[DashboardEmailFollowUpRead]:
@@ -1183,7 +1227,8 @@ def _build_email_follow_ups(
         professor = task.professor
         if professor is None:
             continue
-        score = task.match_score
+        match_result = match_results_by_professor.get(professor_id)
+        score = match_result.match_score if match_result is not None else None
         if score is None or score < threshold:
             continue
         status = professor_status_by_id.get(professor_id, "not_contacted")
@@ -1203,7 +1248,11 @@ def _build_email_follow_ups(
                 status=status,
                 status_label=PROFESSOR_STATUS_LABELS.get(status, status),
                 reason=reason,
-                updated_at=task.updated_at,
+                updated_at=(
+                    match_result.updated_at
+                    if match_result is not None
+                    else task.updated_at
+                ),
             ),
         )
 

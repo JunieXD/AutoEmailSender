@@ -59,6 +59,7 @@ from app.services.batch_task_status import (
     sync_batch_task_completion,
 )
 from app.services.materials import material_can_be_primary
+from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (
     get_default_outreach_template_for_identity,
@@ -414,7 +415,6 @@ async def list_batch_task_items(
                 EmailTask.status,
                 EmailTask.cancellation_reason,
                 EmailTask.batch_send_canceled_at,
-                EmailTask.match_score,
                 EmailTask.outreach_generation_mode,
                 EmailTask.draft_generation_source,
                 EmailTask.draft_fallback_reason,
@@ -456,6 +456,11 @@ async def list_batch_task_items(
         .order_by(EmailTask.created_at.asc(), EmailTask.id.asc())
     )
     email_tasks = list((await session.execute(statement)).scalars().unique())
+    resolved_matches = await load_resolved_match_results(
+        session,
+        active_identity_id=identity_id,
+        professor_ids=[email_task.professor_id for email_task in email_tasks],
+    )
     selected_material_ids = {
         material_id
         for email_task in email_tasks
@@ -476,7 +481,15 @@ async def list_batch_task_items(
             for material_id, size_bytes in rows
         }
     return [
-        _serialize_batch_task_item(email_task, material_sizes=material_sizes)
+        _serialize_batch_task_item(
+            email_task,
+            material_sizes=material_sizes,
+            match_score=(
+                resolved_matches.get(email_task.professor_id).match_score
+                if resolved_matches.get(email_task.professor_id) is not None
+                else None
+            ),
+        )
         for email_task in email_tasks
     ]
 
@@ -1158,6 +1171,7 @@ def _serialize_batch_task_item(
     email_task: EmailTask,
     *,
     material_sizes: dict[int, int] | None = None,
+    match_score: int | None = None,
 ) -> BatchTaskItemRead:
     professor = email_task.professor
     now = utc_now()
@@ -1179,7 +1193,7 @@ def _serialize_batch_task_item(
         batch_send_canceled_at=email_task.batch_send_canceled_at,
         can_cancel_send=_can_cancel_batch_task_item_send(email_task),
         can_restore_send=_can_restore_batch_task_item_send(email_task, now=now),
-        match_score=email_task.match_score,
+        match_score=match_score,
         scheduled_at=email_task.scheduled_at,
         sent_at=email_task.sent_at,
         last_send_attempt_at=email_task.last_send_attempt_at,

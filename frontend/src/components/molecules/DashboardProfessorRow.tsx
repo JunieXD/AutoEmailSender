@@ -123,6 +123,16 @@ export const DashboardProfessorRow = ({
       <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-sm font-medium text-stone-700">
         {formatMatchLabel(professor.match_score)}
       </span>
+      {professor.match_is_shared && professor.match_source_identity_name ? (
+        <span className="rounded-full border border-primary/15 bg-primary/5 px-3 py-1.5 text-sm font-medium text-primary">
+          依据 {professor.match_source_identity_name}
+        </span>
+      ) : null}
+      {professor.match_is_stale ? (
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800">
+          材料已变更
+        </span>
+      ) : null}
       <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600">
         {formatSentLabel(professor.sent_count)}
       </span>

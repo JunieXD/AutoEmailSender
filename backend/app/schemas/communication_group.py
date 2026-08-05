@@ -18,10 +18,12 @@ class IdentityCommunicationGroupRead(ApiSchema):
     id: int
     revision: str | None = None
     members: list[IdentityCommunicationGroupMemberRead]
+    match_source_identity_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class IdentityCommunicationGroupWrite(BaseModel):
     identity_ids: list[int] = Field(min_length=2)
+    match_source_identity_id: int | None = None
     confirm_merge_existing_groups: bool = False

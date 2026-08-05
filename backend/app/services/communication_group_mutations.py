@@ -75,6 +75,12 @@ async def create_communication_group_record(
 
     for identity in final_members:
         identity.communication_group_id = group.id
+    group.match_source_identity_id = _resolve_requested_match_source_identity_id(
+        payload,
+        final_members=final_members,
+        existing_match_source_identity_id=None,
+        preserve_when_omitted=False,
+    )
     await _delete_groups(session, conflicting_group_ids)
     await _record_group_log(
         session,
@@ -83,6 +89,8 @@ async def create_communication_group_record(
         before_member_ids=[],
         after_member_ids=sorted(identity.id for identity in final_members),
         merged_group_ids=sorted(conflicting_group_ids),
+        before_match_source_identity_id=None,
+        after_match_source_identity_id=group.match_source_identity_id,
         actor=actor,
     )
     await session.flush()
@@ -99,6 +107,7 @@ async def update_communication_group_record(
 ) -> IdentityCommunicationGroup:
     group = await get_communication_group_or_raise(session, group_id)
     before_member_ids = sorted(member.id for member in group.members)
+    before_match_source_identity_id = group.match_source_identity_id
     selected = await _load_selected_identities(session, payload.identity_ids)
     conflicting_group_ids = _group_ids(selected) - {group_id}
     if conflicting_group_ids and not payload.confirm_merge_existing_groups:
@@ -115,6 +124,12 @@ async def update_communication_group_record(
             member.communication_group_id = None
     for identity in final_members:
         identity.communication_group_id = group_id
+    group.match_source_identity_id = _resolve_requested_match_source_identity_id(
+        payload,
+        final_members=final_members,
+        existing_match_source_identity_id=before_match_source_identity_id,
+        preserve_when_omitted=True,
+    )
     await _delete_groups(session, conflicting_group_ids)
     group.updated_at = utc_now()
     await _record_group_log(
@@ -124,6 +139,8 @@ async def update_communication_group_record(
         before_member_ids=before_member_ids,
         after_member_ids=sorted(final_member_ids),
         merged_group_ids=sorted(conflicting_group_ids),
+        before_match_source_identity_id=before_match_source_identity_id,
+        after_match_source_identity_id=group.match_source_identity_id,
         actor=actor,
     )
     await session.flush()
@@ -148,6 +165,8 @@ async def delete_communication_group_record(
         before_member_ids=before_member_ids,
         after_member_ids=[],
         merged_group_ids=[],
+        before_match_source_identity_id=group.match_source_identity_id,
+        after_match_source_identity_id=None,
         actor=actor,
     )
     await session.delete(group)
@@ -281,6 +300,35 @@ async def _delete_groups(session: AsyncSession, group_ids: set[int]) -> None:
             await session.delete(group)
 
 
+def _resolve_requested_match_source_identity_id(
+    payload: IdentityCommunicationGroupWrite,
+    *,
+    final_members: list[IdentityProfile],
+    existing_match_source_identity_id: int | None,
+    preserve_when_omitted: bool,
+) -> int | None:
+    final_member_ids = {identity.id for identity in final_members}
+    if "match_source_identity_id" not in payload.model_fields_set:
+        if (
+            preserve_when_omitted
+            and existing_match_source_identity_id in final_member_ids
+        ):
+            return existing_match_source_identity_id
+        return None
+
+    requested_id = payload.match_source_identity_id
+    if requested_id is None:
+        return None
+    if requested_id not in final_member_ids:
+        raise CommunicationGroupMutationError(
+            status_code=422,
+            code="COMMUNICATION_GROUP_MATCH_SOURCE_NOT_MEMBER",
+            message="匹配依据身份必须属于当前共享组",
+            details={"match_source_identity_id": requested_id},
+        )
+    return requested_id
+
+
 async def _record_group_log(
     session: AsyncSession,
     *,
@@ -289,12 +337,16 @@ async def _record_group_log(
     before_member_ids: list[int],
     after_member_ids: list[int],
     merged_group_ids: list[int],
+    before_match_source_identity_id: int | None,
+    after_match_source_identity_id: int | None,
     actor: str | None,
 ) -> None:
     metadata: dict[str, Any] = {
         "before_member_ids": before_member_ids,
         "after_member_ids": after_member_ids,
         "merged_group_ids": merged_group_ids,
+        "before_match_source_identity_id": before_match_source_identity_id,
+        "after_match_source_identity_id": after_match_source_identity_id,
     }
     if actor is not None:
         metadata["actor"] = actor
@@ -326,6 +378,7 @@ def _serialize_group(group: IdentityCommunicationGroup) -> IdentityCommunication
             )
             for member in sorted(group.members, key=lambda item: item.id)
         ],
+        match_source_identity_id=group.match_source_identity_id,
         created_at=group.created_at,
         updated_at=group.updated_at,
     )

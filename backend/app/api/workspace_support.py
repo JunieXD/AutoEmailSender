@@ -37,6 +37,11 @@ from app.schemas.workspace import (
 from app.services import llm_runtime
 from app.services.communication_events import CommunicationEvent, load_communication_events
 from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.services.match_results import (
+    apply_match_result_view_to_task,
+    load_resolved_match_result,
+    match_result_is_stale,
+)
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
 from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
@@ -71,18 +76,12 @@ async def build_workspace_thread(
     if task_updated:
         await session.commit()
         await session.refresh(current_task)
-    match_task = (
-        current_task
-        if _task_has_match_result(current_task)
-        else await _get_latest_identity_match_task(session, professor_id, identity_id)
-    )
     return await _build_workspace_thread_read(
         session,
         professor=professor,
         identity=identity,
         llm_profile=llm_profile,
         current_task=current_task,
-        match_task=match_task,
         sync_warnings=sync_warnings,
     )
 
@@ -94,7 +93,6 @@ async def _build_workspace_thread_read(
     identity: IdentityProfile,
     llm_profile: LLMProfile,
     current_task: EmailTask | None,
-    match_task: EmailTask | None,
     sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
 ) -> WorkspaceThreadRead:
     selected_template = await get_default_outreach_template_for_identity(
@@ -121,6 +119,11 @@ async def _build_workspace_thread_read(
     communication_scope = await resolve_identity_communication_scope(
         session,
         active_identity_id=identity.id,
+    )
+    match_scope, match_result = await load_resolved_match_result(
+        session,
+        active_identity_id=identity.id,
+        professor_id=professor.id,
     )
     communication_events = await load_communication_events(
         session,
@@ -216,11 +219,11 @@ async def _build_workspace_thread_read(
             rendered_template_subject=rendered_template.subject if rendered_template else None,
             rendered_template_body_text=rendered_template.body_text if rendered_template else None,
             rendered_template_body_html=rendered_template.body_html if rendered_template else None,
-            match_score=match_task.match_score if match_task else None,
-            match_reason=match_task.match_reason if match_task else None,
-            fit_points=(match_task.fit_points or []) if match_task else [],
-            risk_points=(match_task.risk_points or []) if match_task else [],
-            match_keywords=(match_task.match_keywords or []) if match_task else [],
+            match_score=match_result.match_score if match_result else None,
+            match_reason=match_result.match_reason if match_result else None,
+            fit_points=list(match_result.fit_points) if match_result else [],
+            risk_points=list(match_result.risk_points) if match_result else [],
+            match_keywords=list(match_result.match_keywords) if match_result else [],
             generated_subject=current_task.generated_subject if current_task else None,
             generated_content_text=current_task.generated_content_text if current_task else None,
             generated_content_html=current_task.generated_content_html if current_task else None,
@@ -265,6 +268,32 @@ async def _build_workspace_thread_read(
                 rendered_template=rendered_template,
             ),
         ),
+        match_source_identity=_serialize_workspace_identity(
+            match_scope.source_identity,
+        ),
+        match_source_material_id=(
+            match_result.primary_material_id
+            if match_result is not None
+            else match_scope.source_identity.current_primary_material_id
+        ),
+        match_source_material_name=(
+            match_result.primary_material_name
+            if match_result is not None
+            else (
+                match_scope.source_identity.current_primary_material.display_name
+                if match_scope.source_identity.current_primary_material is not None
+                else None
+            )
+        ),
+        match_result_id=match_result.result_id if match_result is not None else None,
+        match_analyzed_at=(
+            match_result.analyzed_at if match_result is not None else None
+        ),
+        match_uses_group_source=match_scope.uses_group_match_source,
+        match_is_stale=match_result_is_stale(
+            match_result,
+            match_scope.source_identity,
+        ),
         messages=sorted(
             [
                 *[
@@ -305,23 +334,12 @@ async def build_workspace_thread_for_task(
     if task_updated:
         await session.commit()
         await session.refresh(current_task)
-    match_task = (
-        current_task
-        if _task_has_match_result(current_task)
-        else await _get_latest_identity_match_task(
-            session,
-            current_task.professor_id,
-            current_task.identity_id,
-            exclude_task_id=current_task.id,
-        )
-    )
     return await _build_workspace_thread_read(
         session,
         professor=professor,
         identity=identity,
         llm_profile=llm_profile,
         current_task=current_task,
-        match_task=match_task,
     )
 
 
@@ -338,6 +356,11 @@ async def ensure_workspace_task(
     await _get_llm_profile(session, llm_profile_id)
     professor_pk = professor.id
     identity_pk = identity.id
+    _, match_result = await load_resolved_match_result(
+        session,
+        active_identity_id=identity_pk,
+        professor_id=professor_pk,
+    )
 
     current_task = await _get_latest_email_task(session, professor_pk, identity_pk)
     if current_task is not None:
@@ -348,17 +371,10 @@ async def ensure_workspace_task(
                 commit=commit,
             )
         task_updated = _backfill_task_primary_material_from_identity(current_task, identity)
-        if not _task_has_match_result(current_task):
-            match_task = await _get_latest_identity_match_task(
-                session,
-                professor_pk,
-                identity_pk,
-                exclude_task_id=current_task.id,
-            )
-            if match_task is not None:
-                _copy_match_snapshot(current_task, match_task)
-                current_task.updated_at = utc_now()
-                task_updated = True
+        if not _task_has_match_result(current_task) and match_result is not None:
+            apply_match_result_view_to_task(current_task, match_result)
+            current_task.updated_at = utc_now()
+            task_updated = True
         if task_updated:
             if commit:
                 await session.commit()
@@ -372,7 +388,6 @@ async def ensure_workspace_task(
         identity,
     )
     snapshot = resolve_outreach_template_config(identity, template=selected_template)
-    match_task = await _get_latest_identity_match_task(session, professor_pk, identity_pk)
     task = EmailTask(
         source="manual",
         batch_task_id=None,
@@ -390,14 +405,17 @@ async def ensure_workspace_task(
         outreach_template_body_html=_normalize_nullable_text(snapshot.body_html_template),
         status=(
             EmailTaskStatus.MATCHED.value
-            if match_task is not None
+            if match_result is not None
             else EmailTaskStatus.DISCOVERED.value
         ),
-        match_score=match_task.match_score if match_task else None,
-        match_reason=match_task.match_reason if match_task else None,
-        fit_points=list(match_task.fit_points or []) if match_task else None,
-        risk_points=list(match_task.risk_points or []) if match_task else None,
-        match_keywords=list(match_task.match_keywords or []) if match_task else None,
+        match_score=match_result.match_score if match_result else None,
+        match_source_identity_id=(
+            match_result.identity_id if match_result is not None else None
+        ),
+        match_reason=match_result.match_reason if match_result else None,
+        fit_points=list(match_result.fit_points) if match_result else None,
+        risk_points=list(match_result.risk_points) if match_result else None,
+        match_keywords=list(match_result.match_keywords) if match_result else None,
         selected_material_ids=None,
         created_at=utc_now(),
         updated_at=utc_now(),
@@ -545,39 +563,8 @@ async def _get_email_task_for_workspace_thread(
     )
 
 
-async def _get_latest_identity_match_task(
-    session: AsyncSession,
-    professor_id: int,
-    identity_id: int,
-    *,
-    exclude_task_id: int | None = None,
-) -> EmailTask | None:
-    statement = (
-        select(EmailTask)
-        .where(
-            EmailTask.professor_id == professor_id,
-            EmailTask.identity_id == identity_id,
-            EmailTask.match_score.is_not(None),
-        )
-        .order_by(EmailTask.updated_at.desc(), EmailTask.created_at.desc(), EmailTask.id.desc())
-    )
-    if exclude_task_id is not None:
-        statement = statement.where(EmailTask.id != exclude_task_id)
-    return await session.scalar(statement)
-
-
 def _task_has_match_result(task: EmailTask | None) -> bool:
     return task is not None and task.match_score is not None
-
-
-def _copy_match_snapshot(target: EmailTask, source: EmailTask) -> None:
-    target.match_score = source.match_score
-    target.match_reason = source.match_reason
-    target.fit_points = list(source.fit_points or [])
-    target.risk_points = list(source.risk_points or [])
-    target.match_keywords = list(source.match_keywords or [])
-    if target.status == EmailTaskStatus.DISCOVERED.value:
-        target.status = EmailTaskStatus.MATCHED.value
 
 
 def _recover_legacy_sent_task_status(task: EmailTask | None) -> bool:

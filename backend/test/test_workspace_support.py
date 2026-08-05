@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api.professors import list_professors
 from app.api.workspace_support import build_workspace_thread, _build_workspace_draft, _serialize_workspace_message
 from app.models import (
     EmailDirection,
@@ -16,7 +17,10 @@ from app.models import (
     EmailTask,
     EmailTaskSource,
     EmailTaskStatus,
+    IdentityCommunicationGroup,
+    IdentityMaterial,
     IdentityProfile,
+    IdentityProfessorMatchResult,
     LLMProfile,
     Professor,
 )
@@ -179,6 +183,125 @@ class WorkspaceSupportTest(unittest.TestCase):
                 return [message.subject for message in thread.messages]
 
         self.assertEqual(self._run_async(scenario()), ["当前身份收到"])
+
+    def test_workspace_uses_shared_source_result_without_overwriting_task_snapshot(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                source_identity = self._identity("match-source@example.com")
+                active_identity = self._identity("match-active@example.com")
+                llm_profile = self._llm_profile("workspace-shared-match")
+                professor = Professor(
+                    name="共享匹配老师",
+                    email="shared-match@example.edu",
+                    research_direction="自然语言处理",
+                )
+                group = IdentityCommunicationGroup()
+                session.add_all(
+                    [source_identity, active_identity, llm_profile, professor, group],
+                )
+                await session.flush()
+                source_material = IdentityMaterial(
+                    identity_id=source_identity.id,
+                    display_name="身份 A 默认简历",
+                    file_path="data/materials/source-resume.txt",
+                    original_filename="source-resume.txt",
+                    material_type="resume",
+                    sha256="d" * 64,
+                    extracted_text="自然语言处理项目",
+                )
+                active_material = IdentityMaterial(
+                    identity_id=active_identity.id,
+                    display_name="身份 B 默认简历",
+                    file_path="data/materials/active-resume.txt",
+                    original_filename="active-resume.txt",
+                    material_type="resume",
+                    sha256="e" * 64,
+                    extracted_text="计算机视觉项目",
+                )
+                session.add_all([source_material, active_material])
+                await session.flush()
+                source_identity.current_primary_material_id = source_material.id
+                active_identity.current_primary_material_id = active_material.id
+                source_identity.communication_group_id = group.id
+                active_identity.communication_group_id = group.id
+                group.match_source_identity_id = source_identity.id
+
+                task = EmailTask(
+                    identity_id=active_identity.id,
+                    llm_profile_id=llm_profile.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.MATCHED.value,
+                    match_score=55,
+                    match_reason="身份 B 的历史任务快照",
+                    fit_points=["旧契合点"],
+                    risk_points=["旧风险点"],
+                    match_keywords=["旧关键词"],
+                )
+                canonical_result = IdentityProfessorMatchResult(
+                    identity_id=source_identity.id,
+                    professor_id=professor.id,
+                    llm_profile_id=llm_profile.id,
+                    primary_material_id=source_material.id,
+                    match_score=96,
+                    match_reason="身份 A 的统一匹配理由",
+                    fit_points=["统一契合点"],
+                    risk_points=["统一风险点"],
+                    match_keywords=["统一关键词"],
+                    analyzed_at=datetime.now(UTC),
+                )
+                session.add_all([task, canonical_result])
+                await session.commit()
+
+                thread = await build_workspace_thread(
+                    session,
+                    professor_id=professor.id,
+                    identity_id=active_identity.id,
+                    llm_profile_id=llm_profile.id,
+                )
+                dashboard_items = await list_professors(
+                    identity_id=active_identity.id,
+                    llm_profile_id=llm_profile.id,
+                    ids=str(professor.id),
+                    session=session,
+                )
+                saved_task = await session.get(EmailTask, task.id)
+                assert saved_task is not None
+                return (
+                    thread,
+                    dashboard_items[0],
+                    saved_task.match_score,
+                    saved_task.match_reason,
+                )
+
+        (
+            thread,
+            dashboard_item,
+            task_snapshot_score,
+            task_snapshot_reason,
+        ) = self._run_async(scenario())
+
+        self.assertEqual(thread.identity.email_address, "match-active@example.com")
+        self.assertEqual(thread.match_source_identity.email_address, "match-source@example.com")
+        self.assertTrue(thread.match_uses_group_source)
+        self.assertEqual(thread.match_source_material_name, "身份 A 默认简历")
+        self.assertEqual(thread.current_task.match_score, 96)
+        self.assertEqual(thread.current_task.match_reason, "身份 A 的统一匹配理由")
+        self.assertEqual(thread.current_task.fit_points, ["统一契合点"])
+        self.assertEqual(thread.current_task.risk_points, ["统一风险点"])
+        self.assertEqual(thread.current_task.match_keywords, ["统一关键词"])
+        self.assertFalse(thread.match_is_stale)
+        self.assertEqual(dashboard_item.match_score, 96)
+        self.assertEqual(
+            dashboard_item.match_source_identity_id,
+            thread.match_source_identity.id,
+        )
+        self.assertEqual(
+            dashboard_item.match_source_identity_name,
+            thread.match_source_identity.profile_name,
+        )
+        self.assertTrue(dashboard_item.match_is_shared)
+        self.assertEqual(task_snapshot_score, 55)
+        self.assertEqual(task_snapshot_reason, "身份 B 的历史任务快照")
 
     def test_workspace_thread_excludes_drafts_not_belonging_to_current_task(self) -> None:
         async def scenario() -> list[tuple[str, str | None]]:

@@ -67,6 +67,11 @@ from app.services.batch_draft_fallback import (
 )
 from app.services.batch_task_status import sync_batch_task_completion
 from app.services.mail_runtime import MailAttachment, ReceivedEmail
+from app.services.match_results import (
+    apply_match_result_snapshot_to_task,
+    resolve_identity_match_scope,
+    upsert_identity_professor_match_result,
+)
 from app.services.materials import (
     build_material_download_name,
     ensure_material_extracted_text,
@@ -226,6 +231,7 @@ class MatchUsageSummary:
 class MatchCalculationActionResult:
     professor_id: int
     identity_id: int
+    match_source_identity_id: int
     llm_profile_id: int
     usage: MatchUsageSummary
     run_id: int | None = None
@@ -1030,24 +1036,39 @@ async def calculate_task_match(
     ignore_batch_status: bool = False,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
     llm_profile_id: int | None = None,
+    match_source_identity_id: int | None = None,
 ) -> MatchCalculationActionResult:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
+        match_scope = await resolve_identity_match_scope(
+            session,
+            active_identity_id=task.identity_id,
+            match_source_identity_id=match_source_identity_id,
+        )
         runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
         if (
             task.batch_task
             and task.batch_task.status != BatchTaskStatus.RUNNING.value
             and not ignore_batch_status
         ):
-            return _match_action_result(task)
+            return _match_action_result(
+                task,
+                match_source_identity_id=match_scope.source_identity_id,
+            )
         try:
-            match_material = await _resolve_match_primary_material(session, task)
+            match_material = await _resolve_match_primary_material(
+                session,
+                match_scope.source_identity,
+            )
         except ValueError:
             if force:
                 raise
-            return _match_action_result(task)
+            return _match_action_result(
+                task,
+                match_source_identity_id=match_scope.source_identity_id,
+            )
         ensure_material_extracted_text(match_material)
         if not _has_professor_match_evidence(task.professor):
             raise ValueError("缺少研究方向或近期论文，暂不能分析匹配度")
@@ -1059,20 +1080,28 @@ async def calculate_task_match(
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
         }:
-            return _match_action_result(task)
+            return _match_action_result(
+                task,
+                match_source_identity_id=match_scope.source_identity_id,
+            )
 
         task.llm_profile_id = runtime_llm_profile.id
         runtime_settings = await get_runtime_settings(session)
         adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, runtime_llm_profile)
-        run = await _create_running_match_analysis_run(session, task, match_material)
+        run = await _create_running_match_analysis_run(
+            session,
+            task,
+            match_identity=match_scope.source_identity,
+            primary_material=match_material,
+        )
         await session.commit()
         try:
             generation = await llm_runtime.generate_match_evaluation(
-                identity=task.identity,
+                identity=match_scope.source_identity,
                 primary_material=match_material,
                 llm_profile=runtime_llm_profile,
                 professor=task.professor,
-                available_materials=list(task.identity.materials),
+                available_materials=list(match_scope.source_identity.materials),
                 intended_research_direction=runtime_settings.intended_research_direction,
                 session=session,
                 adaptation=adaptation,
@@ -1098,7 +1127,11 @@ async def calculate_task_match(
             task.last_error = str(exc)
             task.updated_at = utc_now()
             await session.commit()
-            return _match_action_result(task, run_id=run.id)
+            return _match_action_result(
+                task,
+                match_source_identity_id=match_scope.source_identity_id,
+                run_id=run.id,
+            )
         except Exception as exc:
             _mark_match_analysis_run_failed(
                 run,
@@ -1124,6 +1157,10 @@ async def calculate_task_match(
         run.status = "succeeded"
         run.success = True
         run.match_score = result.match_score
+        run.match_reason = result.match_reason
+        run.fit_points = list(result.fit_points)
+        run.risk_points = list(result.risk_points)
+        run.match_keywords = list(result.keywords)
         run.prompt_tokens = generation.usage.prompt_tokens if generation.usage else None
         run.completion_tokens = generation.usage.completion_tokens if generation.usage else None
         run.total_tokens = generation.usage.total_tokens if generation.usage else None
@@ -1136,11 +1173,29 @@ async def calculate_task_match(
         run.error_kind = None
         run.error_message = None
         run.finished_at = utc_now()
-        task.match_score = result.match_score
-        task.match_reason = result.match_reason
-        task.fit_points = result.fit_points
-        task.risk_points = result.risk_points
-        task.match_keywords = result.keywords
+        canonical_result = await upsert_identity_professor_match_result(
+            session,
+            identity_id=match_scope.source_identity_id,
+            professor_id=task.professor_id,
+            llm_profile_id=runtime_llm_profile.id,
+            primary_material_id=match_material.id,
+            source_email_task_id=task.id,
+            analysis_run=run,
+            match_score=result.match_score,
+            match_reason=result.match_reason,
+            fit_points=result.fit_points,
+            risk_points=result.risk_points,
+            match_keywords=result.keywords,
+        )
+        apply_match_result_snapshot_to_task(
+            task,
+            match_source_identity_id=match_scope.source_identity_id,
+            match_score=result.match_score,
+            match_reason=result.match_reason,
+            fit_points=result.fit_points,
+            risk_points=result.risk_points,
+            match_keywords=result.keywords,
+        )
         if task.status in {
             EmailTaskStatus.DISCOVERED.value,
             EmailTaskStatus.MATCHED.value,
@@ -1155,13 +1210,16 @@ async def calculate_task_match(
             "email_task.match_calculated",
             metadata={
                 "match_analysis_run_id": run.id,
-                "match_score": task.match_score,
+                "match_result_id": canonical_result.id,
+                "match_source_identity_id": match_scope.source_identity_id,
+                "match_score": result.match_score,
                 "force": force,
             },
         )
         await session.commit()
         return _match_action_result(
             task,
+            match_source_identity_id=match_scope.source_identity_id,
             usage=_match_usage_summary(generation.usage),
             run_id=run.id,
         )
@@ -1450,12 +1508,14 @@ def _match_usage_summary(
 def _match_action_result(
     task: EmailTask,
     *,
+    match_source_identity_id: int | None = None,
     usage: MatchUsageSummary | None = None,
     run_id: int | None = None,
 ) -> MatchCalculationActionResult:
     return MatchCalculationActionResult(
         professor_id=task.professor_id,
         identity_id=task.identity_id,
+        match_source_identity_id=match_source_identity_id or task.identity_id,
         llm_profile_id=task.llm_profile_id,
         usage=usage or MatchUsageSummary(),
         run_id=run_id,
@@ -1465,12 +1525,14 @@ def _match_action_result(
 async def _create_running_match_analysis_run(
     session: AsyncSession,
     task: EmailTask,
+    *,
+    match_identity: IdentityProfile,
     primary_material: IdentityMaterial,
 ) -> MatchAnalysisRun:
     run = MatchAnalysisRun(
         email_task_id=task.id,
         professor_id=task.professor_id,
-        identity_id=task.identity_id,
+        identity_id=match_identity.id,
         llm_profile_id=task.llm_profile_id,
         primary_material_id=primary_material.id,
         status="running",
@@ -1488,17 +1550,17 @@ async def _create_running_match_analysis_run(
 
 async def _resolve_match_primary_material(
     session: AsyncSession,
-    task: EmailTask,
+    identity: IdentityProfile,
 ) -> IdentityMaterial:
-    material = task.identity.current_primary_material
+    material = identity.current_primary_material
     if material is None:
-        material_id = task.identity.current_primary_material_id
+        material_id = identity.current_primary_material_id
         if material_id is not None:
             material = await session.get(IdentityMaterial, material_id)
     if material is None:
         raise ValueError("请到个人页设置默认材料")
-    if material.identity_id != task.identity_id:
-        raise ValueError("个人页默认材料不属于当前身份")
+    if material.identity_id != identity.id:
+        raise ValueError("匹配依据身份的默认材料归属不正确")
     if not material_can_be_primary(material):
         raise ValueError("个人页默认材料不支持匹配分析")
     return material
@@ -4712,6 +4774,7 @@ def _create_manual_child_task(
             minimum_status=minimum_status,
         ),
         cancellation_reason=None,
+        match_source_identity_id=task.match_source_identity_id,
         match_score=task.match_score,
         match_reason=task.match_reason,
         generated_subject=task.generated_subject if reuse_existing_draft else None,

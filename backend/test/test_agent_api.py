@@ -530,6 +530,7 @@ class AgentApiTests(unittest.TestCase):
         calculation = SimpleNamespace(
             professor_id=professor_id,
             identity_id=identity_id,
+            match_source_identity_id=identity_id,
             llm_profile_id=llm_profile_id,
             usage=SimpleNamespace(
                 prompt_tokens=11,

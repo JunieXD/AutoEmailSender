@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import text
+from sqlalchemy import ForeignKey, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -30,9 +30,19 @@ class IdentityCommunicationGroup(Base):
         server_default=text("CURRENT_TIMESTAMP"),
         onupdate=utc_now,
     )
+    match_source_identity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("identity_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     members: Mapped[list["IdentityProfile"]] = relationship(
         back_populates="communication_group",
         order_by="IdentityProfile.id",
+        foreign_keys="IdentityProfile.communication_group_id",
+        passive_deletes=True,
+    )
+    match_source_identity: Mapped["IdentityProfile | None"] = relationship(
+        foreign_keys=[match_source_identity_id],
         passive_deletes=True,
     )

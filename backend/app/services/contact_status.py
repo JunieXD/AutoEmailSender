@@ -180,7 +180,6 @@ async def _load_tasks_by_professor(
                 EmailTask.professor_id,
                 EmailTask.status,
                 EmailTask.created_at,
-                EmailTask.match_score,
                 EmailTask.sent_at,
                 EmailTask.is_replied,
                 EmailTask.updated_at,

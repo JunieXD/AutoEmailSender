@@ -319,6 +319,9 @@ export const HomePage = () => {
     selectedIdentity,
     selectedLlmProfile,
     communicationScopeKey = "",
+    matchSourceIdentity,
+    matchUsesGroupSource = false,
+    matchScopeKey = "",
     loading: selectionLoading,
   } = useSelectionContext();
   const dashboardFiltersSessionKey = getDashboardFiltersSessionKey(
@@ -363,7 +366,9 @@ export const HomePage = () => {
   const skipNextFiltersPersistRef = useRef(false);
   const professorsRequestKey =
     selectedIdentityId
-      ? `${selectedIdentityId}:${communicationScopeKey || selectedIdentityId}`
+      ? `${selectedIdentityId}:${communicationScopeKey || selectedIdentityId}:${
+          matchScopeKey || selectedIdentityId
+        }`
       : null;
 
   useEffect(() => {
@@ -950,14 +955,22 @@ export const HomePage = () => {
     navigate("/create-task");
   };
 
-  const hasPrimaryMaterial = Boolean(
+  const hasIdentityPrimaryMaterial = Boolean(
     selectedIdentity?.current_primary_material_id,
   );
+  const effectiveMatchSourceIdentity = matchSourceIdentity ?? selectedIdentity;
+  const hasMatchPrimaryMaterial = Boolean(
+    effectiveMatchSourceIdentity?.current_primary_material_id,
+  );
+  const matchSourceName =
+    effectiveMatchSourceIdentity?.profile_name ||
+    effectiveMatchSourceIdentity?.name ||
+    "当前身份";
   const hasTemplate = Boolean(
     selectedIdentity?.outreach_template_body_text?.trim() ||
     selectedIdentity?.outreach_template_body_html?.trim(),
   );
-  const hasMaterialsAndTemplate = hasPrimaryMaterial && hasTemplate;
+  const hasMaterialsAndTemplate = hasIdentityPrimaryMaterial && hasTemplate;
   const onboardingState = getOnboardingState({
     hasIdentity: Boolean(selectedIdentity),
     hasLlmProfile: Boolean(selectedLlmProfile),
@@ -1003,8 +1016,11 @@ export const HomePage = () => {
   );
 
   const handleGenerateOne = async (professorId: number) => {
-    if (!hasPrimaryMaterial) {
-      notifyWarning("缺少默认材料", "请到个人页设置默认材料。");
+    if (!hasMatchPrimaryMaterial) {
+      notifyWarning(
+        "匹配依据身份缺少默认材料",
+        `${matchSourceName} 尚未设置默认材料，请先到个人页补充。`,
+      );
       return;
     }
 
@@ -1040,7 +1056,10 @@ export const HomePage = () => {
     try {
       const usage = await runCalculateMatchForProfessor(professorId);
       await loadProfessors();
-      notifySuccess("匹配分析完成", formatTokenUsageDescription(usage));
+      notifySuccess(
+        "匹配分析完成",
+        `${matchUsesGroupSource ? `已按 ${matchSourceName} 的材料统一计算。` : ""}${formatTokenUsageDescription(usage)}`,
+      );
     } catch (actionError) {
       if (isMatchConflictError(actionError)) {
         notifyWarning("匹配分析进行中", "该任务正在分析中，请稍后刷新结果。");
@@ -1065,8 +1084,11 @@ export const HomePage = () => {
       return;
     }
 
-    if (!hasPrimaryMaterial) {
-      notifyWarning("缺少默认材料", "请到个人页设置默认材料。");
+    if (!hasMatchPrimaryMaterial) {
+      notifyWarning(
+        "匹配依据身份缺少默认材料",
+        `${matchSourceName} 尚未设置默认材料，请先到个人页补充。`,
+      );
       return;
     }
     if (!selectedIdentityId || !selectedLlmProfileId) {
@@ -1185,7 +1207,19 @@ export const HomePage = () => {
               <h1 className="text-3xl font-semibold text-stone-900">
                 导师看板
               </h1>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600"></div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
+                <span className="rounded-full border border-primary/15 bg-white px-3 py-1.5 font-medium text-primary">
+                  {matchUsesGroupSource
+                    ? `组内匹配统一依据 ${matchSourceName}`
+                    : `匹配依据当前身份 ${matchSourceName}`}
+                </span>
+                <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-stone-500">
+                  默认材料：
+                  {effectiveMatchSourceIdentity?.current_primary_material
+                    ?.display_name ||
+                    "尚未设置"}
+                </span>
+              </div>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
@@ -1610,7 +1644,9 @@ export const HomePage = () => {
                   已选中 {selectedIds.size} 位导师
                 </div>
                 <div className="mt-1 text-xs text-stone-500">
-                  可批量分析匹配度，或创建批量任务。
+                  {matchUsesGroupSource
+                    ? `匹配分析将统一使用 ${matchSourceName} 的默认材料。`
+                    : "可批量分析匹配度，或创建批量任务。"}
                 </div>
               </div>
               <div className="flex flex-wrap justify-center gap-3">

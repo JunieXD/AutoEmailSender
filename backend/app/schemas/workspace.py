@@ -123,6 +123,13 @@ class WorkspaceThreadRead(ApiSchema):
     llm_profile: WorkspaceLLMRead
     material_options: list[IdentityMaterialRead]
     current_task: WorkspaceTaskSummaryRead
+    match_source_identity: WorkspaceIdentityRead
+    match_source_material_id: int | None = None
+    match_source_material_name: str | None = None
+    match_result_id: int | None = None
+    match_analyzed_at: datetime | None = None
+    match_uses_group_source: bool = False
+    match_is_stale: bool = False
     messages: list[WorkspaceMessageRead]
     communication_scope: list[WorkspaceIdentityRead] = Field(default_factory=list)
     sync_warnings: list[WorkspaceSyncWarningRead] = Field(default_factory=list)
