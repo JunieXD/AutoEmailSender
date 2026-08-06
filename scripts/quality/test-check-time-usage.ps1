@@ -2,7 +2,7 @@
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("time-check-" + [System.Guid]::NewGuid().ToString("N"))
 try {
     New-Item -ItemType Directory -Path (Join-Path $fixtureRoot "backend/app/models") -Force | Out-Null
@@ -12,7 +12,7 @@ try {
     Set-Content -Path (Join-Path $fixtureRoot "backend/app/services/sample.py") -Encoding UTF8 -Value 'now = datetime.now(UTC)'
     Set-Content -Path (Join-Path $fixtureRoot "frontend/src/sample.ts") -Encoding UTF8 -Value 'const d = new Date(apiValue)'
 
-    & (Join-Path $repoRoot "scripts/check-time-usage.ps1") -Root $fixtureRoot -FailOnViolation | Out-Host
+    & (Join-Path $repoRoot "scripts/quality/check-time-usage.ps1") -Root $fixtureRoot -FailOnViolation | Out-Host
     if ($LASTEXITCODE -eq 0) {
         throw "Expected check-time-usage.ps1 to fail for risky fixtures."
     }

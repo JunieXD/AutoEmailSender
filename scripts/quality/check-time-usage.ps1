@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Root = (Split-Path -Parent $PSScriptRoot),
+    [string]$Root = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [switch]$FailOnViolation,
     [switch]$CoreOnly
 )

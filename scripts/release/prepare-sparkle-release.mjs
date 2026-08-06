@@ -4,10 +4,10 @@ import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } fr
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validateSparklePublicKey } from "./configure-sparkle-info.mjs";
+import { validateSparklePublicKey } from "../packaging/configure-sparkle-info.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const defaultRepoRoot = path.resolve(scriptDirectory, "..");
+const defaultRepoRoot = path.resolve(scriptDirectory, "..", "..");
 const DEFAULT_REPOSITORY = "JunieXD/AutoEmailSender";
 const MAXIMUM_DELTAS = 3;
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");

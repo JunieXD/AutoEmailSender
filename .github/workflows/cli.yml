@@ -7,8 +7,10 @@ on:
       - "agent-support/skills/auto-email-sender/**"
       - "scripts/build-cli.ps1"
       - "scripts/build-cli.sh"
-      - "scripts/generate_cli_build_identity.py"
-      - "scripts/verify_cli_binary.py"
+      - "scripts/build/build-cli.ps1"
+      - "scripts/build/build-cli.sh"
+      - "scripts/build/generate_cli_build_identity.py"
+      - "scripts/build/verify_cli_binary.py"
       - ".github/workflows/cli.yml"
   pull_request:
     paths:
@@ -16,8 +18,10 @@ on:
       - "agent-support/skills/auto-email-sender/**"
       - "scripts/build-cli.ps1"
       - "scripts/build-cli.sh"
-      - "scripts/generate_cli_build_identity.py"
-      - "scripts/verify_cli_binary.py"
+      - "scripts/build/build-cli.ps1"
+      - "scripts/build/build-cli.sh"
+      - "scripts/build/generate_cli_build_identity.py"
+      - "scripts/build/verify_cli_binary.py"
       - ".github/workflows/cli.yml"
 
 permissions:
@@ -60,10 +64,10 @@ jobs:
       - name: Build and verify frozen CLI (POSIX)
         if: runner.os != 'Windows'
         working-directory: .
-        run: ./scripts/build-cli.sh --clean
+        run: ./scripts/build/build-cli.sh --clean
 
       - name: Build and verify frozen CLI (Windows)
         if: runner.os == 'Windows'
         working-directory: .
         shell: pwsh
-        run: ./scripts/build-cli.ps1 -Clean
+        run: ./scripts/build/build-cli.ps1 -Clean

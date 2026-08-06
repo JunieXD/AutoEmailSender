@@ -33,11 +33,11 @@ jobs:
 
       - name: Check time usage
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-time-usage.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/quality/check-time-usage.ps1
 
       - name: Test Windows Agent support cleanup
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/windows-agent-support-cleanup.test.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/quality/windows-agent-support-cleanup.test.ps1
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -54,7 +54,7 @@ jobs:
           uv run python -m unittest discover test
 
       - name: Build Agent CLI
-        run: ./scripts/build-cli.ps1 -Clean
+        run: ./scripts/build/build-cli.ps1 -Clean
         shell: pwsh
 
       - name: Install backend dependencies
@@ -62,7 +62,7 @@ jobs:
         run: uv sync --dev
 
       - name: Build backend executable
-        run: ./scripts/build-backend.ps1 -Clean
+        run: ./scripts/build/build-backend.ps1 -Clean
         shell: pwsh
 
       - name: Install desktop dependencies
@@ -120,14 +120,14 @@ jobs:
           uv run python -m unittest discover test
 
       - name: Build Agent CLI
-        run: ./scripts/build-cli.sh --clean
+        run: ./scripts/build/build-cli.sh --clean
 
       - name: Install backend dependencies
         working-directory: backend
         run: uv sync --dev
 
       - name: Build backend executable
-        run: ./scripts/build-backend.sh --clean
+        run: ./scripts/build/build-backend.sh --clean
 
       - name: Install desktop dependencies
         working-directory: desktop
@@ -136,9 +136,10 @@ jobs:
       - name: Test Sparkle release helpers
         run: >-
           node --test
-          scripts/configure-sparkle-info.test.mjs
-          scripts/sanitize-macos-bundle.test.mjs
-          scripts/prepare-sparkle-release.test.mjs
+          scripts/packaging/configure-sparkle-info.test.mjs
+          scripts/packaging/sanitize-macos-bundle.test.mjs
+          scripts/release/prepare-sparkle-release.test.mjs
+          scripts/quality/script-topology.test.mjs
 
       - name: Test desktop
         working-directory: desktop
@@ -157,7 +158,7 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: >-
-          node scripts/prepare-sparkle-release.mjs
+          node scripts/release/prepare-sparkle-release.mjs
           --release-tag "${{ github.ref_name }}"
           --output-dir desktop/release/sparkle-publish
 
@@ -197,7 +198,7 @@ jobs:
 
       - name: Package mentor crawler Skill
         run: >-
-          python scripts/package_crawl_mentors_skill.py
+          python scripts/packaging/package_crawl_mentors_skill.py
           --version "${{ github.ref_name }}"
           --output-dir release-assets/skill
 

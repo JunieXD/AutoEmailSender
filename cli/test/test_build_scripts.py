@@ -11,6 +11,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+BUILD_SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "build"
+
+
 class CliBuildScriptTests(unittest.TestCase):
     def test_posix_build_creates_arm64_macos_one_file_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.sh")
@@ -36,8 +40,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--executable $CliExecutable", script)
 
     def test_frozen_binary_verifier_requires_embedded_identity_and_matching_catalog(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        namespace = runpy.run_path((repo_root / "scripts" / "verify_cli_binary.py").as_posix())
+        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
         validate_payloads = namespace["validate_payloads"]
         revision = "a" * 40
         version = {
@@ -76,8 +79,7 @@ class CliBuildScriptTests(unittest.TestCase):
             validate_payloads(version, capabilities)
 
     def test_frozen_binary_verifier_reports_failed_process_output(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        namespace = runpy.run_path((repo_root / "scripts" / "verify_cli_binary.py").as_posix())
+        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
         run_json = namespace["_run_json"]
         completed = subprocess.CompletedProcess(
             args=["auto-email-sender.exe", "--format", "json", "capabilities"],
@@ -124,8 +126,8 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertTrue(any("导师" in summary for summary in summaries))
 
     def test_generated_build_identity_hook_uses_string_environment_values(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        generator = repo_root / "scripts" / "generate_cli_build_identity.py"
+        repo_root = REPOSITORY_ROOT
+        generator = BUILD_SCRIPTS_ROOT / "generate_cli_build_identity.py"
         revision = "a" * 40
         environment = os.environ.copy()
         environment["AUTO_EMAIL_SENDER_BUILD_REVISION"] = revision
@@ -174,7 +176,7 @@ class CliBuildScriptTests(unittest.TestCase):
 
 def _read_script(name: str) -> str:
     return (
-        Path(__file__).resolve().parents[2] / "scripts" / name
+        BUILD_SCRIPTS_ROOT / name
     ).read_text(encoding="utf-8")
 
 

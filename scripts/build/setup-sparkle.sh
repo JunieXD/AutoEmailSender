@@ -9,7 +9,7 @@ fi
 sparkle_version="2.9.4"
 sparkle_sha256="ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9"
 sparkle_url="https://github.com/sparkle-project/Sparkle/releases/download/${sparkle_version}/Sparkle-${sparkle_version}.tar.xz"
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 vendor_dir="$repo_root/desktop/native/sparkle/vendor"
 version_marker="$vendor_dir/.sparkle-version"
 

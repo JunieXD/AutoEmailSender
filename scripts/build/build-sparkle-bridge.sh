@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 native_root="$repo_root/desktop/native/sparkle"
 source_path="$native_root/src/sparkle_bridge.mm"
 framework_path="$native_root/vendor/Sparkle.framework"
@@ -14,7 +14,7 @@ output_dir="$native_root/build/Release"
 output_path="$output_dir/sparkle_bridge.node"
 
 if [[ ! -f "$framework_path/Versions/B/Sparkle" ]]; then
-  echo "缺少 Sparkle.framework，请先运行 scripts/setup-sparkle.sh。" >&2
+  echo "缺少 Sparkle.framework，请先运行 scripts/build/setup-sparkle.sh。" >&2
   exit 1
 fi
 

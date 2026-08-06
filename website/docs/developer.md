@@ -103,7 +103,7 @@ npm run dist
 macOS 只发布 Apple Silicon `arm64` DMG，并保持 ad-hoc 签名，不需要 Apple Developer Program。构建前需要准备 Sparkle 和用于更新归档验签的公开密钥：
 
 ```bash
-./scripts/setup-sparkle.sh
+./scripts/build/setup-sparkle.sh
 export SPARKLE_PUBLIC_ED_KEY="<Sparkle EdDSA 公钥>"
 
 cd desktop

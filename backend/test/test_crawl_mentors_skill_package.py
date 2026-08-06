@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts"
+SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "packaging"
 if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 

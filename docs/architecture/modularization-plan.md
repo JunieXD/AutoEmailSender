@@ -1541,7 +1541,9 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9A 已完成：Desktop production、preload、test TypeScript 配置已分离；production build 先清理旧
   `dist`，不再生成 `dist/test`，Vitest 同时显式排除 `dist` 与 `release`。标准测试在 build 前后均只
   发现 source tests。
-- 9B 待执行：脚本分类、稳定根命令 wrapper 与所有调用方更新。
+- 9B 已完成：脚本实现与实现级测试已归入 build、packaging、quality、data、release 五个 owner；
+  已公开的 backend/CLI build、Playwright 安装和 release 根命令保留薄 wrapper，CI、打包配置、工作区测试、
+  active docs 与仓库 skills 均直接使用 owner 路径。`scripts/README.md` 和自动化拓扑测试明确并保护该边界。
 - 9C 待执行：文档分类、历史记录归档与链接审计。
 - 9D 待执行：按实际引用审计删除 Backend、Frontend、Desktop 迁移 shim。
 
@@ -1553,3 +1555,14 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | Desktop 完整套件 | typecheck；production build；标准 Vitest | 18 files，132 tests passed；typecheck/build 通过 |
 | 生产产物 | `dist` 文件清单 | 仅 `dist/src`；无 `dist/test` |
 | Repository | `git diff --check` | 通过 |
+
+9B 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| 脚本门禁 | Bash syntax；Node release/packaging/topology；POSIX prepare/release | 通过；Node 16 tests passed；两个 POSIX 合同脚本通过 |
+| Backend/CLI | build/packaging 定向；完整 unittest | 定向 20 tests passed；Backend 1750 tests、CLI 154 tests passed |
+| Frontend | release notes/desktop packaging 定向；lint；完整 Vitest；production build | 定向 4 tests；115 files、899 tests passed；lint/build 通过 |
+| Desktop | packaging 定向；typecheck；完整 Vitest；production build | 18 + 132 tests passed；typecheck/build 通过 |
+| Website | 完整 Vitest；production build | 4 files、16 tests passed；build 通过 |
+| Repository | CodeGraph；活动旧实现路径与 owner 根解析审计；`git diff --check` | 通过；本机无 `pwsh`，PowerShell 执行测试由 Windows CI 覆盖 |

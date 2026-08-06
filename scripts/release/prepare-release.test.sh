@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-script_path="$repo_root/scripts/prepare-release.sh"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+script_path="$repo_root/scripts/release/prepare-release.sh"
 temp_root="$(mktemp -d)"
 stdout_path="$temp_root/stdout.txt"
 stderr_path="$temp_root/stderr.txt"

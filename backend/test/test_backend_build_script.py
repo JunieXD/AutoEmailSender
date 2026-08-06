@@ -5,6 +5,10 @@ import runpy
 import unittest
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+BUILD_SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "build"
+
+
 class BackendBuildScriptTest(unittest.TestCase):
     def test_declares_document_extraction_fallback_dependencies(self) -> None:
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -23,21 +27,18 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertNotIn('"markitdown', content)
 
     def test_includes_async_sqlite_driver_for_packaged_runtime(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         self.assertIn("--hidden-import aiosqlite", content)
 
     def test_installs_only_playwright_browsers_to_packaged_resource_dir(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
 
     def test_collects_document_extraction_dependencies_for_packaging(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         for package_name in [
             "mammoth",
@@ -52,8 +53,7 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertNotIn("--collect-all pdfplumber", content)
 
     def test_excludes_unused_heavy_document_dependencies_from_packaging(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         for package_name in [
             "markitdown",
@@ -78,11 +78,9 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("MIT License", notice)
 
     def test_backend_build_scripts_use_precise_playwright_hooks(self) -> None:
-        scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
-
         for script_name in ["build-backend.ps1", "build-backend.sh"]:
             with self.subTest(script_name=script_name):
-                content = (scripts_dir / script_name).read_text(encoding="utf-8")
+                content = (BUILD_SCRIPTS_ROOT / script_name).read_text(encoding="utf-8")
                 self.assertIn("pyinstaller-hooks", content)
                 self.assertIn("--additional-hooks-dir", content)
                 self.assertNotIn("--collect-all playwright", content)
@@ -90,7 +88,7 @@ class BackendBuildScriptTest(unittest.TestCase):
     def test_precise_playwright_hooks_keep_driver_package_without_bundled_node(self) -> None:
         import playwright
 
-        hooks_dir = Path(__file__).resolve().parents[2] / "scripts" / "pyinstaller-hooks"
+        hooks_dir = BUILD_SCRIPTS_ROOT / "pyinstaller-hooks"
         hook_namespace = runpy.run_path(str(hooks_dir / "hook-playwright.py"))
         package_dir = Path(playwright.__file__).resolve().parent
         collected_sources = {Path(source).resolve() for source, _destination in hook_namespace["datas"]}
@@ -127,16 +125,14 @@ class BackendBuildScriptTest(unittest.TestCase):
                 self.assertEqual(api_hook["hiddenimports"], [])
 
     def test_collects_llm_tokenizer_namespace_dependencies_for_packaging(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         self.assertIn("--collect-all tiktoken", content)
         self.assertIn("--collect-submodules tiktoken_ext", content)
         self.assertIn("--hidden-import tiktoken_ext.openai_public", content)
 
     def test_runs_packaged_backend_self_check_after_build(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         self.assertIn('Join-Path $BackendDir "dist\\backend\\backend.exe"', content)
         self.assertIn("--self-check", content)
@@ -147,26 +143,20 @@ class BackendBuildScriptTest(unittest.TestCase):
         )
 
     def test_backend_packaging_uses_noarchive_for_smaller_differential_updates(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.ps1"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         self.assertIn("--debug noarchive", content)
 
     def test_playwright_install_helper_installs_only_playwright(self) -> None:
-        script = (
-            Path(__file__).resolve().parents[1]
-            / ".."
-            / "scripts"
-            / "install-backend-playwright.ps1"
+        content = (BUILD_SCRIPTS_ROOT / "install-backend-playwright.ps1").read_text(
+            encoding="utf-8",
         )
-        content = script.resolve().read_text(encoding="utf-8")
 
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
 
     def test_macos_backend_build_script_matches_packaged_runtime_dependencies(self) -> None:
-        script = Path(__file__).resolve().parents[1] / ".." / "scripts" / "build-backend.sh"
-        content = script.resolve().read_text(encoding="utf-8")
+        content = (BUILD_SCRIPTS_ROOT / "build-backend.sh").read_text(encoding="utf-8")
 
         self.assertIn("set -euo pipefail", content)
         self.assertIn('PLAYWRIGHT_BROWSERS_PATH="$PlaywrightBrowsersDir"', content)

@@ -58,7 +58,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 - Backend tests use `unittest` with `test_*.py` naming under `backend/test`. Keep new tests deterministic and avoid live-network dependencies unless they are clearly experimental.
 - Database model or schema changes must include an Alembic revision under `backend/alembic/versions` and tests covering migration or schema behavior.
 - Desktop and website tests use Vitest. For desktop changes, run `npm run typecheck` and `npm run test`; for website changes, run `npm run test` and `npm run build`.
-- For packaging or release changes on POSIX, run `cd frontend && npm run test:release-notes`, `bash scripts/prepare-release.test.sh`, `bash scripts/release-script.test.sh`, and the relevant packaging tests (`cd desktop && npm run test -- packaging.test.ts` and `cd frontend && npm run test -- desktopPackaging.test.ts`). On Windows, run the corresponding `.ps1` script tests with `pwsh -NoProfile -File`.
+- For packaging or release changes on POSIX, run `cd frontend && npm run test:release-notes`, `bash scripts/release/prepare-release.test.sh`, `bash scripts/release/release-script.test.sh`, and the relevant packaging tests (`cd desktop && npm run test -- packaging.test.ts` and `cd frontend && npm run test -- desktopPackaging.test.ts`). On Windows, run the corresponding `.ps1` tests under `scripts/release/` with `pwsh -NoProfile -File`.
 
 ## Commit & Pull Request Guidelines
 

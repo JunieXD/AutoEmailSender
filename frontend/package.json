@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:node": "vitest run --project node",
     "test:dom": "vitest run --project jsdom",
-    "test:release-notes": "vitest run --root .. scripts/release-notes.test.mjs",
+    "test:release-notes": "vitest run --root .. scripts/release/release-notes.test.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

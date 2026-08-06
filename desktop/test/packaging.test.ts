@@ -104,8 +104,8 @@ describe("windows installer packaging", () => {
     expect(config).toContain("to: cli");
     expect(config).toContain("from: ../agent-support");
     expect(config).toContain("to: agent-support");
-    expect(workflow).toContain("./scripts/build-cli.ps1 -Clean");
-    expect(workflow).toContain("./scripts/build-cli.sh --clean");
+    expect(workflow).toContain("./scripts/build/build-cli.ps1 -Clean");
+    expect(workflow).toContain("./scripts/build/build-cli.sh --clean");
   });
 
   it("uses a multi-size PNG-backed Windows icon", () => {
@@ -150,7 +150,12 @@ describe("windows installer packaging", () => {
   it("cleans up only manifest-owned Agent support during Windows uninstall", () => {
     const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
     const cleanupScriptPath = path.resolve("..", "agent-support", "windows-uninstall.ps1");
-    const cleanupTestPath = path.resolve("..", "scripts", "windows-agent-support-cleanup.test.ps1");
+    const cleanupTestPath = path.resolve(
+      "..",
+      "scripts",
+      "quality",
+      "windows-agent-support-cleanup.test.ps1",
+    );
     const cleanupScript = readFileSync(cleanupScriptPath, "utf8");
     const workflow = readFileSync(path.resolve("..", ".github", "workflows", "release.yml"), "utf8");
 
@@ -163,7 +168,7 @@ describe("windows installer packaging", () => {
     expect(cleanupScript).toContain("claude_code");
     expect(cleanupScript).toContain("copilot_cli");
     expect(cleanupScript).toContain("Remove-ManagedUserPathEntry");
-    expect(workflow).toContain("scripts/windows-agent-support-cleanup.test.ps1");
+    expect(workflow).toContain("scripts/quality/windows-agent-support-cleanup.test.ps1");
   });
 });
 
@@ -194,23 +199,32 @@ describe("macOS desktop packaging", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
 
     expect(config).toContain("SUFeedURL:");
-    expect(config).toContain("afterPack: ../scripts/configure-sparkle-info.mjs");
-    expect(config).toContain("afterSign: ../scripts/sanitize-macos-bundle.mjs");
+    expect(config).toContain("afterPack: ../scripts/packaging/configure-sparkle-info.mjs");
+    expect(config).toContain("afterSign: ../scripts/packaging/sanitize-macos-bundle.mjs");
     expect(config).toContain("SUEnableAutomaticChecks: true");
     expect(config).toContain("SUAllowsAutomaticUpdates: false");
     expect(config).toContain("SURequireSignedFeed: true");
     expect(config).toContain("from: native/sparkle/build/Release/sparkle_bridge.node");
     expect(config).toContain("from: native/sparkle/vendor/Sparkle.framework");
     expect(config).toContain("to: Frameworks/Sparkle.framework");
-    const hook = readFileSync(path.resolve("..", "scripts", "configure-sparkle-info.mjs"), "utf8");
+    const hook = readFileSync(
+      path.resolve("..", "scripts", "packaging", "configure-sparkle-info.mjs"),
+      "utf8",
+    );
     expect(hook).toContain("process.env.SPARKLE_PUBLIC_ED_KEY");
     expect(hook).toContain('decoded.length !== 32');
     expect(hook).toContain('"-insert", "SUPublicEDKey"');
-    const sanitizer = readFileSync(path.resolve("..", "scripts", "sanitize-macos-bundle.mjs"), "utf8");
+    const sanitizer = readFileSync(
+      path.resolve("..", "scripts", "packaging", "sanitize-macos-bundle.mjs"),
+      "utf8",
+    );
     expect(sanitizer).toContain('"-cr", appPath');
     expect(sanitizer).toContain('"-r", appPath');
     expect(sanitizer).toContain('"--verify", "--deep", "--strict", appPath');
-    const setupScript = readFileSync(path.resolve("..", "scripts", "setup-sparkle.sh"), "utf8");
+    const setupScript = readFileSync(
+      path.resolve("..", "scripts", "build", "setup-sparkle.sh"),
+      "utf8",
+    );
     expect(setupScript).toContain('sparkle_version="2.9.4"');
     expect(setupScript).toContain("ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9");
   });
@@ -240,8 +254,8 @@ describe("macOS desktop packaging", () => {
     expect(workflow).toContain("build-macos:");
     expect(workflow).toContain("publish:");
     expect(workflow).toContain("needs:");
-    expect(workflow).toContain("scripts/prepare-sparkle-release.mjs");
-    expect(workflow).toContain("python scripts/package_crawl_mentors_skill.py");
+    expect(workflow).toContain("scripts/release/prepare-sparkle-release.mjs");
+    expect(workflow).toContain("python scripts/packaging/package_crawl_mentors_skill.py");
     expect(workflow).toContain("release-assets/skill/*.zip");
     expect(workflow).toContain("if ((${#skill_assets[@]} != 1))");
     expect(workflow).toContain('--json isDraft --jq .isDraft');

@@ -1,8 +1,8 @@
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$scriptPath = Join-Path $repoRoot "scripts\prepare-release.ps1"
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$scriptPath = Join-Path $repoRoot "scripts\release\prepare-release.ps1"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString("N"))
 $stdoutPath = Join-Path $tempRoot "stdout.txt"
 $stderrPath = Join-Path $tempRoot "stderr.txt"

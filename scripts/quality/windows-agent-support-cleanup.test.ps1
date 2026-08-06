@@ -37,7 +37,8 @@ function Write-Manifest(
     Write-Utf8NoBom $Path (($manifest | ConvertTo-Json -Depth 10) + "`n")
 }
 
-$cleanupScript = Join-Path (Split-Path -Parent $PSScriptRoot) "agent-support\windows-uninstall.ps1"
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$cleanupScript = Join-Path $repoRoot "agent-support\windows-uninstall.ps1"
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("auto-email-sender-uninstall-test-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 

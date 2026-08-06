@@ -12,7 +12,7 @@ Update `website/data/crawl-benchmark.json` from a local Auto Email Sender databa
 ## Safety Rules
 
 - Treat `auto_email_sender.db` as read-only. Never migrate it, edit it, copy it into the repository, or commit it.
-- Publish only the aggregate fields produced by `scripts/update_crawl_benchmark.py`. Never publish names, emails, API keys, error details, logs, prompts, or raw database rows.
+- Publish only the aggregate fields produced by `scripts/data/update_crawl_benchmark.py`. Never publish names, emails, API keys, error details, logs, prompts, or raw database rows.
 - Preserve unrelated working-tree changes.
 - Do not guess a school's canonical name. Apply an alias only when the canonical school and institution are supported by the source URL or confirmed by the user.
 - Do not commit, push, open a pull request, or deploy unless the user explicitly requests that action.
@@ -25,7 +25,7 @@ Update `website/data/crawl-benchmark.json` from a local Auto Email Sender databa
 4. From `backend/`, run:
 
    ```bash
-   uv run python ../scripts/update_crawl_benchmark.py [--database /absolute/path/to/auto_email_sender.db] [--legacy-xlsx /absolute/path/to/history.xlsx]
+   uv run python ../scripts/data/update_crawl_benchmark.py [--database /absolute/path/to/auto_email_sender.db] [--legacy-xlsx /absolute/path/to/history.xlsx]
    ```
 
    Import the historical workbook only when requested or on its first migration. The script reads the database in SQLite read-only mode and merges the current machine's records over existing records with the same stable ID.

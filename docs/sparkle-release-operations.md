@@ -17,7 +17,7 @@ macOS Apple Silicon 版使用 Sparkle 2.9.4 更新，Windows 的 `electron-updat
 先在可信 macOS 设备上下载并校验固定版本的 Sparkle：
 
 ```bash
-./scripts/setup-sparkle.sh
+./scripts/build/setup-sparkle.sh
 ```
 
 生成项目专用密钥。工具会把私钥存入当前用户的 macOS 钥匙串，并输出 `SUPublicEDKey`：

@@ -8,7 +8,7 @@ param(
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $backendDir = Join-Path $repoRoot "backend"
 $outputPath = Join-Path $repoRoot $OutputDirectory
 

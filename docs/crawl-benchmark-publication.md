@@ -8,14 +8,14 @@
 
 ```bash
 cd backend
-uv run python ../scripts/update_crawl_benchmark.py
+uv run python ../scripts/data/update_crawl_benchmark.py
 ```
 
 脚本会自动寻找桌面应用数据库，只读查询当前抓取任务，并合并输出文件中已有的其他电脑记录与早期 XLSX 记录。它不会修改原数据库，也不要求先把候选导师导入导师库。首次导入历史表时使用：
 
 ```bash
 cd backend
-uv run python ../scripts/update_crawl_benchmark.py \
+uv run python ../scripts/data/update_crawl_benchmark.py \
   --legacy-xlsx "/absolute/path/to/智能抓取测试记录.xlsx"
 ```
 
