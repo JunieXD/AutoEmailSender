@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from app.services import crawler_tools
+from app.modules.crawler.pages import tools as crawler_tools
 
 
 LIVE_URLS = [

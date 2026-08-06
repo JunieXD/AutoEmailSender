@@ -171,7 +171,7 @@ from app.modules.community.public import (
     CommunityRecordsRead,
 )
 from app.schemas.batch_task import BatchTaskResendContextRead
-from app.schemas.crawl_job import (
+from app.modules.crawler.public import (
     CrawlCandidateUpdatePayload,
     CrawlJobEnrichResult,
     CrawlJobCreatePayload,
@@ -258,7 +258,7 @@ from app.modules.matching.public import (
     restore_match_analysis_job_record,
     retry_failed_match_analysis_job_record,
 )
-from app.services.crawler_debug import crawler_debug_file_path
+from app.modules.crawler.public import crawler_debug_file_path
 from app.services.operation_logs import (
     record_operation_log,
     sanitize_diagnostic_metadata,
@@ -276,7 +276,7 @@ from app.modules.llm.public import (
     resolve_base_url,
 )
 from app.services.smtp_error_explanations import explain_smtp_error
-from app.services.crawl_job_records import (
+from app.modules.crawler.public import (
     CrawlJobRecordError,
     cancel_faculty_crawl_job_record,
     create_faculty_crawl_job_record,
@@ -294,7 +294,7 @@ from app.services.crawl_job_records import (
     resume_faculty_crawl_job_review_record,
     update_faculty_crawl_candidate_record,
 )
-from app.services.crawl_job_events import build_crawl_job_events
+from app.modules.crawler.public import build_crawl_job_events
 from app.services.dashboard_stats import build_dashboard_overview
 from app.services.outreach_template_mutations import (
     OutreachTemplateMutationError,

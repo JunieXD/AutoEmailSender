@@ -599,7 +599,7 @@ class AgentApiTests(unittest.TestCase):
             "Authorization: Bearer startup-secret\nbackend started",
             encoding="utf-8",
         )
-        from app.services.crawler_debug import crawler_debug_file_path
+        from app.modules.crawler.pages.debug import crawler_debug_file_path
 
         debug_file = crawler_debug_file_path(77)
         debug_file.parent.mkdir(parents=True, exist_ok=True)

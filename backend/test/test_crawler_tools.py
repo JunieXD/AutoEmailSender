@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageFetchState
-from app.services.crawler_tools import (
+from app.modules.crawler.pages.tools import (
     CrawlJobSaveBudgetExceeded,
     CrawlJobCanceled,
     CrawlJobPaused,
@@ -42,7 +42,7 @@ from app.services.crawler_tools import (
     _is_resolved_allowed_crawl_url,
     _resolve_safe_public_crawl_url,
 )
-from app.services import crawler_tools
+from app.modules.crawler.pages import tools as crawler_tools
 from test.schema_database import create_schema_sqlite_database
 
 
@@ -198,7 +198,7 @@ class CrawlerToolTests(unittest.TestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_tools.MAX_PAGE_SNAPSHOT_CACHE_ENTRIES", 2, create=True):
+        with patch("app.modules.crawler.pages.tools.MAX_PAGE_SNAPSHOT_CACHE_ENTRIES", 2, create=True):
             ctx.remember_page_snapshot(first)
             ctx.remember_page_snapshot(second)
             self.assertIs(ctx.get_cached_page_snapshot(first.url), first)
@@ -328,7 +328,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_allows_same_host(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -342,7 +342,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_rejects_other_host(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -356,7 +356,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_allows_same_registrable_domain_subdomains(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -370,7 +370,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_rejects_different_registrable_domain(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 80)),
             ],
@@ -384,7 +384,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_resolved_crawl_url_policy_rejects_private_dns_address(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("127.0.0.1", 443)),
             ],
@@ -413,14 +413,14 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_safe_public_crawl_url_allows_domain_without_dns_resolution(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=AssertionError("URL validation should not resolve domain names"),
         ):
             self.assertTrue(is_safe_public_crawl_url("https://faculty.example.edu"))
 
     def test_resolve_safe_public_crawl_url_uses_system_dns_for_fetching_domains(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -430,14 +430,14 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_safe_public_crawl_url_allows_domain_even_if_system_dns_would_be_private(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=AssertionError("URL validation should not resolve domain names"),
         ):
             self.assertTrue(is_safe_public_crawl_url("https://faculty.example.edu"))
 
     def test_is_safe_public_crawl_url_allows_unresolvable_domain_at_validation_time(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=AssertionError("URL validation should not resolve domain names"),
         ):
             self.assertTrue(is_safe_public_crawl_url("https://faculty.example.edu"))
@@ -710,7 +710,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=snapshot),
         ) as crawl_http:
             first = await crawl_page_with_browser_fallback(ctx, "https://example.edu/faculty")
@@ -745,8 +745,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 session_factory=harness.session_factory,
             )
 
-            with patch("app.services.crawler_tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
-                "app.services.crawler_tools._crawl_page_with_browser", AsyncMock()
+            with patch("app.modules.crawler.pages.tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
+                "app.modules.crawler.pages.tools._crawl_page_with_browser", AsyncMock()
             ) as browser_mock:
                 snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/faculty#ignored")
 
@@ -788,8 +788,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 session_factory=harness.session_factory,
             )
 
-            with patch("app.services.crawler_tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
-                "app.services.crawler_tools._crawl_page_with_browser", AsyncMock()
+            with patch("app.modules.crawler.pages.tools.crawl_page_with_http", AsyncMock()) as http_mock, patch(
+                "app.modules.crawler.pages.tools._crawl_page_with_browser", AsyncMock()
             ) as browser_mock:
                 first = await crawl_page_with_browser_fallback(first_ctx, "https://cs.example.edu/faculty")
                 second = await crawl_page_with_browser_fallback(restarted_ctx, "https://cs.example.edu/faculty")
@@ -809,8 +809,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
         ctx.mark_denied_url("https://cs.example.edu/news/a.htm", "无关新闻页")
 
-        with patch("app.services.crawler_tools.crawl_page_with_http") as mocked_http, patch(
-            "app.services.crawler_tools.browser_investigate"
+        with patch("app.modules.crawler.pages.tools.crawl_page_with_http") as mocked_http, patch(
+            "app.modules.crawler.pages.tools.browser_investigate"
         ) as mocked_browser:
             snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/news/a.htm")
 
@@ -839,7 +839,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             return_value=http_snapshot,
         ):
             snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/news/a.htm")
@@ -877,7 +877,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             side_effect=[directory_snapshot, profile_snapshot],
         ):
             directory = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/faculty/index.htm")
@@ -907,7 +907,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             return_value=redirected_snapshot,
         ):
             snapshot = await crawl_page_with_browser_fallback(ctx, "https://cs.example.edu/go-news")
@@ -963,10 +963,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
 
             with patch(
-                "app.services.crawler_tools.crawl_page_with_http",
+                "app.modules.crawler.pages.tools.crawl_page_with_http",
                 new=AsyncMock(return_value=http_snapshot),
             ) as http_fetch, patch(
-                "app.services.crawler_tools.browser_investigate",
+                "app.modules.crawler.pages.tools.browser_investigate",
                 new=AsyncMock(return_value=browser_snapshot),
             ) as browser:
                 actual = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/li", intent="profile")
@@ -1015,10 +1015,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=http_snapshot),
         ), patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
             actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
@@ -1060,10 +1060,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=http_snapshot),
         ), patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
             actual = await crawl_page_with_browser_fallback(ctx, profile_url, intent="profile")
@@ -1102,10 +1102,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return browser_snapshot
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=http_snapshot),
         ), patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(side_effect=fail_browser),
         ) as browser:
             actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
@@ -1153,10 +1153,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "app.services.crawler_tools.crawl_page_with_http",
+                "app.modules.crawler.pages.tools.crawl_page_with_http",
                 new=AsyncMock(return_value=direct),
             ), patch(
-                "app.services.crawler_tools._crawl_page_with_browser",
+                "app.modules.crawler.pages.tools._crawl_page_with_browser",
                 new=AsyncMock(return_value=browser),
             ):
                 first = await crawl_page_with_browser_fallback(first_ctx, request_url, intent="profile")
@@ -1216,10 +1216,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=http_snapshot),
         ), patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
             actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url)
@@ -1421,7 +1421,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 dynamic_directory_ready_poll_ms=100,
                 dynamic_directory_stable_ms=100,
             )
-            with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+            with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
                 snapshot = await crawler_tools._try_playwright_browser_fetch_once(
                     "https://example.edu/faculty",
                     options,
@@ -1462,10 +1462,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=http_snapshot),
         ), patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser:
             actual = await crawl_page_with_browser_fallback(ctx, ctx.start_url, intent="profile")
@@ -1511,10 +1511,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         with patch(
-            "app.services.crawler_tools.httpx.AsyncClient",
+            "app.modules.crawler.pages.tools.httpx.AsyncClient",
             new=FakeAsyncClient,
         ), patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(
                 return_value=PageSnapshot(
                     url=ctx.start_url,
@@ -1528,7 +1528,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ) as http_fetch, patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(
                 return_value=PageSnapshot(
                     url=ctx.start_url,
@@ -1569,15 +1569,15 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawler_tools._is_resolved_allowed_crawl_url",
+                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
                 return_value=True,
             ),
             patch(
-                "app.services.crawler_tools._should_offload_browser_fetch_to_thread",
+                "app.modules.crawler.pages.tools._should_offload_browser_fetch_to_thread",
                 return_value=True,
             ),
             patch(
-                "app.services.crawler_tools.asyncio.to_thread",
+                "app.modules.crawler.pages.tools.asyncio.to_thread",
                 new=AsyncMock(return_value=expected),
             ) as to_thread,
         ):
@@ -1616,18 +1616,18 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawler_tools._is_resolved_allowed_crawl_url",
+                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
                 return_value=True,
             ),
             patch(
-                "app.services.crawler_tools._should_offload_browser_fetch_to_thread",
+                "app.modules.crawler.pages.tools._should_offload_browser_fetch_to_thread",
                 return_value=False,
             ),
             patch(
-                "app.services.crawler_tools._fetch_page_with_playwright_direct",
+                "app.modules.crawler.pages.tools._fetch_page_with_playwright_direct",
                 new=fake_direct,
             ),
-            patch("app.services.crawler_tools.asyncio.to_thread", new=AsyncMock()) as to_thread,
+            patch("app.modules.crawler.pages.tools.asyncio.to_thread", new=AsyncMock()) as to_thread,
         ):
             actual = await _crawl_page_with_browser(
                 ctx,
@@ -2206,10 +2206,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             new=AsyncMock(return_value=snapshot),
         ) as mocked_http, patch(
-            "app.services.crawler_tools.browser_investigate",
+            "app.modules.crawler.pages.tools.browser_investigate",
             new=AsyncMock(return_value=snapshot),
         ) as mocked_browser:
             with self.assertRaises(CrawlJobCanceled):
@@ -2238,7 +2238,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             new=AsyncMock(return_value=snapshot),
         ) as mocked_browser:
             with self.assertRaises(CrawlJobCanceled):
@@ -2387,11 +2387,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
-        ), patch("app.services.crawler_tools.httpx.AsyncClient") as client_class:
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient") as client_class:
             client = client_class.return_value.__aenter__.return_value
             client.get.return_value = response
 
@@ -2421,11 +2421,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
-        ), patch("app.services.crawler_tools.httpx.AsyncClient") as client_class:
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient") as client_class:
             client = client_class.return_value.__aenter__.return_value
             client.get.return_value = response
 
@@ -2452,9 +2452,9 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         private_dns = [(0, 0, 0, "", ("10.0.0.1", 443))]
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=[public_dns, public_dns, public_dns, public_dns, private_dns],
-        ), patch("app.services.crawler_tools.httpx.AsyncClient") as client_class:
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient") as client_class:
             client = client_class.return_value.__aenter__.return_value
             client.get.return_value = response
 
@@ -2492,11 +2492,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return async_client(transport=transport, **kwargs)
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
-        ), patch("app.services.crawler_tools.httpx.AsyncClient", side_effect=client_factory):
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient", side_effect=client_factory):
             snapshot = await crawl_page_with_http(ctx, "https://faculty.example.edu/faculty")
 
         self.assertEqual(snapshot.status, "failed")
@@ -2523,11 +2523,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return _FakeAsyncHttpClient(response)
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
-        ), patch("app.services.crawler_tools.httpx.AsyncClient", side_effect=client_factory):
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient", side_effect=client_factory):
             snapshot = await crawl_page_with_http(ctx, "https://faculty.example.edu/faculty")
 
         self.assertEqual(snapshot.status, "succeeded")
@@ -2558,12 +2558,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
         ), patch(
-            "app.services.crawler_tools._default_async_network_backend",
+            "app.modules.crawler.pages.tools._default_async_network_backend",
             return_value=backend,
         ):
             snapshot = await crawl_page_with_http(ctx, "https://faculty.example.edu/faculty")
@@ -2595,12 +2595,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
         ), patch(
-            "app.services.crawler_tools._default_async_network_backend",
+            "app.modules.crawler.pages.tools._default_async_network_backend",
             return_value=backend,
         ):
             snapshot = await crawl_page_with_http(ctx, "https://faculty.example.edu/faculty")
@@ -2637,9 +2637,9 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return [(0, 0, 0, "", ("93.184.216.34", 443))]
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=getaddrinfo,
-        ), patch("app.services.crawler_tools.httpx.AsyncClient") as client_class:
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient") as client_class:
             client = client_class.return_value.__aenter__.return_value
             client.get.return_value = response
 
@@ -2684,10 +2684,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return [(0, 0, 0, "", ("93.184.216.35", 443))]
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=resolve_current_public_ip,
         ), patch(
-            "app.services.crawler_tools._default_async_network_backend",
+            "app.modules.crawler.pages.tools._default_async_network_backend",
             return_value=backend,
         ):
             snapshot = await crawl_page_with_http(ctx, "https://faculty.example.edu/faculty")
@@ -2745,12 +2745,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             return expected_snapshot
 
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
         ), patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             side_effect=safe_http_path,
         ) as http_path:
             snapshot = await crawl_page_with_browser_fallback(ctx, "https://faculty.example.edu/faculty")
@@ -2784,10 +2784,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             return_value=empty_http_snapshot,
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
             snapshot = await crawl_page_with_browser_fallback(ctx, "https://faculty.example.edu/faculty")
@@ -2823,10 +2823,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             return_value=blocked_http_snapshot,
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
             snapshot = await crawl_page_with_browser_fallback(ctx, "https://faculty.example.edu/faculty")
@@ -2869,10 +2869,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             return_value=blocked_http_snapshot,
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             side_effect=[first_browser_snapshot, second_browser_snapshot],
         ) as browser_path:
             first = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/a")
@@ -2917,10 +2917,10 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools.crawl_page_with_http",
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
             side_effect=[blocked_http_snapshot, other_http_snapshot],
         ) as http_path, patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
             first = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/a")
@@ -2949,7 +2949,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ) as browser_path:
             snapshot = await crawler_tools.browser_investigate(
@@ -2993,13 +2993,13 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with patch(
-                "app.services.crawler_tools._crawl_page_with_browser",
+                "app.modules.crawler.pages.tools._crawl_page_with_browser",
                 new=AsyncMock(return_value=browser_snapshot),
             ) as browser_path, patch(
-                "app.services.crawler_tools._has_unsafe_public_crawl_url",
+                "app.modules.crawler.pages.tools._has_unsafe_public_crawl_url",
                 return_value=False,
             ), patch(
-                "app.services.crawler_tools.is_allowed_crawl_url",
+                "app.modules.crawler.pages.tools.is_allowed_crawl_url",
                 return_value=True,
             ):
                 snapshot = await crawler_tools.browser_investigate(
@@ -3022,7 +3022,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
         ctx.mark_denied_url("https://cs.example.edu/news/a.htm", "无关新闻页")
 
-        with patch("app.services.crawler_tools._crawl_page_with_browser") as mocked_browser:
+        with patch("app.modules.crawler.pages.tools._crawl_page_with_browser") as mocked_browser:
             snapshot = await crawler_tools.browser_investigate(
                 ctx,
                 "https://cs.example.edu/news/a.htm",
@@ -3053,7 +3053,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._crawl_page_with_browser",
+            "app.modules.crawler.pages.tools._crawl_page_with_browser",
             return_value=browser_snapshot,
         ):
             snapshot = await crawler_tools.browser_investigate(
@@ -3206,7 +3206,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.services.crawler_tools.async_playwright",
+            "app.modules.crawler.pages.tools.async_playwright",
             return_value=_Playwright(),
         ):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
@@ -3265,7 +3265,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+        with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "https://teacher.example.edu/zhoufeng",
                 "",
@@ -3320,7 +3320,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+        with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "https://teacher.example.edu/zhoufeng",
                 "",
@@ -3377,7 +3377,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+        with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "https://teacher.example.edu/zhoufeng",
                 "",
@@ -3400,7 +3400,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_tools._try_fetch_browser_pagination_once",
+            "app.modules.crawler.pages.tools._try_fetch_browser_pagination_once",
             new=AsyncMock(side_effect=[failed, succeeded]),
         ) as attempt_mock:
             result = await crawler_tools._fetch_browser_pagination_direct(
@@ -3496,7 +3496,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+        with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
             result = await crawler_tools._try_fetch_browser_pagination_once(
                 "https://example.edu/directory",
                 {
@@ -3562,7 +3562,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args: object) -> None:
                 return None
 
-        with patch("app.services.crawler_tools.async_playwright", return_value=_Playwright()):
+        with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
                 "https://scs.bupt.edu.cn/szjs1/jsyl.htm",
                 "",

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.models import CrawlJobRun
-from app.services.crawl_job_runs import (
+from app.modules.crawler.jobs.runs import (
     _settle_active_segment,
     create_initial_crawl_job_run,
     create_retry_crawl_job_run,
@@ -43,7 +43,7 @@ class CrawlJobRunAppVersionSnapshotTests(unittest.TestCase):
         job = SimpleNamespace(id=42, status="queued", current_run_id=None)
 
         with patch(
-            "app.services.crawl_job_runs.get_current_app_version",
+            "app.modules.crawler.jobs.runs.get_current_app_version",
             return_value="9.8.7",
         ):
             initial = asyncio.run(create_initial_crawl_job_run(session, job))

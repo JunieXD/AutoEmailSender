@@ -18,8 +18,8 @@ from app.agents.faculty_crawler_agent import (
     _validate_professor_candidate_batch,
 )
 from app.models import LLMProfile
-from app.services.crawler_tools import CrawlToolContext
-from app.services.crawler_tools import PageSnapshot
+from app.modules.crawler.pages.tools import CrawlToolContext
+from app.modules.crawler.pages.tools import PageSnapshot
 from app.services.llm_runtime import LLMRuntimeAdaptation
 
 
@@ -494,9 +494,9 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             with (
                 patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
                 patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
-                patch("app.services.crawler_tools._crawl_page_with_browser", AsyncMock(return_value=snapshot)) as browser_mock,
-                patch("app.services.crawler_tools._ensure_crawl_job_can_continue_for_context", AsyncMock()),
-                patch("app.services.crawler_tools.record_page_snapshot", AsyncMock()),
+                patch("app.modules.crawler.pages.tools._crawl_page_with_browser", AsyncMock(return_value=snapshot)) as browser_mock,
+                patch("app.modules.crawler.pages.tools._ensure_crawl_job_can_continue_for_context", AsyncMock()),
+                patch("app.modules.crawler.pages.tools.record_page_snapshot", AsyncMock()),
                 patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
                 patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
             ):

@@ -23,7 +23,7 @@ from app.models import (
     CrawlPageChunkStatus,
     CrawlPageFetchState,
 )
-from app.services.crawler_v2_models import CrawlerV2WorkKind, CrawlerV2WorkerConfig
+from app.modules.crawler.v2.models import CrawlerV2WorkKind, CrawlerV2WorkerConfig
 from test.schema_database import create_schema_sqlite_database
 from app.services.crawler_v2_scheduler import (
     ZERO_CANDIDATE_BROWSER_RETRY_REASON,

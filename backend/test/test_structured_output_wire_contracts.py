@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from app.services.crawler_structured_output import (
+from app.modules.crawler.llm.structured_output import (
     CandidateEnrichmentWirePayload,
     CandidateFieldConfidenceWire,
     ProfessorCandidateWirePayload,
@@ -30,12 +30,14 @@ class _LooseObjectResult(BaseModel):
 class StructuredOutputWireContractTests(unittest.TestCase):
     def test_all_known_non_agent_json_calls_use_the_shared_adaptation(self) -> None:
         from app.modules.llm import runtime as llm_runtime
+        from app.modules.crawler.v2 import (
+            profile_extraction as crawler_v2_profile_extraction,
+            routing as crawler_v2_routing,
+        )
         from app.services import (
             crawl_job_runtime,
             crawler_v2_chunk_worker,
             crawler_v2_enrichment_worker,
-            crawler_v2_profile_extraction,
-            crawler_v2_routing,
         )
 
         self.assertIn(
@@ -85,7 +87,7 @@ class StructuredOutputWireContractTests(unittest.TestCase):
         self.assertEqual(violations, [])
 
     def test_every_production_wire_model_is_strict_schema_compatible(self) -> None:
-        from app.services.crawler_v2_routing import (
+        from app.modules.crawler.v2.routing import (
             V2EntryRoutingPayload,
             V2PaginationRoutingPayload,
         )

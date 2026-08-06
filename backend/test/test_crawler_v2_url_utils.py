@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.crawler_v2_url_utils import is_same_domain, normalize_url, task_dedupe_key
+from app.modules.crawler.v2.url_utils import is_same_domain, normalize_url, task_dedupe_key
 
 
 class CrawlerV2UrlUtilsTests(unittest.TestCase):

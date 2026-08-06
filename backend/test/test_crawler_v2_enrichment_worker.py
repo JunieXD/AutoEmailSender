@@ -23,8 +23,8 @@ from app.models import (
     CrawlWorkerTokenUsage,
     LLMProfile,
 )
-from app.services.crawler_tools import CandidateEnrichmentPayload
-from app.services.crawler_structured_output import CandidateEnrichmentWirePayload
+from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
+from app.modules.crawler.llm.structured_output import CandidateEnrichmentWirePayload
 from app.services.llm_runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,

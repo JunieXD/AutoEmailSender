@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageFetchState
 from app.models.base import Base
-from app.services.crawler_chunking import ChunkingConfig, PageChunkDraft, build_page_chunks
-from app.services.crawler_chunk_runtime import claim_next_page_chunk, create_chunks_for_page, submit_page_chunk_candidates
-from app.services.crawler_tools import CrawlToolContext
+from app.modules.crawler.pages.chunking import ChunkingConfig, PageChunkDraft, build_page_chunks
+from app.modules.crawler.pages.chunk_runtime import claim_next_page_chunk, create_chunks_for_page, submit_page_chunk_candidates
+from app.modules.crawler.pages.tools import CrawlToolContext
 
 
 @asynccontextmanager

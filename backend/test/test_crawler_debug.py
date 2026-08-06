@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from app.core.config import get_settings
-from app.services.crawler_debug import append_crawler_v2_debug_event, crawler_debug_file_path
+from app.modules.crawler.pages.debug import append_crawler_v2_debug_event, crawler_debug_file_path
 
 
 class CrawlerV2DebugLogTests(unittest.TestCase):

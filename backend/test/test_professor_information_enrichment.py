@@ -20,7 +20,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services.crawler_tools import CandidateEnrichmentPayload
+from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
 from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
 from app.services.crawler_v2_scheduler import finalize_idle_jobs
 from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs

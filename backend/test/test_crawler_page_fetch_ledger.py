@@ -11,14 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models.base import Base
 from app.models.crawl_job import CrawlJob, CrawlPageFetchState
-from app.services.crawler_page_fetch_ledger import (
+from app.modules.crawler.pages.fetch_ledger import (
     classify_page_fetch_failure,
     get_page_fetch_decision,
     mark_page_fetch_result,
     normalize_fetch_url,
     should_prefer_browser_for_fetch_domain,
 )
-from app.services.crawler_tools import PageSnapshot
+from app.modules.crawler.pages.tools import PageSnapshot
 
 
 @asynccontextmanager

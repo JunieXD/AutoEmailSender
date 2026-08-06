@@ -10,8 +10,6 @@ APP_ROOT = BACKEND_ROOT / "app"
 
 REVIEWED_LEGACY_VIOLATIONS = {
     "app/core/agent_mutation_headers.py -> app.services.agent_mutations",
-    "app/schemas/crawl_job.py -> app.services.crawler_tools",
-    "app/schemas/crawl_job.py -> app.services.crawler_v2_url_utils",
     "app/services/agent_drafts.py -> app.api.workspace_support",
     "app/services/crawl_job_runtime.py -> app.agents.faculty_crawler_agent",
 }

@@ -4,7 +4,7 @@ import re
 import unittest
 from dataclasses import replace
 
-from app.services.crawler_chunking import (
+from app.modules.crawler.pages.chunking import (
     ChunkingConfig,
     build_page_chunks,
     estimate_tokens,
@@ -301,7 +301,7 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertEqual(config.max_split_depth, 7)
 
     def test_split_chunk_content_only_splits_above_one_hundred_tokens(self) -> None:
-        from app.services.crawler_chunking import split_chunk_content
+        from app.modules.crawler.pages.chunking import split_chunk_content
 
         at_minimum = "\n".join(["甲" * 25] * 4)
         above_minimum = "\n".join(["甲" * 25, "乙" * 25, "丙" * 25, "丁" * 26])
@@ -331,7 +331,7 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertGreaterEqual(len(above_minimum_drafts), 2)
 
     def test_split_chunk_content_uses_dynamic_fanout_for_too_many_candidates(self) -> None:
-        from app.services.crawler_chunking import split_chunk_content
+        from app.modules.crawler.pages.chunking import split_chunk_content
 
         content = "\n".join(
             f"教师{i} 研究方向 数据库 人工智能 [详情](https://cs.example.edu/t{i}.htm)"
@@ -390,7 +390,7 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLess(max(draft.token_estimate for draft in drafts), estimate_tokens(content))
 
     def test_split_chunk_content_caps_retry_overlap_at_fifteen_tokens(self) -> None:
-        from app.services.crawler_chunking import split_chunk_content
+        from app.modules.crawler.pages.chunking import split_chunk_content
 
         content = "\n".join(
             chr(0x4E00 + index) * 5
@@ -417,7 +417,7 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLessEqual(repeated_tokens, 15)
 
     def test_split_chunk_content_caps_binary_retry_overlap_when_a_line_exceeds_limit(self) -> None:
-        from app.services.crawler_chunking import split_chunk_content
+        from app.modules.crawler.pages.chunking import split_chunk_content
 
         content = "\n".join(chr(0x4E00 + index) * 20 for index in range(6))
         drafts = split_chunk_content(
@@ -441,7 +441,7 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLessEqual(repeated_tokens, 15)
 
     def test_replays_candidate_dense_markdown_with_limited_retry_overlap(self) -> None:
-        from app.services.crawler_chunking import split_chunk_content
+        from app.modules.crawler.pages.chunking import split_chunk_content
 
         source_url = "https://faculty.hust.edu.cn/teachers/index.htm"
         markdown = "\n".join(

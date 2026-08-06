@@ -15,7 +15,8 @@
 - 已完成：第 4D 批——Frontend professor/community 实体 API 边界收敛。
 - 已完成：第 5A 批——`matching` 核心与 analysis jobs。
 - 已完成：第 5B 批——`llm` profile、runtime 与 adaptation。
-- 下一阶段：第 6 批——`crawler` 领域归位。
+- 已完成：第 6A 批——`crawler` 合同与运行基础。
+- 下一阶段：第 6B 批——`crawler` adapters、job runtime 与 workers。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档

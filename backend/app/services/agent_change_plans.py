@@ -38,7 +38,7 @@ from app.modules.community.public import (
     CommunityImportPayload,
     CommunityMentorComparisonRead,
 )
-from app.schemas.crawl_job import CrawlJobRetryPayload
+from app.modules.crawler.public import CrawlJobRetryPayload
 from app.modules.professors.public import (
     ParsedProfessorImport,
     ProfessorBulkTagsPayload,
@@ -73,7 +73,7 @@ from app.services.outreach_template_mutations import (
     archive_outreach_template_record,
     get_outreach_template_or_raise,
 )
-from app.services.crawl_job_records import (
+from app.modules.crawler.public import (
     CrawlJobRecordError,
     retry_faculty_crawl_job_record,
 )

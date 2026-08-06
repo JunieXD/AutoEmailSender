@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 5 批已完成，第 6 批待开始
+状态：已确认，第 6A 批已完成，第 6B 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -162,7 +162,7 @@ cli/src/auto_email_sender_cli/
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
-| 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
+| 6 | `crawler` | 执行中（6A 已完成，6B 待开始） | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
@@ -901,3 +901,97 @@ backend/app/modules/llm/
 停止点：第 5 批 matching 与 llm 所有权均已归位；LLM 内部 adaptation 协作边已被显式记录而未向
 外扩散。第 6 批只迁移 crawler 的 DTO、UI/Agent adapter、worker/scheduler、页面策略与运行时持久化，
 不混入 campaign/workspace 状态机重构。
+
+### 第 6A 批：`crawler` 合同与运行基础（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/crawler/
+├── schemas.py
+├── public.py
+├── jobs/
+│   ├── events.py
+│   ├── metrics.py
+│   ├── records.py
+│   └── runs.py
+├── pages/
+│   ├── chunk_runtime.py
+│   ├── chunking.py
+│   ├── debug.py
+│   ├── domain_policy.py
+│   ├── fetch_ledger.py
+│   └── tools.py
+├── llm/
+│   ├── endpoint_retry.py
+│   └── structured_output.py
+└── v2/
+    ├── models.py
+    ├── profile_extraction.py
+    ├── profile_text_cache.py
+    ├── profile_url_policy.py
+    ├── retry.py
+    ├── routing.py
+    ├── token_usage.py
+    └── url_utils.py
+```
+
+计划范围：
+
+- 迁移 crawl job/candidate/page 的 UI/Agent DTO，以及 job record、run、event、metrics 持久化与投影。
+- 迁移页面安全策略、抓取工具、fetch ledger、chunking/chunk runtime、debug 文件，以及 crawler 专用的
+  LLM endpoint retry/structured-output wire adapter。
+- 迁移不直接调度 worker 的 v2 数据模型、URL/profile 策略、文本缓存、retry、token usage、路由与
+  profile extraction，形成可供 6B 编排层调用的闭合基础。
+- `crawler.public` 暴露领域外真正需要的 DTO、record use cases、只读投影、调试路径、安全 URL 合同、
+  run/token 合同和 profile text cache；Agent API、automation、professors enrichment、diagnostics 改走该入口。
+- 对应旧 schema/service 路径保留纯 re-export，并新增完整公共符号对象一致性测试；尚未迁移的
+  API/Agent/job runtime/scheduler/workers 可在 6A 内继续通过兼容入口调用，6B 完成后生产旧路径审计必须归零。
+
+本批不变量：
+
+- crawl job/candidate/page DTO、revision/幂等、事件、run/token/metrics 与持久化事务语义不变。
+- SSRF 防护、DNS/IP 校验、页面抓取/browser fallback、ledger、chunk 切分/领取/提交、候选校验与保存不变。
+- v2 路由、profile extraction、structured-output wire、缓存 key/TTL、retry 和 token 统计不变。
+- 不修改 CrawlJob/Candidate/Page/Chunk/Run ORM、Alembic、HTTP/Agent/Frontend 合同、worker 并发或队列优先级；
+  不拆写约 2800 行 crawler tools，不新增门禁例外。
+
+计划验证：schema/records/runs/events/metrics、URL 安全与 crawler tools、ledger/chunk/runtime、structured-output、
+v2 routing/profile policies/cache/token、Agent/diagnostics/professors enrichment 关联流程、架构/兼容门禁，
+以及 Backend 完整 unittest 和相关 CLI/Frontend 合同。
+
+第 6B 预定边界：迁移 `api/crawl_jobs.py`、`agents/faculty_crawler_agent.py`、
+`services/crawl_job_runtime.py`、`crawler_v2_scheduler.py` 及 page/chunk/enrichment workers；组合根与
+RuntimeManager 改走新入口后再做生产旧路径归零审计。
+
+实际结果：
+
+- 21 个 crawler 基础实现文件已按 `jobs/pages/llm/v2` 四个内部子包归位；新模块内部全部使用相对导入，
+  不再依赖任何旧 crawler 路径。
+- `crawler.public` 已成为 Agent API、automation、diagnostics 与 professors enrichment 的跨领域入口；
+  crawl DTO、record use cases、事件/指标/run、debug、安全 URL 及 profile cache 均由真实所有者导出。
+- 旧 schema/service 路径保留纯 re-export；新增 AST 驱动的完整本地公共符号对象一致性测试、公共门面
+  对象一致性测试及关键模块独立进程导入测试。
+- 已偿还 `schemas.crawl_job -> crawler_tools/url_utils` 两条 legacy layer 门禁例外；SSRF、防抓取绕过、
+  ledger、chunk、候选保存、wire、路由、缓存、retry 和 token 行为均保持原样。
+- 尚未迁移的 UI API、Agent、job runtime、scheduler/workers 继续经兼容入口调用这些基础能力；该临时
+  同领域旧路径只保留到 6B，不作为新的跨领域边界或门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、21 类完整公共符号、门面与独立导入 | 7 tests passed |
+| Backend crawler 基础 | records/runs/events/metrics、tools/chunk/ledger/debug、LLM wire、v2 policies/routing/cache/token | 233 tests passed |
+| Backend 关联流程 | Agent/UI API、professors enrichment、旧编排器、scheduler 与三类 worker | 356 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1734 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | Tasks/Professors crawler、enrichment API、notifications 与页面布局 | 9 files，115 tests passed |
+| Repository | CodeGraph 同步；新模块旧路径闭包审计；6B 剩余路径审计；`git diff --check` | 通过 |
+
+停止点：crawler DTO、持久化和运行基础已形成闭合模块，外部领域调用已走公共入口。第 6B 只迁移
+HTTP/Agent adapters、job runtime、scheduler 和 page/chunk/enrichment workers，并在完成后将全部生产
+crawler 旧路径依赖归零；不迁移 benchmark publication 或 ORM。

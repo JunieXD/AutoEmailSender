@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Base, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlWorkerKind, CrawlWorkerTokenUsage
-from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
+from app.modules.crawler.v2.token_usage import record_crawler_v2_token_usage
 
 
 class CrawlerV2TokenUsageTests(unittest.IsolatedAsyncioTestCase):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.crawler_v2_retry import MAX_CRAWLER_V2_ATTEMPTS, retry_backoff_seconds, mark_crawler_v2_failed
+from app.modules.crawler.v2.retry import MAX_CRAWLER_V2_ATTEMPTS, retry_backoff_seconds, mark_crawler_v2_failed
 
 class FakeWorkItem:
     def __init__(self, attempt_count: int | None) -> None:

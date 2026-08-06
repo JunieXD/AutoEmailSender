@@ -19,7 +19,7 @@ from app.schemas.diagnostics import (
     OperationLogListResponse,
     OperationLogRead,
 )
-from app.services.crawler_debug import crawler_debug_file_path
+from app.modules.crawler.public import crawler_debug_file_path
 
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
@@ -202,5 +202,4 @@ def _to_operation_log_read(log: OperationLog) -> OperationLogRead:
         metadata=log.event_metadata,
         created_at=log.created_at,
     )
-
 

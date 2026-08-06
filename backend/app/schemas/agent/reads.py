@@ -6,7 +6,7 @@ from typing import Generic, Literal, TypeVar
 from pydantic import Field
 
 from app.schemas.base import ApiSchema
-from app.schemas.crawl_job import CrawlCandidateRead, CrawlJobEventRead, CrawlPageRead
+from app.modules.crawler.public import CrawlCandidateRead, CrawlJobEventRead, CrawlPageRead
 
 
 AgentItem = TypeVar("AgentItem")

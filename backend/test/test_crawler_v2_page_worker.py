@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.schema_database import create_schema_sqlite_database
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
-from app.services.crawler_tools import BrowserPaginationExpansion, PageSnapshot
+from app.modules.crawler.pages.tools import BrowserPaginationExpansion, PageSnapshot
 from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
-from app.services.crawler_v2_routing import (
+from app.modules.crawler.v2.routing import (
     IFRAME_DISCOVERY_REASON,
     PAGINATION_DISCOVERY_REASON,
     PAGINATION_EXPANSION_MODE,

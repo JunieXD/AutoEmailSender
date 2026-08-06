@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.crawl_jobs import create_crawl_job
 from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, LLMProfile
-from app.schemas.crawl_job import CrawlJobCreatePayload
+from app.modules.crawler.schemas import CrawlJobCreatePayload
 from app.services.runtime_manager import RuntimeManager
 
 

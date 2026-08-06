@@ -29,7 +29,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
         create_migrated_sqlite_database(self.db_path)
         self.getaddrinfo_patcher = patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -290,7 +290,7 @@ class CrawlJobsApiTests(unittest.TestCase):
 
     def test_create_crawl_job_allows_domain_without_dns_resolution(self) -> None:
         with patch(
-            "app.services.crawler_tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
             side_effect=AssertionError("Creating a crawl job should not resolve domain names"),
         ):
             response = self.client.post(

@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from app.models import CrawlJob, CrawlJobRun, CrawlJobStatus
-from app.services.crawl_job_metrics import build_crawl_job_metrics
+from app.modules.crawler.jobs.metrics import build_crawl_job_metrics
 
 
 class CrawlJobMetricsTests(unittest.TestCase):

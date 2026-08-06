@@ -3,12 +3,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.services.crawler_v2_profile_extraction import (
+from app.modules.crawler.v2.profile_extraction import (
     V2ProfileExtractionPayload,
     build_v2_profile_extraction_prompt,
     invoke_v2_profile_extraction_agent,
 )
-from app.services.crawler_structured_output import (
+from app.modules.crawler.llm.structured_output import (
     ProfessorCandidateWirePayload,
     V2ProfileExtractionWirePayload,
 )
@@ -63,7 +63,7 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_v2_profile_extraction.request_crawler_structured_completion",
+            "app.modules.crawler.v2.profile_extraction.request_crawler_structured_completion",
             new=AsyncMock(side_effect=LLMRuntimeError("模型返回的 JSON 结构无效")),
         ) as request_mock:
             with self.assertRaisesRegex(LLMRuntimeError, "JSON 结构无效"):
@@ -99,7 +99,7 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
         session_factory = object()
 
         with patch(
-            "app.services.crawler_v2_profile_extraction.request_crawler_structured_completion",
+            "app.modules.crawler.v2.profile_extraction.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(completion, wire_payload, "json_schema_strict")
             ),

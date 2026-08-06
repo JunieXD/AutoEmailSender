@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
-from app.services.crawler_v2_routing import (
+from app.modules.crawler.v2.routing import (
     ENTRY_EXPANSION_MODE,
     IFRAME_DISCOVERY_REASON,
     PAGINATION_EXPANSION_MODE,
@@ -45,7 +45,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
         session_factory = object()
 
         with patch(
-            "app.services.crawler_v2_routing.request_crawler_structured_completion",
+            "app.modules.crawler.v2.routing.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(completion, payload, "json_schema_strict")
             ),
@@ -249,7 +249,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         with patch(
-            "app.services.crawler_v2_routing._invoke_structured_routing_phase",
+            "app.modules.crawler.v2.routing._invoke_structured_routing_phase",
             new=phase_mock,
         ):
             result = await invoke_v2_page_routing_agent(
@@ -289,7 +289,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         with patch(
-            "app.services.crawler_v2_routing._invoke_structured_routing_phase",
+            "app.modules.crawler.v2.routing._invoke_structured_routing_phase",
             new=phase_mock,
         ):
             result = await invoke_v2_page_routing_agent(
@@ -325,7 +325,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         with patch(
-            "app.services.crawler_v2_routing._invoke_structured_routing_phase",
+            "app.modules.crawler.v2.routing._invoke_structured_routing_phase",
             new=phase_mock,
         ):
             result = await invoke_v2_page_routing_agent(

@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageStatus
-from app.services.crawl_job_events import (
+from app.modules.crawler.jobs.events import (
     build_crawl_job_events,
     normalize_agent_trace_event,
     summarize_agent_trace_event,

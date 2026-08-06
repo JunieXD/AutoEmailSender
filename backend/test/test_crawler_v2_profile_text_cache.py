@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.crawler_v2_profile_text_cache import ProfileTextCache
+from app.modules.crawler.v2.profile_text_cache import ProfileTextCache
 
 
 class ProfileTextCacheTests(unittest.TestCase):

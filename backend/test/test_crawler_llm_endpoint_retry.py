@@ -42,7 +42,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
             pass
 
     async def test_protocol_status_error_relearns_persists_rebuilds_and_retries_once(self) -> None:
-        from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+        from app.modules.crawler.llm.endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 
         request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
         models = [
@@ -63,11 +63,11 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawler_llm_endpoint_retry.invalidate_endpoint_adaptation",
+                "app.modules.crawler.llm.endpoint_retry.invalidate_endpoint_adaptation",
                 new=AsyncMock(return_value=True),
             ) as invalidate,
             patch(
-                "app.services.crawler_llm_endpoint_retry.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.llm.endpoint_retry.ensure_llm_runtime_adaptation",
                 new=AsyncMock(side_effect=relearn),
             ) as ensure,
         ):
@@ -97,7 +97,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_response_validation_error_relearns_and_retries_once(self) -> None:
-        from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+        from app.modules.crawler.llm.endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 
         request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
         models = [
@@ -114,8 +114,8 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
         build_model = Mock(side_effect=models)
 
         with (
-            patch("app.services.crawler_llm_endpoint_retry.invalidate_endpoint_adaptation", new=AsyncMock(return_value=True)) as invalidate,
-            patch("app.services.crawler_llm_endpoint_retry.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=self.responses_adaptation)) as ensure,
+            patch("app.modules.crawler.llm.endpoint_retry.invalidate_endpoint_adaptation", new=AsyncMock(return_value=True)) as invalidate,
+            patch("app.modules.crawler.llm.endpoint_retry.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=self.responses_adaptation)) as ensure,
         ):
             response, adaptation = await invoke_crawler_llm_with_endpoint_retry(
                 self.session_factory,
@@ -132,7 +132,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
         ensure.assert_awaited_once()
 
     async def test_relearn_failure_keeps_failed_endpoint_cache_invalidated(self) -> None:
-        from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+        from app.modules.crawler.llm.endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 
         await self._record_endpoint_kind("chat_completions")
         request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
@@ -148,7 +148,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawler_llm_endpoint_retry.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.llm.endpoint_retry.ensure_llm_runtime_adaptation",
                 new=AsyncMock(side_effect=RuntimeError("reprobe failed")),
             ),
             self.assertRaisesRegex(RuntimeError, "reprobe failed"),
@@ -171,7 +171,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_second_protocol_error_is_not_retried_a_third_time(self) -> None:
-        from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+        from app.modules.crawler.llm.endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 
         request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
         error = APIStatusError("not found", response=httpx.Response(404, request=request), body=None)
@@ -182,8 +182,8 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
         build_model = Mock(side_effect=models)
 
         with (
-            patch("app.services.crawler_llm_endpoint_retry.invalidate_endpoint_adaptation", new=AsyncMock(return_value=True)) as invalidate,
-            patch("app.services.crawler_llm_endpoint_retry.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=self.responses_adaptation)) as ensure,
+            patch("app.modules.crawler.llm.endpoint_retry.invalidate_endpoint_adaptation", new=AsyncMock(return_value=True)) as invalidate,
+            patch("app.modules.crawler.llm.endpoint_retry.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=self.responses_adaptation)) as ensure,
             self.assertRaises(APIStatusError),
         ):
             await invoke_crawler_llm_with_endpoint_retry(
@@ -203,7 +203,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
         ensure.assert_awaited_once()
 
     async def test_second_protocol_error_invalidates_retry_endpoint_before_raising(self) -> None:
-        from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+        from app.modules.crawler.llm.endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 
         await self._record_endpoint_kind("chat_completions")
         request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
@@ -225,7 +225,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawler_llm_endpoint_retry.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.llm.endpoint_retry.ensure_llm_runtime_adaptation",
                 new=AsyncMock(side_effect=relearn),
             ),
             self.assertRaises(APIStatusError),
@@ -248,7 +248,7 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_auth_rate_limit_and_server_errors_do_not_relearn(self) -> None:
-        from app.services.crawler_llm_endpoint_retry import invoke_crawler_llm_with_endpoint_retry
+        from app.modules.crawler.llm.endpoint_retry import invoke_crawler_llm_with_endpoint_retry
 
         request = httpx.Request("POST", "https://relay.example/v1/chat/completions")
         for status_code in (401, 429, 500):
@@ -264,8 +264,8 @@ class CrawlerLLMEndpointRetryTests(unittest.IsolatedAsyncioTestCase):
                 )
                 build_model = Mock(return_value=model)
                 with (
-                    patch("app.services.crawler_llm_endpoint_retry.invalidate_endpoint_adaptation", new=AsyncMock()) as invalidate,
-                    patch("app.services.crawler_llm_endpoint_retry.ensure_llm_runtime_adaptation", new=AsyncMock()) as ensure,
+                    patch("app.modules.crawler.llm.endpoint_retry.invalidate_endpoint_adaptation", new=AsyncMock()) as invalidate,
+                    patch("app.modules.crawler.llm.endpoint_retry.ensure_llm_runtime_adaptation", new=AsyncMock()) as ensure,
                     self.assertRaises(APIStatusError),
                 ):
                     await invoke_crawler_llm_with_endpoint_retry(

@@ -21,8 +21,8 @@ from app.services.crawler_v2_chunk_worker import (
     invoke_v2_chunk_agent,
     run_crawler_v2_chunk_worker_once,
 )
-from app.services.crawler_tools import ProfessorCandidatePayload
-from app.services.crawler_structured_output import V2ChunkWirePayload
+from app.modules.crawler.pages.tools import ProfessorCandidatePayload
+from app.modules.crawler.llm.structured_output import V2ChunkWirePayload
 from app.services.llm_runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,

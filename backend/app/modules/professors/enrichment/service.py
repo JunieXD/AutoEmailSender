@@ -26,13 +26,13 @@ from .schemas import (
     ProfessorInformationEnrichmentItemRead,
     ProfessorInformationEnrichmentJobRead,
 )
-from app.services.crawl_job_metrics import build_crawl_job_metrics
-from app.services.crawl_job_runs import (
+from app.modules.crawler.public import build_crawl_job_metrics
+from app.modules.crawler.public import (
     create_initial_crawl_job_run,
     mark_crawl_job_run_finished,
 )
-from app.services.crawler_tools import validate_safe_public_crawl_url
-from app.services.crawler_v2_profile_text_cache import profile_text_cache
+from app.modules.crawler.public import validate_safe_public_crawl_url
+from app.modules.crawler.public import profile_text_cache
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.modules.professors.public import (
     is_valid_professor_email,

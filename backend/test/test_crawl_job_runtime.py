@@ -28,8 +28,8 @@ from app.services.crawl_job_runtime import (
     resolve_crawl_runtime_concurrency,
     run_queued_crawl_jobs_once,
 )
-from app.services.crawl_job_runs import create_initial_crawl_job_run
-from app.services.crawler_tools import (
+from app.modules.crawler.jobs.runs import create_initial_crawl_job_run
+from app.modules.crawler.pages.tools import (
     CandidateEnrichmentPayload,
     CrawlJobSaveBudgetExceeded,
     CrawlToolContext,
@@ -37,7 +37,7 @@ from app.services.crawler_tools import (
     ProfessorCandidatePayload,
     save_candidates,
 )
-from app.services.crawler_structured_output import (
+from app.modules.crawler.llm.structured_output import (
     CandidateEnrichmentWirePayload,
     CandidateFieldConfidenceWire,
     ProfessorCandidateWirePayload,
@@ -739,7 +739,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 assert job is not None
                 job.status = CrawlJobStatus.PAUSED.value
                 await session.commit()
-            from app.services.crawler_tools import CrawlJobPaused
+            from app.modules.crawler.pages.tools import CrawlJobPaused
 
             raise CrawlJobPaused()
 

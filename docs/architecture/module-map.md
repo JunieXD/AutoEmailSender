@@ -109,6 +109,14 @@ Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在
 runtime 与 adaptation 的双向延迟导入属于同领域内部探测协议，第一轮迁移记录该边并保持现有时序，
 不得向 crawler、campaign 或 workspace 反向取用业务实现。
 
+## crawler 基础子切片（第 6A 批，已完成）
+
+`backend/app/modules/crawler/` 按 `jobs`、`pages`、`llm`、`v2` 四个内部子包组织。6A 拥有 DTO、
+job record/run/event/metrics、页面抓取与 chunk 基础、crawler 专用 LLM wire adapter，以及不直接调度
+worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、scheduler 和 workers。
+领域外只经 `crawler.public` 使用 record use cases、投影、安全 URL 合同、debug 路径、run/token 合同
+和 profile text cache；Professor enrichment 仍拥有补全 job 生命周期，仅把抓取执行委托给 crawler。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

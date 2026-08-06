@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas.base import ApiSchema
-from app.schemas.crawl_job import CrawlCandidateReviewStatusDTO
+from app.modules.crawler.public import CrawlCandidateReviewStatusDTO
 
 
 AgentDraftGenerationMode = Literal["template", "ai_rewrite", "manual"]
