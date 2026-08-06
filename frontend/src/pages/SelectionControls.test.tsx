@@ -162,7 +162,7 @@ vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notifyMock,
 }));
 
-vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => ({
     stopTrackingInformationEnrichmentJob: vi.fn(),
     trackCrawlCandidateEnrichment: vi.fn(),

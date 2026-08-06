@@ -17,7 +17,7 @@ const mockedNotifySuccess = vi.hoisted(() => vi.fn());
 const mockedNotifyWarning = vi.hoisted(() => vi.fn());
 const mockedTrackMatchAnalysisJob = vi.hoisted(() => vi.fn());
 
-vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => ({
     trackMatchAnalysisJob: mockedTrackMatchAnalysisJob,
   }),

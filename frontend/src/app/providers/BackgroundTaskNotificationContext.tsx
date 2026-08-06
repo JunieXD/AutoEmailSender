@@ -20,7 +20,7 @@ import { getMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
 import {
   getProfessorInformationEnrichmentJob,
   listProfessorInformationEnrichmentItems,
-} from "@/lib/api/professorInformationEnrichmentApi";
+} from "@/entities/professor/api/informationEnrichment";
 import type {
   CrawlJobDTO,
   CrawlJobEventDTO,

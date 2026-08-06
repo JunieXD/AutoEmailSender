@@ -44,7 +44,7 @@ import { Pagination } from "@/components/molecules/Pagination";
 import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
 import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
 import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
-import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
+import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";

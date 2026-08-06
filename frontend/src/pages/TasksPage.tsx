@@ -42,7 +42,7 @@ import { SelectionToggleButton } from "@/components/molecules/SelectionToggleBut
 import { ProfessorEditDialog } from "@/components/molecules/ProfessorEditDialog";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
-import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
+import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";

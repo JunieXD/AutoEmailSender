@@ -10,7 +10,7 @@ import type {
   ProfessorDashboardItemDTO,
 } from "@/types";
 
-vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => ({
     trackMatchAnalysisJob: vi.fn(),
   }),

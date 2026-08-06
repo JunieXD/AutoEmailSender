@@ -93,6 +93,13 @@ app -> pages -> widgets -> features -> entities -> shared
 - 不同 feature slice 之间深层导入。
 - 旧 `lib`、`lib/api`、`context`、`components/atoms` 新增向上依赖。
 
+当前 owner 约束：
+
+- 应用级 Provider 位于 `app/providers`；`app/` 可编排 feature、entity 与旧 context，但不得把业务规则
+  重新收回组合层。
+- professor 与 community-mentor API 由对应 `entities/*/api` 拥有；迁移期 `lib/api` 实体 re-export
+  已在第 9 批删除。实体专属 session cache 与其实体 API 同域放置。
+
 第 1 批冻结以下现有例外：
 
 | 来源 | 目标 |

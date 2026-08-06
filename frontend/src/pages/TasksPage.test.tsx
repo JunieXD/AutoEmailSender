@@ -119,7 +119,7 @@ vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notificationMocks,
 }));
 
-vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => backgroundTaskNotificationMocks,
 }));
 

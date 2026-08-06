@@ -1552,7 +1552,10 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
   清理 `app.services` 中无调用的领域聚合导出；生产入口、普通测试和活动文档均已改用 owner/public
   façade。只验证旧入口的断言已移除，模块测试保留并加强 owner、公共 façade、schema 聚合与组合根
   边界；通用 AST 门禁禁止 legacy 技术层重新引入指向 `app.modules` 的纯 re-export 文件。
-- 9D Frontend 待执行：迁移 2 个剩余生产调用方，删除 3 个实体 API shim，收紧兼容测试与架构特例。
+- 9D Frontend 已完成：后台任务 Provider 归入 `app/providers`，community catalog session cache 归入
+  `entities/community-mentor`；生产调用与测试 mock 均直接使用 owner。3 个实体 API shim 和只验证旧
+  API 的断言已删除，`legacy-lib-api -> entities` 的纯 re-export 架构特例及一条 context 历史例外已
+  移除。活动 `src/types/index.ts` 聚合入口保留，并继续验证其实体类型值与 owner 同源。
 - 9D Desktop 待执行：删除 13 个根 service shim 与 `types.ts`，同步 IPC 合同和 import 边界测试。
 
 9A 验证结果：
@@ -1593,3 +1596,11 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | Backend 定向回归 | identities/campaigns/system/matching/templates/workspace/LLM；crawler/Agent | 218 + 273 tests passed |
 | Backend 完整套件 | `uv run python -m unittest discover -s test -b` | Ran 1715 tests；OK（1 skipped） |
 | Repository | CodeGraph；96 个删除模块活动引用；AST shim 门禁；`git diff --check` | 通过 |
+
+9D Frontend 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Frontend 定向 | 架构、后台任务通知、community catalog、实体 API 与类型聚合 | 4 files，35 tests passed |
+| Frontend 完整套件 | lint；Vitest；production build | lint/build 通过；115 files，899 tests passed |
+| Repository | CodeGraph；旧 import/文件路径；production bundle；`git diff --check` | 通过 |

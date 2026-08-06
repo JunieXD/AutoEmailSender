@@ -12,7 +12,7 @@ const mockedNotifications = vi.hoisted(() => ({
   notifyWarning: vi.fn(),
 }));
 
-vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => ({
     trackMatchAnalysisJob: vi.fn(),
   }),

@@ -44,7 +44,7 @@ import {
 import {
   getCommunityMentorCatalogSessionSnapshot,
   requestCommunityMentorCatalog,
-} from '@/lib/communityMentorCatalogCache';
+} from '@/entities/community-mentor/api/catalogCache';
 import {
   getCommunityMentorPageSessionSnapshot,
   setCommunityMentorPageSessionSnapshot,

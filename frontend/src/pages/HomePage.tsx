@@ -27,7 +27,7 @@ import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTa
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { Pagination } from "@/components/molecules/Pagination";
-import { useBackgroundTaskNotification } from "@/context/BackgroundTaskNotificationContext";
+import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {

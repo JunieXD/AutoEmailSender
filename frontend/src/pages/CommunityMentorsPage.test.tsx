@@ -6,7 +6,7 @@ import {
   addVisibleRecordSelection,
   getVisibleRecordSelectionState,
 } from '@/lib/communityMentorSelection';
-import { resetCommunityMentorCatalogSessionCacheForTests } from '@/lib/communityMentorCatalogCache';
+import { resetCommunityMentorCatalogSessionCacheForTests } from '@/entities/community-mentor/api/catalogCache';
 import { resetCommunityMentorPageSessionSnapshotForTests } from '@/lib/communityMentorPageState';
 import { CommunityMentorsPage } from '@/pages/CommunityMentorsPage';
 import type {

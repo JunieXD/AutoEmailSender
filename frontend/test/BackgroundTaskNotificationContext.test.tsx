@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BackgroundTaskNotificationProvider,
   useBackgroundTaskNotification,
-} from "@/context/BackgroundTaskNotificationContext";
+} from "@/app/providers/BackgroundTaskNotificationContext";
 import { NotificationProvider } from "@/context/NotificationContext";
 import type {
   CrawlJobEventDTO,
@@ -31,7 +31,7 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
   getMatchAnalysisJob: apiMocks.getMatchAnalysisJob,
 }));
 
-vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   getProfessorInformationEnrichmentJob:
     apiMocks.getProfessorInformationEnrichmentJob,
   listProfessorInformationEnrichmentItems:

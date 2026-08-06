@@ -10,7 +10,7 @@ import { AgentSupportOnboarding } from '@/components/organisms/AgentSupportOnboa
 import { KeepAliveLayout } from '@/components/organisms/KeepAliveLayout';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
-import { BackgroundTaskNotificationProvider } from '@/context/BackgroundTaskNotificationContext';
+import { BackgroundTaskNotificationProvider } from '@/app/providers/BackgroundTaskNotificationContext';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';

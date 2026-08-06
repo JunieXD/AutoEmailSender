@@ -1,5 +1,5 @@
-import { getCommunityMentorCatalog } from '@/lib/api/communityMentorsApi';
-import type { CommunityCatalogDTO } from '@/types';
+import { getCommunityMentorCatalog } from '@/entities/community-mentor/api/communityMentors';
+import type { CommunityCatalogDTO } from '../model/types';
 
 let catalogSessionCache: CommunityCatalogDTO | null = null;
 let catalogCacheRequest: Promise<CommunityCatalogDTO> | null = null;

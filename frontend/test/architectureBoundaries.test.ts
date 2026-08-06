@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 const srcRoot = path.resolve(process.cwd(), "src");
 
 const reviewedLegacyViolations = new Set([
-  "context/BackgroundTaskNotificationContext.tsx -> features/crawl-review/client/crawlJobEvents.ts",
   "context/NotificationContext.tsx -> components/organisms/NotificationViewport.tsx",
   "lib/api/createTask.ts -> features/create-task/types.ts",
   "lib/api/tokenUsage.ts -> features/token-usage/client/tokenUsage.ts",
@@ -44,7 +43,9 @@ const classify = (file: string): Boundary => {
   if (first === "components") {
     return { layer: second === "atoms" ? "legacy-atoms" : "legacy-components" };
   }
-  if (["App.tsx", "main.tsx"].includes(first)) return { layer: "app" };
+  if (first === "app" || ["App.tsx", "main.tsx"].includes(first)) {
+    return { layer: "app" };
+  }
   return { layer: "legacy-other" };
 };
 
@@ -77,26 +78,6 @@ const importSpecifiers = (file: string): string[] => {
   };
   visit(sourceFile);
   return imports;
-};
-
-const isPureReExportCompatibilityModule = (file: string): boolean => {
-  const sourceText = readFileSync(file, "utf8");
-  const sourceFile = ts.createSourceFile(
-    file,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
-  return (
-    sourceFile.statements.length > 0 &&
-    sourceFile.statements.every(
-      (statement) =>
-        ts.isExportDeclaration(statement) &&
-        statement.moduleSpecifier !== undefined &&
-        ts.isStringLiteral(statement.moduleSpecifier),
-    )
-  );
 };
 
 const resolveInternalImport = (source: string, specifier: string): string | null => {
@@ -180,11 +161,7 @@ const collectViolations = (): Set<string> => {
       if (!target) continue;
       const sourceBoundary = classify(source);
       const targetBoundary = classify(target);
-      const isVerifiedCompatibilityEdge =
-        sourceBoundary.layer === "legacy-lib-api" &&
-        targetBoundary.layer === "entities" &&
-        isPureReExportCompatibilityModule(source);
-      if (isForbidden(sourceBoundary, targetBoundary) && !isVerifiedCompatibilityEdge) {
+      if (isForbidden(sourceBoundary, targetBoundary)) {
         violations.add(`${toRelative(source)} -> ${toRelative(target)}`);
       }
     }

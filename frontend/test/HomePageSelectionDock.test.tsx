@@ -9,7 +9,7 @@ import type {
 } from "@/types";
 import { HomePage } from "@/pages/HomePage";
 
-vi.mock("@/context/BackgroundTaskNotificationContext", () => ({
+vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => ({
     trackMatchAnalysisJob: vi.fn(),
   }),
