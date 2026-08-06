@@ -22,28 +22,29 @@
   - `failure_summary`
   - `reply_headers`
 
-### 1.2 服务层
-- `app/services/llm_runtime.py`
+### 1.2 领域 owner 与运行服务
+- `app/modules/llm/runtime.py`（领域外经 `app.modules.llm.public`）
   - 负责 LLM 健康检查
   - 负责真实 `chat/completions` 调用
   - 负责结构化 JSON 解析
   - 负责 token 用量解析与估算
-- `app/services/mail_runtime.py`
+- `app/modules/communications/transport.py`（领域外经 `app.modules.communications.public`）
   - 负责 SMTP 连接测试
   - 负责 IMAP 连接测试
   - 负责真实 MIME 邮件构造与发送
-  - 负责 IMAP 收件箱抓取与解析
-- `app/services/task_runtime.py`
+- `app/modules/communications/imap/sync.py`
+  - 负责 IMAP 增量/历史同步、收件解析与回信匹配
+- `app/modules/workspace/tasks/runtime.py`
   - 负责手动草稿生成
   - 负责批准并发送 / 排程
+- `app/modules/workspace/tasks/delivery.py`
   - 负责 dispatcher 消费
-  - 负责 IMAP 回信匹配
-- `app/services/test_compose_runtime.py`
+- `app/modules/communications/test_compose/runtime.py`
   - 负责测试写信页线程读取
   - 负责测试草稿生成
   - 负责测试邮件真实发送与历史保存
 - `app/services/runtime_manager.py`
-  - 负责 FastAPI 生命周期中的发送与回信检测循环
+  - 只负责在 FastAPI 生命周期中经领域公共入口启动发送与回信检测循环
 
 ## 2. API 变更
 ### 2.1 身份测试接口

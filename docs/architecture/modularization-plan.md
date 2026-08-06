@@ -1623,7 +1623,7 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | 范围 | 验证 | 结果 |
 |---|---|---|
 | Backend | 完整 unittest | Ran 1715 tests；OK（1 skipped） |
-| CLI | GUI owner/baseline 定向；完整 unittest | 53 + 154 tests passed |
+| CLI | import/GUI owner/baseline 定向；完整 unittest | 54 + 154 tests passed |
 | Frontend | lint；完整 Vitest；production build | lint/build 通过；115 files，899 tests passed |
 | Desktop | typecheck；完整 Vitest；production build；构建后 packaging | 17 files，131 tests；packaging 18 tests；typecheck/build 通过 |
 | Website | 完整 Vitest；production build | 4 files，16 tests passed；build 通过 |
@@ -1632,6 +1632,10 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 
 最终审计发现并修复 CLI GUI 覆盖门禁仍指向已删除 Frontend API shim 的遗漏；覆盖清单与版本化
 baseline 现使用相对 `frontend/src` 的真实 owner 路径，门禁同时扫描 `lib/api` 与实体 API owner。
+完成审计还同步修正了架构索引、模块地图和真实发信/LLM 实现说明中的迁移期表述，使活动文档只把
+现有 owner/public façade 描述为当前入口；迁移前路径仅在明确的历史来源和归档记录中保留。
+门禁复核同时删除一条已偿还的 Frontend 例外，并收紧 CLI invocation 规则，禁止其绕过 bootstrap
+直接聚合 commands；当前实现无需例外即可通过该约束。
 
 显式保留项：
 

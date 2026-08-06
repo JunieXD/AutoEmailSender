@@ -104,7 +104,6 @@ app -> pages -> widgets -> features -> entities -> shared
 
 | 来源 | 目标 |
 |---|---|
-| `context/BackgroundTaskNotificationContext.tsx` | `features/crawl-review/client/crawlJobEvents.ts` |
 | `context/NotificationContext.tsx` | `components/organisms/NotificationViewport.tsx` |
 | `lib/api/createTask.ts` | `features/create-task/types.ts` |
 | `lib/api/tokenUsage.ts` | `features/token-usage/client/tokenUsage.ts` |
@@ -118,6 +117,9 @@ app -> pages -> widgets -> features -> entities -> shared
 - `protocol` 不能依赖 `commands`、`bootstrap` 或 `transport`。
 - `catalog` 可以依赖 `protocol`，不能依赖具体命令实现。
 - `commands` 可以依赖 `transport`、`protocol`、`catalog` 和命令共享基础。
+- `invocation` 只能依赖 `catalog` 与 `protocol`，命令树必须由 `bootstrap` 注入，不得直接聚合
+  `commands` 或调用 `transport`。
+- `installation` 只能依赖 `protocol`；其余根级辅助模块只能互相依赖或使用 `protocol`。
 - `bootstrap` 是唯一可以聚合全部命令的组合根。
 - CLI 任何模块都不得导入 `backend/app` 或直接连接数据库。
 

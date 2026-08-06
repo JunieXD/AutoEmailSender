@@ -11,7 +11,7 @@
 | `community` | 社区导师目录、缓存、预览、导入、分享包 | `community_mentor*` | `professors` 公共写入用例 |
 | `campaigns` | 批量任务、邮件任务、草稿、模板、排程 | `batch_*`、`email_task*`、`outreach_template*` | `identities`、`professors`、`llm` |
 | `communications` | SMTP、IMAP、邮件历史、回复检测、测试邮件 | `mail_runtime.py`、`imap_*`、`email_log*`、`test_compose*` | `identities`、`professors` |
-| `workspace` | 单导师会话、审核、发送与后续动作的应用编排 | `workspace*`、部分 `task_runtime.py` | `matching`、`campaigns`、`communications` |
+| `workspace` | 单导师会话、审核、发送与后续动作的应用编排 | `modules/workspace/{api,thread,tasks/*}` | `matching`、`campaigns`、`communications` |
 | `matching` | 匹配计算、分析任务、分析运行记录 | `matching.py`、`match_analysis*` | `identities`、`professors`、`llm` |
 | `crawler` | 抓取任务、运行、worker、页面策略、证据与调试 | `crawl_*`、`crawler_*`、crawler agent | `llm`，通过用例向 `professors` 交付候选结果 |
 | `llm` | LLM profile、调用、端点适配、结构化输出、thinking、token 记录 | `llm_*`、`structured_output_*`、`thinking_*` | 平台能力 |
@@ -35,14 +35,14 @@ backend/app/modules/system/runtime_settings/
 领域外调用方统一经 `backend/app/modules/system/public.py` 进入；切片自己的
 `public.py` 供 system 领域内部组合与领域门面转发使用。
 
-初始文件来源：
+迁移前文件来源（现已删除）：
 
 - `backend/app/api/runtime_settings.py`
 - `backend/app/schemas/runtime_settings.py`
 - `backend/app/services/runtime_settings.py`
 - 与 runtime settings 紧密相关、经调用图确认可同时迁移的 system settings 代码
 
-旧路径暂时保留纯 re-export 兼容入口。`/api/runtime-settings`、Agent `/settings` 和 CLI 命令合同保持不变。
+第 9 批已删除这些旧路径及纯 re-export；`/api/runtime-settings`、Agent `/settings` 和 CLI 命令合同保持不变。
 
 ## identities 首个子切片（第 3A 批，已完成）
 
@@ -65,32 +65,32 @@ backend/app/modules/identities/
 领域外调用方统一经 `backend/app/modules/identities/public.py` 进入。材料、身份主体、
 SMTP/IMAP 测试和模板设置不属于本子切片。
 
-## identities 身份主体子切片（第 3B 批）
+## identities 身份主体子切片（第 3B 批，已完成）
 
 profiles 拥有身份 CRUD、默认身份、SMTP/IMAP 连接测试、模板导入、身份 DTO 与身份序列化。
 materials 在本批只拥有材料 DTO 与材料序列化，以解除原 `identity.py` 和
 `identity_serializers.py` 的混合职责；材料生命周期行为仍属于第 3C。
 
-## identities 材料生命周期子切片（第 3C 批）
+## identities 材料生命周期子切片（第 3C 批，已完成）
 
 materials 拥有材料上传、默认选择、删除预览与确认、引用一致性、文本提取适用性、下载命名
 和 UI HTTP adapter。删除事务需要协调 campaigns/tasks、test-compose 与 matching 记录；第一轮
 通过这些领域现有服务/模型协作，不复制状态机，也不改变数据库关系。领域外调用方统一通过
 `backend/app/modules/identities/public.py` 使用材料能力。
 
-## professors 核心子切片（第 4A 批）
+## professors 核心子切片（第 4A 批，已完成）
 
 professors 拥有导师 DTO、CRUD/归档、标签、批量变更、样例数据、导入导出及字段归一化。
 领域外的 Agent、crawler、campaign 与 community 调用方统一经
 `backend/app/modules/professors/public.py` 进入。信息补全作为内部子切片在 4B 迁移，community
 仍是独立领域，不因共享 Professor ORM 而合并所有权。
 
-## professors 信息补全子切片（第 4B 批）
+## professors 信息补全子切片（第 4B 批，已完成）
 
 信息补全位于 `backend/app/modules/professors/enrichment/`，拥有补全 DTO、job/item 生命周期和
-UI adapter；它通过现有 crawler worker/scheduler 执行采集，后者在第 6 批迁移前仍是显式外部依赖。
+UI adapter；它通过 `crawler.public` 委托现有 worker/scheduler 执行采集，不直接导入 crawler 实现。
 
-## community 导师库子切片（第 4C 批）
+## community 导师库子切片（第 4C 批，已完成）
 
 `backend/app/modules/community/mentors/` 拥有远端数据合同、目录/分片缓存与校验、导师比较预览、
 导入生命周期和安全分享包。它通过 `professors` 公共能力复用字段规范化，并暂时直接协调
@@ -113,7 +113,7 @@ runtime 与 adaptation 的双向延迟导入属于同领域内部探测协议，
 
 `backend/app/modules/crawler/` 按 `jobs`、`pages`、`llm`、`v2` 四个内部子包组织。6A 拥有 DTO、
 job record/run/event/metrics、页面抓取与 chunk 基础、crawler 专用 LLM wire adapter，以及不直接调度
-worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、scheduler 和 workers。
+worker 的 v2 策略与路由；6B 已迁入 UI/Agent adapter、job 编排、scheduler 和 workers。
 领域外只经 `crawler.public` 使用 record use cases、投影、安全 URL 合同、debug 路径、run/token 合同
 和 profile text cache；Professor enrichment 仍拥有补全 job 生命周期，仅把抓取执行委托给 crawler。
 
@@ -143,8 +143,8 @@ transport、协议错误、message fetch/rate limit/sync state，以及 test-com
 
 `communications/imap/sync.py` 拥有 IMAP 增量/历史同步、single-flight 锁与 throttle、sent-folder
 发现、recent-v2/targeted history、sent/received 关联、回复检测和 EmailLog 写入。RuntimeManager、
-workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；旧 `task_runtime.py` 仅保留原公开
-同步入口的对象级兼容转发，communications 不反向依赖 workspace。
+workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；第 9 批已删除旧
+`task_runtime.py` 兼容入口，communications 不反向依赖 workspace。
 
 ## workspace、email-task 与 batch adapters（第 7C 批，已完成）
 
@@ -153,7 +153,8 @@ email-task UI adapters。`workspace.public` 是 Agent、campaign adapter/worker 
 
 `workspace/tasks/runtime.py` 拥有草稿生成/改写、审核/保存、手动继续和跟进状态机；
 `workspace/tasks/delivery.py` 拥有到期任务选择、批量窗口、身份发送间隔、发送恢复和 SMTP 提交。
-旧 API/schema/service 路径是纯 re-export，生产调用和测试 patch 已迁到真实 owner。
+第 9 批已删除旧 API/schema/service re-export，生产调用和测试 patch 均使用真实 owner 或
+`workspace.public`。
 
 ## 前端层与 slice
 

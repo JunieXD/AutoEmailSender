@@ -23,7 +23,7 @@ ALLOWED_CATEGORY_IMPORTS = {
     "transport": {"transport", "protocol"},
     "protocol": {"protocol"},
     "catalog": {"catalog", "protocol"},
-    "invocation": {"invocation", "catalog", "protocol", "commands"},
+    "invocation": {"invocation", "catalog", "protocol"},
     "installation": {"installation", "protocol"},
     "root": {"root", "protocol"},
 }
