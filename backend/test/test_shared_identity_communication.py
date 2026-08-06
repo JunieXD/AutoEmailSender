@@ -10,8 +10,8 @@ from unittest.mock import patch
 from sqlalchemy import event, insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.workspace_support import build_workspace_thread
-from app.api.workspaces import refresh_workspace_replies
+from app.modules.workspace.api import refresh_workspace_replies
+from app.modules.workspace.thread import build_workspace_thread
 from app.models import (
     EmailDirection,
     EmailLog,
@@ -444,12 +444,12 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
 
                 with (
                     patch(
-                        "app.api.workspaces.sync_workspace_professor_replies",
+                        "app.modules.workspace.api.sync_workspace_professor_replies",
                         side_effect=fake_sync,
                     ),
-                    patch("app.api.workspaces.get_session_factory", return_value=object()),
+                    patch("app.modules.workspace.api.get_session_factory", return_value=object()),
                     patch(
-                        "app.api.workspaces.build_workspace_thread",
+                        "app.modules.workspace.api.build_workspace_thread",
                         side_effect=fake_build_thread,
                     ),
                 ):

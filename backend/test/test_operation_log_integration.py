@@ -354,7 +354,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
         )
         cancel_response = self.client.post(f"/api/email-tasks/{task_id}/cancel-schedule")
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ):
             send_response = self.client.post(

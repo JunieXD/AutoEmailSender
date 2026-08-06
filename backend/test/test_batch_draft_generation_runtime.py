@@ -37,7 +37,7 @@ from app.services.batch_draft_generation_runtime import (
 class BatchDraftGenerationRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._runtime_adaptation_patch = patch(
-            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._runtime_adaptation_patch.start()
@@ -74,7 +74,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             return self._build_draft_generation_result()
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=fake_generate),
         ):
             processed = self._run_async(
@@ -112,7 +112,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=fake_generate),
         ) as mocked_generate:
             processed_counts = self._run_async(run_twice())
@@ -144,7 +144,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 return self._build_draft_generation_result()
 
             with patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 new=AsyncMock(side_effect=fake_generate),
             ):
                 worker = asyncio.create_task(
@@ -191,11 +191,11 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
                 new=AsyncMock(side_effect=fake_ensure),
             ) as adaptation_mock,
             patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 new=AsyncMock(side_effect=fake_generate),
             ) as generate_mock,
         ):
@@ -333,7 +333,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         task_ids = self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=llm_runtime.LLMRuntimeError("LLM 请求失败")),
         ):
             processed = self._run_async(
@@ -353,7 +353,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DRAFT_FAILED.value]))
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=AssertionError("draft_failed 不应被自动重试")),
         ) as mocked_generate:
             processed = self._run_async(
@@ -376,7 +376,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(return_value=self._build_draft_generation_result()),
         ):
             processed = self._run_async(
@@ -403,7 +403,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=AssertionError("缺默认材料的任务不应被认领")),
         ) as mocked_generate:
             processed = self._run_async(
@@ -429,7 +429,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=AssertionError("缺研究方向的任务不应被认领")),
         ) as mocked_generate:
             processed = self._run_async(
@@ -464,7 +464,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(return_value=self._build_draft_generation_result()),
         ):
             processed = self._run_async(
@@ -488,7 +488,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(return_value=self._build_draft_generation_result()),
         ):
             processed = self._run_async(

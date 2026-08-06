@@ -33,9 +33,6 @@ from app.modules.campaigns.public import (
     BatchTaskResendContextRead,
     CreateBatchTaskRequest,
 )
-from app.schemas.email_task import EmailTaskApprovalRequest
-from app.schemas.workspace import WorkspaceThreadRead
-from app.api.workspace_support import build_workspace_thread_for_task
 from app.modules.campaigns.public import (
     build_jittered_batch_schedule,
     has_future_batch_window,
@@ -71,15 +68,18 @@ from app.modules.campaigns.public import (
     resolve_outreach_template_config,
 )
 from app.modules.communications.public import explain_smtp_error
-from app.services import llm_runtime
-from app.services.task_runtime import (
+from app.modules.workspace.public import (
     BatchDraftApprovalConflictError,
+    EmailTaskApprovalRequest,
+    WorkspaceThreadRead,
     approve_and_send_task,
     approve_draft_task,
     approve_generated_batch_drafts,
+    build_workspace_thread_for_task,
     expire_batch_task_if_needed,
     regenerate_task_draft,
 )
+from app.services import llm_runtime
 
 
 router = APIRouter(prefix="/api/batch-tasks", tags=["batch-tasks"])

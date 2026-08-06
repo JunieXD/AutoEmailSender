@@ -34,12 +34,12 @@ from app.modules.communications.imap.sync import (
     sync_identity_incremental_poll_once,
     sync_workspace_professor_replies,
 )
-from app.services.task_runtime import (
+from app.modules.workspace.tasks.runtime import (
     _create_manual_child_task,
     continue_task_manually,
     generate_task_draft,
 )
-from app.api.workspace_support import ensure_workspace_task
+from app.modules.workspace.thread import ensure_workspace_task
 
 
 class ConcurrencyGuardTests(unittest.TestCase):
@@ -76,10 +76,10 @@ class ConcurrencyGuardTests(unittest.TestCase):
             )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             new=AsyncMock(side_effect=delayed_generate),
         ) as mocked_generate, patch(
-            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(
                 return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None),
             ),
@@ -147,7 +147,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
                 await competing_session.commit()
 
         with patch(
-            "app.services.task_runtime._ensure_no_manual_child_exists",
+            "app.modules.workspace.tasks.runtime._ensure_no_manual_child_exists",
             new=AsyncMock(side_effect=create_competing_child),
         ):
             result = self._run_async(continue_task_manually(self.session_factory, task_id))

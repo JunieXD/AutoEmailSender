@@ -20,7 +20,7 @@ from app.modules.campaigns.public import (
 from app.modules.campaigns.public import (
     build_missing_research_fallback_for_task,
 )
-from app.services.task_runtime import (
+from app.modules.workspace.public import (
     WORKSPACE_DRAFT_REWRITE_INTERRUPTED_MESSAGE,
     WORKSPACE_DRAFT_REWRITE_TIMEOUT,
     generate_task_draft,

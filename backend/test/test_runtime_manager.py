@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.models import AppSetting, Base
 from datetime import UTC, datetime, timedelta, timezone
 
-from app.services.task_runtime import _has_future_scheduled_at
+from app.modules.workspace.tasks.delivery import _has_future_scheduled_at
 from app.services.runtime_manager import RuntimeManager, _run_match_analysis_worker_once
 
 

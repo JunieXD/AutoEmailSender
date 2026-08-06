@@ -157,7 +157,7 @@ from app.modules.system.public import (
     serialize_runtime_settings,
     update_runtime_settings,
 )
-from app.schemas.workspace import WorkspaceSyncWarningRead, WorkspaceThreadRead
+from app.modules.workspace.public import WorkspaceSyncWarningRead, WorkspaceThreadRead
 from app.modules.campaigns.public import (
     IdentityDefaultOutreachTemplateUpdate,
     OutreachTemplateCreate,
@@ -310,9 +310,11 @@ from app.modules.campaigns.public import (
     get_outreach_template,
 )
 from app.modules.campaigns.public import import_outreach_template_file
-from app.services.task_runtime import (
+from app.modules.workspace.public import (
+    build_workspace_thread,
     cancel_scheduled_task,
     continue_task_manually,
+    ensure_workspace_task,
     start_follow_up_task,
     update_task_outreach_config,
     update_task_primary_material,
@@ -329,7 +331,6 @@ from app.modules.communications.public import (
     sync_identity_history_poll_once,
     sync_workspace_professor_replies,
 )
-from app.api.workspace_support import build_workspace_thread, ensure_workspace_task
 from app.modules.llm.public import ThinkingAdaptationFailed
 from app.services.token_usage_records import (
     build_token_usage_chart,

@@ -25,13 +25,15 @@ from app.models import (
 )
 from app.modules.communications.transport import SendMailResult
 from test.schema_database import create_schema_sqlite_database
-from app.schemas.email_task import EmailTaskApprovalRequest
-from app.services.task_runtime import (
-    approve_and_send_task,
-    approve_draft_task,
+from app.modules.workspace.tasks.delivery import (
     dispatch_due_tasks_once,
     dispatch_email_task,
 )
+from app.modules.workspace.tasks.runtime import (
+    approve_and_send_task,
+    approve_draft_task,
+)
+from app.modules.workspace.tasks.schemas import EmailTaskApprovalRequest
 
 
 class BatchTaskDispatchScheduleTests(unittest.TestCase):
@@ -63,7 +65,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -87,7 +89,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -112,7 +114,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -136,7 +138,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -162,7 +164,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -195,7 +197,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -227,7 +229,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -254,7 +256,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -286,7 +288,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -367,7 +369,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._mark_task_user_removed(task_id))
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             with self.assertRaisesRegex(ValueError, "已从批量任务中移除"):
@@ -406,7 +408,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(dispatch_email_task(self.session_factory, task_id))
@@ -438,7 +440,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         event.listen(self.engine.sync_engine, "before_cursor_execute", reschedule_before_claim)
         try:
             with patch(
-                "app.services.task_runtime.mail_runtime.send_email",
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
                 AsyncMock(return_value=self._build_send_result()),
             ) as mocked_send:
                 self._run_async(dispatch_email_task(self.session_factory, task_id))
@@ -478,7 +480,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         event.listen(self.engine.sync_engine, "before_cursor_execute", cancel_before_claim)
         try:
             with patch(
-                "app.services.task_runtime.mail_runtime.send_email",
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
                 AsyncMock(return_value=self._build_send_result()),
             ) as mocked_send:
                 sent = self._run_async(
@@ -510,7 +512,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(
@@ -547,7 +549,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(
@@ -571,7 +573,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._set_task_status(task_id, EmailTaskStatus.REVIEW_REQUIRED.value))
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(dispatch_email_task(self.session_factory, task_id))
@@ -593,7 +595,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(side_effect=delayed_send),
         ) as mocked_send:
             self._run_async(dispatch_twice())
@@ -607,7 +609,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._set_task_sending(task_id, now - timedelta(minutes=45)))
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -628,7 +630,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._set_task_sending(task_id, now - timedelta(minutes=5)))
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -649,7 +651,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -682,7 +684,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -721,7 +723,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -755,7 +757,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -793,7 +795,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -825,7 +827,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -857,7 +859,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -891,7 +893,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -927,7 +929,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             before_due = self._run_async(
@@ -971,7 +973,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ):
             self._run_async(
@@ -995,7 +997,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1020,7 +1022,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1045,7 +1047,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1076,7 +1078,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._mark_batch_task_deleted_by_email_task_id(approved_task_id))
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(

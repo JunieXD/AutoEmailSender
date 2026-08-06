@@ -8,9 +8,9 @@ _SCHEMA_EXPORT_MODULES = {
     "ConnectionTestResult": "app.modules.identities.profiles.schemas",
     "CreateBatchTaskRequest": "app.modules.campaigns.schemas",
     "CreateMatchAnalysisJobRequest": "app.modules.matching.schemas",
-    "EmailTaskApprovalRequest": "app.schemas.email_task",
-    "EmailTaskPrimaryMaterialRequest": "app.schemas.email_task",
-    "EmailTaskScheduleRequest": "app.schemas.email_task",
+    "EmailTaskApprovalRequest": "app.modules.workspace.tasks.schemas",
+    "EmailTaskPrimaryMaterialRequest": "app.modules.workspace.tasks.schemas",
+    "EmailTaskScheduleRequest": "app.modules.workspace.tasks.schemas",
     "IdentityCommunicationGroupMemberRead": (
         "app.modules.identities.communication_groups.schemas"
     ),
@@ -34,8 +34,8 @@ _SCHEMA_EXPORT_MODULES = {
     "ProfessorDashboardItemRead": "app.modules.professors.schemas",
     "ProfessorImportResult": "app.modules.professors.schemas",
     "ProfessorRead": "app.modules.professors.schemas",
-    "WorkspaceMessageRead": "app.schemas.workspace",
-    "WorkspaceThreadRead": "app.schemas.workspace",
+    "WorkspaceMessageRead": "app.modules.workspace.schemas",
+    "WorkspaceThreadRead": "app.modules.workspace.schemas",
 }
 
 

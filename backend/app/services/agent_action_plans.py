@@ -20,10 +20,14 @@ from app.schemas.agent import (
     AgentPlanSummaryRead,
     AgentPrepareSendRequest,
 )
-from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskScheduleRequest
+from app.modules.workspace.public import (
+    EmailTaskApprovalRequest,
+    EmailTaskScheduleRequest,
+    approve_and_schedule_task,
+    approve_and_send_task,
+)
 from app.services.agent_plan_effects import resolve_agent_plan_effects
 from app.services.operation_logs import record_operation_log
-from app.services.task_runtime import approve_and_schedule_task, approve_and_send_task
 
 
 PLAN_TTL = timedelta(minutes=30)

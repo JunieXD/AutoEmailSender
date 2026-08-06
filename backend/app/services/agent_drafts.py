@@ -4,7 +4,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.api.workspace_support import ensure_workspace_task
 from app.core.time import utc_now
 from app.models import (
     EmailTask,
@@ -18,8 +17,16 @@ from app.schemas.agent import (
     AgentDraftRewriteRequest,
     AgentDraftSaveRequest,
 )
-from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest
 from app.modules.identities.public import material_can_be_primary
+from app.modules.workspace.public import (
+    EmailTaskApprovalRequest,
+    EmailTaskRewriteDraftRequest,
+    ensure_workspace_task,
+    regenerate_task_draft,
+    rewrite_task_draft,
+    save_task_draft,
+    start_follow_up_task,
+)
 from app.services.match_results import load_resolved_match_result
 from app.services.operation_logs import record_operation_log
 from app.modules.campaigns.public import (
@@ -33,11 +40,6 @@ from app.modules.campaigns.public import (
     resolve_outreach_template_config,
 )
 from app.services.rich_text import normalize_email_html
-from app.services.task_runtime import (
-    regenerate_task_draft,
-    save_task_draft,
-    start_follow_up_task,
-)
 
 
 async def generate_agent_draft(

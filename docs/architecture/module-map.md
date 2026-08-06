@@ -99,8 +99,8 @@ Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在
 ## matching 子切片（第 5A 批，已完成）
 
 `backend/app/modules/matching/` 拥有启发式评分、基础草稿规则和 match analysis job/item 生命周期。
-它通过 identities/professors 的实体与匹配范围合同读取输入，并暂时调用 campaigns/workspace 侧的
-`task_runtime.calculate_task_match` 执行 LLM 分析；该跨领域编排边留待第 7 批收敛。
+`matching/task_analysis.py` 拥有 task-level LLM 匹配计算、运行记录恢复和结果落库；job runtime 通过
+域内调用复用该能力，领域外统一经 `matching.public` 调用，不再依赖 workspace/task runtime。
 
 ## llm 子切片（第 5B 批，已完成）
 
@@ -129,9 +129,9 @@ worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、sch
 规则、无研究方向草稿回退，以及 outreach template 的 DTO、UI adapter、库、变更、导入和渲染。
 领域外统一经 `campaigns.public` 使用这些能力；模板 UI router 只由组合根直接注册。
 
-`api/batch_tasks.py`、`batch_draft_generation_runtime.py` 与 `task_runtime.py` 仍同时编排
-workspace/communications，分别留到 7C 和 7B/7C 拆分。BatchTask、EmailTask、OutreachTemplate ORM
-继续属于 `app.models` registry，不在本轮文件所有权迁移中拆表或复制。
+`api/batch_tasks.py` 与 `batch_draft_generation_runtime.py` 仍是待迁移的 campaign adapter/worker，
+但已只经 `workspace.public` 触发单封任务动作；它们在 7C3 归入 campaigns。BatchTask、EmailTask、
+OutreachTemplate ORM 继续属于 `app.models` registry，不在本轮文件所有权迁移中拆表或复制。
 
 ## communications 传输与同步子切片（第 7B 批，已完成）
 
@@ -142,8 +142,17 @@ transport、协议错误、message fetch/rate limit/sync state，以及 test-com
 
 `communications/imap/sync.py` 拥有 IMAP 增量/历史同步、single-flight 锁与 throttle、sent-folder
 发现、recent-v2/targeted history、sent/received 关联、回复检测和 EmailLog 写入。RuntimeManager、
-workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；`task_runtime.py` 仅保留原公开
-同步入口的对象级兼容转发。邮件任务审核、重写、发送编排和后续动作继续留给 7C workspace。
+workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；旧 `task_runtime.py` 仅保留原公开
+同步入口的对象级兼容转发，communications 不反向依赖 workspace。
+
+## workspace 与 email-task 子切片（第 7C2 批，已完成）
+
+`backend/app/modules/workspace/` 拥有 workspace DTO、thread projection/task bootstrap，以及 workspace 与
+email-task UI adapters。`workspace.public` 是 Agent、campaign adapter/worker 和 RuntimeManager 的稳定入口。
+
+`workspace/tasks/runtime.py` 拥有草稿生成/改写、审核/保存、手动继续和跟进状态机；
+`workspace/tasks/delivery.py` 拥有到期任务选择、批量窗口、身份发送间隔、发送恢复和 SMTP 提交。
+旧 API/schema/service 路径是纯 re-export，生产调用和测试 patch 已迁到真实 owner。
 
 ## 前端层与 slice
 

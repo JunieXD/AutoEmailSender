@@ -1333,3 +1333,22 @@ backend/app/modules/
 3. 运行 Backend 完整 unittest，CLI 完整/Agent 合同，Frontend lint、完整 Vitest 与 production build。
 4. 同步 CodeGraph，审计生产 legacy 路径归零、shim AST 纯度、跨领域深层导入、静态未使用导入和
    `git diff --check`，再更新本节实绩并进入第 8 批。
+
+当前执行进度：
+
+- 7C1 已完成：task-level matching analysis 已迁入 `matching.task_analysis`，matching job runtime、startup
+  与 UI/Agent adapters 已改走 matching owner/public façade。
+- 7C2 已完成：workspace/email-task DTO、thread projection 与 UI adapters 已归入 `workspace`；原
+  `task_runtime.py` 已按状态机和发送编排拆为 `tasks.runtime` 与 `tasks.delivery`，六个旧路径保留纯
+  re-export，生产旧路径引用归零。
+- 7C3 待执行：迁移 batch HTTP adapter 与 batch draft worker，并完成第 7C 的跨端完整验收。
+
+7C2 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与领域定向 | owner/兼容、workspace、并发、delivery、runtime manager、共享通信 | 94 tests passed |
+| Backend API/worker | API endpoints、batch draft worker、operation log | 226 tests passed |
+| Backend Agent | Agent API 与 action-plan | 75 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1750 tests；OK（1 skipped） |
+| Repository | shim AST 纯度、生产旧路径与跨域深层导入审计、F821、`git diff --check` | 通过 |

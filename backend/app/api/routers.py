@@ -11,7 +11,7 @@ from app.modules.community.mentors.api import router as community_mentors_router
 from app.api.dashboard import router as dashboard_router
 from app.modules.crawler.api import router as crawl_jobs_router
 from app.api.diagnostics import router as diagnostics_router
-from app.api.email_tasks import router as email_tasks_router
+from app.modules.workspace.tasks.api import router as email_tasks_router
 from app.modules.identities.profiles.api import router as identities_router
 from app.modules.llm.api import router as llm_profiles_router
 from app.modules.identities.materials.api import router as materials_router
@@ -25,7 +25,7 @@ from app.modules.professors.enrichment.api import (
 from app.modules.system.runtime_settings.api import router as runtime_settings_router
 from app.modules.communications.test_compose.api import router as test_compose_router
 from app.api.token_usage import router as token_usage_router
-from app.api.workspaces import router as workspaces_router
+from app.modules.workspace.api import router as workspaces_router
 
 API_ROUTERS: tuple[APIRouter, ...] = (
     agent_v1_router,

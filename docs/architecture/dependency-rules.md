@@ -24,13 +24,6 @@
 | 来源 | 目标 |
 |---|---|
 | `app/core/agent_mutation_headers.py` | `app.services.agent_mutations` |
-| `app/schemas/crawl_job.py` | `app.services.crawler_tools` |
-| `app/schemas/crawl_job.py` | `app.services.crawler_v2_url_utils` |
-| `app/schemas/crawl_job.py` | `app.services.professor_field_normalization` |
-| `app/schemas/professor.py` | `app.services.professor_field_normalization` |
-| `app/services/agent_drafts.py` | `app.api.workspace_support` |
-| `app/services/crawl_job_runtime.py` | `app.agents.faculty_crawler_agent` |
-| `app/services/test_compose_runtime.py` | `app.api.identity_serializers` |
 
 ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作为第 1 批失败条件；后续在领域模型迁移时单独治理。
 
@@ -72,11 +65,22 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   campaigns 或 LLM 高层模块。
 - IMAP 同步、历史扫描与回复检测由 `app.modules.communications.imap.sync` 拥有；领域外调用方只能经
   `app.modules.communications.public` 调用，communications 不得反向导入 workspace/campaigns runtime。
-- `app.services.task_runtime` 在 7C 完成前仅为原同步公开符号提供对象级兼容别名；生产代码不得再从
-  该路径调用 IMAP 同步或回复识别能力。
+- `app.services.task_runtime` 仅为原同步公开符号提供对象级兼容别名；生产代码不得再从该路径调用
+  IMAP 同步或回复识别能力。
 - 旧 `app.api.test_compose`、`app.schemas.test_compose` 及
   `app.services.mail_runtime|imap_*|email_*|communication_events|smtp_error_explanations|test_compose_runtime`
   仅作兼容 re-export；新生产代码不得引用。
+
+### 已落地的 workspace 领域入口
+
+- 领域外代码只能经 `app.modules.workspace.public` 使用 workspace thread、email-task 状态机与
+  delivery 能力；workspace 与 email-task UI router 只由组合根直接注册。
+- `tasks.runtime` 拥有草稿生成/改写、审核、手动继续和跟进状态机；`tasks.delivery` 拥有到期选择、
+  身份发送窗口、发送恢复和 SMTP 提交。两者只使用域内相对导入协作。
+- workspace 只能经 `campaigns.public`、`communications.public`、`identities.public`、
+  `matching.public`、`llm.public` 与其他领域协作；communications 不得反向依赖 workspace。
+- 旧 `app.api.email_tasks|workspaces|workspace_support`、`app.schemas.email_task|workspace` 和
+  `app.services.task_runtime` 仅作兼容 re-export；生产代码不得引用。兼容入口由第 9 批统一审计清理。
 
 ## 3. Frontend 渐进门禁
 

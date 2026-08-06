@@ -55,7 +55,7 @@ class ApiEndpointTests(unittest.TestCase):
         get_settings.cache_clear()
 
         self._task_runtime_adaptation_patch = patch(
-            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._match_task_analysis_adaptation_patch = patch(
@@ -3007,7 +3007,7 @@ class ApiEndpointTests(unittest.TestCase):
             return self._build_match_evaluation_result(match_score=91)
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=fake_generate_draft_content),
         ):
             draft_response = self.client.post(
@@ -3066,11 +3066,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(side_effect=fake_ensure),
             ) as adaptation_mock,
             patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 AsyncMock(side_effect=fake_generate_draft_content),
             ) as generate_mock,
         ):
@@ -3100,11 +3100,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
             ),
             patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 AsyncMock(side_effect=fake_generate_draft_content),
             ),
         ):
@@ -3158,11 +3158,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", extra_body)),
             ) as adaptation_mock,
             patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 AsyncMock(side_effect=fake_generate_draft_content),
             ) as generate_mock,
         ):
@@ -3185,7 +3185,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = self._create_rewrite_ready_task()
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=AssertionError("空正文不能调用 LLM")),
         ):
             response = self.client.post(
@@ -3237,11 +3237,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
             ),
             patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 AsyncMock(side_effect=fake_generate_draft_content),
             ),
         ):
@@ -3270,11 +3270,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
             ),
             patch(
-                "app.services.task_runtime.llm_runtime.generate_draft_content",
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
                 AsyncMock(side_effect=fake_generate_draft_content),
             ),
         ):
@@ -3297,7 +3297,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = self._create_generating_workspace_rewrite_task()
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=AssertionError("已领取任务不能再次调用 LLM")),
         ):
             response = self.client.post(
@@ -3674,7 +3674,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = ensure_response.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result(message_id="<subject-render@example.com>", provider_payload={})),
         ) as mocked_send, patch(
             "app.modules.campaigns.templates.rendering.datetime",
@@ -3735,7 +3735,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = ensure_response.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(),
         ) as mocked_send:
             response = self.client.post(
@@ -4720,7 +4720,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(
                 return_value=self._build_draft_generation_result(
                     subject="测试草稿",
@@ -4783,7 +4783,7 @@ class ApiEndpointTests(unittest.TestCase):
         professor_id = self._create_professor(email="queued-template@example.edu")
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<queued-template@example.com>",
@@ -5672,10 +5672,10 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         from app.core.database import get_session_factory
-        from app.services.task_runtime import generate_task_draft
+        from app.modules.workspace.tasks.runtime import generate_task_draft
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=_remove_item_before_generation_returns),
         ):
             self._run_async(generate_task_draft(get_session_factory(), item_id, force=True))
@@ -5758,10 +5758,10 @@ class ApiEndpointTests(unittest.TestCase):
             raise llm_runtime.LLMRuntimeError("generation failed after removal")
 
         from app.core.database import get_session_factory
-        from app.services.task_runtime import generate_task_draft
+        from app.modules.workspace.tasks.runtime import generate_task_draft
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=_remove_item_then_fail),
         ):
             with self.assertRaises(llm_runtime.LLMRuntimeError):
@@ -5847,10 +5847,10 @@ class ApiEndpointTests(unittest.TestCase):
             raise asyncio.CancelledError()
 
         from app.core.database import get_session_factory
-        from app.services.task_runtime import generate_task_draft
+        from app.modules.workspace.tasks.runtime import generate_task_draft
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=_remove_item_then_cancel),
         ):
             with self.assertRaises(asyncio.CancelledError):
@@ -5920,10 +5920,10 @@ class ApiEndpointTests(unittest.TestCase):
             raise asyncio.CancelledError()
 
         from app.core.database import get_session_factory
-        from app.services.task_runtime import generate_task_draft
+        from app.modules.workspace.tasks.runtime import generate_task_draft
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=_cancel_generation),
         ):
             with self.assertRaises(asyncio.CancelledError):
@@ -6508,7 +6508,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(
                 return_value=self._build_draft_generation_result(
                     subject="更新后的套磁申请",
@@ -6557,7 +6557,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(switched_thread["current_task"]["status"], "review_required")
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<manual-send@example.com>",
@@ -6625,7 +6625,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = workspace.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(
                 return_value=self._build_draft_generation_result(
                     subject="不应生成的草稿",
@@ -6689,7 +6689,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = workspace.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=AssertionError("模板模式不应调用 LLM 草稿生成")),
         ) as mocked_generate:
             response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
@@ -6735,7 +6735,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = workspace.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(
                 return_value=self._build_draft_generation_result(
                     subject="预览主题",
@@ -6805,7 +6805,7 @@ class ApiEndpointTests(unittest.TestCase):
         from app.modules.llm import runtime as llm_runtime
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=llm_runtime.LLMRuntimeError("模型未返回可用改写内容")),
         ):
             response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
@@ -7089,7 +7089,7 @@ class ApiEndpointTests(unittest.TestCase):
         from app.modules.matching.public import MatchAnalysisAlreadyRunningError
 
         with patch(
-            "app.api.email_tasks.calculate_task_match_once",
+            "app.modules.workspace.tasks.api.calculate_task_match_once",
             AsyncMock(side_effect=MatchAnalysisAlreadyRunningError("该任务正在分析中")),
         ):
             response = self.client.post("/api/email-tasks/1/calculate-match")
@@ -7816,7 +7816,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<guarded-send@example.com>",
@@ -8427,7 +8427,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(regenerate_response.json()["detail"], "请选择 AI 写信参考材料后再生成草稿")
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<manual-no-primary@example.com>",
@@ -8542,7 +8542,7 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(
                 return_value=self._build_draft_generation_result(
                     subject="测试草稿",
@@ -8588,7 +8588,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         schedule_time = datetime.now(UTC) + timedelta(hours=1)
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<msg-1@example.com>",
@@ -9382,7 +9382,7 @@ class ApiEndpointTests(unittest.TestCase):
         professor_id = professor_response.json()["id"]
 
         with patch(
-            "app.services.task_runtime.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<template-immediate@example.com>",
@@ -9497,7 +9497,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=AssertionError("缺研究方向时不应调用模型")),
         ) as mocked_generate:
             regenerate = self.client.post(
@@ -10471,7 +10471,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_draft_content",
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=_fake_generate_draft_content),
         ) as mocked_generate:
             generate_response = self.client.post(
@@ -10980,7 +10980,7 @@ class ApiEndpointTests(unittest.TestCase):
 
     async def _dispatch_due_tasks(self) -> None:
         from app.core.database import get_session_factory
-        from app.services.task_runtime import dispatch_due_tasks_once
+        from app.modules.workspace.tasks.delivery import dispatch_due_tasks_once
 
         await dispatch_due_tasks_once(get_session_factory(), limit=10)
 
