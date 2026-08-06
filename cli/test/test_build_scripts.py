@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class CliBuildScriptTests(unittest.TestCase):
@@ -73,6 +74,28 @@ class CliBuildScriptTests(unittest.TestCase):
         capabilities["_meta"]["build_kind"] = "override"
         with self.assertRaisesRegex(RuntimeError, "unexpected frozen CLI build kind"):
             validate_payloads(version, capabilities)
+
+    def test_frozen_binary_verifier_reports_failed_process_output(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        namespace = runpy.run_path((repo_root / "scripts" / "verify_cli_binary.py").as_posix())
+        run_json = namespace["_run_json"]
+        completed = subprocess.CompletedProcess(
+            args=["auto-email-sender.exe", "--format", "json", "capabilities"],
+            returncode=1,
+            stdout="partial stdout\n",
+            stderr="real Windows failure\n",
+        )
+
+        with patch.object(namespace["subprocess"], "run", return_value=completed) as run_process:
+            with self.assertRaises(RuntimeError) as raised:
+                run_json(Path("auto-email-sender.exe"), "capabilities")
+
+        message = str(raised.exception)
+        self.assertIn("exit code 1", message)
+        self.assertIn("partial stdout", message)
+        self.assertIn("real Windows failure", message)
+        self.assertIn("stderr:", message)
+        self.assertFalse(run_process.call_args.kwargs["check"])
 
     def test_generated_build_identity_hook_uses_string_environment_values(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]

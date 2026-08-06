@@ -78,14 +78,25 @@ def _run_json(executable: Path, command: str) -> dict[str, Any]:
     # the shell that happened to invoke the build script.
     environment.pop("AUTO_EMAIL_SENDER_BUILD_REVISION", None)
     environment.pop("AUTO_EMAIL_SENDER_CLI_VERSION", None)
+    invocation = [executable.as_posix(), "--format", "json", command]
     completed = subprocess.run(
-        [executable.as_posix(), "--format", "json", command],
-        check=True,
+        invocation,
+        check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         env=environment,
     )
+    if completed.returncode != 0:
+        stdout = completed.stdout.rstrip() or "<empty>"
+        stderr = completed.stderr.rstrip() or "<empty>"
+        raise RuntimeError(
+            f"frozen CLI {command} failed with exit code {completed.returncode}\n"
+            f"command: {subprocess.list2cmdline(invocation)}\n"
+            f"stdout:\n{stdout}\n"
+            f"stderr:\n{stderr}"
+        )
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
