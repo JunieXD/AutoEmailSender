@@ -1,0 +1,28 @@
+export const DESKTOP_IPC_CHANNELS = {
+  appGetVersion: "app:get-version",
+  appQuit: "app:quit",
+  backendConnection: "backend:connection",
+  backendStatus: "backend:status",
+  agentSupportGetStatus: "agent-support:get-status",
+  agentSupportEnable: "agent-support:enable",
+  agentSupportRepair: "agent-support:repair",
+  agentSupportDisable: "agent-support:disable",
+  agentSupportInstallSkill: "agent-support:install-skill",
+  agentSupportUninstallSkill: "agent-support:uninstall-skill",
+  agentSupportDismissOnboarding: "agent-support:dismiss-onboarding",
+  agentSupportStatus: "agent-support:status",
+  professorSelectImportFile: "professors:select-import-file",
+  communityShareSave: "community-share:save",
+  materialOpen: "materials:open",
+  externalUrlOpen: "external-url:open",
+  startupGetStatus: "startup:get-status",
+  startupSetEnabled: "startup:set-enabled",
+  updateCheck: "update:check",
+  updateDownload: "update:download",
+  updateSwitchToFullDownload: "update:switch-to-full-download",
+  updateQuitAndInstall: "update:quit-and-install",
+  updateStatus: "update:status",
+} as const;
+
+export type DesktopIpcChannel =
+  (typeof DESKTOP_IPC_CHANNELS)[keyof typeof DESKTOP_IPC_CHANNELS];

@@ -214,7 +214,10 @@ describe("update helpers", () => {
 
   it("adds release notes to the available update status", () => {
     const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
-    const types = readFileSync(path.resolve("src", "types.ts"), "utf8");
+    const types = readFileSync(
+      path.resolve("..", "contracts", "desktop-ipc.d.ts"),
+      "utf8",
+    );
 
     expect(types).toContain("releaseNotes?: string");
     expect(source).toContain("releaseNotes: normalizeReleaseNotes(info.releaseNotes)");

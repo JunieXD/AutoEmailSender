@@ -181,3 +181,7 @@ Electron preload -> IPC contract -> Electron main modules
 ```
 
 Frontend 不直接导入 backend Python 代码；CLI 不直接导入 backend 包；跨进程共享的是版本化合同，不是运行时业务实现。
+
+Desktop renderer 可见 DTO 与 bridge 以 `contracts/desktop-ipc.d.ts` 为单一来源；
+`frontend/src/types/desktop.d.ts` 和 `desktop/src/types.ts` 只做类型转发。IPC/event channel 由
+`desktop/src/contracts/channels.ts` 统一定义，preload bridge 与 main handlers 不得内联重复 channel。

@@ -1438,3 +1438,21 @@ desktop/src/
 3. 共享类型变更后运行 Frontend lint、完整 Vitest 与 production build。
 4. 同步 CodeGraph，审计根 service 生产引用、channel 字符串旁路、跨进程深层导入、循环依赖、
    构建产物路径和 `git diff --check`，更新实绩后才进入第 9 批。
+
+当前执行进度：
+
+- 8A 已完成：renderer 可见 DTO 与 bridge 已收敛到 `contracts/desktop-ipc.d.ts`；Desktop 与 Frontend
+  只保留类型转发。23 个 IPC/event channel 已集中到 `desktop/src/contracts/channels.ts`，main、preload
+  与现有 handler 不再内联业务 channel 字符串。preload 实现已迁入 `preload/bridge.ts`，根入口只安装
+  bridge；两个进程的 TypeScript 编译仍分别输出原有格式和路径。
+- 8B 待执行：迁移 main-process services 及其测试 owner，保留根路径兼容入口并同步开发 CLI 路径。
+- 8C 待执行：提取 IPC 注册与 application bootstrap，增强 Desktop 分层门禁并完成跨端验收。
+
+8A 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Desktop 合同/边界 | IPC contract、import boundary、packaging 定向测试 | 22 tests passed |
+| Desktop 完整套件 | source Vitest；typecheck；production build | 16 files，127 tests passed；typecheck/build 通过 |
+| Frontend 完整套件 | lint；Vitest；production build | lint/build 通过；115 files，899 tests passed |
+| Repository | channel 旁路审计；共享合同平台依赖审计；CodeGraph；`git diff --check` | 通过 |

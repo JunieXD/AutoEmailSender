@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, type Menu
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFrontendIndexPath, startBackend } from "./backend.js";
+import { DESKTOP_IPC_CHANNELS } from "./contracts/channels.js";
 import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
   cleanupAgentRuntimeDescriptor,
@@ -240,11 +241,11 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.webContents.on("did-finish-load", () => {
     if (currentBackendConnection !== null) {
-      mainWindow?.webContents.send("backend:connection", currentBackendConnection);
+      mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendConnection, currentBackendConnection);
     }
-    mainWindow?.webContents.send("backend:status", currentBackendStatus);
+    mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendStatus, currentBackendStatus);
     if (currentAgentSupportStatus !== null) {
-      mainWindow?.webContents.send("agent-support:status", currentAgentSupportStatus);
+      mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.agentSupportStatus, currentAgentSupportStatus);
     }
   });
   mainWindow.on("close", (event) => {
@@ -358,7 +359,7 @@ function publishBackendReady(controller: BackendController): void {
     baseUrl: controller.baseUrl,
     accessToken: controller.uiAccessToken,
   };
-  mainWindow?.webContents.send("backend:connection", currentBackendConnection);
+  mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendConnection, currentBackendConnection);
   publishBackendStatus(createInitialBackendStatus());
   const unsubscribe = controller.onStatus((status) => publishBackendStatus(status));
   controller.ready
@@ -391,12 +392,12 @@ async function removeAgentRuntime(controller: BackendController): Promise<boolea
 
 function publishBackendStatus(status: typeof currentBackendStatus): void {
   currentBackendStatus = status;
-  mainWindow?.webContents.send("backend:status", status);
+  mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendStatus, status);
 }
 
 function publishAgentSupportStatus(status: AgentSupportStatus): AgentSupportStatus {
   currentAgentSupportStatus = status;
-  mainWindow?.webContents.send("agent-support:status", status);
+  mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.agentSupportStatus, status);
   return status;
 }
 
@@ -459,16 +460,16 @@ function isAgentIntegrationId(value: unknown): value is AgentIntegrationId {
     || value === "copilot_cli";
 }
 
-ipcMain.handle("app:get-version", () => app.getVersion());
-ipcMain.handle("app:quit", () => {
+ipcMain.handle(DESKTOP_IPC_CHANNELS.appGetVersion, () => app.getVersion());
+ipcMain.handle(DESKTOP_IPC_CHANNELS.appQuit, () => {
   quitFromTray();
 });
-ipcMain.handle("startup:get-status", async () => {
+ipcMain.handle(DESKTOP_IPC_CHANNELS.startupGetStatus, async () => {
   currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
   refreshTrayContextMenu();
   return currentStartupAtLoginStatus;
 });
-ipcMain.handle("startup:set-enabled", async (_event, enabled: unknown) => {
+ipcMain.handle(DESKTOP_IPC_CHANNELS.startupSetEnabled, async (_event, enabled: unknown) => {
   if (typeof enabled !== "boolean") {
     throw new Error("Invalid startup setting.");
   }
@@ -477,19 +478,19 @@ ipcMain.handle("startup:set-enabled", async (_event, enabled: unknown) => {
   refreshTrayContextMenu();
   return currentStartupAtLoginStatus;
 });
-ipcMain.handle("agent-support:get-status", async () =>
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportGetStatus, async () =>
   publishAgentSupportStatus(await agentSupportService.getStatus()),
 );
-ipcMain.handle("agent-support:enable", async () =>
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportEnable, async () =>
   runAgentSupportAction("installing", agentSupportService.enable),
 );
-ipcMain.handle("agent-support:repair", async () =>
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportRepair, async () =>
   runAgentSupportAction("installing", agentSupportService.repair),
 );
-ipcMain.handle("agent-support:disable", async () =>
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportDisable, async () =>
   runAgentSupportAction("updating", agentSupportService.disable),
 );
-ipcMain.handle("agent-support:install-skill", async (_event, agentId: unknown) => {
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportInstallSkill, async (_event, agentId: unknown) => {
   if (!isAgentIntegrationId(agentId)) {
     throw new Error("不支持的 Agent。");
   }
@@ -499,7 +500,7 @@ ipcMain.handle("agent-support:install-skill", async (_event, agentId: unknown) =
     "正在安装 Agent 使用说明…",
   );
 });
-ipcMain.handle("agent-support:uninstall-skill", async (_event, agentId: unknown) => {
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportUninstallSkill, async (_event, agentId: unknown) => {
   if (!isAgentIntegrationId(agentId)) {
     throw new Error("不支持的 Agent。");
   }
@@ -509,7 +510,7 @@ ipcMain.handle("agent-support:uninstall-skill", async (_event, agentId: unknown)
     "正在卸载 Agent 使用说明…",
   );
 });
-ipcMain.handle("agent-support:dismiss-onboarding", async () =>
+ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportDismissOnboarding, async () =>
   publishAgentSupportStatus(await agentSupportService.dismissOnboarding()),
 );
 registerUpdateIpc(() => mainWindow);

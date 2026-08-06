@@ -6,6 +6,7 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from "electron";
+import { DESKTOP_IPC_CHANNELS } from "./contracts/channels.js";
 import type { CommunityShareSaveResult } from "./types.js";
 
 export type SelectedImportFile = {
@@ -90,7 +91,7 @@ export function createCommunityShareSaveService(
 }
 
 export function registerFileSelectionIpc(): void {
-  ipcMain.handle("professors:select-import-file", async (): Promise<SelectedImportFile | null> => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.professorSelectImportFile, async (): Promise<SelectedImportFile | null> => {
     const result = await dialog.showOpenDialog(buildProfessorImportDialogOptions());
     if (result.canceled || result.filePaths.length === 0) {
       return null;
@@ -111,7 +112,7 @@ export function registerFileSelectionIpc(): void {
 
 export function registerCommunityShareSaveIpc(): void {
   const service = createCommunityShareSaveService();
-  ipcMain.handle("community-share:save", (_event, data: unknown) =>
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.communityShareSave, (_event, data: unknown) =>
     service.save(data),
   );
 }

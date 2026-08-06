@@ -3,10 +3,11 @@ import { createWriteStream } from "node:fs";
 import { chmod, copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
+import { DESKTOP_IPC_CHANNELS } from "./contracts/channels.js";
 import type { MaterialOpenResult } from "./types.js";
 
 export const MATERIAL_OPEN_COPY_TTL_MS = 24 * 60 * 60 * 1000;
-export const MATERIAL_OPEN_IPC_CHANNEL = "materials:open";
+export const MATERIAL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.materialOpen;
 
 type MaterialOpenDependencies = {
   fetch: typeof fetch;

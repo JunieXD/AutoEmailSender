@@ -11,5 +11,5 @@
     "types": ["node", "vitest"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["src/preload.ts"]
+  "exclude": ["src/preload.ts", "src/preload/**/*.ts"]
 }

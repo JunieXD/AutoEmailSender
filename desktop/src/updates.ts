@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { checkForMacSparkleUpdates, startMacSparkle } from "./macSparkle.js";
+import { DESKTOP_IPC_CHANNELS } from "./contracts/channels.js";
 import type { UpdateDownloadMode, UpdateDownloadProgress, UpdateStatus } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -255,7 +256,7 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
     registerElectronUpdaterEvents(getWindow);
   }
 
-  ipcMain.handle("update:check", async () => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.updateCheck, async () => {
     if (!app.isPackaged) {
       currentStatus = { state: "not_available", version: app.getVersion() };
       return currentStatus;
@@ -285,21 +286,21 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
     return checkForElectronUpdates(getWindow);
   });
 
-  ipcMain.handle("update:download", async (_event, options?: { mode?: UpdateDownloadMode }) => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.updateDownload, async (_event, options?: { mode?: UpdateDownloadMode }) => {
     if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
     return startUpdateDownload(getWindow, options?.mode ?? "differential");
   });
 
-  ipcMain.handle("update:switch-to-full-download", async () => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.updateSwitchToFullDownload, async () => {
     if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
     return startUpdateDownload(getWindow, "full");
   });
 
-  ipcMain.handle("update:quit-and-install", () => {
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.updateQuitAndInstall, () => {
     if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
@@ -417,7 +418,7 @@ function getAutoUpdater(): typeof electronUpdater.autoUpdater {
 
 function publish(getWindow: () => BrowserWindow | null, status: UpdateStatus): void {
   currentStatus = status;
-  getWindow()?.webContents.send("update:status", status);
+  getWindow()?.webContents.send(DESKTOP_IPC_CHANNELS.updateStatus, status);
 }
 
 function wait(milliseconds: number): Promise<void> {

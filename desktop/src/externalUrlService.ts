@@ -1,8 +1,9 @@
 import { BrowserWindow, ipcMain, shell } from "electron";
 import { access } from "node:fs/promises";
 import path from "node:path";
+import { DESKTOP_IPC_CHANNELS } from "./contracts/channels.js";
 
-export const EXTERNAL_URL_OPEN_IPC_CHANNEL = "external-url:open";
+export const EXTERNAL_URL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.externalUrlOpen;
 
 type ExternalUrlDependencies = {
   openExternal: (url: string) => Promise<void>;

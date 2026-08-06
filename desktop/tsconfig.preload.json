@@ -10,5 +10,5 @@
     "outDir": "dist",
     "types": ["node", "vitest"]
   },
-  "include": ["src/preload.ts", "src/types.ts"]
+  "include": ["src/preload.ts", "src/preload/**/*.ts", "src/contracts/**/*.ts"]
 }
