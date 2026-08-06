@@ -1511,9 +1511,8 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9B 将脚本实现与同类测试归入 `scripts/{build,packaging,quality,data,release}`，同步 workflow、package、
   docs、AGENTS 和仓库 skills。已写入开发/发布流程的 build/release/Playwright 根命令保留薄转发入口，
   其余调用方直接使用 owner；包装入口只转发参数，不复制逻辑。
-- 9C 将历史规格与实施记录整体迁入 `docs/archive/superpowers`，把根目录文档归入 product、
-  development、operations，并更新代码、测试、网站、skills 与文档链接。新增文档地图，明确活动文档、
-  机器校验资产、release notes 与 archive 的所有权。
+- 9C 将根目录文档归入 product、development、operations，并更新代码、测试、网站、skills 与文档链接。
+  新增文档地图，明确活动文档、机器校验资产、release notes 与 screenshots 的所有权。
 - 9D 按 Backend、Frontend、Desktop 分组删除已确认无调用的兼容 shim，移除只验证旧入口的测试，
   保留并加强 owner/public façade/边界测试。任何仍有生产或工具调用的入口必须先迁移调用方；无法证明
   安全删除的入口记录为显式保留项，不以目录整洁为由强删。
@@ -1545,10 +1544,9 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9B 已完成：脚本实现与实现级测试已归入 build、packaging、quality、data、release 五个 owner；
   已公开的 backend/CLI build、Playwright 安装和 release 根命令保留薄 wrapper，CI、打包配置、工作区测试、
   active docs 与仓库 skills 均直接使用 owner 路径。`scripts/README.md` 和自动化拓扑测试明确并保护该边界。
-- 9C 已完成：当前产品、开发与运维文档已按 owner 归入 `docs/{product,development,operations}`；
-  历史规格/实施记录整体迁入 `docs/archive/superpowers`，正文作为历史快照保留。`docs/README.md`、archive
-  说明和文档拓扑门禁明确活动来源、机器校验资产、release notes、screenshots 与归档边界，并验证活动
-  Markdown 本地链接可解析。
+- 9C 已完成：当前产品、开发与运维文档已按 owner 归入 `docs/{product,development,operations}`。
+  历史规格与实施记录已于 2026-08 按确认清理；`docs/README.md` 和文档拓扑门禁明确活动来源、机器校验
+  资产、release notes 与 screenshots，并验证活动 Markdown 本地链接可解析。
 - 9D Backend 已完成：删除 96 个纯迁移 shim（17 个 API、14 个 schema、64 个 service、1 个 agent），
   清理 `app.services` 中无调用的领域聚合导出；生产入口、普通测试和活动文档均已改用 owner/public
   façade。只验证旧入口的断言已移除，模块测试保留并加强 owner、公共 façade、schema 聚合与组合根
