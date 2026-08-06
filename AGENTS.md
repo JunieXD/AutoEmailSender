@@ -22,7 +22,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 - `website/` contains the VitePress documentation site, public screenshots, and website-specific tests.
 - `scripts/` contains release, packaging, icon-generation, and release-note helper scripts.
 - `backend/test/`, `frontend/test/`, `frontend/src/**/*.test.*`, `desktop/test/`, and `website/test/` contain the active automated tests.
-- `docs/` stores product notes, database notes, implementation notes, release notes, screenshots, and design specs. `data/` holds local runtime data and exports.
+- `docs/` is owner-based: active guidance lives under `architecture/`, `product/`, `development/`, and `operations/`; published notes live under `releases/`, historical plans under `archive/`, and images under `screenshots/`. Start at `docs/README.md`. `data/` holds local runtime data and exports.
 
 ## Build, Test, and Development Commands
 

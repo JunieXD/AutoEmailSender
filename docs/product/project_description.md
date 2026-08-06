@@ -79,11 +79,11 @@
 - 发信与收信：SMTP + IMAP
 
 ## 7. 相关文档
-- `docs/material_management_design.md`
-- `docs/material_management_implementation.md`
-- `docs/professor_management_design.md`
-- `docs/professor_management_implementation.md`
-- `docs/real_delivery_and_llm_design.md`
-- `docs/real_delivery_and_llm_implementation.md`
-- `docs/operations_runbook.md`
-- `docs/database_table_design.md`
+- `docs/product/material_management_design.md`
+- `docs/development/material_management_implementation.md`
+- `docs/product/professor_management_design.md`
+- `docs/development/professor_management_implementation.md`
+- `docs/product/real_delivery_and_llm_design.md`
+- `docs/development/real_delivery_and_llm_implementation.md`
+- `docs/operations/operations_runbook.md`
+- `docs/development/database_table_design.md`

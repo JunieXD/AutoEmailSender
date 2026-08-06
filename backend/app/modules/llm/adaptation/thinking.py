@@ -5,7 +5,7 @@ from __future__ import annotations
 The cache is keyed by (api_base_url, model_name, endpoint_kind), so the same
 model can retain independent thinking adaptations for different endpoint
 protocols. Rows are stored in ``thinking_adaptation_cache``; see
-``docs/database_table_design.md`` for field semantics.
+``docs/development/database_table_design.md`` for field semantics.
 """
 
 

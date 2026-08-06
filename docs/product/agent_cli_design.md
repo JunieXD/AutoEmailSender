@@ -7,7 +7,7 @@
 - 目标平台：Windows x64、macOS Apple Silicon
 - 当前实现：已完成安全读取、完整回信导出、草稿、单草稿发送计划、桌面启用/修复以及跨平台打包链路；业务命令要求用户先手动打开桌面软件；完整命令地图中的其余业务能力继续分阶段覆盖
 
-> 下一阶段的通用、Agent-first 接口演进目标、实施顺序与验收标准见 [Agent-first 通用 CLI 演进路线](agent_cli_evolution_plan.md)。该路线补充本文的实现阶段，不改变本文已经确认的安全和产品边界。
+> 下一阶段的通用、Agent-first 接口演进目标、实施顺序与验收标准见 [Agent-first 通用 CLI 演进路线](../development/agent_cli_evolution_plan.md)。该路线补充本文的实现阶段，不改变本文已经确认的安全和产品边界。
 
 ## 1. 一句话结论
 

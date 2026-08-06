@@ -138,7 +138,12 @@ class ContractTests(unittest.TestCase):
         self.assertNotEqual(baseline, capability_catalog_revision(changed))
 
     def test_versioned_baseline_lists_match_the_live_capability_registry(self) -> None:
-        baseline_path = Path(__file__).resolve().parents[2] / "docs" / "agent_cli_baseline.json"
+        baseline_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "development"
+            / "agent_cli_baseline.json"
+        )
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
         concurrency = json.loads(
             (baseline_path.parent / "agent_cli_concurrency_coverage.json").read_text(encoding="utf-8"),

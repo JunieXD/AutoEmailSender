@@ -9,7 +9,7 @@ from auto_email_sender_cli.capabilities import get_capability
 
 
 ROOT = Path(__file__).resolve().parents[2]
-COVERAGE_FILE = ROOT / "docs" / "agent_cli_gui_coverage.json"
+COVERAGE_FILE = ROOT / "docs" / "development" / "agent_cli_gui_coverage.json"
 FRONTEND_SRC = ROOT / "frontend" / "src"
 API_DIR = ROOT / "frontend" / "src" / "lib" / "api"
 _DIRECT_EXPORT_PATTERN = re.compile(

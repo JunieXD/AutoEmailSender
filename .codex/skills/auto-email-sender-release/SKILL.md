@@ -11,7 +11,7 @@ Drive the project release flow from a version number to a verified public GitHub
 
 Publish repository-delivered Skills under the same AutoEmailSender version and tag. Keep `crawl-mentors-to-xlsx` canonical under `.agents/skills/crawl-mentors-to-xlsx`, keep `.claude/skills/crawl-mentors-to-xlsx` as its Claude Code entry, and attach `crawl-mentors-to-xlsx-v<version>.zip` to the same GitHub Release. Do not create a separate Skill-only release, submit to a plugin marketplace, or put the Skill inside Electron installers unless the project explicitly changes that distribution policy.
 
-Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, read `docs/sparkle-release-operations.md`. Treat that repository document as the detailed source of truth and keep this skill focused on the release procedure.
+Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, read `docs/operations/sparkle-release-operations.md`. Treat that repository document as the detailed source of truth and keep this skill focused on the release procedure.
 
 ## Release Flow
 
@@ -29,7 +29,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
    - key product diffs under `frontend/src`, `backend/app`, `desktop/src`, `desktop`, and `scripts`
    - repository Skill diffs under `.agents/skills`, `.claude/skills`, and `.codex/skills`, plus their installation documentation under `website/docs`
    - changed tests under `backend/test`, `frontend/test`, `frontend/src/**/*.test.*`, `desktop/test`, and `website/test`
-   - related `docs/superpowers/specs/**` and `docs/superpowers/plans/**` files when they changed in the release range
+   - related historical records under `docs/archive/superpowers/{specs,plans}/**` when they changed in the release range
 8. Write `docs/releases/v<version>.md` directly from that context as a user-friendly announcement.
 9. Keep these sections in order: `### 新增功能`, `### 体验优化`, `### 问题修复`. Put higher-impact changes first.
 10. Run Repository Skill Preflight and Sparkle Preflight below, then run the platform-specific release command from step 4.
@@ -47,11 +47,11 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 ## Sparkle Preflight
 
-- Read `docs/sparkle-release-operations.md` before every macOS release.
+- Read `docs/operations/sparkle-release-operations.md` before every macOS release.
 - Confirm `gh` is authenticated to `JunieXD/AutoEmailSender` and that `gh secret list` contains both `SPARKLE_PUBLIC_ED_KEY` and `SPARKLE_ED_PRIVATE_KEY`. Check names only; never attempt to read, print, or reconstruct secret values.
 - Do not regenerate or rotate the Sparkle keys during a normal release. Do not copy the private key into the repository, command arguments, workflow files, or logs.
 - The GitHub Actions workflow owns Sparkle download preparation, signing, appcast generation, delta generation, and publication. Do not create an alternate manual publishing path.
-- Confirm the macOS package retains the post-sign bundle cleanup and signature verification described in `docs/sparkle-release-operations.md`, so the release can form a clean baseline for future deltas.
+- Confirm the macOS package retains the post-sign bundle cleanup and signature verification described in `docs/operations/sparkle-release-operations.md`, so the release can form a clean baseline for future deltas.
 
 ## Test Failure Handling
 

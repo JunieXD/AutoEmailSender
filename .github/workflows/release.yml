@@ -140,6 +140,7 @@ jobs:
           scripts/packaging/sanitize-macos-bundle.test.mjs
           scripts/release/prepare-sparkle-release.test.mjs
           scripts/quality/script-topology.test.mjs
+          scripts/quality/document-topology.test.mjs
 
       - name: Test desktop
         working-directory: desktop

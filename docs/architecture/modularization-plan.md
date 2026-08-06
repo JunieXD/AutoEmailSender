@@ -1498,7 +1498,7 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
   的生产构建与测试发现边界当前没有同类产物污染。
 - `scripts/` 现有 36 个脚本/测试平铺在根目录，可明确归入 build、packaging、quality、data、release；
   `.github`、Desktop packaging、AGENTS、仓库 skills 与运维文档共同引用这些路径。
-- `docs/superpowers/{specs,plans}` 是历史设计/实施记录，可整体迁入 archive 并保持内部相对链接；根目录
+- 原 `superpowers/{specs,plans}` 是历史设计/实施记录，可整体迁入 archive 并保持内部相对链接；根目录
   其余文档可按 product、development、operations 分类，`architecture` 与 `releases` 保持稳定。
 - Backend、Frontend 与 Desktop 均有迁移期兼容 re-export。删除前必须逐项证明生产调用、普通测试、
   workflow 与打包入口均不再引用；活动聚合入口（例如 Frontend 通用 types barrel）不得误删。
@@ -1510,7 +1510,7 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9B 将脚本实现与同类测试归入 `scripts/{build,packaging,quality,data,release}`，同步 workflow、package、
   docs、AGENTS 和仓库 skills。已写入开发/发布流程的 build/release/Playwright 根命令保留薄转发入口，
   其余调用方直接使用 owner；包装入口只转发参数，不复制逻辑。
-- 9C 将历史 `docs/superpowers` 整体迁入 `docs/archive/superpowers`，把根目录文档归入 product、
+- 9C 将历史规格与实施记录整体迁入 `docs/archive/superpowers`，把根目录文档归入 product、
   development、operations，并更新代码、测试、网站、skills 与文档链接。新增文档地图，明确活动文档、
   机器校验资产、release notes 与 archive 的所有权。
 - 9D 按 Backend、Frontend、Desktop 分组删除已确认无调用的兼容 shim，移除只验证旧入口的测试，
@@ -1544,7 +1544,10 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9B 已完成：脚本实现与实现级测试已归入 build、packaging、quality、data、release 五个 owner；
   已公开的 backend/CLI build、Playwright 安装和 release 根命令保留薄 wrapper，CI、打包配置、工作区测试、
   active docs 与仓库 skills 均直接使用 owner 路径。`scripts/README.md` 和自动化拓扑测试明确并保护该边界。
-- 9C 待执行：文档分类、历史记录归档与链接审计。
+- 9C 已完成：当前产品、开发与运维文档已按 owner 归入 `docs/{product,development,operations}`；
+  历史规格/实施记录整体迁入 `docs/archive/superpowers`，正文作为历史快照保留。`docs/README.md`、archive
+  说明和文档拓扑门禁明确活动来源、机器校验资产、release notes、screenshots 与归档边界，并验证活动
+  Markdown 本地链接可解析。
 - 9D 待执行：按实际引用审计删除 Backend、Frontend、Desktop 迁移 shim。
 
 9A 验证结果：
@@ -1566,3 +1569,13 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | Desktop | packaging 定向；typecheck；完整 Vitest；production build | 18 + 132 tests passed；typecheck/build 通过 |
 | Website | 完整 Vitest；production build | 4 files、16 tests passed；build 通过 |
 | Repository | CodeGraph；活动旧实现路径与 owner 根解析审计；`git diff --check` | 通过；本机无 `pwsh`，PowerShell 执行测试由 Windows CI 覆盖 |
+
+9C 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| 文档门禁 | 根目录 owner、archive、CLI 机器资产、活动 Markdown 本地链接 | 4 tests passed；旧活动路径归零 |
+| CLI | 文档/机器基线定向合同；完整 unittest | 54 + 154 tests passed |
+| Backend | thinking adaptation owner 定向回归 | 37 tests passed |
+| Website | 完整 Vitest；production build | 4 files、16 tests passed；build 通过 |
+| Repository | CodeGraph；活动旧文档路径审计；`git diff --check` | 通过；archive 内历史路径按说明保留 |

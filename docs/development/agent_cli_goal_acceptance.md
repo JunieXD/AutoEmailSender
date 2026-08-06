@@ -11,7 +11,7 @@ G1–G10 全部通过；解析错误、发现闭环、计划语义、构建身�
 
 ## 实时基线
 
-基线来自 `docs/agent_cli_baseline.json`，不是手工估计：
+基线来自 `docs/development/agent_cli_baseline.json`，不是手工估计：
 
 | 项目 | 数量 |
 | --- | ---: |
@@ -34,10 +34,10 @@ G1–G10 全部通过；解析错误、发现闭环、计划语义、构建身�
 | G4 状态可解释率 | 63/63（100%） | `test_every_stateful_contract_and_known_state_has_explicit_actions`、`test_state_metadata_covers_non_terminal_partial_and_nested_task_states`，并由后端状态机测试覆盖非法动作。 |
 | G5 写入回执覆盖率 | 84/84（100%） | 合同测试要求统一 `mutation_receipt`；后端 Agent API 测试验证实际变更、审计引用、部分结果和幂等回执。 |
 | G6 可恢复重试与未知外部执行保护 | 通过 | 后端幂等写入、计划执行、重复发送和 `EXTERNAL_EXECUTION_UNKNOWN` 测试通过；CLI 网络异常测试确认非幂等外部请求不会自动重试。 |
-| G7 并发静默覆盖 | 0 次 | `docs/agent_cli_concurrency_coverage.json` 中 8 个关键对象均有 `revision`、`If-Revision` 和冲突测试；冲突返回 `REVISION_CONFLICT` 与最新摘要。 |
+| G7 并发静默覆盖 | 0 次 | `docs/development/agent_cli_concurrency_coverage.json` 中 8 个关键对象均有 `revision`、`If-Revision` 和冲突测试；冲突返回 `REVISION_CONFLICT` 与最新摘要。 |
 | G8 高风险安全边界 | 通过 | 高风险合同披露范围、外部服务、费用和确认规则；计划过期/stale、未确认执行和重复执行测试通过。 |
 | G9 秘密泄露 | 0 次 | CLI 脱敏、错误/回执字段和后端 DTO 安全测试通过；可用命令合同没有密码、API Key、token 等秘密输入参数。 |
-| G10 GUI ↔ CLI 分类覆盖 | 157/157 导出动作（100%），覆盖 21 个模块 | `docs/agent_cli_gui_coverage.json` 与 `test_every_business_api_module_has_an_explicit_cli_classification`；每个导出动作均为 `available`、`ui_only` 或 `planned` 并有理由。 |
+| G10 GUI ↔ CLI 分类覆盖 | 157/157 导出动作（100%），覆盖 21 个模块 | `docs/development/agent_cli_gui_coverage.json` 与 `test_every_business_api_module_has_an_explicit_cli_classification`；每个导出动作均为 `available`、`ui_only` 或 `planned` 并有理由。 |
 
 ## 测试结果
 

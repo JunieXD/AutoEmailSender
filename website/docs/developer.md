@@ -112,4 +112,4 @@ npm run dist:mac
 
 `dist:mac` 会自动编译原生桥接并把 `Sparkle.framework` 放入应用包。DMG 同时用于首次安装和 Sparkle 无法使用差分包时的全量回退，不再另外发布裸 `.app`。
 
-正式发布由 tag 触发 GitHub Actions：Windows 和 macOS job 只构建产物，最后由单独的 publish job 一次性创建 Release。macOS job 会复用上一版 `appcast.xml`，下载最近 3 个旧 DMG，生成并签名差分包与新的 appcast。完整的首次密钥配置、迁移和故障处理见 [Sparkle 发布运维说明](https://github.com/JunieXD/AutoEmailSender/blob/master/docs/sparkle-release-operations.md)。
+正式发布由 tag 触发 GitHub Actions：Windows 和 macOS job 只构建产物，最后由单独的 publish job 一次性创建 Release。macOS job 会复用上一版 `appcast.xml`，下载最近 3 个旧 DMG，生成并签名差分包与新的 appcast。完整的首次密钥配置、迁移和故障处理见 [Sparkle 发布运维说明](https://github.com/JunieXD/AutoEmailSender/blob/master/docs/operations/sparkle-release-operations.md)。

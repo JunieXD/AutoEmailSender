@@ -8,7 +8,7 @@ from auto_email_sender_cli.capabilities import get_capability
 
 
 ROOT = Path(__file__).resolve().parents[2]
-COVERAGE_FILE = ROOT / "docs" / "agent_cli_concurrency_coverage.json"
+COVERAGE_FILE = ROOT / "docs" / "development" / "agent_cli_concurrency_coverage.json"
 BACKEND_TEST_FILE = ROOT / "backend" / "test" / "test_agent_api.py"
 
 

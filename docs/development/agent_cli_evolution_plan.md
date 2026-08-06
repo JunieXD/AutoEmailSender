@@ -3,7 +3,7 @@
 - 文档状态：Goal 执行合同（G1–G10 已按第 10.5 节验收通过）
 - 日期：2026-08-05
 - 适用项目：Auto Email Sender
-- 关联基线：[Agent 通用 CLI 产品与技术设计](agent_cli_design.md)
+- 关联基线：[Agent 通用 CLI 产品与技术设计](../product/agent_cli_design.md)
 - 当前快照：CLI 协议 v2；当前注册表显示 148 项能力，其中 146 项可用、2 项因凭据安全限制仅桌面端可用。该数字会随版本变化，实际能力始终以 `auto-email-sender --format json capabilities` 为准。
 - 本次验收报告：[agent_cli_goal_acceptance.md](agent_cli_goal_acceptance.md)
 
@@ -449,7 +449,7 @@ CLI 的长远可靠性取决于一份统一的“能力注册信息”。目前�
 
 基线快照只能用于计算分母、发现回归和解释变化，不能成为“保持 147 项命令不变”之类的约束。增加、合并或淘汰能力是允许的，但任何新增可用能力立即继承 G1–G10 的验收责任。
 
-当前可审计快照保存在 [`docs/agent_cli_baseline.json`](agent_cli_baseline.json)，并由 CLI 契约测试逐项对照实时能力注册表；并发对象和 GUI 模块的理由分别保存在 [`docs/agent_cli_concurrency_coverage.json`](agent_cli_concurrency_coverage.json) 与 [`docs/agent_cli_gui_coverage.json`](agent_cli_gui_coverage.json)。
+当前可审计快照保存在 [`docs/development/agent_cli_baseline.json`](agent_cli_baseline.json)，并由 CLI 契约测试逐项对照实时能力注册表；并发对象和 GUI 模块的理由分别保存在 [`docs/development/agent_cli_concurrency_coverage.json`](agent_cli_concurrency_coverage.json) 与 [`docs/development/agent_cli_gui_coverage.json`](agent_cli_gui_coverage.json)。
 
 ### 10.5 Goal 完成判定
 
