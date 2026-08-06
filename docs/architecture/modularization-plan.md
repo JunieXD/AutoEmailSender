@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 7 批已完成，第 8 批待开始
+状态：已确认，第 7 批已完成，第 8 批执行中
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -164,7 +164,7 @@ cli/src/auto_email_sender_cli/
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 已完成（7A～7C） | 任务、草稿、发送、收信的依赖方向单向化 |
-| 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
+| 8 | Desktop 进程模块化与 IPC 合同收敛 | 执行中 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
 批次可以继续拆成更小提交，但不得把两个互不相关的领域迁移混在同一提交中。
@@ -1370,3 +1370,71 @@ backend/app/modules/
 停止点：第 7 批的 campaigns、communications、workspace 所有权与公共入口均已落地；legacy 路径
 只承担兼容 re-export。第 8 批只处理 Electron main/preload/IPC 的进程内模块化，不改变后端、前端、
 CLI、HTTP/Agent/IPC 合同或分发资源相对路径。
+
+### 第 8 批：Desktop 进程模块化与 IPC 合同收敛（执行中）
+
+开始日期：2026-08-06
+
+CodeGraph 与只读定界结果：
+
+- `desktop/src/main.ts` 当前 561 行，同时持有应用生命周期、窗口/托盘、backend 恢复、Agent support
+  状态和 IPC handler 注册；入口与组合逻辑未分离。
+- `desktop/src/preload.ts` 当前 119 行，同时维护 backend connection 状态、renderer bridge 和全部 IPC
+  channel 字符串；main 与 preload 之间缺少可编译的 channel 单一来源。
+- `desktop/src/types.ts` 混合 main-process 内部启动类型与跨进程 DTO；
+  `frontend/src/types/desktop.d.ts` 手工复制 renderer 可见类型，后续修改存在漂移风险。
+- 13 个 main-process service 平铺在 `src/`；既有测试直接导入这些路径。Electron 打包入口固定为
+  `dist/src/main.js`，preload 固定为 `dist/src/preload.js`，这两个分发路径必须保持不变。
+- 当前 Desktop 门禁只保护 main/preload 方向和无循环；需要继续保护 contracts、preload、main 子树的
+  单向依赖，并禁止分层完成后重新向根目录 service shim 增加生产依赖。
+
+计划目标拓扑：
+
+```text
+contracts/
+└── desktop-ipc.d.ts
+desktop/src/
+├── main.ts
+├── preload.ts
+├── contracts/
+│   └── channels.ts
+├── main/
+│   ├── bootstrap/application.ts
+│   ├── ipc/register.ts
+│   ├── backend/{service.ts,types.ts}
+│   ├── agent-support/{runtime.ts,service.ts,prepare-dev-cli.ts}
+│   ├── updates/{service.ts,sparkle.ts}
+│   ├── files/{import-export.ts,material-open.ts}
+│   └── shell/{external-url.ts,startup-at-login.ts,tray.ts,window-icon.ts,window-lifecycle.ts}
+└── preload/
+    └── bridge.ts
+```
+
+计划分段：
+
+- 8A 建立跨工作区 `desktop-ipc.d.ts` 和 Desktop channel registry；Frontend desktop declaration 只
+  re-export 共享 DTO 并声明 `Window` bridge，preload 实现迁入 `preload/bridge.ts`，根 `preload.ts`
+  只负责安装 bridge。类型检查必须证明 Desktop 与 Frontend 使用同一合同。
+- 8B 按 backend、agent-support、updates、files、shell 归位 main-process services；生产代码与测试改用
+  新 owner，原根路径暂留纯 re-export。开发 CLI 准备器的运行路径同步到新 owner，Electron main/preload
+  分发路径和资源相对路径保持不变。
+- 8C 将集中 IPC handler 迁入 `main/ipc/register.ts`，应用状态和生命周期组合迁入
+  `main/bootstrap/application.ts`；根 `main.ts` 只调用 bootstrap。增强 AST import 门禁，保护
+  `main -> contracts`、`preload -> contracts` 的依赖方向并禁止跨进程反向导入。
+
+兼容与依赖策略：
+
+- main-process 子模块不得导入 preload；preload 只能依赖共享合同和 preload 域内实现；共享合同不得
+  依赖 Electron、Node 或任一进程实现。
+- channel 名称、参数与返回 DTO、事件 payload、bridge 方法名保持不变；不改变 context isolation、
+  node integration、窗口/托盘、backend 恢复、更新、文件和 Agent support 行为。
+- 根 service 兼容入口只允许 re-export，生产调用与测试 patch 必须迁到 owner；第 9 批统一审计后删除。
+- 不改变依赖或锁文件，不移动打包资源，不把测试输出混入新的生产模块目录。
+
+计划验证：
+
+1. 每个子段运行 Desktop import boundary、对应 service/preload/contract 定向测试和 typecheck。
+2. 完成后运行 Desktop 完整 Vitest、production build 与 packaging tests，核对 main/preload/dev CLI 输出。
+3. 共享类型变更后运行 Frontend lint、完整 Vitest 与 production build。
+4. 同步 CodeGraph，审计根 service 生产引用、channel 字符串旁路、跨进程深层导入、循环依赖、
+   构建产物路径和 `git diff --check`，更新实绩后才进入第 9 批。
