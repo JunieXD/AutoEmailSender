@@ -50,6 +50,9 @@ from app.modules.campaigns.public import (
 from app.modules.campaigns.public import (
     BatchTaskResendContextError,
     build_batch_task_resend_context,
+    classify_resend_content,
+    decide_resend_item,
+    reused_content_requires_review,
 )
 from app.modules.campaigns.public import (
     count_completed_batch_task_items,
@@ -175,6 +178,40 @@ async def create_batch_task(
     )
     if len(professors) != len(set(payload.professor_ids)):
         raise HTTPException(status_code=404, detail="部分导师不存在或已被移入回收站")
+
+    resend_source_items: dict[int, EmailTask] = {}
+    if payload.resend_source_batch_task_id is not None:
+        source_batch_task = await session.scalar(
+            select(BatchTask)
+            .options(
+                selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
+            )
+            .where(BatchTask.id == payload.resend_source_batch_task_id),
+        )
+        if source_batch_task is None:
+            raise HTTPException(status_code=404, detail="未找到原批量任务")
+        if source_batch_task.identity_id != payload.identity_id:
+            raise HTTPException(status_code=400, detail="重新发起任务必须沿用原任务身份")
+        if source_batch_task.status not in {
+            BatchTaskStatus.STOPPED.value,
+            BatchTaskStatus.COMPLETED.value,
+            BatchTaskStatus.EXPIRED.value,
+        }:
+            raise HTTPException(status_code=400, detail="原批量任务尚未结束，不能重新发起")
+
+        requested_professor_ids = set(payload.professor_ids)
+        for source_item in source_batch_task.email_tasks:
+            if source_item.professor_id not in requested_professor_ids:
+                continue
+            decision = decide_resend_item(source_item)
+            if not decision.selectable:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{source_item.professor.name}不属于可重新发起项：{decision.reason_label}",
+                )
+            resend_source_items[source_item.professor_id] = source_item
+        if set(resend_source_items) != requested_professor_ids:
+            raise HTTPException(status_code=400, detail="部分导师不属于原任务的可重新发起项")
 
     scheduled_at_values: list[datetime | None] = [None] * len(professors)
     if payload.schedule_type == "scheduled":
@@ -308,26 +345,99 @@ async def create_batch_task(
         draft_fallback_reason = None
         task_status = EmailTaskStatus.DISCOVERED.value
         approved_at = None
-        try:
-            initial_draft = build_initial_batch_draft(
-                identity,
-                professor,
-                outreach_config,
-                primary_material_available=primary_material_id is not None,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if initial_draft is not None:
-            generated_subject = initial_draft.subject
-            generated_body_text = initial_draft.body_text
-            generated_body_html = initial_draft.body_html
-            draft_generation_source = initial_draft.generation_source
-            draft_fallback_reason = initial_draft.fallback_reason
-            if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
-                task_status = EmailTaskStatus.APPROVED.value
-                approved_at = utc_now()
-            else:
+        approved_subject = None
+        approved_body_text = None
+        approved_body_html = None
+        item_primary_material_id = primary_material_id
+        item_selected_material_ids = selected_material_ids
+        item_outreach_template_id = selected_template.id if selected_template is not None else None
+        item_outreach_generation_mode = outreach_config.generation_mode
+        item_outreach_template_subject = _normalize_nullable_text(outreach_config.subject_template)
+        item_outreach_template_body_text = _normalize_nullable_text(outreach_config.body_text_template)
+        item_outreach_template_body_html = _normalize_nullable_text(outreach_config.body_html_template)
+        source_item = resend_source_items.get(professor.id)
+        reuse_kind = classify_resend_content(source_item) if source_item is not None else "regenerate"
+
+        if source_item is not None and reuse_kind != "regenerate":
+            if (
+                source_item.primary_material_id in material_map
+                and material_can_be_primary(material_map[source_item.primary_material_id])
+            ):
+                item_primary_material_id = source_item.primary_material_id
+            source_selected_material_ids = source_item.selected_material_ids
+            if reuse_kind == "rewrite_source":
+                source_selected_material_ids = (
+                    source_item.draft_rewrite_source_selected_material_ids
+                    if source_item.draft_rewrite_source_selected_material_ids is not None
+                    else source_selected_material_ids
+                )
+            if source_selected_material_ids is not None:
+                item_selected_material_ids = [
+                    material_id
+                    for material_id in source_selected_material_ids
+                    if material_id in material_map
+                ] or None
+            if source_item.outreach_template_snapshot_version is not None:
+                item_outreach_template_id = source_item.outreach_template_id
+                item_outreach_generation_mode = source_item.outreach_generation_mode
+                item_outreach_template_subject = source_item.outreach_template_subject
+                item_outreach_template_body_text = source_item.outreach_template_body_text
+                item_outreach_template_body_html = source_item.outreach_template_body_html
+
+            if reuse_kind == "rewrite_source":
+                generated_subject = source_item.draft_rewrite_source_subject
+                generated_body_text = source_item.draft_rewrite_source_body_text
+                generated_body_html = source_item.draft_rewrite_source_body_html
+                draft_generation_source = source_item.draft_generation_source
                 task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+            else:
+                generated_subject = source_item.generated_subject
+                generated_body_text = source_item.generated_content_text
+                generated_body_html = source_item.generated_content_html
+                draft_generation_source = source_item.draft_generation_source
+                draft_fallback_reason = source_item.draft_fallback_reason
+                if reuse_kind == "approved":
+                    approved_subject = source_item.approved_subject
+                    approved_body_text = source_item.approved_body_text
+                    approved_body_html = source_item.approved_body_html
+                    approved_at = utc_now()
+                    if reused_content_requires_review(source_item):
+                        generated_subject = generated_subject or approved_subject
+                        generated_body_text = generated_body_text or approved_body_text
+                        generated_body_html = generated_body_html or approved_body_html
+                        task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+                    else:
+                        task_status = (
+                            EmailTaskStatus.SCHEDULED.value
+                            if payload.schedule_type == "scheduled"
+                            else EmailTaskStatus.APPROVED.value
+                        )
+                else:
+                    task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+        else:
+            try:
+                initial_draft = build_initial_batch_draft(
+                    identity,
+                    professor,
+                    outreach_config,
+                    primary_material_available=primary_material_id is not None,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if initial_draft is not None:
+                generated_subject = initial_draft.subject
+                generated_body_text = initial_draft.body_text
+                generated_body_html = initial_draft.body_html
+                draft_generation_source = initial_draft.generation_source
+                draft_fallback_reason = initial_draft.fallback_reason
+                if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
+                    task_status = EmailTaskStatus.APPROVED.value
+                    approved_subject = generated_subject
+                    approved_body_text = generated_body_text
+                    approved_body_html = generated_body_html
+                    approved_at = utc_now()
+                else:
+                    task_status = EmailTaskStatus.REVIEW_REQUIRED.value
 
         email_task = EmailTask(
             source=EmailTaskSource.BATCH.value,
@@ -335,27 +445,31 @@ async def create_batch_task(
             identity_id=payload.identity_id,
             llm_profile_id=payload.llm_profile_id,
             professor_id=professor.id,
-            primary_material_id=primary_material_id,
-            outreach_template_id=(
-                selected_template.id if selected_template is not None else None
-            ),
+            primary_material_id=item_primary_material_id,
+            outreach_template_id=item_outreach_template_id,
             outreach_template_snapshot_version=1,
-            outreach_generation_mode=outreach_config.generation_mode,
-            outreach_template_subject=_normalize_nullable_text(outreach_config.subject_template),
-            outreach_template_body_text=_normalize_nullable_text(outreach_config.body_text_template),
-            outreach_template_body_html=_normalize_nullable_text(outreach_config.body_html_template),
+            outreach_generation_mode=item_outreach_generation_mode,
+            outreach_template_subject=item_outreach_template_subject,
+            outreach_template_body_text=item_outreach_template_body_text,
+            outreach_template_body_html=item_outreach_template_body_html,
             status=task_status,
             generated_subject=generated_subject,
             generated_content_text=generated_body_text,
             generated_content_html=generated_body_html,
             draft_generation_source=draft_generation_source,
             draft_fallback_reason=draft_fallback_reason,
-            approved_subject=(generated_subject if approved_at is not None else None),
-            approved_body_text=(generated_body_text if approved_at is not None else None),
-            approved_body_html=(generated_body_html if approved_at is not None else None),
+            approved_subject=approved_subject,
+            approved_body_text=approved_body_text,
+            approved_body_html=approved_body_html,
             approved_at=approved_at,
+            match_source_identity_id=source_item.match_source_identity_id if source_item else None,
+            match_score=source_item.match_score if source_item else None,
+            match_reason=source_item.match_reason if source_item else None,
+            fit_points=list(source_item.fit_points) if source_item and source_item.fit_points else None,
+            risk_points=list(source_item.risk_points) if source_item and source_item.risk_points else None,
+            match_keywords=list(source_item.match_keywords) if source_item and source_item.match_keywords else None,
             scheduled_at=scheduled_at_values[index],
-            selected_material_ids=selected_material_ids,
+            selected_material_ids=item_selected_material_ids,
         )
         session.add(email_task)
 
@@ -374,6 +488,18 @@ async def create_batch_task(
             "outreach_template_id": batch_task.outreach_template_id,
             "outreach_template_name_snapshot": batch_task.outreach_template_name_snapshot,
             "outreach_generation_mode": batch_task.outreach_generation_mode,
+            "resend_source_batch_task_id": payload.resend_source_batch_task_id,
+            "reused_approved_count": sum(
+                1 for item in resend_source_items.values() if classify_resend_content(item) == "approved"
+            ),
+            "reused_generated_count": sum(
+                1
+                for item in resend_source_items.values()
+                if classify_resend_content(item) in {"generated", "rewrite_source"}
+            ),
+            "regenerated_count": sum(
+                1 for item in resend_source_items.values() if classify_resend_content(item) == "regenerate"
+            ),
         },
     )
     await session.commit()

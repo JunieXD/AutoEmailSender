@@ -26,6 +26,11 @@ from app.modules.identities.public import material_can_be_primary
 SUCCESS_STATUSES = {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
 EXCLUDED_RUNNING_STATUSES = {EmailTaskStatus.SENDING.value}
 
+RESEND_CONTENT_APPROVED = "approved"
+RESEND_CONTENT_GENERATED = "generated"
+RESEND_CONTENT_REWRITE_SOURCE = "rewrite_source"
+RESEND_CONTENT_REGENERATE = "regenerate"
+
 REASON_LABELS: dict[tuple[str, str | None], str] = {
     (EmailTaskStatus.CANCELED.value, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value): "发送窗口已过期",
     (EmailTaskStatus.CANCELED.value, EmailTaskCancellationReason.BATCH_STOPPED.value): "任务中止后未发送",
@@ -52,6 +57,59 @@ class BatchTaskResendContextError(ValueError):
     def __init__(self, status_code: int, message: str) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def classify_resend_content(email_task: EmailTask) -> str:
+    has_approved_snapshot = any(
+        (value or "").strip()
+        for value in (
+            email_task.approved_subject,
+            email_task.approved_body_text,
+            email_task.approved_body_html,
+        )
+    )
+    if has_approved_snapshot and _has_sendable_content(
+        email_task.approved_subject or email_task.generated_subject,
+        email_task.approved_body_text or email_task.generated_content_text,
+        email_task.approved_body_html or email_task.generated_content_html,
+    ):
+        return RESEND_CONTENT_APPROVED
+    if _has_sendable_content(
+        email_task.generated_subject,
+        email_task.generated_content_text,
+        email_task.generated_content_html,
+    ):
+        return RESEND_CONTENT_GENERATED
+    if _has_sendable_content(
+        email_task.draft_rewrite_source_subject,
+        email_task.draft_rewrite_source_body_text,
+        email_task.draft_rewrite_source_body_html,
+    ):
+        return RESEND_CONTENT_REWRITE_SOURCE
+    return RESEND_CONTENT_REGENERATE
+
+
+def _has_sendable_content(
+    subject: str | None,
+    body_text: str | None,
+    body_html: str | None,
+) -> bool:
+    return bool((subject or "").strip() and ((body_text or "").strip() or (body_html or "").strip()))
+
+
+def reused_content_requires_review(email_task: EmailTask) -> bool:
+    if classify_resend_content(email_task) != RESEND_CONTENT_APPROVED:
+        return True
+    if email_task.status in {
+        EmailTaskStatus.APPROVED.value,
+        EmailTaskStatus.SCHEDULED.value,
+        EmailTaskStatus.SEND_FAILED.value,
+    }:
+        return False
+    return not (
+        email_task.status == EmailTaskStatus.CANCELED.value
+        and email_task.scheduled_at is not None
+    )
 
 
 def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
@@ -128,6 +186,7 @@ async def build_batch_task_resend_context(
         primary_material_id=task.primary_material_id,
         selected_material_ids=task.selected_material_ids,
     )
+    available_material_ids = {material.id for material in task.identity.materials}
     sorted_email_tasks = sorted(task.email_tasks, key=lambda item: (item.created_at, item.id))
     snapshot_task = sorted_email_tasks[0] if sorted_email_tasks else None
     has_batch_outreach_snapshot = task.outreach_template_snapshot_version is not None
@@ -197,9 +256,21 @@ async def build_batch_task_resend_context(
                 default_selected=decision.default_selected,
                 selectable=decision.selectable,
                 unavailable_reason=decision.unavailable_reason,
+                content_reuse_kind=classify_resend_content(email_task),
+                content_requires_review=reused_content_requires_review(email_task),
                 updated_at=email_task.updated_at,
             ),
         )
+
+        if decision.selectable:
+            item_material_ids = set(email_task.selected_material_ids or [])
+            if item_material_ids - available_material_ids:
+                warnings.append("部分邮件单独选择的原附件已不存在，重新发起时将自动移除")
+            if (
+                email_task.primary_material_id is not None
+                and email_task.primary_material_id not in available_material_ids
+            ):
+                warnings.append("部分邮件原 AI 写信参考材料已不存在；已有草稿仍会保留")
 
     return BatchTaskResendContextRead(
         task=BatchTaskResendContextTaskRead(
@@ -225,5 +296,5 @@ async def build_batch_task_resend_context(
             default_selected_count=sum(1 for item in items if item.default_selected),
             unavailable_count=sum(1 for item in items if not item.selectable),
         ),
-        warnings=warnings,
+        warnings=list(dict.fromkeys(warnings)),
     )

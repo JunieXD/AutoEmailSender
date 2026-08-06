@@ -125,8 +125,10 @@ _RESEND_EXPORTS = {
     "BatchTaskResendContextError",
     "ResendItemDecision",
     "build_batch_task_resend_context",
+    "classify_resend_content",
     "decide_resend_item",
     "filter_available_material_defaults",
+    "reused_content_requires_review",
 }
 _DRAFT_RUNTIME_EXPORTS = {
     "BatchDraftGenerationCoordinator",

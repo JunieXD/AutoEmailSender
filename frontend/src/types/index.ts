@@ -399,6 +399,7 @@ export interface CreateBatchTaskRequestDTO {
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
   outreach_template_id?: number | null;
+  resend_source_batch_task_id?: number | null;
 }
 
 export type MatchAnalysisJobStatus =
@@ -610,6 +611,8 @@ export interface BatchTaskResendItemDTO {
   default_selected: boolean;
   selectable: boolean;
   unavailable_reason: string | null;
+  content_reuse_kind: 'approved' | 'generated' | 'rewrite_source' | 'regenerate';
+  content_requires_review: boolean;
   updated_at: string;
 }
 

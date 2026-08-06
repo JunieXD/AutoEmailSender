@@ -458,6 +458,7 @@ describe("CreateTaskPage", () => {
     await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
     expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
       llm_profile_id: selectedLlmProfile.id,
+      resend_source_batch_task_id: 12,
       outreach_generation_mode: "template",
       outreach_template_subject: "重发主题 {{name}}",
       outreach_template_body_text: "重发正文",

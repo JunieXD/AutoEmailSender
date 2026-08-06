@@ -1493,6 +1493,8 @@ describe("TasksPage batch draft review", () => {
           default_selected: true,
           selectable: true,
           unavailable_reason: null,
+          content_reuse_kind: "approved",
+          content_requires_review: false,
           updated_at: "2026-05-08T00:00:00",
         },
       ],
@@ -1521,6 +1523,8 @@ describe("TasksPage batch draft review", () => {
     });
     expect(within(resendDialog).getByText("机器人方向申请模板")).toBeInTheDocument();
     expect(within(resendDialog).getByText("AI 辅助写信")).toBeInTheDocument();
+    expect(within(resendDialog).getByText("可直接沿用 1 封 · 需要重新生成 0 封")).toBeInTheDocument();
+    expect(within(resendDialog).getByText("沿用上次已批准内容")).toBeInTheDocument();
 
     fireEvent.click(
       within(resendDialog).getByRole("button", { name: "去创建新任务" }),

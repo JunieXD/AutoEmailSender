@@ -3821,10 +3821,10 @@ export const TasksPage = () => {
     const confirmed = await confirm({
       title: "确认重新发起这批老师？",
       description: [
-        "将自动切换到原任务身份，并带入原任务的模板内容和材料。",
+        "将自动切换到原任务身份，并优先沿用每位老师上次已审核或 AI 改写后的邮件。",
         `发信模板：${resendTemplateLabel}`,
         `写信方式：${resendGenerationModeLabel}`,
-        "模型使用当前已选择的模型，发送日期和时间窗口需要重新设置。进入创建页后仍可修改，最终以创建页编辑器中看到的内容为准。",
+        "当前模板和模型只用于没有可复用草稿的邮件；发送日期和时间窗口需要重新设置。",
       ].join("\n"),
       confirmLabel: "去创建新任务",
       cancelLabel: "继续选择",

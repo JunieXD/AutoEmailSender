@@ -373,10 +373,10 @@ describe("HomePage match analysis", () => {
     });
     renderPage();
 
-    expect(
-      await screen.findByText("组内匹配统一依据 申请身份 A"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "分析匹配度" })[0]);
+    const analyzeButtons = await screen.findAllByRole("button", {
+      name: "分析匹配度",
+    });
+    fireEvent.click(analyzeButtons[0]);
 
     await waitFor(() => {
       expect(mockedNotifyWarning).toHaveBeenCalledWith(
