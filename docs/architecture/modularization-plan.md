@@ -1535,3 +1535,21 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
    合同测试；不创建 tag、不推送、不发布产物。
 4. 最终同步 CodeGraph，审计旧代码/文档/脚本路径、跨域/跨进程反向依赖、测试产物、缓存、锁文件、
    `git status` 与 `git diff --check`。更新实际结果和剩余保留项后才宣告全部批次完成。
+
+当前执行进度：
+
+- 9A 已完成：Desktop production、preload、test TypeScript 配置已分离；production build 先清理旧
+  `dist`，不再生成 `dist/test`，Vitest 同时显式排除 `dist` 与 `release`。标准测试在 build 前后均只
+  发现 source tests。
+- 9B 待执行：脚本分类、稳定根命令 wrapper 与所有调用方更新。
+- 9C 待执行：文档分类、历史记录归档与链接审计。
+- 9D 待执行：按实际引用审计删除 Backend、Frontend、Desktop 迁移 shim。
+
+9A 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Desktop 拓扑门禁 | production/test config、import boundary、packaging | 21 tests passed |
+| Desktop 完整套件 | typecheck；production build；标准 Vitest | 18 files，132 tests passed；typecheck/build 通过 |
+| 生产产物 | `dist` 文件清单 | 仅 `dist/src`；无 `dist/test` |
+| Repository | `git diff --check` | 通过 |

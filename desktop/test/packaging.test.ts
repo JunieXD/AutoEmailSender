@@ -28,6 +28,28 @@ describe("desktop development", () => {
       "npm run build && node dist/src/main/agent-support/prepare-dev-cli.js && electron . --dev",
     );
   });
+
+  it("separates production, preload, and test TypeScript builds", () => {
+    const packageJson = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as {
+      scripts: { build: string; clean: string; typecheck: string };
+    };
+    const productionConfig = JSON.parse(
+      readFileSync(path.resolve("tsconfig.json"), "utf8"),
+    ) as { include: string[] };
+    const testConfig = JSON.parse(
+      readFileSync(path.resolve("tsconfig.test.json"), "utf8"),
+    ) as { compilerOptions: { noEmit: boolean }; include: string[] };
+    const vitestConfig = readFileSync(path.resolve("vitest.config.ts"), "utf8");
+
+    expect(packageJson.scripts.build).toContain("npm run clean");
+    expect(packageJson.scripts.clean).toContain("rmSync('dist'");
+    expect(packageJson.scripts.typecheck).toContain("tsconfig.test.json");
+    expect(productionConfig.include).toEqual(["src/**/*.ts"]);
+    expect(testConfig.compilerOptions.noEmit).toBe(true);
+    expect(testConfig.include).toContain("test/**/*.ts");
+    expect(vitestConfig).toContain('"**/dist/**"');
+    expect(vitestConfig).toContain('"**/release/**"');
+  });
 });
 
 describe("windows installer packaging", () => {
