@@ -9,6 +9,8 @@ description: Safely merge one or more computers' local Auto Email Sender crawl d
 
 Update `website/data/crawl-benchmark.json` from a local Auto Email Sender database without exposing mentor-level data. Preserve records published by other computers, update the same crawl task in place after later enrichment, and leave commit and push decisions to the user unless they explicitly request them.
 
+Read `docs/operations/crawl-benchmark-publication.md` before changing publication behavior or resolving an unfamiliar merge, schema, or privacy case. Treat it as the detailed repository source of truth and keep this Skill focused on the execution workflow.
+
 ## Safety Rules
 
 - Treat `auto_email_sender.db` as read-only. Never migrate it, edit it, copy it into the repository, or commit it.

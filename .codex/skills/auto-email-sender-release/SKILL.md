@@ -29,7 +29,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
    - key product diffs under `frontend/src`, `backend/app`, `desktop/src`, `desktop`, and `scripts`
    - repository Skill diffs under `.agents/skills`, `.claude/skills`, and `.codex/skills`, plus their installation documentation under `website/docs`
    - changed tests under `backend/test`, `frontend/test`, `frontend/src/**/*.test.*`, `desktop/test`, and `website/test`
-   - related historical records under `docs/archive/superpowers/{specs,plans}/**` when they changed in the release range
+   - related owner documentation under `docs/{architecture,product,development,operations}/**` when it changed in the release range
 8. Write `docs/releases/v<version>.md` directly from that context as a user-friendly announcement.
 9. Keep these sections in order: `### 新增功能`, `### 体验优化`, `### 问题修复`. Put higher-impact changes first.
 10. Run Repository Skill Preflight and Sparkle Preflight below, then run the platform-specific release command from step 4.
@@ -40,7 +40,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 - Treat `crawl-mentors-to-xlsx` as a versioned deliverable that shares the application's version and tag. Distribute its canonical directory through the tagged repository and as the standalone `crawl-mentors-to-xlsx-v<version>.zip` asset in the same GitHub Release, never through the EXE, DMG, or a plugin marketplace.
 - Inspect `git ls-tree -r --name-only HEAD -- .agents/skills/crawl-mentors-to-xlsx .claude/skills/crawl-mentors-to-xlsx`. Compare the result with `expected_canonical_files` in `backend/test/test_crawl_mentors_skill_contract.py`; require all ten canonical files plus the Claude Code forwarding `SKILL.md` to be present in the release commit.
-- Use the available `skill-creator` `quick_validate.py` against both Skill directories when either entry changed. Then run `cd backend` and `uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package`. Generate a local ZIP with `python scripts/packaging/package_crawl_mentors_skill.py --version <version> --output-dir <temporary-dir>` and inspect its top-level directory and canonical file list. The normal release scripts run both tests automatically; do not remove or bypass them.
+- Use the available `skill-creator` `quick_validate.py` against both Skill directories when either entry changed. From `backend/`, run `uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package`, then generate a local ZIP with `uv run python ../scripts/packaging/package_crawl_mentors_skill.py --version <version> --output-dir <temporary-dir>` and inspect its top-level directory and canonical file list. The normal release scripts run both tests automatically; do not remove or bypass them.
 - When the release range changes the Skill guide or website navigation, run `npm test` and `npm run build` in `website` before publishing.
 - Confirm the public guide is written for ordinary users who have not cloned the repository. Require paste-ready global installation flows for Codex and Claude Code, a manual Release ZIP flow for Windows/macOS/Linux, the complete-directory requirement, latest `master` versus reproducible tag behavior, the local-global directory scope, and the absence of a marketplace release. Do not imply that installing or updating the desktop application installs or updates the Skill.
 - Treat `--dry-run` only as a command-sequence rehearsal: it does not enforce `master` or a clean worktree. Independently complete the branch, status, tracked-file, and version checks before treating the release as ready.
@@ -57,7 +57,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 
 - Inspect the failing command, error, stack trace, and recent behavior before deciding whether the release is blocked.
 - If the product code is broken, stop and report the failing step. Do not patch around a real defect just to publish.
-- If a desktop test failure comes from an outdated ignored file under `desktop/dist/test`, run `npm run build` in `desktop` and rerun the focused test before editing source tests.
+- If a desktop test failure depends on whether a build ran first, run `npm run clean` in `desktop` and rerun the focused source test before editing it. Treat any regenerated `desktop/dist/test` files or test discovery under `desktop/dist` as a topology regression.
 - If a source test is stale and no longer matches intentional behavior, update it minimally to match the current user-facing behavior. Do not change production code unless investigation shows the application is wrong.
 - Run the focused failing tests first, then rerun the relevant verification command.
 - Because the release script requires a clean tree except for `docs/releases/v<version>.md`, commit a required stale-test fix before retrying. Use a focused Conventional Commit message such as `test(frontend): 修复发布前测试夹具`.
