@@ -73,7 +73,7 @@ export const DashboardProfessorRow = ({
   <article
     data-testid={`dashboard-professor-row-${professor.id}`}
     className={clsx(
-      "grid gap-4 px-6 py-5 transition lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_auto] lg:items-center",
+      "grid gap-4 px-6 py-5 transition lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_22rem] lg:items-center",
       getRowBackgroundClass(selected, timeHighlight),
     )}
   >
@@ -112,22 +112,17 @@ export const DashboardProfessorRow = ({
           </div>
         )}
         {isProfessorSearchFieldEmpty(professor.research_direction) ? null : (
-          <p className="mt-2 line-clamp-2 text-sm leading-6 text-stone-600">
+          <p className="mt-2 line-clamp-1 text-sm leading-6 text-stone-600">
             {formatProfessorSearchField(professor.research_direction)}
           </p>
         )}
       </div>
     </div>
 
-    <div className="flex flex-wrap gap-2 lg:justify-start">
+    <div className="flex flex-wrap gap-2 lg:justify-start lg:pl-6">
       <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-sm font-medium text-stone-700">
         {formatMatchLabel(professor.match_score)}
       </span>
-      {professor.match_is_shared && professor.match_source_identity_name ? (
-        <span className="rounded-full border border-primary/15 bg-primary/5 px-3 py-1.5 text-sm font-medium text-primary">
-          依据 {professor.match_source_identity_name}
-        </span>
-      ) : null}
       {professor.match_is_stale ? (
         <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800">
           材料已变更
@@ -151,7 +146,7 @@ export const DashboardProfessorRow = ({
       </span>
     </div>
 
-    <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+    <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap lg:justify-end">
       <button
         type="button"
         onClick={onCalculateMatch}

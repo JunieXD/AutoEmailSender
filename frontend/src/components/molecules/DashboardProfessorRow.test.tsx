@@ -51,6 +51,30 @@ describe("DashboardProfessorRow", () => {
     expect(screen.queryByText("匹配度 86%")).not.toBeInTheDocument();
   });
 
+  it("does not show the shared match source", () => {
+    render(
+      <DashboardProfessorRow
+        professor={{
+          ...professor,
+          match_is_shared: true,
+          match_source_identity_name: "申请身份 A",
+        }}
+        selected={false}
+        bulkDisabled={false}
+        scoring={false}
+        canCalculateMatch
+        statusLabel="未发送"
+        timeHighlight={null}
+        timeLabel={null}
+        onToggleSelection={vi.fn()}
+        onCalculateMatch={vi.fn()}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("依据 申请身份 A")).not.toBeInTheDocument();
+  });
+
   it("labels an uncalculated score as match degree", () => {
     render(
       <DashboardProfessorRow
@@ -267,7 +291,7 @@ describe("DashboardProfessorRow", () => {
       row.querySelector(".mt-1.text-sm.text-stone-500"),
     ).not.toBeInTheDocument();
     expect(
-      row.querySelector("p.mt-2.line-clamp-2.text-sm.leading-6.text-stone-600"),
+      row.querySelector("p.mt-2.line-clamp-1.text-sm.leading-6.text-stone-600"),
     ).not.toBeInTheDocument();
   });
 

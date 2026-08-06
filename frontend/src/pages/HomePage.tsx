@@ -1207,19 +1207,6 @@ export const HomePage = () => {
               <h1 className="text-3xl font-semibold text-stone-900">
                 导师看板
               </h1>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
-                <span className="rounded-full border border-primary/15 bg-white px-3 py-1.5 font-medium text-primary">
-                  {matchUsesGroupSource
-                    ? `组内匹配统一依据 ${matchSourceName}`
-                    : `匹配依据当前身份 ${matchSourceName}`}
-                </span>
-                <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-stone-500">
-                  默认材料：
-                  {effectiveMatchSourceIdentity?.current_primary_material
-                    ?.display_name ||
-                    "尚未设置"}
-                </span>
-              </div>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
