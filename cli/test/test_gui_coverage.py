@@ -11,7 +11,10 @@ from auto_email_sender_cli.capabilities import get_capability
 ROOT = Path(__file__).resolve().parents[2]
 COVERAGE_FILE = ROOT / "docs" / "development" / "agent_cli_gui_coverage.json"
 FRONTEND_SRC = ROOT / "frontend" / "src"
-API_DIR = ROOT / "frontend" / "src" / "lib" / "api"
+BUSINESS_API_GLOBS = (
+    "lib/api/*.ts",
+    "entities/*/api/*.ts",
+)
 _DIRECT_EXPORT_PATTERN = re.compile(
     r"^\s*export\s+(?:default\s+)?(?:async\s+)?(?:const|function|class)\s+([A-Za-z_$][\w$]*)",
     re.MULTILINE,
@@ -93,11 +96,13 @@ class GuiCoverageTests(unittest.TestCase):
         actions = document.get("actions")
         self.assertIsInstance(actions, list)
         by_source = {item.get("source"): item for item in actions if isinstance(item, dict)}
+        excluded_sources = set(document.get("excluded_sources", []))
         business_sources = {
-            path.name
-            for path in API_DIR.glob("*.ts")
+            path.relative_to(FRONTEND_SRC).as_posix()
+            for pattern in BUSINESS_API_GLOBS
+            for path in FRONTEND_SRC.glob(pattern)
             if not path.name.endswith(".test.ts")
-            and path.name not in set(document.get("excluded_sources", []))
+            and path.relative_to(FRONTEND_SRC).as_posix() not in excluded_sources
         }
         self.assertEqual(set(by_source), business_sources)
         self.assertEqual(len(by_source), len(actions))
@@ -108,7 +113,7 @@ class GuiCoverageTests(unittest.TestCase):
             self.assertTrue(item.get("id"), item)
             self.assertTrue(item.get("reason"), item)
             source = item["source"]
-            exported_names = extract_exported_actions_from_file(API_DIR / source)
+            exported_names = extract_exported_actions_from_file(FRONTEND_SRC / source)
             classified_actions = item.get("exported_actions")
             self.assertIsInstance(classified_actions, list, item)
             classified_names = {
@@ -182,9 +187,11 @@ class GuiCoverageTests(unittest.TestCase):
             {"run", "execute", "fallback", "load"},
         )
 
-    def test_export_scanner_follows_workspace_star_reexports(self) -> None:
+    def test_export_scanner_follows_entity_star_reexports(self) -> None:
         self.assertEqual(
-            extract_exported_actions_from_file(API_DIR / "communityMentorsApi.ts"),
+            extract_exported_actions_from_file(
+                FRONTEND_SRC / "entities/community-mentor/index.ts",
+            ),
             {
                 "downloadCommunitySharePackage",
                 "getCommunityMentorCatalog",

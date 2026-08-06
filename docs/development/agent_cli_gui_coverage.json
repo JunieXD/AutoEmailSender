@@ -1,14 +1,15 @@
 {
   "schema_version": 2,
-  "scope": "frontend/src/lib/api/*.ts business-facing exported actions",
+  "scope": "frontend/src business-facing API owner modules",
   "excluded_sources": [
-    "client.ts",
-    "client.test.ts"
+    "lib/api/client.ts",
+    "lib/api/client.test.ts",
+    "entities/community-mentor/api/catalogCache.ts"
   ],
   "actions": [
     {
       "id": "batch-tasks",
-      "source": "batchTasksApi.ts",
+      "source": "lib/api/batchTasksApi.ts",
       "exported_actions": [
         "listBatchTasks",
         "createBatchTask",
@@ -68,7 +69,7 @@
     },
     {
       "id": "communication-groups",
-      "source": "communicationGroups.ts",
+      "source": "lib/api/communicationGroups.ts",
       "exported_actions": [
         "listCommunicationGroups",
         "createCommunicationGroup",
@@ -87,7 +88,7 @@
     },
     {
       "id": "community-mentors",
-      "source": "communityMentorsApi.ts",
+      "source": "entities/community-mentor/api/communityMentors.ts",
       "exported_actions": [
         "getCommunityMentorCatalog",
         "listCommunityMentors",
@@ -107,7 +108,7 @@
     },
     {
       "id": "crawl-jobs",
-      "source": "crawlJobsApi.ts",
+      "source": "lib/api/crawlJobsApi.ts",
       "exported_actions": [
         "createCrawlJob",
         "listCrawlJobs",
@@ -149,7 +150,7 @@
     },
     {
       "id": "create-task",
-      "source": "createTask.ts",
+      "source": "lib/api/createTask.ts",
       "exported_actions": ["createTask"],
       "status": "planned",
       "required_capabilities": [],
@@ -157,7 +158,7 @@
     },
     {
       "id": "dashboard",
-      "source": "dashboardApi.ts",
+      "source": "lib/api/dashboardApi.ts",
       "exported_actions": ["getDashboardOverview"],
       "status": "available",
       "required_capabilities": ["dashboard.overview"],
@@ -165,7 +166,7 @@
     },
     {
       "id": "diagnostics",
-      "source": "diagnosticsApi.ts",
+      "source": "lib/api/diagnosticsApi.ts",
       "exported_actions": [
         "listOperationLogs",
         "exportOperationLogs",
@@ -181,7 +182,7 @@
     },
     {
       "id": "email-tasks",
-      "source": "emailTasksApi.ts",
+      "source": "lib/api/emailTasksApi.ts",
       "exported_actions": [
         "regenerateDraft",
         "calculateMatch",
@@ -223,7 +224,7 @@
     },
     {
       "id": "identities",
-      "source": "identities.ts",
+      "source": "lib/api/identities.ts",
       "exported_actions": [
         "listIdentities",
         "createIdentity",
@@ -268,7 +269,7 @@
     },
     {
       "id": "llm-config",
-      "source": "llmConfig.ts",
+      "source": "lib/api/llmConfig.ts",
       "exported_actions": [
         "loadLLMConfig",
         "saveLLMConfig",
@@ -283,7 +284,7 @@
     },
     {
       "id": "llm-profiles",
-      "source": "llmProfiles.ts",
+      "source": "lib/api/llmProfiles.ts",
       "exported_actions": [
         "listLLMProfiles",
         "createLLMProfile",
@@ -337,7 +338,7 @@
     },
     {
       "id": "match-analysis",
-      "source": "matchAnalysisJobsApi.ts",
+      "source": "lib/api/matchAnalysisJobsApi.ts",
       "exported_actions": [
         "listMatchAnalysisJobs",
         "createMatchAnalysisJob",
@@ -363,7 +364,7 @@
     },
     {
       "id": "materials",
-      "source": "materials.ts",
+      "source": "lib/api/materials.ts",
       "exported_actions": [
         "uploadIdentityMaterial",
         "setPrimaryMaterial",
@@ -384,7 +385,7 @@
     },
     {
       "id": "outreach-templates",
-      "source": "outreachTemplates.ts",
+      "source": "lib/api/outreachTemplates.ts",
       "exported_actions": [
         "listOutreachTemplates",
         "getOutreachTemplate",
@@ -411,7 +412,7 @@
     },
     {
       "id": "professor-information-enrichment",
-      "source": "professorInformationEnrichmentApi.ts",
+      "source": "entities/professor/api/informationEnrichment.ts",
       "exported_actions": [
         "createSingleProfessorInformationEnrichment",
         "getActiveProfessorInformationEnrichment",
@@ -439,7 +440,7 @@
     },
     {
       "id": "professors",
-      "source": "professorsApi.ts",
+      "source": "entities/professor/api/professors.ts",
       "exported_actions": [
         "listProfessors",
         "listProfessorsForManagement",
@@ -506,7 +507,7 @@
     },
     {
       "id": "profiles-legacy",
-      "source": "profiles.ts",
+      "source": "lib/api/profiles.ts",
       "exported_actions": [
         "loadProfiles",
         "saveProfiles",
@@ -523,7 +524,7 @@
     },
     {
       "id": "runtime-settings",
-      "source": "runtimeSettings.ts",
+      "source": "lib/api/runtimeSettings.ts",
       "exported_actions": [
         "getRuntimeSettings",
         "updateRuntimeSettings"
@@ -537,7 +538,7 @@
     },
     {
       "id": "test-compose",
-      "source": "testComposeApi.ts",
+      "source": "lib/api/testComposeApi.ts",
       "exported_actions": [
         "getTestComposeStatus",
         "getTestComposeThread",
@@ -557,7 +558,7 @@
     },
     {
       "id": "token-usage",
-      "source": "tokenUsage.ts",
+      "source": "lib/api/tokenUsage.ts",
       "exported_actions": [
         "listTokenUsageRecords",
         "getTokenUsageChart",
@@ -573,7 +574,7 @@
     },
     {
       "id": "workspaces",
-      "source": "workspacesApi.ts",
+      "source": "lib/api/workspacesApi.ts",
       "exported_actions": [
         "getWorkspaceThread",
         "ensureWorkspaceTask",
