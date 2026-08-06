@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 7 批已完成，第 8 批执行中
+状态：已确认，第 8 批已完成，第 9 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -164,7 +164,7 @@ cli/src/auto_email_sender_cli/
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 已完成（7A～7C） | 任务、草稿、发送、收信的依赖方向单向化 |
-| 8 | Desktop 进程模块化与 IPC 合同收敛 | 执行中 | main/preload 薄入口、类型单一来源 |
+| 8 | Desktop 进程模块化与 IPC 合同收敛 | 已完成 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
 批次可以继续拆成更小提交，但不得把两个互不相关的领域迁移混在同一提交中。
@@ -1371,9 +1371,10 @@ backend/app/modules/
 只承担兼容 re-export。第 8 批只处理 Electron main/preload/IPC 的进程内模块化，不改变后端、前端、
 CLI、HTTP/Agent/IPC 合同或分发资源相对路径。
 
-### 第 8 批：Desktop 进程模块化与 IPC 合同收敛（执行中）
+### 第 8 批：Desktop 进程模块化与 IPC 合同收敛（已完成）
 
 开始日期：2026-08-06
+完成日期：2026-08-06
 
 CodeGraph 与只读定界结果：
 
@@ -1448,7 +1449,9 @@ desktop/src/
 - 8B 已完成：13 个 main-process service 已按 backend、agent-support、updates、files、shell 归位；
   生产入口与测试直接使用 owner，旧根路径仅保留纯 re-export。内部 backend 类型已与跨进程 DTO
   分离，开发 CLI 构建/运行入口已同步到 agent-support owner。
-- 8C 待执行：提取 IPC 注册与 application bootstrap，增强 Desktop 分层门禁并完成跨端验收。
+- 8C 已完成：handler 装配已集中到 `main/ipc/register.ts`，生命周期与运行状态组合已迁入
+  `main/bootstrap/application.ts`；根 `main.ts` 与 `preload.ts` 均缩减为 3 行。Desktop AST 门禁现保护
+  entrypoint、contracts、preload、main-process 与兼容 shim 的依赖方向，并继续检测完整静态循环。
 
 8A 验证结果：
 
@@ -1468,3 +1471,18 @@ desktop/src/
 | Desktop 完整套件 | source Vitest；typecheck；production build | 17 files，129 tests passed；typecheck/build 通过 |
 | 构建产物 | main、preload、agent-support 开发 CLI owner | 目标文件均存在；main/preload 路径未变 |
 | Repository | 生产旧根路径审计；`git diff --check` | 通过 |
+
+8C 与第 8 批完整验收结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Desktop 合同与门禁 | entrypoint、IPC contract/registration、兼容 owner、循环依赖 | 4 files，9 tests passed |
+| Desktop 源测试 | `vitest run test/*.test.ts` | 18 files，131 tests passed |
+| Desktop 标准脚本 | `npm run test` | 36 files，262 tests passed（含 `dist/test` 重复发现） |
+| Desktop 构建 | typecheck；production build；main/preload/bootstrap/ipc 产物 | 全部通过；main/preload 原路径不变 |
+| Frontend 完整套件 | lint；Vitest；production build | lint/build 通过；115 files，899 tests passed |
+| Repository | CodeGraph；channel/旧根路径/跨进程导入审计；`git diff --check` | 通过 |
+
+停止点：Desktop 的跨进程类型、channel、preload bridge、main-process capability owner、IPC 注册和
+application bootstrap 已分离，两个 Electron 分发入口保持稳定。当前 `tsconfig.json` 仍把测试编译到
+`dist/test`，标准 Vitest 会在本地 build 后重复发现测试；该已确认问题归第 9 批测试拓扑处理。

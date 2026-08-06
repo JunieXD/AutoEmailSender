@@ -180,7 +180,8 @@ backend 进程控制与内部类型同目录；Agent runtime descriptor、安装
 自启动、托盘和窗口生命周期归 `shell`。
 
 根目录同名 service 仅作纯 re-export，生产入口与测试直接使用 owner。Electron 的 `main.ts`、
-`preload.ts` 构建入口和打包资源路径保持不变；第 8C 继续提取 bootstrap 与 IPC 注册。
+`preload.ts` 构建入口和打包资源路径保持不变。`main/ipc/register.ts` 统一装配 handler，
+`main/bootstrap/application.ts` 拥有应用生命周期与运行状态组合；两个根入口只调用各自 bootstrap。
 
 ## 跨进程边界
 

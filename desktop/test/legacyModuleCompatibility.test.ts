@@ -75,7 +75,8 @@ const legacyOwners = [
 
 describe("desktop legacy module compatibility", () => {
   it("keeps root compatibility modules as pure re-exports", () => {
-    for (const { legacyPath } of legacyOwners) {
+    const legacyPaths = [...legacyOwners.map(({ legacyPath }) => legacyPath), "types.ts"];
+    for (const legacyPath of legacyPaths) {
       const absolutePath = path.resolve("src", legacyPath);
       const sourceFile = ts.createSourceFile(
         absolutePath,
@@ -85,13 +86,14 @@ describe("desktop legacy module compatibility", () => {
         ts.ScriptKind.TS,
       );
 
-      expect(sourceFile.statements, legacyPath).toHaveLength(1);
-      const [statement] = sourceFile.statements;
-      expect(ts.isExportDeclaration(statement), legacyPath).toBe(true);
-      expect(
-        ts.isExportDeclaration(statement) && statement.moduleSpecifier !== undefined,
-        legacyPath,
-      ).toBe(true);
+      expect(sourceFile.statements.length, legacyPath).toBeGreaterThan(0);
+      for (const statement of sourceFile.statements) {
+        expect(ts.isExportDeclaration(statement), legacyPath).toBe(true);
+        expect(
+          ts.isExportDeclaration(statement) && statement.moduleSpecifier !== undefined,
+          legacyPath,
+        ).toBe(true);
+      }
     }
   });
 

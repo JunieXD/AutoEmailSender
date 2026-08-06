@@ -6,6 +6,22 @@ import { describe, expect, it } from "vitest";
 
 
 const srcRoot = path.resolve(process.cwd(), "src");
+const legacyCompatibilityFiles = new Set([
+  "agentRuntime.ts",
+  "agentSupportService.ts",
+  "backend.ts",
+  "externalUrlService.ts",
+  "fileSelection.ts",
+  "macSparkle.ts",
+  "materialOpenService.ts",
+  "prepareDevCli.ts",
+  "startup.ts",
+  "trayController.ts",
+  "types.ts",
+  "updates.ts",
+  "windowIcon.ts",
+  "windowLifecycle.ts",
+]);
 
 const listSourceFiles = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -82,16 +98,38 @@ const processBoundaryViolations = (graph: Map<string, Set<string>>): string[] =>
       if (source !== "preload.ts" && target === "preload.ts") {
         violations.push(`${source} -> ${target}: preload must remain a process boundary`);
       }
+      if (source === "main.ts" && target !== "main/bootstrap/application.ts") {
+        violations.push(`${source} -> ${target}: main entrypoint may only call the application bootstrap`);
+      }
+      if (source === "preload.ts" && target !== "preload/bridge.ts") {
+        violations.push(`${source} -> ${target}: preload may only depend on bridge contracts`);
+      }
       if (
-        source === "preload.ts" &&
-        target !== "types.ts" &&
+        source.startsWith("preload/") &&
         !target.startsWith("contracts/") &&
         !target.startsWith("preload/")
       ) {
-        violations.push(`${source} -> ${target}: preload may only depend on bridge contracts`);
+        violations.push(`${source} -> ${target}: preload modules may only depend on bridge contracts`);
       }
       if (source.startsWith("main/") && (target === "preload.ts" || target.startsWith("preload/"))) {
         violations.push(`${source} -> ${target}: main-process modules must not import preload code`);
+      }
+      if (source.startsWith("main/") && legacyCompatibilityFiles.has(target)) {
+        violations.push(`${source} -> ${target}: main-process modules must use the capability owner`);
+      }
+      if (
+        source.startsWith("contracts/") &&
+        (target === "main.ts" || target === "preload.ts" || target.startsWith("main/") || target.startsWith("preload/"))
+      ) {
+        violations.push(`${source} -> ${target}: contracts must not depend on process implementations`);
+      }
+      if (
+        target.startsWith("main/") &&
+        source !== "main.ts" &&
+        !source.startsWith("main/") &&
+        !legacyCompatibilityFiles.has(source)
+      ) {
+        violations.push(`${source} -> ${target}: only main-process code may use main-process modules`);
       }
     }
   }
@@ -131,5 +169,21 @@ describe("desktop process and import boundaries", () => {
 
   it("keeps the desktop source import graph acyclic", () => {
     expect(importCycles(dependencyGraph())).toEqual([]);
+  });
+
+  it("keeps the main entrypoint limited to bootstrap invocation", () => {
+    const source = readFileSync(path.resolve(srcRoot, "main.ts"), "utf8");
+    const sourceFile = ts.createSourceFile(
+      "main.ts",
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+
+    expect(sourceFile.statements).toHaveLength(2);
+    expect(ts.isImportDeclaration(sourceFile.statements[0])).toBe(true);
+    expect(ts.isExpressionStatement(sourceFile.statements[1])).toBe(true);
+    expect(source).toContain("bootstrapDesktopApplication();");
   });
 });
