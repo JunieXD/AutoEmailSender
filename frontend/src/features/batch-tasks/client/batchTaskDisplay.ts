@@ -45,7 +45,7 @@ export const getBatchTaskItemCancellationText = (item: BatchTaskItemDTO) => {
     return "发送窗口已过期";
   }
   if (item.cancellation_reason === "batch_stopped") {
-    return "批量任务已中止";
+    return "批量任务已终止";
   }
   return null;
 };

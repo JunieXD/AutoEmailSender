@@ -18,9 +18,9 @@ export const TasksDashboardClient: React.FC<TasksDashboardClientProps> = ({ init
   const handleResume = (id: string) => setTasks(tasks.map((t) => (t.id === id ? { ...t, status: '运行中' } : t)));
   const handleStop = async (id: string) => {
     const shouldStop = await confirm({
-      title: '确认中止这个任务？',
-      description: '中止后当前批次不会继续推进生成、排程和发送。',
-      confirmLabel: '确认中止',
+      title: '确认终止这个任务？',
+      description: '终止后当前批次不会继续推进生成、排程和发送。',
+      confirmLabel: '确认终止',
       cancelLabel: '继续保留',
       tone: 'danger',
     });

@@ -1179,7 +1179,7 @@ export const PROFESSOR_STATUS_LABELS = {
 export const BATCH_TASK_STATUS_LABELS: Record<BatchTaskRuntimeStatus, string> = {
   running: '运行中',
   paused: '已暂停',
-  stopped: '已中止',
+  stopped: '已终止',
   completed: '已完成',
   expired: '已过期',
 };

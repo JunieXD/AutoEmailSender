@@ -62,7 +62,7 @@ export const BatchTaskCard: React.FC<BatchTaskCardProps> = ({ task, onPause, onR
               <Pause className="w-4 h-4" /> 暂停
             </button>
             <button onClick={() => onStop(task.id)} className={btnDangerOutline}>
-              <Square className="w-4 h-4" /> 中止
+              <Square className="w-4 h-4" /> 终止
             </button>
             <button onClick={() => onView(task.id)} className={btnOutline}>
               详情
@@ -73,7 +73,7 @@ export const BatchTaskCard: React.FC<BatchTaskCardProps> = ({ task, onPause, onR
         {task.status === '已暂停' && (
           <>
             <button onClick={() => onStop(task.id)} className={btnDangerOutline}>
-              <Square className="w-4 h-4" /> 中止
+              <Square className="w-4 h-4" /> 终止
             </button>
             <button onClick={() => onView(task.id)} className={btnOutline}>
               详情

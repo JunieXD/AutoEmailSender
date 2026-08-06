@@ -2423,9 +2423,9 @@ export const TasksPage = () => {
         await resumeBatchTask(taskId);
       } else {
         const confirmed = await confirm({
-          title: "确认中止这个任务？",
-          description: "中止后当前批次不会继续推进生成、排程和发送。",
-          confirmLabel: "确认中止",
+          title: "确认终止这个任务？",
+          description: "终止后当前批次不会继续推进生成、排程和发送。",
+          confirmLabel: "确认终止",
           cancelLabel: "先保留",
           tone: "danger",
         });
@@ -4329,7 +4329,7 @@ export const TasksPage = () => {
                           className="ui-btn-danger"
                         >
                           <Square className="h-4 w-4" />
-                          中止
+                          终止
                         </button>
                       ) : null}
                       <button
