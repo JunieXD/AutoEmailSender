@@ -31,7 +31,7 @@ from app.services.crawler_tools import (
     crawl_page_with_browser_fallback,
     ensure_crawl_job_can_continue,
 )
-from app.services.llm_runtime import (
+from app.modules.llm.public import (
     DEFAULT_LLM_TEMPERATURE,
     LLMRuntimeAdaptation,
     resolve_base_url,

@@ -9,8 +9,8 @@ from openai import APIResponseValidationError, APIStatusError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import LLMProfile
-from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
-from app.services.llm_runtime import (
+from app.modules.llm.public import invalidate_endpoint_adaptation
+from app.modules.llm.public import (
     LLMRuntimeAdaptation,
     ensure_llm_runtime_adaptation,
     resolve_base_url,

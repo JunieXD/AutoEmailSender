@@ -15,7 +15,7 @@ from app.services.crawler_structured_output import (
     V2ProfileExtractionWirePayload,
     professor_candidate_wire_to_dict,
 )
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     DraftGenerationWireResult,
     DraftRewriteResult,
     MatchEvaluationWireResult,
@@ -29,13 +29,13 @@ class _LooseObjectResult(BaseModel):
 
 class StructuredOutputWireContractTests(unittest.TestCase):
     def test_all_known_non_agent_json_calls_use_the_shared_adaptation(self) -> None:
+        from app.modules.llm import runtime as llm_runtime
         from app.services import (
             crawl_job_runtime,
             crawler_v2_chunk_worker,
             crawler_v2_enrichment_worker,
             crawler_v2_profile_extraction,
             crawler_v2_routing,
-            llm_runtime,
         )
 
         self.assertIn(

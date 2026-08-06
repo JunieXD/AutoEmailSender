@@ -23,7 +23,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services import llm_runtime
+from app.modules.llm import runtime as llm_runtime
 from test.schema_database import create_schema_sqlite_database
 from app.services.batch_draft_generation_runtime import (
     BatchDraftGenerationCoordinator,

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.migrations import get_alembic_config, get_head_revision
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.runtime import LLMRuntimeAdaptation
 from app.modules.professors.public import PROFESSOR_TEMPLATE_COLUMNS
 from test.migrated_database import create_migrated_sqlite_database
 
@@ -96,11 +96,11 @@ class ApiEndpointTests(unittest.TestCase):
                 AsyncMock(return_value=(True, "IMAP 连接测试成功")),
             ),
             patch(
-                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+                "app.modules.llm.api.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
             ),
             patch(
-                "app.api.llm_profiles.probe_llm_profile",
+                "app.modules.llm.api.probe_llm_profile",
                 AsyncMock(
                     return_value=self._build_probe_result(
                         ok=True,
@@ -288,7 +288,7 @@ class ApiEndpointTests(unittest.TestCase):
         llm_id = self._create_llm()
 
         with patch(
-            "app.api.llm_profiles.fetch_llm_profile_models",
+            "app.modules.llm.api.fetch_llm_profile_models",
             AsyncMock(
                 return_value=self._build_model_catalog_result(
                     ok=True,
@@ -312,7 +312,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.api.llm_profiles.fetch_llm_profile_models",
+                "app.modules.llm.api.fetch_llm_profile_models",
                 AsyncMock(
                     return_value=self._build_model_catalog_result(
                         ok=True,
@@ -324,7 +324,7 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ) as fetch_mock,
             patch(
-                "app.api.llm_profiles.probe_llm_profile",
+                "app.modules.llm.api.probe_llm_profile",
                 AsyncMock(
                     return_value=self._build_probe_result(
                         ok=True,
@@ -335,7 +335,7 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ) as probe_mock,
             patch(
-                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+                "app.modules.llm.api.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
             ) as adaptation_mock,
         ):
@@ -357,7 +357,7 @@ class ApiEndpointTests(unittest.TestCase):
         payload["model_name"] = "cache-preview-model"
 
         async def record_adaptation(session, profile):
-            from app.services.thinking_adaptation import record_thinking_adaptation
+            from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
             await record_thinking_adaptation(
                 session,
@@ -369,11 +369,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+                "app.modules.llm.api.ensure_llm_runtime_adaptation",
                 side_effect=record_adaptation,
             ),
             patch(
-                "app.api.llm_profiles.probe_llm_profile",
+                "app.modules.llm.api.probe_llm_profile",
                 AsyncMock(
                     return_value=self._build_probe_result(
                         ok=True,
@@ -428,7 +428,7 @@ class ApiEndpointTests(unittest.TestCase):
                 calls.append(url)
                 return FakeResponse({"output_text": "OK"})
 
-        with patch("app.services.llm_runtime.httpx.AsyncClient", FakeAsyncClient):
+        with patch("app.modules.llm.runtime.httpx.AsyncClient", FakeAsyncClient):
             preview_response = self.client.post("/api/llm-profiles/preview/test", json=payload)
             created_response = self.client.post("/api/llm-profiles", json=payload)
             profile_id = created_response.json()["id"]
@@ -474,7 +474,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(json.loads(thinking_row[0]))
 
     def test_llm_profile_preview_test_returns_failure_when_thinking_adaptation_fails(self) -> None:
-        from app.services.llm_runtime import LLMRuntimeError
+        from app.modules.llm.runtime import LLMRuntimeError
 
         payload = self._build_llm_payload(api_base_url="https://tls.example.com/v1")
         error = LLMRuntimeError(
@@ -487,10 +487,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+                "app.modules.llm.api.ensure_llm_runtime_adaptation",
                 AsyncMock(side_effect=error),
             ),
-            patch("app.api.llm_profiles.probe_llm_profile", AsyncMock()) as probe_mock,
+            patch("app.modules.llm.api.probe_llm_profile", AsyncMock()) as probe_mock,
         ):
             response = self.client.post("/api/llm-profiles/preview/test", json=payload)
 
@@ -634,7 +634,7 @@ class ApiEndpointTests(unittest.TestCase):
                 self.assertEqual(response.json()["outreach_template_body_html"], case["body_html"])
 
     def test_llm_structured_result_validation_rejects_invalid_json(self) -> None:
-        from app.services.llm_runtime import DraftGenerationResult, LLMRuntimeError, parse_structured_result
+        from app.modules.llm.runtime import DraftGenerationResult, LLMRuntimeError, parse_structured_result
 
         with self.assertRaises(LLMRuntimeError):
             parse_structured_result('{"subject":"only-subject"}', DraftGenerationResult)
@@ -3253,7 +3253,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
 
     def test_rewrite_draft_normalizes_source_html_before_persisting(self) -> None:
-        from app.services import llm_runtime
+        from app.modules.llm import runtime as llm_runtime
 
         task_id = self._create_rewrite_ready_task()
 
@@ -5696,7 +5696,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.json(), [])
 
     def test_removed_batch_item_stays_removed_when_generation_fails(self) -> None:
-        from app.services import llm_runtime
+        from app.modules.llm import runtime as llm_runtime
 
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
@@ -6796,7 +6796,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(workspace.status_code, 200, msg=workspace.text)
         task_id = workspace.json()["current_task"]["id"]
 
-        from app.services import llm_runtime
+        from app.modules.llm import runtime as llm_runtime
 
         with patch(
             "app.services.task_runtime.llm_runtime.generate_draft_content",
@@ -10097,7 +10097,7 @@ class ApiEndpointTests(unittest.TestCase):
         set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
         self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
 
-        from app.services import llm_runtime
+        from app.modules.llm import runtime as llm_runtime
 
         with patch(
             "app.services.test_compose_runtime.llm_runtime.generate_draft_content",
@@ -10998,7 +10998,7 @@ class ApiEndpointTests(unittest.TestCase):
         *,
         match_score: int,
     ):
-        from app.services.llm_runtime import (
+        from app.modules.llm.runtime import (
             GeneratedMatchEvaluation,
             MatchEvaluationResult,
         )
@@ -11027,7 +11027,7 @@ class ApiEndpointTests(unittest.TestCase):
         stable_prefix_hash: str | None = None,
         prompt_cache_key: str | None = None,
     ):
-        from app.services.llm_runtime import (
+        from app.modules.llm.runtime import (
             ChatCompletionUsage,
             DraftGenerationResult,
             GeneratedDraftContent,
@@ -11310,7 +11310,7 @@ class ApiEndpointTests(unittest.TestCase):
 
     @staticmethod
     def _build_probe_result(*, ok: bool, message: str, resolved_base_url: str, response_preview: str):
-        from app.services.llm_runtime import LLMProbeResult
+        from app.modules.llm.runtime import LLMProbeResult
 
         return LLMProbeResult(
             ok=ok,
@@ -11328,7 +11328,7 @@ class ApiEndpointTests(unittest.TestCase):
         models: list[str],
         selected_model_available: bool,
     ):
-        from app.services.llm_runtime import LLMModelCatalogResult
+        from app.modules.llm.runtime import LLMModelCatalogResult
 
         return LLMModelCatalogResult(
             ok=ok,

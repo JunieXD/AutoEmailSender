@@ -13,7 +13,7 @@ from app.services.crawl_job_runs import extract_token_usage_from_llm_response
 from app.services.crawler_structured_output import request_crawler_structured_completion
 from app.services.crawler_tools import is_safe_public_crawl_url
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.public import LLMRuntimeAdaptation
 
 
 ENTRY_EXPANSION_MODE = "entry"

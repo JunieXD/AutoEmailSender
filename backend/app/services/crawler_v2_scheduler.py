@@ -26,7 +26,7 @@ from app.services.crawler_v2_models import CrawlerV2ClaimedWork, CrawlerV2Worker
 from app.services.crawler_v2_profile_text_cache import profile_text_cache
 from app.modules.system.public import get_runtime_settings
 from app.services.crawl_job_runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
-from app.services.llm_runtime import format_llm_runtime_error_for_user
+from app.modules.llm.public import format_llm_runtime_error_for_user
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}

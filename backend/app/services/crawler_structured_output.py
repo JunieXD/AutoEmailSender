@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, mod
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import LLMProfile
-from app.services.llm_runtime import (
+from app.modules.llm.public import (
     DEFAULT_LLM_TEMPERATURE,
     ChatCompletionResult,
     LLMRuntimeAdaptation,

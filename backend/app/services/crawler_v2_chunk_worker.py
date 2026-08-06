@@ -26,7 +26,7 @@ from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_profile_url_policy import extract_normalized_markdown_links
 from app.services.crawler_v2_url_utils import is_same_domain, normalize_url
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.llm_runtime import (
+from app.modules.llm.public import (
     LLMRuntimeAdaptation,
     ensure_llm_runtime_adaptation,
     format_llm_runtime_error_for_user,

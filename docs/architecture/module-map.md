@@ -102,6 +102,13 @@ Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在
 它通过 identities/professors 的实体与匹配范围合同读取输入，并暂时调用 campaigns/workspace 侧的
 `task_runtime.calculate_task_match` 执行 LLM 分析；该跨领域编排边留待第 7 批收敛。
 
+## llm 子切片（第 5B 批，已完成）
+
+`backend/app/modules/llm/` 拥有 profile DTO/UI adapter、模型目录与探测、匹配/草稿/重写运行时，
+以及 endpoint、thinking、structured-output 三类能力适配。其他领域统一通过 `llm.public` 调用；
+runtime 与 adaptation 的双向延迟导入属于同领域内部探测协议，第一轮迁移记录该边并保持现有时序，
+不得向 crawler、campaign 或 workspace 反向取用业务实现。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

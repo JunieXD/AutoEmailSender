@@ -266,7 +266,7 @@ from app.services.operation_logs import (
     sanitize_user_visible_error,
 )
 from app.services.mail_runtime import test_imap_connection, test_smtp_connection
-from app.services.llm_runtime import (
+from app.modules.llm.public import (
     LLMModelCatalogResult,
     LLMProbeResult,
     LLMRuntimeError,
@@ -328,7 +328,7 @@ from app.services.test_compose_runtime import (
     save_test_compose_draft,
 )
 from app.api.workspace_support import build_workspace_thread, ensure_workspace_task
-from app.services.thinking_adaptation import ThinkingAdaptationFailed
+from app.modules.llm.public import ThinkingAdaptationFailed
 from app.services.token_usage_records import (
     build_token_usage_chart,
     build_token_usage_visualization,

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.runtime import LLMRuntimeAdaptation
 
 
 class OperationLogIntegrationTests(unittest.TestCase):
@@ -166,10 +166,10 @@ class OperationLogIntegrationTests(unittest.TestCase):
         )
 
         with patch(
-            "app.api.llm_profiles.probe_llm_profile",
+            "app.modules.llm.api.probe_llm_profile",
             AsyncMock(return_value=self._build_probe_result()),
         ), patch(
-            "app.api.llm_profiles.ensure_llm_runtime_adaptation",
+            "app.modules.llm.api.ensure_llm_runtime_adaptation",
             AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         ):
             response = self.client.post(f"/api/llm-profiles/{llm_profile_id}/test")
@@ -234,7 +234,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
             async def post(self, url: str, **kwargs: object) -> FakeResponse:
                 return FakeResponse()
 
-        with patch("app.services.llm_runtime.httpx.AsyncClient", FakeAsyncClient):
+        with patch("app.modules.llm.runtime.httpx.AsyncClient", FakeAsyncClient):
             response = self.client.post(f"/api/llm-profiles/{llm_profile_id}/test")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
@@ -289,7 +289,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
         )
 
         with patch(
-            "app.api.llm_profiles.fetch_llm_profile_models",
+            "app.modules.llm.api.fetch_llm_profile_models",
             AsyncMock(return_value=self._build_model_catalog_result()),
         ):
             response = self.client.get(f"/api/llm-profiles/{llm_profile_id}/models")
@@ -520,7 +520,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def _build_probe_result():
-        from app.services.llm_runtime import LLMProbeResult
+        from app.modules.llm.runtime import LLMProbeResult
 
         return LLMProbeResult(
             ok=False,
@@ -540,7 +540,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def _build_model_catalog_result():
-        from app.services.llm_runtime import LLMModelCatalogResult
+        from app.modules.llm.runtime import LLMModelCatalogResult
 
         return LLMModelCatalogResult(
             ok=False,

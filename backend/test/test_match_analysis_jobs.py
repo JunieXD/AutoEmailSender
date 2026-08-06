@@ -26,7 +26,7 @@ from app.models import (
     OperationLog,
     Professor,
 )
-from app.services import llm_runtime
+from app.modules.llm import runtime as llm_runtime
 from app.modules.matching.public import (
     create_match_analysis_job,
     request_match_analysis_job_cancel,

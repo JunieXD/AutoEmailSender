@@ -25,7 +25,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services import llm_runtime
+from app.modules.llm import runtime as llm_runtime
 from app.services.task_runtime import (
     _create_manual_child_task,
     continue_task_manually,

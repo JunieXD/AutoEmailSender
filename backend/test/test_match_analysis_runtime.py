@@ -26,7 +26,8 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
-from app.services import llm_runtime, task_runtime
+from app.modules.llm import runtime as llm_runtime
+from app.services import task_runtime
 from app.services.match_results import (
     load_resolved_match_result,
     match_result_is_stale,

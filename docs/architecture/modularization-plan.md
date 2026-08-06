@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 5A 批已完成，第 5B 批待开始
+状态：已确认，第 5 批已完成，第 6 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -161,7 +161,7 @@ cli/src/auto_email_sender_cli/
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
-| 5 | `matching` 与 `llm` | 执行中（5A 已完成，5B 待开始） | 解除现有 LLM adaptation 循环或记录剩余边界 |
+| 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
@@ -826,3 +826,78 @@ CLI/Frontend 合同，以及 Backend 完整 unittest。
 停止点：matching 领域实现与兼容边界已归位；跨领域调用
 `task_runtime.calculate_task_match` 明确保留至第 7 批。第 5B 只迁移 LLM profile、runtime 与
 endpoint/thinking/structured-output adaptation，不混入 crawler 或 campaign 行为调整。
+
+### 第 5B 批：`llm` profile、runtime 与 adaptation（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/llm/
+├── api.py
+├── schemas.py
+├── runtime.py
+├── adaptation/
+│   ├── endpoint.py
+│   ├── thinking.py
+│   └── structured_output.py
+└── public.py
+```
+
+计划范围：
+
+- 迁移 LLM profile UI adapter/DTO、模型目录与探测、匹配/草稿/重写 runtime，以及 endpoint、thinking、
+  structured-output 三类能力探测和持久化适配。
+- 组合根、Agent API、matching/crawler/campaign/communications 等生产调用方改走 `llm.public`；
+  schema 聚合入口改指向新 DTO。
+- 六个旧 API/schema/service 路径保留纯 re-export；既有测试的运行时 patch 改指向新真实所有者，
+  并新增完整公共符号兼容与独立导入测试。
+- `runtime` 与三类 adaptation 目前互相调用：runtime 在请求阶段延迟导入 adaptation，adaptation 在探测
+  阶段延迟导入 runtime 的底层请求函数。第一轮原样收敛为同领域内部协作边，不将其伪装成跨领域依赖；
+  后续只有在不改变探测时序和 monkeypatch 合同的前提下才抽取内部 contracts。
+
+本批不变量：
+
+- `/api/llm-profiles` 路径、DTO、默认 profile、模型列表、测试连接及 operation log 语义不变。
+- endpoint fallback/relearn、thinking 禁用探测、structured-output 严格模式探测、缓存 key/TTL/锁及
+  错误分类、脱敏和重试次数不变。
+- prompt、payload、token 估算/解析、HTTP 请求参数和外部 Agent/CLI/Frontend 合同不变。
+- 不修改 LLMProfile/adaptation ORM、Alembic、crawler worker、campaign/workspace 状态机、依赖或锁文件；
+  不重写约 4000 行 runtime/adaptation 算法，不新增门禁例外。
+
+计划验证：LLM profile UI/Agent/operation log、runtime/prompt/wire contracts、三类 adaptation、crawler
+调用链、matching/campaign/workspace 相关流程、架构/兼容门禁、CLI/Frontend 合同，以及 Backend 完整 unittest。
+
+实际结果：
+
+- LLM profile DTO/UI adapter、完整 runtime 及三类 adaptation 已原样迁入 `backend/app/modules/llm/`；
+  组合根直接注册新 router，schema 聚合入口直接指向新 DTO。
+- Agent API、crawler、matching/test-compose 与其他生产调用方统一改走 `app.modules.llm.public`；六个
+  旧 API/schema/service 文件仅保留带显式 `__all__` 的纯 re-export，完整公共符号均保持对象一致。
+- runtime 与 endpoint/thinking/structured-output adaptation 的双向延迟导入已收敛为同领域内部相对导入，
+  并在模块地图中显式记录；未改写能力探测、缓存、锁、重试或请求时序。
+- 既有测试的私有锁注册表、底层请求和 patch 均已指向新真实所有者；生产代码旧路径审计为零。
+- 未修改 ORM、Alembic、HTTP/Agent/CLI/Frontend 合同、crawler/campaign 状态机、依赖或锁文件，
+  未新增架构门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、六类完整导出对象一致性与独立导入 | 12 tests passed |
+| Backend LLM 核心 | runtime/prompt/wire、endpoint/thinking/structured-output adaptation | 157 tests passed |
+| Backend 关联流程 | profile UI、Agent、operation log、crawler、matching、批量草稿与并发 | 543 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1731 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | Profile onboarding、LLM preview/test/default 与模板导入 | 2 files，33 tests passed |
+| Repository | CodeGraph 同步；生产旧路径/公共符号审计；`git diff --check` | 通过 |
+
+验证备注：CLI 完整 153 项额外发现 1 个第 4D 遗留的 community API 纯 re-export 扫描误判；它与本批
+LLM 路径无关，且 Agent/client 合同 81/81 通过。该门禁验证债在第 5B 后以独立修复处理，最终全仓
+验收不得保留失败。
+
+停止点：第 5 批 matching 与 llm 所有权均已归位；LLM 内部 adaptation 协作边已被显式记录而未向
+外扩散。第 6 批只迁移 crawler 的 DTO、UI/Agent adapter、worker/scheduler、页面策略与运行时持久化，
+不混入 campaign/workspace 状态机重构。

@@ -32,7 +32,7 @@ from app.services.crawler_page_fetch_ledger import (
     should_prefer_browser_for_fetch_domain,
 )
 from app.services.html_text import html_to_text
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.public import LLMRuntimeAdaptation
 from app.services.crawler_structured_output import CANDIDATE_WIRE_PROMPT_CONTRACT
 from app.modules.professors.public import (
     RECENT_PAPERS_MAX_ITEMS,

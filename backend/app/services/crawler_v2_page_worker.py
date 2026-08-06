@@ -38,7 +38,7 @@ from app.services.crawler_v2_retry import mark_crawler_v2_failed
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON, ensure_job_active
 from app.services.crawler_v2_url_utils import has_spa_route_fragment
-from app.services.llm_runtime import ensure_llm_runtime_adaptation, format_llm_runtime_error_for_user
+from app.modules.llm.public import ensure_llm_runtime_adaptation, format_llm_runtime_error_for_user
 
 
 MAX_PAGE_TASKS_PER_JOB = 5000

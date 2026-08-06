@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.public import LLMRuntimeAdaptation
 from app.services.crawler_structured_output import (
     CANDIDATE_WIRE_PROMPT_CONTRACT,
     EMPTY_CANDIDATE_WIRE_JSON,

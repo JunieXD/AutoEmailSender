@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.models import LLMProfile
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     DEFAULT_LLM_MAX_TOKENS,
     MatchEvaluationResult,
@@ -347,7 +347,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await generate_match_evaluation(
@@ -431,7 +431,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await generate_draft_content(
@@ -510,7 +510,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await generate_draft_content(
@@ -597,7 +597,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await generate_draft_content(
@@ -689,7 +689,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await generate_draft_content(
@@ -767,7 +767,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await generate_draft_content(
@@ -859,7 +859,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.request_chat_completion",
+            "app.modules.llm.runtime.request_chat_completion",
             return_value=ChatCompletionResult(content=raw),
         ) as request_mock:
             generated = await generate_draft_content(
@@ -920,7 +920,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.request_chat_completion",
+            "app.modules.llm.runtime.request_chat_completion",
             return_value=ChatCompletionResult(content=raw),
         ) as request_mock:
             generated = await generate_draft_content(
@@ -972,7 +972,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         raw = '{"replacements":[{"segment_id":"seg_1","text":"正文。"}]}'
 
         with patch(
-            "app.services.llm_runtime.request_chat_completion",
+            "app.modules.llm.runtime.request_chat_completion",
             return_value=ChatCompletionResult(
                 content=raw,
                 request_url="https://api.example.com/chat/completions",
@@ -1033,7 +1033,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.request_chat_completion",
+            "app.modules.llm.runtime.request_chat_completion",
             return_value=ChatCompletionResult(content=raw),
         ) as request_mock:
             generated = await generate_draft_content(
@@ -1076,7 +1076,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("计算机视觉", generated.result.body_text)
 
     def test_match_only_prompt_includes_explicit_score_rubric(self) -> None:
-        from app.services.llm_runtime import SYSTEM_MATCH_ONLY_PROMPT
+        from app.modules.llm.runtime import SYSTEM_MATCH_ONLY_PROMPT
 
         expected_fragments = [
             "研究主题匹配度：0-45",
@@ -1811,7 +1811,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_default_personalization_keeps_direction_and_scope_flexible(self) -> None:
         from app.models import Professor
-        from app.services.llm_runtime import (
+        from app.modules.llm.runtime import (
             _build_draft_rewrite_default_personalization_task,
         )
 
@@ -2009,7 +2009,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.request_chat_completion",
+            "app.modules.llm.runtime.request_chat_completion",
             return_value=ChatCompletionResult(content=raw),
         ) as request_mock:
             result = await generate_draft_content(
@@ -2090,7 +2090,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.request_structured_completion",
+            "app.modules.llm.runtime.request_structured_completion",
             new=AsyncMock(),
         ) as request_mock:
             result = await generate_draft_content(
@@ -2176,7 +2176,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不要从零重写", prompt)
 
     def test_system_draft_prompt_requires_research_direction_and_format_preservation(self) -> None:
-        from app.services.llm_runtime import SYSTEM_DRAFT_PROMPT
+        from app.modules.llm.runtime import SYSTEM_DRAFT_PROMPT
 
         self.assertIn("导师研究方向", SYSTEM_DRAFT_PROMPT)
         self.assertIn("适度表达优化", SYSTEM_DRAFT_PROMPT)
@@ -2207,7 +2207,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await _request_completion_endpoint(
@@ -2253,7 +2253,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await _request_completion_endpoint(
@@ -2299,7 +2299,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 calls: list[tuple[str, dict[str, object] | None]] = []
                 responses = [_FakeResponse(status_code=status_code, text="unsupported")]
                 with patch(
-                    "app.services.llm_runtime.httpx.AsyncClient",
+                    "app.modules.llm.runtime.httpx.AsyncClient",
                     side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
                 ):
                     with self.assertRaises(LLMEndpointProtocolError) as context:
@@ -2332,7 +2332,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         calls: list[tuple[str, dict[str, object] | None]] = []
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             with self.assertRaises(LLMEndpointProtocolError) as context:
@@ -2361,7 +2361,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         responses = [_FakeResponse(status_code=200, payload={"unexpected": "shape"})]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
         ):
             with self.assertRaises(LLMEndpointProtocolError) as context:
@@ -2387,7 +2387,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status_code=status_code):
                 responses = [_FakeResponse(status_code=status_code, text="request failed")]
                 with patch(
-                    "app.services.llm_runtime.httpx.AsyncClient",
+                    "app.modules.llm.runtime.httpx.AsyncClient",
                     side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
                 ):
                     with self.assertRaises(LLMRuntimeError) as context:
@@ -2414,7 +2414,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
@@ -2444,10 +2444,10 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.llm_runtime.httpx.AsyncClient",
+                "app.modules.llm.runtime.httpx.AsyncClient",
                 side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
             ),
-            patch("app.services.llm_runtime._append_llm_runtime_log"),
+            patch("app.modules.llm.runtime._append_llm_runtime_log"),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
                 await _request_completion_endpoint(
@@ -2475,7 +2475,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
@@ -2509,7 +2509,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
         ):
             result = await _request_completion_endpoint(
@@ -2542,7 +2542,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
@@ -2590,7 +2590,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await request_chat_completion(
@@ -2667,8 +2667,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return _CapturingAsyncClient(outcomes, calls, kwargs)
 
         with (
-            patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client),
-            patch("app.services.llm_runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+            patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client),
+            patch("app.modules.llm.runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
         ):
             result = await request_chat_completion(
                 profile,
@@ -2712,7 +2712,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         def fake_client(*args, **kwargs):
             return _CapturingAsyncClient(outcomes, calls, kwargs)
 
-        with patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client):
+        with patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client):
             result = await fetch_llm_profile_models(profile)
 
         self.assertTrue(result.ok)
@@ -2737,8 +2737,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return _CapturingAsyncClient(outcomes, calls, kwargs)
 
         with (
-            patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client),
-            patch("app.services.llm_runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+            patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client),
+            patch("app.modules.llm.runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
         ):
             result = await fetch_llm_profile_models(profile)
 
@@ -2769,8 +2769,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return _CapturingAsyncClient(outcomes, calls, kwargs)
 
         with (
-            patch("app.services.llm_runtime.httpx.AsyncClient", side_effect=fake_client),
-            patch("app.services.llm_runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+            patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client),
+            patch("app.modules.llm.runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
         ):
             result = await fetch_llm_profile_models(profile)
 
@@ -2817,7 +2817,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.llm_runtime.httpx.AsyncClient",
+                "app.modules.llm.runtime.httpx.AsyncClient",
                 side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
             ),
         ):
@@ -2849,7 +2849,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await probe_llm_profile(profile)
@@ -2880,7 +2880,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await probe_llm_profile(profile)
@@ -2907,7 +2907,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             for base_url in base_urls:
@@ -2952,7 +2952,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await probe_llm_profile(profile)
@@ -2981,7 +2981,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await probe_llm_profile(
@@ -3015,7 +3015,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await fetch_llm_profile_models(profile)
@@ -3044,7 +3044,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
         ):
             result = await fetch_llm_profile_models(profile)
@@ -3067,7 +3067,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
         ):
             result = await probe_llm_profile(profile)
@@ -3096,7 +3096,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=httpx.ConnectError("All connection attempts failed"),
         ):
             result = await probe_llm_profile(profile)
@@ -3107,7 +3107,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("网络", result.message)
 
     def test_formats_packaged_connect_error_for_crawler_errors(self) -> None:
-        from app.services.llm_runtime import format_llm_runtime_error_for_user
+        from app.modules.llm.runtime import format_llm_runtime_error_for_user
 
         formatted = format_llm_runtime_error_for_user(
             "模型请求失败: All connection attempts failed"
@@ -3133,7 +3133,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
@@ -3173,7 +3173,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
@@ -3217,7 +3217,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             await request_chat_completion(
@@ -3261,7 +3261,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             result = await request_chat_completion(
@@ -3299,7 +3299,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             await request_chat_completion(
@@ -3349,7 +3349,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_ensure_runtime_adaptation_learns_responses_and_hits_cache(self) -> None:
-        from app.services.llm_runtime import ensure_llm_runtime_adaptation
+        from app.modules.llm.runtime import ensure_llm_runtime_adaptation
 
         profile = self._profile()
         calls: list[tuple[str, dict[str, object] | None]] = []
@@ -3360,7 +3360,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -3382,7 +3382,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_ensure_runtime_adaptation_reports_chat_and_responses_urls_when_responses_probe_fails(self) -> None:
-        from app.services.llm_runtime import ensure_llm_runtime_adaptation
+        from app.modules.llm.runtime import ensure_llm_runtime_adaptation
 
         profile = self._profile()
         responses = [
@@ -3390,7 +3390,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             _FakeResponse(status_code=500, text="responses probe failed"),
         ]
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
         ):
             async with self.session_factory() as session:
@@ -3410,8 +3410,8 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_uncommitted_sessions_share_one_endpoint_probe(self) -> None:
         from app.models import Base
-        from app.services import llm_endpoint_adaptation
-        from app.services.llm_runtime import (
+        from app.modules.llm.adaptation import endpoint as llm_endpoint_adaptation
+        from app.modules.llm.runtime import (
             ChatCompletionResult,
             ensure_llm_runtime_adaptation,
         )
@@ -3466,15 +3466,15 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     with (
                         patch(
-                            "app.services.llm_runtime._request_completion_endpoint",
+                            "app.modules.llm.runtime._request_completion_endpoint",
                             side_effect=probe_endpoint,
                         ),
                         patch(
-                            "app.services.llm_endpoint_adaptation.record_endpoint_adaptation",
+                            "app.modules.llm.adaptation.endpoint.record_endpoint_adaptation",
                             side_effect=record_then_hold,
                         ),
                         patch(
-                            "app.services.thinking_adaptation.ensure_thinking_adaptation",
+                            "app.modules.llm.adaptation.thinking.ensure_thinking_adaptation",
                             new=AsyncMock(return_value=None),
                         ) as ensure_thinking,
                     ):
@@ -3504,15 +3504,15 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                     await engine.dispose()
 
     async def test_protocol_error_invalidates_once_relearns_other_endpoint_and_retries(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )
-        from app.services.llm_runtime import (
+        from app.modules.llm.runtime import (
             LLMRuntimeAdaptation,
             request_chat_completion,
         )
-        from app.services.thinking_adaptation import record_thinking_adaptation
+        from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
         profile = self._profile()
         async with self.session_factory() as session:
@@ -3538,7 +3538,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             _FakeResponse(status_code=200, payload={"output_text": "recovered"}),
         ]
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -3579,8 +3579,8 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_non_protocol_error_keeps_learned_endpoint(self) -> None:
-        from app.services.llm_endpoint_adaptation import get_cached_endpoint_kind, record_endpoint_adaptation
-        from app.services.llm_runtime import LLMRuntimeAdaptation
+        from app.modules.llm.adaptation.endpoint import get_cached_endpoint_kind, record_endpoint_adaptation
+        from app.modules.llm.runtime import LLMRuntimeAdaptation
 
         profile = self._profile()
         async with self.session_factory() as session:
@@ -3593,7 +3593,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient([_FakeResponse(500, text="upstream error")], []),
         ):
             async with self.session_factory() as session:
@@ -3614,7 +3614,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_first_adaptation_merges_probe_urls_into_final_non_protocol_error(self) -> None:
-        from app.services.thinking_adaptation import record_thinking_adaptation
+        from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
         profile = self._profile()
         async with self.session_factory() as session:
@@ -3633,7 +3633,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             _FakeResponse(status_code=500, text="final responses request failed"),
         ]
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
         ):
             async with self.session_factory() as session:
@@ -3657,7 +3657,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_protocol_retry_reports_all_attempted_urls_when_responses_probe_fails(self) -> None:
-        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
 
         profile = self._profile()
         async with self.session_factory() as session:
@@ -3675,7 +3675,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         ]
         calls: list[tuple[str, dict[str, object] | None]] = []
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -3700,8 +3700,8 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 2)
 
     async def test_protocol_retry_reports_all_attempted_urls_when_final_responses_request_fails(self) -> None:
-        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
-        from app.services.thinking_adaptation import record_thinking_adaptation
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+        from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
         profile = self._profile()
         async with self.session_factory() as session:
@@ -3727,7 +3727,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         ]
         calls: list[tuple[str, dict[str, object] | None]] = []
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -3753,8 +3753,8 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 3)
 
     async def test_protocol_retry_returns_success_when_operation_log_write_fails(self) -> None:
-        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
-        from app.services.thinking_adaptation import record_thinking_adaptation
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+        from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
         profile = self._profile()
         async with self.session_factory() as session:
@@ -3780,7 +3780,7 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         ]
         with (
             patch(
-                "app.services.llm_runtime.httpx.AsyncClient",
+                "app.modules.llm.runtime.httpx.AsyncClient",
                 side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
             ),
             patch(

@@ -62,7 +62,7 @@ class ThinkingAdaptationCacheModelTests(unittest.TestCase):
 
 class IsThinkingModeProtocolErrorTests(unittest.TestCase):
     def test_returns_true_for_deepseek_reasoning_content_error(self) -> None:
-        from app.services.thinking_adaptation import is_thinking_mode_protocol_error
+        from app.modules.llm.adaptation.thinking import is_thinking_mode_protocol_error
 
         body = (
             '{"error":{"code":"400","message":"Param Incorrect",'
@@ -72,13 +72,13 @@ class IsThinkingModeProtocolErrorTests(unittest.TestCase):
         self.assertTrue(is_thinking_mode_protocol_error(400, body))
 
     def test_returns_true_for_thinking_block_error(self) -> None:
-        from app.services.thinking_adaptation import is_thinking_mode_protocol_error
+        from app.modules.llm.adaptation.thinking import is_thinking_mode_protocol_error
 
         body = '{"error":{"message":"thinking block must be preserved"}}'
         self.assertTrue(is_thinking_mode_protocol_error(400, body))
 
     def test_returns_false_for_non_400_status(self) -> None:
-        from app.services.thinking_adaptation import is_thinking_mode_protocol_error
+        from app.modules.llm.adaptation.thinking import is_thinking_mode_protocol_error
 
         body = (
             '{"error":{"message":"The reasoning_content in the thinking '
@@ -88,20 +88,20 @@ class IsThinkingModeProtocolErrorTests(unittest.TestCase):
         self.assertFalse(is_thinking_mode_protocol_error(401, body))
 
     def test_returns_false_for_unrelated_400(self) -> None:
-        from app.services.thinking_adaptation import is_thinking_mode_protocol_error
+        from app.modules.llm.adaptation.thinking import is_thinking_mode_protocol_error
 
         body = '{"error":{"message":"Not supported model"}}'
         self.assertFalse(is_thinking_mode_protocol_error(400, body))
 
     def test_returns_false_for_empty_body(self) -> None:
-        from app.services.thinking_adaptation import is_thinking_mode_protocol_error
+        from app.modules.llm.adaptation.thinking import is_thinking_mode_protocol_error
 
         self.assertFalse(is_thinking_mode_protocol_error(400, ""))
 
 
 class ThinkingDisableCandidatesTests(unittest.TestCase):
     def test_candidates_in_priority_order(self) -> None:
-        from app.services.thinking_adaptation import THINKING_DISABLE_CANDIDATES
+        from app.modules.llm.adaptation.thinking import THINKING_DISABLE_CANDIDATES
 
         self.assertEqual(
             list(THINKING_DISABLE_CANDIDATES),
@@ -115,7 +115,7 @@ class ThinkingDisableCandidatesTests(unittest.TestCase):
         )
 
     def test_thinking_keys_include_reasoning_effort(self) -> None:
-        from app.services.thinking_adaptation import merge_extra_body
+        from app.modules.llm.adaptation.thinking import merge_extra_body
 
         merged = merge_extra_body(
             {
@@ -130,7 +130,7 @@ class ThinkingDisableCandidatesTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", merged)
 
     def test_merge_extra_body_overrides_existing_thinking_keys(self) -> None:
-        from app.services.thinking_adaptation import merge_extra_body
+        from app.modules.llm.adaptation.thinking import merge_extra_body
 
         merged = merge_extra_body(
             {
@@ -146,7 +146,7 @@ class ThinkingDisableCandidatesTests(unittest.TestCase):
         self.assertEqual(merged["messages"], [{"role": "user", "content": "ping"}])
 
     def test_merge_extra_body_handles_none(self) -> None:
-        from app.services.thinking_adaptation import merge_extra_body
+        from app.modules.llm.adaptation.thinking import merge_extra_body
 
         merged = merge_extra_body(
             {"model": "gpt-4o-mini", "thinking": {"type": "enabled"}},
@@ -170,7 +170,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
             pass
 
     async def test_miss_returns_false_with_none(self) -> None:
-        from app.services.thinking_adaptation import get_cached_extra_body
+        from app.modules.llm.adaptation.thinking import get_cached_extra_body
 
         async with self.session_factory() as session:
             hit, value = await get_cached_extra_body(
@@ -183,7 +183,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_record_then_get_returns_hit_with_value(self) -> None:
         from app.models import ThinkingAdaptationCache
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -211,7 +211,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.endpoint_kind, "chat_completions")
 
     async def test_explicit_endpoint_kind_isolated_from_default_cache(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -251,7 +251,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(responses_value, {"thinking": {"type": "disabled"}})
 
     async def test_record_with_none_persists_known_no_extra_body(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -276,7 +276,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(value)
 
     async def test_record_twice_updates_existing_row(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -310,7 +310,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_record_twice_before_commit_updates_single_pending_row(self) -> None:
         from app.models import ThinkingAdaptationCache
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -347,7 +347,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_record_uses_single_cache_row(self) -> None:
         from app.models import ThinkingAdaptationCache
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -389,7 +389,7 @@ class CacheReadWriteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row_count, 1)
 
     async def test_record_updates_loaded_row_in_same_session(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             record_thinking_adaptation,
         )
@@ -458,7 +458,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             probe_and_learn_extra_body,
         )
@@ -472,7 +472,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -497,7 +497,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
     def test_stepfun_probe_payload_uses_larger_budget_only_for_official_base_urls(self) -> None:
         from app.models import LLMProfile
-        from app.services.thinking_adaptation import _build_probe_payload
+        from app.modules.llm.adaptation.thinking import _build_probe_payload
 
         for base_url in (
             "https://api.stepfun.com/v1",
@@ -521,7 +521,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             probe_and_learn_extra_body,
         )
@@ -603,7 +603,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -630,7 +630,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             probe_and_learn_extra_body,
         )
@@ -650,7 +650,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -678,14 +678,14 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             probe_and_learn_extra_body,
         )
 
         calls: list[tuple[str, dict[str, object] | None]] = []
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(
                 [_FakeResponse(status_code=200, payload={"output_text": "7"})],
                 calls,
@@ -716,7 +716,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             probe_and_learn_extra_body,
         )
 
@@ -734,7 +734,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -751,7 +751,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             ThinkingAdaptationFailed,
             THINKING_DISABLE_CANDIDATES,
             probe_and_learn_extra_body,
@@ -767,7 +767,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -783,9 +783,9 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import patch
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
-        from app.services.llm_runtime import LLMRuntimeError
+        from app.modules.llm.runtime import LLMRuntimeError
 
-        from app.services.thinking_adaptation import probe_and_learn_extra_body
+        from app.modules.llm.adaptation.thinking import probe_and_learn_extra_body
 
         calls: list[tuple[str, dict[str, object] | None]] = []
         responses = [
@@ -796,7 +796,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -813,7 +813,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             probe_and_learn_extra_body,
         )
@@ -833,7 +833,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -882,7 +882,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             ensure_thinking_adaptation,
             record_thinking_adaptation,
         )
@@ -898,7 +898,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         calls: list[tuple[str, dict[str, object] | None]] = []
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient([], calls),
         ):
             async with self.session_factory() as session:
@@ -912,7 +912,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             ensure_thinking_adaptation,
             get_cached_extra_body,
         )
@@ -929,7 +929,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
         ]
         calls: list[tuple[str, dict[str, object] | None]] = []
         with patch(
-            "app.services.llm_runtime.httpx.AsyncClient",
+            "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
         ):
             async with self.session_factory() as session:
@@ -952,7 +952,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         from sqlalchemy.exc import IntegrityError
 
-        from app.services.thinking_adaptation import ensure_thinking_adaptation
+        from app.modules.llm.adaptation.thinking import ensure_thinking_adaptation
 
         from app.models import LLMProfile
 
@@ -974,11 +974,11 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.thinking_adaptation.get_cached_extra_body",
+                "app.modules.llm.adaptation.thinking.get_cached_extra_body",
                 side_effect=fake_get_cached_extra_body,
             ),
             patch(
-                "app.services.thinking_adaptation.probe_and_learn_extra_body",
+                "app.modules.llm.adaptation.thinking.probe_and_learn_extra_body",
                 AsyncMock(
                     side_effect=IntegrityError(
                         "insert",
@@ -994,7 +994,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, cached_value)
 
     async def test_invalidate_removes_only_current_endpoint_triple(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             invalidate_thinking_adaptation,
             record_thinking_adaptation,
@@ -1048,7 +1048,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_invalidate_matches_cached_json_null(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             invalidate_thinking_adaptation,
             record_thinking_adaptation,
@@ -1081,7 +1081,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalidate_keeps_value_refreshed_between_check_and_delete(self) -> None:
         from unittest.mock import patch
 
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             get_cached_extra_body,
             invalidate_thinking_adaptation,
             record_thinking_adaptation,
@@ -1152,7 +1152,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
 class AdaptFailureMessageTests(unittest.TestCase):
     def test_appends_hint_for_thinking_protocol_error(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             adapt_failure_message_for_thinking_error,
         )
 
@@ -1166,7 +1166,7 @@ class AdaptFailureMessageTests(unittest.TestCase):
         self.assertIn("自适应探活", adapted)
 
     def test_passes_through_unrelated_messages(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             adapt_failure_message_for_thinking_error,
         )
 
@@ -1177,7 +1177,7 @@ class AdaptFailureMessageTests(unittest.TestCase):
         )
 
     def test_passes_through_none(self) -> None:
-        from app.services.thinking_adaptation import (
+        from app.modules.llm.adaptation.thinking import (
             adapt_failure_message_for_thinking_error,
         )
 

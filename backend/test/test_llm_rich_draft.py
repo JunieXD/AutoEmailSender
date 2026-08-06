@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.models import IdentityProfile, LLMProfile, Professor
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     DraftBodyBlockWire,
     DraftBodyItemWire,
@@ -139,7 +139,7 @@ class LLMRichDraftAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.llm_runtime.request_structured_completion",
+            "app.modules.llm.runtime.request_structured_completion",
             new=AsyncMock(
                 return_value=(
                     ChatCompletionResult(content="{}"),

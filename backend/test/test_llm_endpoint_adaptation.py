@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 class ResponseEnvelopeClassificationTests(unittest.TestCase):
     def test_chat_completions_envelope_is_valid_for_chat(self) -> None:
-        from app.services.llm_endpoint_adaptation import classify_response_envelope
+        from app.modules.llm.adaptation.endpoint import classify_response_envelope
 
         result = classify_response_envelope(
             "chat_completions",
@@ -20,14 +20,14 @@ class ResponseEnvelopeClassificationTests(unittest.TestCase):
         self.assertEqual(result, "valid")
 
     def test_responses_envelope_is_other_endpoint_for_chat(self) -> None:
-        from app.services.llm_endpoint_adaptation import classify_response_envelope
+        from app.modules.llm.adaptation.endpoint import classify_response_envelope
 
         result = classify_response_envelope("chat_completions", {"output": []})
 
         self.assertEqual(result, "other_endpoint")
 
     def test_target_protocol_wins_when_envelopes_overlap(self) -> None:
-        from app.services.llm_endpoint_adaptation import classify_response_envelope
+        from app.modules.llm.adaptation.endpoint import classify_response_envelope
 
         result = classify_response_envelope(
             "responses",
@@ -40,7 +40,7 @@ class ResponseEnvelopeClassificationTests(unittest.TestCase):
         self.assertEqual(result, "valid")
 
     def test_invalid_envelope_is_invalid(self) -> None:
-        from app.services.llm_endpoint_adaptation import classify_response_envelope
+        from app.modules.llm.adaptation.endpoint import classify_response_envelope
 
         self.assertEqual(
             classify_response_envelope("chat_completions", {"choices": []}),
@@ -48,7 +48,7 @@ class ResponseEnvelopeClassificationTests(unittest.TestCase):
         )
 
     def test_chat_completions_rejects_malformed_choice_entries(self) -> None:
-        from app.services.llm_endpoint_adaptation import classify_response_envelope
+        from app.modules.llm.adaptation.endpoint import classify_response_envelope
 
         malformed_envelopes = (
             {"choices": ["not-a-choice"]},
@@ -70,7 +70,7 @@ class ResponseEnvelopeClassificationTests(unittest.TestCase):
 
 class EndpointCandidateTests(unittest.TestCase):
     def test_candidates_prefer_chat_by_default_and_fallback_from_failure(self) -> None:
-        from app.services.llm_endpoint_adaptation import endpoint_candidates
+        from app.modules.llm.adaptation.endpoint import endpoint_candidates
 
         self.assertEqual(endpoint_candidates(), ("chat_completions", "responses"))
         self.assertEqual(
@@ -104,7 +104,7 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_cache_miss_and_normalized_url_hit(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )
@@ -134,7 +134,7 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached, "responses")
 
     async def test_cache_is_scoped_by_base_url_and_model_name(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )
@@ -193,7 +193,7 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upsert_updates_one_row_and_loaded_instance(self) -> None:
         from app.models import LLMEndpointAdaptationCache
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )
@@ -234,7 +234,7 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row_count, 1)
 
     async def test_invalidate_deletes_only_the_endpoint_that_failed(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             invalidate_endpoint_adaptation,
             record_endpoint_adaptation,
@@ -273,7 +273,7 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_writes_keep_one_cache_row(self) -> None:
         from app.models import LLMEndpointAdaptationCache
-        from app.services.llm_endpoint_adaptation import record_endpoint_adaptation
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
 
         async def record(endpoint_kind: str) -> None:
             async with self.session_factory() as session:
@@ -296,17 +296,17 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
 
 class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        from app.services import llm_endpoint_adaptation
+        from app.modules.llm.adaptation import endpoint as llm_endpoint_adaptation
 
         llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
 
     async def asyncTearDown(self) -> None:
-        from app.services import llm_endpoint_adaptation
+        from app.modules.llm.adaptation import endpoint as llm_endpoint_adaptation
 
         llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
 
     async def test_same_key_is_serialized(self) -> None:
-        from app.services.llm_endpoint_adaptation import endpoint_adaptation_lock
+        from app.modules.llm.adaptation.endpoint import endpoint_adaptation_lock
 
         entered_first = asyncio.Event()
         release_first = asyncio.Event()
@@ -333,7 +333,7 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order, ["first", "second"])
 
     async def test_different_keys_can_proceed_in_parallel(self) -> None:
-        from app.services.llm_endpoint_adaptation import endpoint_adaptation_lock
+        from app.modules.llm.adaptation.endpoint import endpoint_adaptation_lock
 
         first_entered = asyncio.Event()
         second_entered = asyncio.Event()
@@ -356,7 +356,7 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(first_task, second_task)
 
     async def test_registry_entry_is_removed_after_last_waiter_leaves(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,
         )
@@ -367,7 +367,7 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(key, _endpoint_adaptation_locks)
 
     async def test_registry_entry_survives_holder_exit_until_waiter_leaves(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,
         )
@@ -412,7 +412,7 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(key, _endpoint_adaptation_locks)
 
     async def test_cancelled_waiter_decrements_users_and_cleans_up_registry(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,
         )
@@ -453,7 +453,7 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(key, _endpoint_adaptation_locks)
 
     async def test_cancelled_holder_releases_lock_and_allows_reacquisition(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,
         )

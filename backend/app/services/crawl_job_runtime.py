@@ -29,8 +29,8 @@ from app.services.crawl_job_runs import (
     mark_crawl_job_run_running,
 )
 from app.modules.system.public import get_runtime_settings
-from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
-from app.services.llm_runtime import (
+from app.modules.llm.public import invalidate_endpoint_adaptation
+from app.modules.llm.public import (
     LLMRuntimeAdaptation,
     LLMRuntimeError,
     ensure_llm_runtime_adaptation,
@@ -42,7 +42,7 @@ from app.services.crawler_structured_output import (
     professor_candidate_wire_to_dict,
     request_crawler_structured_completion,
 )
-from app.services.thinking_adaptation import (
+from app.modules.llm.public import (
     ThinkingAdaptationFailed,
     adapt_failure_message_for_thinking_error,
 )

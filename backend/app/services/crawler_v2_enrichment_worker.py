@@ -38,7 +38,7 @@ from app.services.crawler_v2_scheduler import ensure_job_active
 from app.services.crawler_v2_token_usage import record_crawler_v2_token_usage
 from app.services.crawler_v2_url_utils import is_same_domain
 from app.services.crawl_job_runs import extract_token_usage_from_llm_response
-from app.services.llm_runtime import ensure_llm_runtime_adaptation
+from app.modules.llm.public import ensure_llm_runtime_adaptation
 from app.services.crawler_structured_output import (
     CandidateEnrichmentWirePayload,
     request_crawler_structured_completion,
