@@ -20,6 +20,7 @@ import httpcore
 from bs4 import BeautifulSoup
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageTask
@@ -33,6 +34,7 @@ from .fetch_ledger import (
 )
 from app.services.html_text import html_to_text
 from app.modules.llm.public import LLMRuntimeAdaptation
+from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 from ..llm.structured_output import CANDIDATE_WIRE_PROMPT_CONTRACT
 from app.modules.professors.public import (
     RECENT_PAPERS_MAX_ITEMS,
@@ -611,6 +613,7 @@ async def _find_existing_candidate_for_payload(
     job_id: int,
     email: str | None,
     profile_url: str | None,
+    identity_key: str | None = None,
 ) -> CrawlCandidate | None:
     if email:
         row = await session.scalar(
@@ -626,6 +629,15 @@ async def _find_existing_candidate_for_payload(
             select(CrawlCandidate).where(
                 CrawlCandidate.job_id == job_id,
                 CrawlCandidate.profile_url == profile_url,
+            )
+        )
+        if row is not None:
+            return row
+    if identity_key:
+        row = await session.scalar(
+            select(CrawlCandidate).where(
+                CrawlCandidate.job_id == job_id,
+                CrawlCandidate.identity_key == identity_key,
             )
         )
         if row is not None:
@@ -650,6 +662,7 @@ class CrawlToolContext:
         default_factory=lambda: LLMRuntimeAdaptation("chat_completions", None)
     )
     entry_type: str | None = None
+    claim_fence: CrawlerV2ClaimFence | None = None
 
     def mark_http_blocked(self, url: str) -> None:
         host = (urlparse(url).hostname or "").lower()
@@ -2557,6 +2570,12 @@ async def _save_normalized_candidate_payloads(
     merged_count = 0
     skipped_duplicate_count = 0
     async with ctx.session_factory() as session:
+        if ctx.claim_fence is not None and not await fence_crawler_v2_claim(
+            session,
+            ctx.claim_fence,
+        ):
+            await session.rollback()
+            return CandidatePersistenceResult(saved=[])
         if await _is_crawl_job_stopped(session, ctx.job_id):
             return CandidatePersistenceResult(saved=[])
 
@@ -2565,12 +2584,14 @@ async def _save_normalized_candidate_payloads(
             email = payload["email"]
             normalized_email = str(email).lower() if email else None
             normalized_profile_url = payload.get("profile_url")
+            identity_key = payload.get("identity_key") or normalized_email or normalized_profile_url
 
             existing = await _find_existing_candidate_for_payload(
                 session,
                 job_id=ctx.job_id,
                 email=normalized_email,
                 profile_url=normalized_profile_url,
+                identity_key=identity_key,
             )
             if existing is not None:
                 if _merge_candidate_payload(existing, payload):
@@ -2580,7 +2601,7 @@ async def _save_normalized_candidate_payloads(
                 continue
 
             if not payload.get("identity_key"):
-                payload["identity_key"] = normalized_email or normalized_profile_url
+                payload["identity_key"] = identity_key
             if not payload.get("field_sources"):
                 payload["field_sources"] = {
                     field_name: _field_source_entry(payload, field_name)
@@ -2588,8 +2609,30 @@ async def _save_normalized_candidate_payloads(
                     if payload.get(field_name) not in (None, "", [])
                 }
 
+            if await _is_crawl_job_stopped(session, ctx.job_id):
+                await session.rollback()
+                return CandidatePersistenceResult(saved=[])
+
             row = CrawlCandidate(job_id=ctx.job_id, **payload)
-            session.add(row)
+            try:
+                async with session.begin_nested():
+                    session.add(row)
+                    await session.flush()
+            except IntegrityError:
+                existing = await _find_existing_candidate_for_payload(
+                    session,
+                    job_id=ctx.job_id,
+                    email=normalized_email,
+                    profile_url=normalized_profile_url,
+                    identity_key=identity_key,
+                )
+                if existing is None:
+                    raise
+                if _merge_candidate_payload(existing, payload):
+                    merged_count += 1
+                else:
+                    skipped_duplicate_count += 1
+                continue
             saved.append(row)
 
         if await _is_crawl_job_stopped(session, ctx.job_id):

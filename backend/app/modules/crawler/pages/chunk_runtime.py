@@ -11,6 +11,7 @@ from app.models import CrawlPageChunk, CrawlPageChunkStatus
 from .chunking import ChunkingConfig, PageChunkDraft, estimate_tokens, split_chunk_content
 from .fetch_ledger import mark_page_chunks_processed
 from .tools import CrawlToolContext, ProfessorCandidatePayload, save_candidate_batch
+from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 
 
 @dataclass(frozen=True)
@@ -53,8 +54,15 @@ async def create_chunks_for_page(
     job_id: int,
     page_id: int | None,
     drafts: list[PageChunkDraft],
+    claim_fence: CrawlerV2ClaimFence | None = None,
 ) -> int:
     async with session_factory() as session:
+        if claim_fence is not None and not await fence_crawler_v2_claim(
+            session,
+            claim_fence,
+        ):
+            await session.rollback()
+            return 0
         created = 0
         seen_chunk_ids: set[str] = set()
         for draft in drafts:
@@ -299,8 +307,15 @@ async def split_page_chunk_for_retry(
     job_id: int,
     chunk_pk: int,
     reason: str,
+    claim_fence: CrawlerV2ClaimFence | None = None,
 ) -> dict[str, Any]:
     async with session_factory() as session:
+        if claim_fence is not None and not await fence_crawler_v2_claim(
+            session,
+            claim_fence,
+        ):
+            await session.rollback()
+            return {"status": "claim_lost", "child_count": 0, "split_reason": reason}
         chunk = await session.get(CrawlPageChunk, chunk_pk)
         if chunk is None or chunk.job_id != job_id:
             return {"status": "missing_chunk", "child_count": 0, "split_reason": reason}

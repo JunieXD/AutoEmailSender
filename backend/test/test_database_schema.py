@@ -153,6 +153,99 @@ class MigrationScriptTests(unittest.TestCase):
             downgraded.close()
         self.assertEqual(values, [(1, 2), (2, 3)])
 
+    def test_crawler_recovery_migration_merges_duplicate_candidates(self) -> None:
+        database_path = Path(self.temp_dir.name) / "crawler_recovery.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260806_crawl_job_serial"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            job_id = connection.execute(
+                """
+                INSERT INTO crawl_jobs (
+                    university, school, start_url, status,
+                    progress_current, progress_total, runtime_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "示例大学",
+                    "计算机学院",
+                    "https://example.edu/faculty",
+                    "running",
+                    0,
+                    0,
+                    "v2",
+                ),
+            ).lastrowid
+            connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, email, title, identity_key
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, "张三", "ZHANG@example.edu", "教授", "legacy-a"),
+            )
+            connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, email, department, identity_key
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, "张三", "zhang@example.edu", "计算机系", "legacy-b"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(database_path)
+        try:
+            candidates = upgraded.execute(
+                """
+                SELECT email, title, department
+                FROM crawl_candidates
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchall()
+            candidate_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list('crawl_candidates')"
+                ).fetchall()
+            }
+            page_task_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info('crawl_page_tasks')"
+                ).fetchall()
+            }
+            token_usage_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info('crawl_worker_token_usages')"
+                ).fetchall()
+            }
+        finally:
+            upgraded.close()
+
+        self.assertEqual(
+            candidates,
+            [("zhang@example.edu", "教授", "计算机系")],
+        )
+        self.assertTrue(
+            {
+                "uq_crawl_candidates_job_identity_key",
+                "uq_crawl_candidates_job_email_ci",
+                "uq_crawl_candidates_job_profile_url",
+            }.issubset(candidate_indexes)
+        )
+        self.assertIn("failure_count", page_task_columns)
+        self.assertTrue({"run_id", "claim_id"}.issubset(token_usage_columns))
+
     def test_professor_history_queue_migration_upgrades_and_downgrades(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_history_queue.db"
         env = os.environ.copy()

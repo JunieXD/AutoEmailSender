@@ -32,10 +32,12 @@ from .profile_url_policy import (
     CandidateProfileUrlPolicyError,
     has_explicit_markdown_link,
 )
-from .retry import MAX_CRAWLER_V2_ATTEMPTS, mark_crawler_v2_failed
+from .retry import mark_crawler_v2_failed
 from .profile_text_cache import profile_text_cache
 from .scheduler import ensure_job_active
 from .token_usage import record_crawler_v2_token_usage
+from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from .models import CrawlerV2WorkKind
 from .url_utils import is_same_domain
 from ..jobs.runs import extract_token_usage_from_llm_response
 from app.modules.llm.public import ensure_llm_runtime_adaptation
@@ -159,8 +161,29 @@ async def run_crawler_v2_enrichment_worker_once(
                 output_tokens=usage.get("output_tokens") or 0,
                 cached_tokens=usage.get("cached_tokens") or 0,
                 raw_usage=dict(usage),
+                claim=CrawlerV2ClaimFence(
+                    kind=CrawlerV2WorkKind.ENRICHMENT,
+                    work_item_id=task_id,
+                    worker_id=worker_id,
+                ),
             )
         async with session_factory() as session:
+            if not await fence_crawler_v2_claim(
+                session,
+                CrawlerV2ClaimFence(
+                    kind=CrawlerV2WorkKind.ENRICHMENT,
+                    work_item_id=task_id,
+                    worker_id=worker_id,
+                ),
+            ):
+                await session.rollback()
+                await _discard_cached_profile_text_if_terminal(
+                    session_factory,
+                    task_id=task_id,
+                    job_id=job_id,
+                    candidate_id=candidate_id,
+                )
+                return 0
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             current_candidate = await session.get(CrawlCandidate, candidate_id)
             if task is None or current_candidate is None:
@@ -256,7 +279,7 @@ async def run_crawler_v2_enrichment_worker_once(
                     max_attempts=(
                         1
                         if isinstance(exc, CandidateProfileUrlPolicyError)
-                        else MAX_CRAWLER_V2_ATTEMPTS
+                        else None
                     ),
                 )
                 if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value:

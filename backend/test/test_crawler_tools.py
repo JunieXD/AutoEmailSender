@@ -3112,6 +3112,49 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             assert saved is not None
             self.assertEqual(saved.profile_url, profile_url)
 
+    async def test_concurrent_candidate_saves_are_deduplicated(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url="https://cs.example.edu/faculty",
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            results = await asyncio.gather(
+                save_candidate_payloads_shared(
+                    ctx,
+                    [
+                        ProfessorCandidatePayload(
+                            name="张三",
+                            email="ZHANG@example.edu",
+                            title="教授",
+                        )
+                    ],
+                ),
+                save_candidate_payloads_shared(
+                    ctx,
+                    [
+                        ProfessorCandidatePayload(
+                            name="张三",
+                            email="zhang@example.edu",
+                            department="计算机系",
+                        )
+                    ],
+                ),
+            )
+
+            self.assertEqual(await harness.count_rows(CrawlCandidate), 1)
+            self.assertEqual(sum(result["saved_count"] for result in results), 1)
+            async with harness.session_factory() as session:
+                candidate = await session.scalar(
+                    select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+                )
+            assert candidate is not None
+            self.assertEqual(candidate.email, "zhang@example.edu")
+
     async def test_save_candidate_payloads_rejects_listing_entry_start_url_without_email(self) -> None:
         listing_url = "https://example.edu/faculty"
         async with _RealCrawlerSessionHarness() as harness:
@@ -3725,6 +3768,9 @@ class _CancelOnSecondStatusSession:
     def add(self, row: object) -> None:
         self._session.add(row)
 
+    def begin_nested(self):
+        return self._session.begin_nested()
+
     async def get(self, model: object, key: object) -> object:
         if model is CrawlJob and key == self._job_id:
             await self._maybe_cancel_job()
@@ -3745,6 +3791,9 @@ class _CancelOnSecondStatusSession:
 
     async def refresh(self, row: object) -> None:
         await self._session.refresh(row)
+
+    async def flush(self) -> None:
+        await self._session.flush()
 
     async def _maybe_cancel_job(self) -> None:
         self._status_read_count += 1

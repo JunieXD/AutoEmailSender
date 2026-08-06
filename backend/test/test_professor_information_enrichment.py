@@ -239,7 +239,11 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             llm_profile_id=self.llm_profile_id,
             trigger_mode="single",
         )
-        task_id = await self._claim_only_task(job_id, attempt_count=4)
+        task_id = await self._claim_only_task(
+            job_id,
+            attempt_count=4,
+            failure_count=3,
+        )
 
         with patch(
             "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
@@ -343,7 +347,13 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
             return professor.id
 
-    async def _claim_only_task(self, job_id: int, *, attempt_count: int = 1) -> int:
+    async def _claim_only_task(
+        self,
+        job_id: int,
+        *,
+        attempt_count: int = 1,
+        failure_count: int = 0,
+    ) -> int:
         async with self.session_factory() as session:
             task = await session.scalar(
                 select(CrawlCandidateEnrichmentTask).where(
@@ -357,6 +367,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             task.status = CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
             task.worker_id = "test-worker"
             task.attempt_count = attempt_count
+            task.failure_count = failure_count
             await session.commit()
             return task.id
 

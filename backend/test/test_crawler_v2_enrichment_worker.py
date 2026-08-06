@@ -620,6 +620,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             assert task is not None
             task.attempt_count = 4
+            task.failure_count = 3
             await session.commit()
 
         with (

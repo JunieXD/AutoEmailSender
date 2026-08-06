@@ -40,6 +40,7 @@ from .runs import (
     get_or_create_current_crawl_job_run,
     mark_crawl_job_run_finished,
     mark_crawl_job_run_paused,
+    mark_crawl_job_run_queued,
     mark_crawl_job_run_running,
 )
 from app.modules.system.public import get_runtime_settings
@@ -515,11 +516,7 @@ async def _recover_interrupted_crawl_job(
             await _expire_interrupted_v2_work_leases(session, job_id=job.id, now=now)
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
-            if job.current_run_id is not None:
-                run = await session.get(CrawlJobRun, job.current_run_id)
-                if run is not None and run.status == CrawlJobStatus.RUNNING.value:
-                    run.status = CrawlJobStatus.QUEUED.value
-                    run.updated_at = now
+            await mark_crawl_job_run_queued(session, job, now=now)
             await session.commit()
             return
 
@@ -529,11 +526,7 @@ async def _recover_interrupted_crawl_job(
                 await _expire_interrupted_v2_work_leases(session, job_id=job.id, now=now)
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
-            if job.current_run_id is not None:
-                run = await session.get(CrawlJobRun, job.current_run_id)
-                if run is not None and run.status == CrawlJobStatus.RUNNING.value:
-                    run.status = CrawlJobStatus.QUEUED.value
-                    run.updated_at = now
+            await mark_crawl_job_run_queued(session, job, now=now)
             await session.commit()
             return
 

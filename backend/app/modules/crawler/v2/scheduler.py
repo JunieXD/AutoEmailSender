@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
+import logging
 import uuid
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -27,13 +30,19 @@ from app.models import (
 from .models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
 from .profile_text_cache import profile_text_cache
 from app.modules.system.public import get_runtime_settings
-from ..jobs.runs import mark_crawl_job_run_finished, mark_crawl_job_run_running
+from ..jobs.runs import (
+    mark_crawl_job_run_finished,
+    mark_crawl_job_run_queued,
+    mark_crawl_job_run_running,
+)
 from app.modules.llm.public import format_llm_runtime_error_for_user
+from .lease import CrawlerV2ClaimFence, renew_crawler_v2_claim
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
 ZERO_CANDIDATE_BROWSER_RETRY_REASON = "zero_candidates_force_browser"
 _CLAIM_LOCK = asyncio.Lock()
+logger = logging.getLogger(__name__)
 
 
 async def ensure_job_active(session: AsyncSession, job_id: int) -> bool:
@@ -129,8 +138,16 @@ async def _eligible_job_ids(
             .order_by(CrawlJob.updated_at.asc(), CrawlJob.created_at.asc(), CrawlJob.id.asc())
         )
     )
-    admitted_jobs = list(running_jobs)
-    available_slots = max(0, job_concurrency - len(running_jobs))
+    admitted_jobs = list(running_jobs[:job_concurrency])
+    overflow_jobs = running_jobs[job_concurrency:]
+    for job in overflow_jobs:
+        demoted_at = utc_now()
+        await _expire_job_work_leases(session, job_id=job.id, now=demoted_at)
+        job.status = CrawlJobStatus.QUEUED.value
+        job.updated_at = demoted_at
+        await mark_crawl_job_run_queued(session, job, now=demoted_at)
+
+    available_slots = max(0, job_concurrency - len(admitted_jobs))
     if available_slots > 0:
         admitted_jobs.extend(
             list(
@@ -154,6 +171,30 @@ async def _eligible_job_ids(
         )
     )
     return [job.id for job in admitted_jobs]
+
+
+async def _expire_job_work_leases(
+    session: AsyncSession,
+    *,
+    job_id: int,
+    now: datetime,
+) -> None:
+    for model, processing_status in (
+        (CrawlPageTask, CrawlPageTaskStatus.PROCESSING.value),
+        (CrawlPageChunk, CrawlPageChunkStatus.PROCESSING.value),
+        (
+            CrawlCandidateEnrichmentTask,
+            CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+        ),
+    ):
+        await session.execute(
+            update(model)
+            .where(
+                model.job_id == job_id,
+                model.status == processing_status,
+            )
+            .values(lease_expires_at=now)
+        )
 
 
 async def run_crawler_v2_scheduler_once(
@@ -399,7 +440,11 @@ async def _mark_job_running_for_claimed_work(session: AsyncSession, *, job_id: i
 def _page_task_claimable(now: datetime):
     return or_(
         CrawlPageTask.status == CrawlPageTaskStatus.PENDING.value,
-        (CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value) & (CrawlPageTask.lease_expires_at <= now),
+        (CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value)
+        & (
+            CrawlPageTask.lease_expires_at.is_(None)
+            | (CrawlPageTask.lease_expires_at <= now)
+        ),
         (CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value) & ((CrawlPageTask.lease_expires_at.is_(None)) | (CrawlPageTask.lease_expires_at <= now)),
     )
 
@@ -415,7 +460,11 @@ def _page_task_unfinished(now: datetime):
 def _chunk_claimable(now: datetime):
     return or_(
         CrawlPageChunk.status == CrawlPageChunkStatus.PENDING.value,
-        (CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value) & (CrawlPageChunk.lease_expires_at <= now),
+        (CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value)
+        & (
+            CrawlPageChunk.lease_expires_at.is_(None)
+            | (CrawlPageChunk.lease_expires_at <= now)
+        ),
         (CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value) & ((CrawlPageChunk.lease_expires_at.is_(None)) | (CrawlPageChunk.lease_expires_at <= now)),
     )
 
@@ -431,7 +480,11 @@ def _chunk_unfinished(now: datetime):
 def _enrichment_task_claimable(now: datetime):
     return or_(
         CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-        (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value) & (CrawlCandidateEnrichmentTask.lease_expires_at <= now),
+        (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value)
+        & (
+            CrawlCandidateEnrichmentTask.lease_expires_at.is_(None)
+            | (CrawlCandidateEnrichmentTask.lease_expires_at <= now)
+        ),
         (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value) & ((CrawlCandidateEnrichmentTask.lease_expires_at.is_(None)) | (CrawlCandidateEnrichmentTask.lease_expires_at <= now)),
     )
 
@@ -690,8 +743,13 @@ async def run_crawler_v2_once(
     worker_id: str = "crawler-v2-worker",
     config: CrawlerV2WorkerConfig | None = None,
 ) -> int:
+    resolved_config = config or CrawlerV2WorkerConfig()
     claim_owner_id = f"{worker_id[:80]}:{uuid.uuid4().hex}"
-    claimed = await claim_next_v2_work(session_factory, worker_id=claim_owner_id, config=config)
+    claimed = await claim_next_v2_work(
+        session_factory,
+        worker_id=claim_owner_id,
+        config=config,
+    )
     if claimed.kind is CrawlerV2WorkKind.IDLE:
         async with session_factory() as session:
             await finalize_idle_jobs(session)
@@ -699,16 +757,116 @@ async def run_crawler_v2_once(
         return 0
     if claimed.work_item_id is None:
         return 0
+    work: Awaitable[int]
     if claimed.kind is CrawlerV2WorkKind.PAGE:
         from .page_worker import run_crawler_v2_page_worker_once
 
-        return await run_crawler_v2_page_worker_once(session_factory, task_id=claimed.work_item_id, worker_id=claim_owner_id)
-    if claimed.kind is CrawlerV2WorkKind.CHUNK:
+        work = run_crawler_v2_page_worker_once(
+            session_factory,
+            task_id=claimed.work_item_id,
+            worker_id=claim_owner_id,
+        )
+    elif claimed.kind is CrawlerV2WorkKind.CHUNK:
         from .chunk_worker import run_crawler_v2_chunk_worker_once
 
-        return await run_crawler_v2_chunk_worker_once(session_factory, chunk_id=claimed.work_item_id, worker_id=claim_owner_id)
-    if claimed.kind is CrawlerV2WorkKind.ENRICHMENT:
+        work = run_crawler_v2_chunk_worker_once(
+            session_factory,
+            chunk_id=claimed.work_item_id,
+            worker_id=claim_owner_id,
+        )
+    elif claimed.kind is CrawlerV2WorkKind.ENRICHMENT:
         from .enrichment_worker import run_crawler_v2_enrichment_worker_once
 
-        return await run_crawler_v2_enrichment_worker_once(session_factory, task_id=claimed.work_item_id, worker_id=claim_owner_id)
-    return 0
+        work = run_crawler_v2_enrichment_worker_once(
+            session_factory,
+            task_id=claimed.work_item_id,
+            worker_id=claim_owner_id,
+        )
+    else:
+        return 0
+
+    return await _run_claimed_work_with_heartbeat(
+        session_factory,
+        claim=CrawlerV2ClaimFence(
+            kind=claimed.kind,
+            work_item_id=claimed.work_item_id,
+            worker_id=claim_owner_id,
+        ),
+        lease_seconds=resolved_config.lease_seconds,
+        work=work,
+    )
+
+
+async def _run_claimed_work_with_heartbeat(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    claim: CrawlerV2ClaimFence,
+    lease_seconds: int,
+    work: Awaitable[int],
+) -> int:
+    work_task = asyncio.create_task(work)
+    heartbeat_task = asyncio.create_task(
+        _run_claim_heartbeat(
+            session_factory,
+            claim=claim,
+            lease_seconds=lease_seconds,
+        )
+    )
+    try:
+        done, _ = await asyncio.wait(
+            {work_task, heartbeat_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        work_task.cancel()
+        heartbeat_task.cancel()
+        await asyncio.gather(work_task, heartbeat_task, return_exceptions=True)
+        raise
+    if work_task in done:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+        return await work_task
+
+    claim_is_current = False
+    try:
+        claim_is_current = await heartbeat_task
+    except Exception:
+        logger.exception(
+            "抓取工作项租约心跳异常，停止旧 claim：kind=%s item=%s",
+            claim.kind.value,
+            claim.work_item_id,
+        )
+    if not claim_is_current:
+        work_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await work_task
+        return 0
+    return await work_task
+
+
+async def _run_claim_heartbeat(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    claim: CrawlerV2ClaimFence,
+    lease_seconds: int,
+) -> bool:
+    interval_seconds = max(0.1, min(60.0, max(1, lease_seconds) / 3))
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            if not await renew_crawler_v2_claim(
+                session_factory,
+                claim,
+                lease_seconds=lease_seconds,
+            ):
+                return False
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "抓取工作项租约续租失败，将在短间隔后重试：kind=%s item=%s",
+                claim.kind.value,
+                claim.work_item_id,
+            )
+            await asyncio.sleep(min(5.0, interval_seconds))

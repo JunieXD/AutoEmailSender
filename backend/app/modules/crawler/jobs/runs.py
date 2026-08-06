@@ -100,7 +100,8 @@ async def mark_crawl_job_run_running(
     run.status = CrawlJobStatus.RUNNING.value
     if run.started_at is None:
         run.started_at = resolved_now
-    run.active_started_at = resolved_now
+    if run.active_started_at is None:
+        run.active_started_at = resolved_now
     run.updated_at = resolved_now
     return run
 
@@ -128,6 +129,8 @@ async def mark_crawl_job_run_queued(
 ) -> CrawlJobRun:
     resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = await get_or_create_current_crawl_job_run(session, job, now=resolved_now)
+    if run.active_started_at is not None:
+        _settle_active_segment(run, now=resolved_now)
     run.status = CrawlJobStatus.QUEUED.value
     run.updated_at = resolved_now
     return run

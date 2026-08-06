@@ -318,6 +318,32 @@ class CrawlPageFetchState(Base):
 
 class CrawlCandidate(Base):
     __tablename__ = "crawl_candidates"
+    __table_args__ = (
+        Index(
+            "uq_crawl_candidates_job_identity_key",
+            "job_id",
+            "identity_key",
+            unique=True,
+            sqlite_where=text("identity_key IS NOT NULL AND trim(identity_key) <> ''"),
+            postgresql_where=text("identity_key IS NOT NULL AND trim(identity_key) <> ''"),
+        ),
+        Index(
+            "uq_crawl_candidates_job_email_ci",
+            "job_id",
+            "email",
+            unique=True,
+            sqlite_where=text("email IS NOT NULL AND trim(email) <> ''"),
+            postgresql_where=text("email IS NOT NULL AND trim(email) <> ''"),
+        ),
+        Index(
+            "uq_crawl_candidates_job_profile_url",
+            "job_id",
+            "profile_url",
+            unique=True,
+            sqlite_where=text("profile_url IS NOT NULL AND trim(profile_url) <> ''"),
+            postgresql_where=text("profile_url IS NOT NULL AND trim(profile_url) <> ''"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
@@ -394,6 +420,7 @@ class CrawlPageTask(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     fetch_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     direct_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -436,6 +463,7 @@ class CrawlCandidateEnrichmentTask(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     enriched_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -450,11 +478,26 @@ class CrawlCandidateEnrichmentTask(Base):
 
 class CrawlWorkerTokenUsage(Base):
     __tablename__ = "crawl_worker_token_usages"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "worker_kind",
+            "work_item_id",
+            "claim_id",
+            name="uq_crawl_worker_token_usage_claim",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("crawl_job_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     worker_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     work_item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    claim_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
