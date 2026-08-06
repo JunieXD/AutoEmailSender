@@ -8995,6 +8995,169 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400, msg=response.text)
         self.assertIn("已成功触达", response.json()["detail"])
 
+    def test_batch_resend_normalizes_html_requires_review_and_uses_new_materials(self) -> None:
+        identity_response = self.client.post(
+            "/api/identities",
+            json=self._build_identity_payload(with_imap=False),
+        )
+        self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
+        identity_id = identity_response.json()["id"]
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="safe-resend@example.edu")
+        old_primary_id = self._upload_material(
+            identity_id,
+            filename="old-resume.txt",
+            content=b"old resume",
+            material_type="resume",
+        )
+        new_primary_id = self._upload_material(
+            identity_id,
+            filename="new-resume.txt",
+            content=b"new resume",
+            material_type="resume",
+        )
+        old_attachment_id = self._upload_material(
+            identity_id,
+            filename="old-paper.pdf",
+            content=b"old paper",
+            material_type="publication",
+        )
+        new_attachment_id = self._upload_material(
+            identity_id,
+            filename="new-paper.pdf",
+            content=b"new paper",
+            material_type="publication",
+        )
+        source_batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=old_primary_id,
+            selected_material_ids=[old_attachment_id],
+        )
+        source_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="canceled",
+            primary_material_id=old_primary_id,
+            selected_material_ids=[old_attachment_id],
+            batch_task_id=source_batch_task_id,
+            source="batch",
+            approved_subject="历史 HTML 主题",
+            approved_body_html="<p>历史 HTML 正文</p>",
+            outreach_generation_mode="llm",
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET cancellation_reason = 'schedule_expired',
+                    scheduled_at = datetime('now', '-1 day')
+                WHERE id = ?
+                """,
+                (source_task_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        context = self.client.get(
+            f"/api/batch-tasks/{source_batch_task_id}/resend-context",
+        )
+        self.assertEqual(context.status_code, 200, msg=context.text)
+        self.assertEqual(context.json()["items"][0]["content_reuse_kind"], "approved")
+        self.assertTrue(context.json()["items"][0]["content_requires_review"])
+
+        response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "安全复用历史 HTML",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": new_primary_id,
+                "selected_material_ids": [new_attachment_id],
+                "outreach_template_id": None,
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": None,
+                "outreach_template_body_text": None,
+                "outreach_template_body_html": None,
+                "resend_source_batch_task_id": source_batch_task_id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            row = connection.execute(
+                """
+                SELECT status, primary_material_id, selected_material_ids,
+                       approved_subject, approved_body_text, approved_body_html
+                FROM email_tasks
+                WHERE batch_task_id = ?
+                """,
+                (response.json()["id"],),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row[0], "review_required")
+        self.assertEqual(row[1], new_primary_id)
+        self.assertEqual(json.loads(row[2]), [new_attachment_id])
+        self.assertEqual(row[3], "历史 HTML 主题")
+        self.assertEqual(row[4], "历史 HTML 正文")
+        self.assertEqual(row[5], "<p>历史 HTML 正文</p>")
+
+    def test_batch_resend_requires_fallback_template_when_content_must_regenerate(self) -> None:
+        identity_response = self.client.post(
+            "/api/identities",
+            json=self._build_identity_payload(with_imap=False),
+        )
+        self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
+        identity_id = identity_response.json()["id"]
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="regenerate-resend@example.edu")
+        source_batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="expired",
+            primary_material_id=None,
+        )
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="draft_failed",
+            primary_material_id=None,
+            batch_task_id=source_batch_task_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+
+        response = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "name": "仍需重新生成",
+                "professor_ids": [professor_id],
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "selected_material_ids": None,
+                "outreach_template_id": None,
+                "outreach_generation_mode": "llm",
+                "outreach_template_subject": None,
+                "outreach_template_body_text": None,
+                "outreach_template_body_html": None,
+                "resend_source_batch_task_id": source_batch_task_id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, msg=response.text)
+        self.assertIn("主题和纯文本正文", response.json()["detail"])
+
     def test_batch_task_resend_context_filters_deleted_material_defaults(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()

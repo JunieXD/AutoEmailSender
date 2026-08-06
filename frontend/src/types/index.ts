@@ -635,6 +635,7 @@ export interface BatchTaskResendPrefillContextDTO {
   sourceTaskName: string;
   identityId: number;
   professorIds: number[];
+  requiresRegeneration: boolean;
   defaults: BatchTaskResendDefaultsDTO;
   warnings: string[];
 }

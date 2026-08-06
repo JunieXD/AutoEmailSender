@@ -432,6 +432,7 @@ describe("CreateTaskPage", () => {
       sourceTaskName: "过期任务",
       identityId: selectedIdentity.id,
       professorIds: [selectedProfessor.id],
+      requiresRegeneration: false,
       defaults: {
         identity_id: selectedIdentity.id,
         outreach_generation_mode: "template",
@@ -495,6 +496,7 @@ describe("CreateTaskPage", () => {
         sourceTaskName: "过期任务",
         identityId: selectedIdentity.id,
         professorIds: [selectedProfessor.id],
+        requiresRegeneration: false,
         defaults: {
           identity_id: selectedIdentity.id,
           outreach_generation_mode: "llm",
@@ -523,6 +525,45 @@ describe("CreateTaskPage", () => {
       selectedIdentity.current_primary_material_id = previousPrimaryMaterialId;
       selectedIdentity.outreach_generation_mode = previousGenerationMode;
     }
+  });
+
+  it("allows an all-reusable AI resend without a template or primary material", async () => {
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "全部复用任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      requiresRegeneration: false,
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_generation_mode: "llm",
+        outreach_template_subject: null,
+        outreach_template_body_text: null,
+        outreach_template_body_html: null,
+        primary_material_id: null,
+        selected_material_ids: [],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(notifyMock.notifyFormErrors).not.toHaveBeenCalled();
+    expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      outreach_generation_mode: "llm",
+      outreach_template_subject: null,
+      outreach_template_body_text: null,
+      primary_material_id: null,
+      resend_source_batch_task_id: 12,
+    }));
   });
   it("explains that scheduled AI rewritten drafts still need manual review", () => {
     expect(buildBatchCreateConfirmDescription("llm", "scheduled")).toContain(

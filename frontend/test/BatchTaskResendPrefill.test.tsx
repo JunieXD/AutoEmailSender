@@ -11,6 +11,7 @@ const context = {
   sourceTaskName: '原任务',
   identityId: 3,
   professorIds: [88, 89],
+  requiresRegeneration: false,
   defaults: {
     identity_id: 3,
     outreach_generation_mode: 'template' as const,
@@ -44,6 +45,16 @@ describe('batchTaskResendPrefill', () => {
       ...context,
       identityId: 4,
     });
+    expect(readBatchResendPrefillContext()).toBeNull();
+  });
+
+  it('clears context without regeneration metadata', () => {
+    const invalidContext = { ...context } as Partial<typeof context>;
+    delete invalidContext.requiresRegeneration;
+    window.sessionStorage.setItem(
+      BATCH_RESEND_PREFILL_CONTEXT_KEY,
+      JSON.stringify(invalidContext),
+    );
     expect(readBatchResendPrefillContext()).toBeNull();
   });
 

@@ -35,10 +35,13 @@ export const BatchTaskResendDialog = ({
   const generationModeLabel = getOutreachGenerationModeLabel(
     context?.defaults.outreach_generation_mode,
   );
-  const reusableCount = selectableItems.filter(
+  const selectedItems = selectableItems.filter(
+    (item) => item.professor_id !== null && selectedProfessorIds.includes(item.professor_id),
+  );
+  const reusableCount = selectedItems.filter(
     (item) => item.content_reuse_kind !== 'regenerate',
   ).length;
-  const regenerateCount = selectableItems.length - reusableCount;
+  const regenerateCount = selectedItems.length - reusableCount;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/35 p-4">

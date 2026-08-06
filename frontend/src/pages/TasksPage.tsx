@@ -3835,11 +3835,18 @@ export const TasksPage = () => {
     }
     setSelectedIdentityId(resendContext.task.identity_id);
     writeSelectedProfessorIdsForBatchTask(selectedResendProfessorIds);
+    const requiresRegeneration = resendContext.items.some(
+      (item) =>
+        item.professor_id !== null &&
+        selectedResendProfessorIds.includes(item.professor_id) &&
+        item.content_reuse_kind === "regenerate",
+    );
     writeBatchResendPrefillContext({
       sourceTaskId: resendContext.task.id,
       sourceTaskName: resendContext.task.name,
       identityId: resendContext.task.identity_id,
       professorIds: selectedResendProfessorIds,
+      requiresRegeneration,
       defaults: resendContext.defaults,
       warnings: resendContext.warnings,
     });

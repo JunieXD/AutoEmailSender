@@ -128,6 +128,7 @@ _RESEND_EXPORTS = {
     "classify_resend_content",
     "decide_resend_item",
     "filter_available_material_defaults",
+    "normalize_resend_body",
     "reused_content_requires_review",
 }
 _DRAFT_RUNTIME_EXPORTS = {

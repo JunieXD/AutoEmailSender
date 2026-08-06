@@ -22,6 +22,7 @@ from .schemas import (
     BatchTaskResendSummaryRead,
 )
 from app.modules.identities.public import material_can_be_primary
+from app.services.rich_text import normalize_email_html
 
 SUCCESS_STATUSES = {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
 EXCLUDED_RUNNING_STATUSES = {EmailTaskStatus.SENDING.value}
@@ -94,7 +95,23 @@ def _has_sendable_content(
     body_text: str | None,
     body_html: str | None,
 ) -> bool:
-    return bool((subject or "").strip() and ((body_text or "").strip() or (body_html or "").strip()))
+    normalized_body_text, _ = normalize_resend_body(body_text, body_html)
+    return bool((subject or "").strip() and (normalized_body_text or "").strip())
+
+
+def normalize_resend_body(
+    body_text: str | None,
+    body_html: str | None,
+) -> tuple[str | None, str | None]:
+    if (body_text or "").strip():
+        return body_text, body_html
+    if not (body_html or "").strip():
+        return body_text, body_html
+    try:
+        rendered = normalize_email_html(body_html or "")
+    except ValueError:
+        return body_text, body_html
+    return rendered.text, rendered.html
 
 
 def reused_content_requires_review(email_task: EmailTask) -> bool:
@@ -106,10 +123,7 @@ def reused_content_requires_review(email_task: EmailTask) -> bool:
         EmailTaskStatus.SEND_FAILED.value,
     }:
         return False
-    return not (
-        email_task.status == EmailTaskStatus.CANCELED.value
-        and email_task.scheduled_at is not None
-    )
+    return True
 
 
 def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
@@ -186,7 +200,6 @@ async def build_batch_task_resend_context(
         primary_material_id=task.primary_material_id,
         selected_material_ids=task.selected_material_ids,
     )
-    available_material_ids = {material.id for material in task.identity.materials}
     sorted_email_tasks = sorted(task.email_tasks, key=lambda item: (item.created_at, item.id))
     snapshot_task = sorted_email_tasks[0] if sorted_email_tasks else None
     has_batch_outreach_snapshot = task.outreach_template_snapshot_version is not None
@@ -261,16 +274,6 @@ async def build_batch_task_resend_context(
                 updated_at=email_task.updated_at,
             ),
         )
-
-        if decision.selectable:
-            item_material_ids = set(email_task.selected_material_ids or [])
-            if item_material_ids - available_material_ids:
-                warnings.append("部分邮件单独选择的原附件已不存在，重新发起时将自动移除")
-            if (
-                email_task.primary_material_id is not None
-                and email_task.primary_material_id not in available_material_ids
-            ):
-                warnings.append("部分邮件原 AI 写信参考材料已不存在；已有草稿仍会保留")
 
     return BatchTaskResendContextRead(
         task=BatchTaskResendContextTaskRead(

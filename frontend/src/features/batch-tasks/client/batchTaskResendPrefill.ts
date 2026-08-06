@@ -22,6 +22,7 @@ export const readBatchResendPrefillContext = (): BatchTaskResendPrefillContextDT
       typeof parsed.sourceTaskName !== 'string' ||
       !Number.isFinite(parsed.identityId) ||
       !isNumberArray(parsed.professorIds) ||
+      typeof parsed.requiresRegeneration !== 'boolean' ||
       !parsed.defaults ||
       parsed.defaults.identity_id !== parsed.identityId
     ) {

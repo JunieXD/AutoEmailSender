@@ -1447,6 +1447,7 @@ describe("TasksPage batch draft review", () => {
   });
 
   it("shows and confirms the original template when relaunching failed items", async () => {
+    window.sessionStorage.clear();
     const task = buildBatchTask({
       name: "需要重新发起的任务",
       status: "completed",
@@ -1541,6 +1542,13 @@ describe("TasksPage batch draft review", () => {
         description: expect.stringContaining("写信方式：AI 辅助写信"),
       }),
     );
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/create-task"));
+    expect(
+      JSON.parse(window.sessionStorage.getItem("batch_resend_prefill_context") ?? "{}"),
+    ).toEqual(expect.objectContaining({
+      professorIds: [21],
+      requiresRegeneration: false,
+    }));
   });
 
   it("cancels and restores a scheduled professor on the original card", async () => {

@@ -118,6 +118,8 @@ export const CreateTaskPage = () => {
   const targetMentorsStartRef = useRef<HTMLElement | null>(null);
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
+  const requiresDraftGeneration =
+    !isResendPrefillActive || resendPrefillContext?.requiresRegeneration !== false;
   const professorsRequestKey =
     selectedIdentityId && selectedProfessorIds.length > 0
       ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
@@ -424,19 +426,19 @@ export const CreateTaskPage = () => {
     ) {
       validationErrors.push('当前定时发送窗口已全部过期，请重新选择发送日期或结束时间');
     }
-    if (taskMode === 'template' && !templateSubject.trim()) {
+    if (requiresDraftGeneration && taskMode === 'template' && !templateSubject.trim()) {
       validationErrors.push('直接套用模板需要填写模板主题');
     }
-    if (taskMode === 'template' && !templateBodyText.trim()) {
+    if (requiresDraftGeneration && taskMode === 'template' && !templateBodyText.trim()) {
       validationErrors.push('直接套用模板需要填写模板纯文本正文');
     }
-    if (taskMode === 'llm' && !subject.trim()) {
+    if (requiresDraftGeneration && taskMode === 'llm' && !subject.trim()) {
       validationErrors.push('AI 辅助写信需要填写套磁信模板主题');
     }
-    if (taskMode === 'llm' && !body.trim()) {
+    if (requiresDraftGeneration && taskMode === 'llm' && !body.trim()) {
       validationErrors.push('AI 辅助写信需要填写套磁信模板正文');
     }
-    if (taskMode === 'llm' && primaryMaterialId === null) {
+    if (requiresDraftGeneration && taskMode === 'llm' && primaryMaterialId === null) {
       validationErrors.push('AI 写信参考材料为必选项');
     }
 

@@ -52,6 +52,7 @@ from app.modules.campaigns.public import (
     build_batch_task_resend_context,
     classify_resend_content,
     decide_resend_item,
+    normalize_resend_body,
     reused_content_requires_review,
 )
 from app.modules.campaigns.public import (
@@ -212,6 +213,10 @@ async def create_batch_task(
             resend_source_items[source_item.professor_id] = source_item
         if set(resend_source_items) != requested_professor_ids:
             raise HTTPException(status_code=400, detail="部分导师不属于原任务的可重新发起项")
+    resend_requires_regeneration = not resend_source_items or any(
+        classify_resend_content(item) == "regenerate"
+        for item in resend_source_items.values()
+    )
 
     scheduled_at_values: list[datetime | None] = [None] * len(professors)
     if payload.schedule_type == "scheduled":
@@ -245,7 +250,7 @@ async def create_batch_task(
 
     selected_template = None
     if payload.outreach_template_id is not None:
-        allow_archived_provenance = bool(
+        allow_archived_provenance = not resend_requires_regeneration or bool(
             {
                 "outreach_template_subject",
                 "outreach_template_body_text",
@@ -300,7 +305,7 @@ async def create_batch_task(
         outreach_config.subject_template,
         outreach_config.body_text_template,
     )
-    if detail:
+    if detail and resend_requires_regeneration:
         raise HTTPException(status_code=400, detail=detail)
 
     batch_task = BatchTask(
@@ -359,24 +364,6 @@ async def create_batch_task(
         reuse_kind = classify_resend_content(source_item) if source_item is not None else "regenerate"
 
         if source_item is not None and reuse_kind != "regenerate":
-            if (
-                source_item.primary_material_id in material_map
-                and material_can_be_primary(material_map[source_item.primary_material_id])
-            ):
-                item_primary_material_id = source_item.primary_material_id
-            source_selected_material_ids = source_item.selected_material_ids
-            if reuse_kind == "rewrite_source":
-                source_selected_material_ids = (
-                    source_item.draft_rewrite_source_selected_material_ids
-                    if source_item.draft_rewrite_source_selected_material_ids is not None
-                    else source_selected_material_ids
-                )
-            if source_selected_material_ids is not None:
-                item_selected_material_ids = [
-                    material_id
-                    for material_id in source_selected_material_ids
-                    if material_id in material_map
-                ] or None
             if source_item.outreach_template_snapshot_version is not None:
                 item_outreach_template_id = source_item.outreach_template_id
                 item_outreach_generation_mode = source_item.outreach_generation_mode
@@ -388,18 +375,30 @@ async def create_batch_task(
                 generated_subject = source_item.draft_rewrite_source_subject
                 generated_body_text = source_item.draft_rewrite_source_body_text
                 generated_body_html = source_item.draft_rewrite_source_body_html
+                generated_body_text, generated_body_html = normalize_resend_body(
+                    generated_body_text,
+                    generated_body_html,
+                )
                 draft_generation_source = source_item.draft_generation_source
                 task_status = EmailTaskStatus.REVIEW_REQUIRED.value
             else:
                 generated_subject = source_item.generated_subject
                 generated_body_text = source_item.generated_content_text
                 generated_body_html = source_item.generated_content_html
+                generated_body_text, generated_body_html = normalize_resend_body(
+                    generated_body_text,
+                    generated_body_html,
+                )
                 draft_generation_source = source_item.draft_generation_source
                 draft_fallback_reason = source_item.draft_fallback_reason
                 if reuse_kind == "approved":
                     approved_subject = source_item.approved_subject
                     approved_body_text = source_item.approved_body_text
                     approved_body_html = source_item.approved_body_html
+                    approved_body_text, approved_body_html = normalize_resend_body(
+                        approved_body_text,
+                        approved_body_html,
+                    )
                     approved_at = utc_now()
                     if reused_content_requires_review(source_item):
                         generated_subject = generated_subject or approved_subject
