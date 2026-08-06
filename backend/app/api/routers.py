@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.agent_v1 import router as agent_v1_router
-from app.api.batch_tasks import router as batch_tasks_router
+from app.modules.campaigns.batch_tasks.api import router as batch_tasks_router
 from app.modules.identities.communication_groups.api import (
     router as communication_groups_router,
 )

@@ -128,6 +128,14 @@ _RESEND_EXPORTS = {
     "decide_resend_item",
     "filter_available_material_defaults",
 }
+_DRAFT_RUNTIME_EXPORTS = {
+    "BatchDraftGenerationCoordinator",
+    "materialize_missing_research_template_fallbacks",
+    "recover_interrupted_workspace_draft_rewrites",
+    "recover_stale_generating_drafts",
+    "recover_stale_workspace_draft_rewrites",
+    "run_queued_batch_drafts_once",
+}
 
 
 def __getattr__(name: str):
@@ -135,6 +143,8 @@ def __getattr__(name: str):
         from . import agent as owner
     elif name in _RESEND_EXPORTS:
         from . import resend as owner
+    elif name in _DRAFT_RUNTIME_EXPORTS:
+        from .drafts import runtime as owner
     else:
         raise AttributeError(name)
 
@@ -144,11 +154,14 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | _AGENT_EXPORTS | _RESEND_EXPORTS)
+    return sorted(
+        set(globals()) | _AGENT_EXPORTS | _RESEND_EXPORTS | _DRAFT_RUNTIME_EXPORTS
+    )
 
 
 __all__ = [
     *[name for name in globals() if not name.startswith("_")],
     *sorted(_AGENT_EXPORTS),
+    *sorted(_DRAFT_RUNTIME_EXPORTS),
     *sorted(_RESEND_EXPORTS),
 ]

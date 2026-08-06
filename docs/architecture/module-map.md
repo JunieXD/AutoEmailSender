@@ -129,9 +129,10 @@ worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、sch
 规则、无研究方向草稿回退，以及 outreach template 的 DTO、UI adapter、库、变更、导入和渲染。
 领域外统一经 `campaigns.public` 使用这些能力；模板 UI router 只由组合根直接注册。
 
-`api/batch_tasks.py` 与 `batch_draft_generation_runtime.py` 仍是待迁移的 campaign adapter/worker，
-但已只经 `workspace.public` 触发单封任务动作；它们在 7C3 归入 campaigns。BatchTask、EmailTask、
-OutreachTemplate ORM 继续属于 `app.models` registry，不在本轮文件所有权迁移中拆表或复制。
+batch HTTP adapter 已归入 `campaigns/batch_tasks/api.py`，batch draft claim/recovery worker 已归入
+`campaigns/drafts/runtime.py`；两者只经 `workspace.public` 触发单封任务动作，组合根、startup 与
+RuntimeManager 分别直接使用 owner 或 `campaigns.public`。BatchTask、EmailTask、OutreachTemplate ORM
+继续属于 `app.models` registry，不在本轮文件所有权迁移中拆表或复制。
 
 ## communications 传输与同步子切片（第 7B 批，已完成）
 
@@ -145,7 +146,7 @@ transport、协议错误、message fetch/rate limit/sync state，以及 test-com
 workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；旧 `task_runtime.py` 仅保留原公开
 同步入口的对象级兼容转发，communications 不反向依赖 workspace。
 
-## workspace 与 email-task 子切片（第 7C2 批，已完成）
+## workspace、email-task 与 batch adapters（第 7C 批，已完成）
 
 `backend/app/modules/workspace/` 拥有 workspace DTO、thread projection/task bootstrap，以及 workspace 与
 email-task UI adapters。`workspace.public` 是 Agent、campaign adapter/worker 和 RuntimeManager 的稳定入口。

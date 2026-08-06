@@ -81,6 +81,11 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   `matching.public`、`llm.public` 与其他领域协作；communications 不得反向依赖 workspace。
 - 旧 `app.api.email_tasks|workspaces|workspace_support`、`app.schemas.email_task|workspace` 和
   `app.services.task_runtime` 仅作兼容 re-export；生产代码不得引用。兼容入口由第 9 批统一审计清理。
+- batch HTTP adapter 与 draft claim/recovery worker 分别由
+  `app.modules.campaigns.batch_tasks.api`、`app.modules.campaigns.drafts.runtime` 拥有；worker 仅经
+  `workspace.public` 调用单封任务用例，领域外 worker 调用方仅经 `campaigns.public`。
+- 旧 `app.api.batch_tasks` 与 `app.services.batch_draft_generation_runtime` 仅作兼容 re-export；生产代码
+  不得引用。兼容入口由第 9 批统一审计清理。
 
 ## 3. Frontend 渐进门禁
 

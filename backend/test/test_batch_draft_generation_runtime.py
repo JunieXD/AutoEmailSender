@@ -25,7 +25,7 @@ from app.models import (
 )
 from app.modules.llm import runtime as llm_runtime
 from test.schema_database import create_schema_sqlite_database
-from app.services.batch_draft_generation_runtime import (
+from app.modules.campaigns.drafts.runtime import (
     BatchDraftGenerationCoordinator,
     recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,

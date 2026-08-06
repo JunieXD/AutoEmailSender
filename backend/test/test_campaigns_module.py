@@ -9,6 +9,7 @@ import unittest
 
 
 LEGACY_MODULE_OWNERS = {
+    "app.api.batch_tasks": "app.modules.campaigns.batch_tasks.api",
     "app.api.outreach_templates": "app.modules.campaigns.templates.api",
     "app.schemas.batch_task": "app.modules.campaigns.schemas",
     "app.schemas.outreach_template": "app.modules.campaigns.templates.schemas",
@@ -18,6 +19,7 @@ LEGACY_MODULE_OWNERS = {
     "app.services.batch_task_item_actions": "app.modules.campaigns.item_actions",
     "app.services.batch_task_resend_context": "app.modules.campaigns.resend",
     "app.services.batch_draft_fallback": "app.modules.campaigns.drafts.fallback",
+    "app.services.batch_draft_generation_runtime": "app.modules.campaigns.drafts.runtime",
     "app.services.outreach_template_library": "app.modules.campaigns.templates.library",
     "app.services.outreach_template_mutations": "app.modules.campaigns.templates.mutations",
     "app.services.outreach_templates": "app.modules.campaigns.templates.rendering",

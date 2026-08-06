@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.backend_error_logging import write_backend_worker_error_log
 from app.core.config import get_settings
 from app.models import AppSetting
-from app.services.batch_draft_generation_runtime import (
+from app.modules.campaigns.public import (
     BatchDraftGenerationCoordinator,
     run_queued_batch_drafts_once,
 )

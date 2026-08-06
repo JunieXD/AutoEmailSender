@@ -5181,7 +5181,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
 
-        from app.api.batch_tasks import _serialize_batch_task
+        from app.modules.campaigns.batch_tasks.api import _serialize_batch_task
 
         unloaded_item_columns: list[set[str]] = []
 
@@ -5193,7 +5193,7 @@ class ApiEndpointTests(unittest.TestCase):
             return _serialize_batch_task(task)
 
         with patch(
-            "app.api.batch_tasks._serialize_batch_task",
+            "app.modules.campaigns.batch_tasks.api._serialize_batch_task",
             side_effect=capture_batch_task_projection,
         ):
             listed = self.client.get(
@@ -9601,7 +9601,7 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        from app.api.batch_tasks import _serialize_batch_task_item
+        from app.modules.campaigns.batch_tasks.api import _serialize_batch_task_item
 
         unloaded_task_columns: list[set[str]] = []
         unloaded_professor_columns: list[set[str]] = []
@@ -9612,7 +9612,7 @@ class ApiEndpointTests(unittest.TestCase):
             return _serialize_batch_task_item(email_task, **kwargs)
 
         with patch(
-            "app.api.batch_tasks._serialize_batch_task_item",
+            "app.modules.campaigns.batch_tasks.api._serialize_batch_task_item",
             side_effect=capture_batch_item_projection,
         ):
             response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")

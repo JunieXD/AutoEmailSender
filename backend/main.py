@@ -34,7 +34,7 @@ from app.core.sqlite_diagnostics import is_sqlite_database_lock_error
 from app.core.startup_logging import write_startup_phase_log
 from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 from app.modules.matching.public import recover_interrupted_match_analysis_runs
-from app.services.batch_draft_generation_runtime import (
+from app.modules.campaigns.public import (
     recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,
 )

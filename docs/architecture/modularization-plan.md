@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 7A、7B 批已完成，第 7C 批执行中
+状态：已确认，第 7 批已完成，第 8 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -163,7 +163,7 @@ cli/src/auto_email_sender_cli/
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
-| 7 | `campaigns`、`communications`、`workspace` | 执行中（7C） | 任务、草稿、发送、收信的依赖方向单向化 |
+| 7 | `campaigns`、`communications`、`workspace` | 已完成（7A～7C） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
@@ -1264,9 +1264,10 @@ CodeGraph，审计已迁移旧路径、跨域依赖和 `git diff --check`。
 email-task/workspace 状态机、发送队列编排、batch HTTP adapter 与 draft worker；communications 不得
 反向依赖 workspace，campaigns 只通过 workspace 公共合同触发任务动作。
 
-### 第 7C 批：`workspace`、email-task 状态机与发送编排（执行中）
+### 第 7C 批：`workspace`、email-task 状态机与发送编排（已完成）
 
 开始日期：2026-08-06
+完成日期：2026-08-06
 
 CodeGraph 定界结果：
 
@@ -1341,7 +1342,9 @@ backend/app/modules/
 - 7C2 已完成：workspace/email-task DTO、thread projection 与 UI adapters 已归入 `workspace`；原
   `task_runtime.py` 已按状态机和发送编排拆为 `tasks.runtime` 与 `tasks.delivery`，六个旧路径保留纯
   re-export，生产旧路径引用归零。
-- 7C3 待执行：迁移 batch HTTP adapter 与 batch draft worker，并完成第 7C 的跨端完整验收。
+- 7C3 已完成：batch HTTP adapter 已迁入 `campaigns.batch_tasks.api`，batch draft claim/recovery worker
+  已迁入 `campaigns.drafts.runtime`；组合根直接注册 owner router，RuntimeManager 与 startup 只经
+  `campaigns.public` 使用 worker 能力。两个旧路径仅保留纯 re-export，生产旧路径引用归零。
 
 7C2 验证结果：
 
@@ -1352,3 +1355,18 @@ backend/app/modules/
 | Backend Agent | Agent API 与 action-plan | 75 tests passed |
 | Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1750 tests；OK（1 skipped） |
 | Repository | shim AST 纯度、生产旧路径与跨域深层导入审计、F821、`git diff --check` | 通过 |
+
+7C3 与第 7C 完整验收结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend campaigns 门禁 | 架构/API import boundary、兼容 owner、独立导入 | 8 tests passed |
+| Backend batch/runtime 定向 | batch API、draft worker、RuntimeManager、delivery、API endpoints | 270 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1750 tests；OK（1 skipped） |
+| CLI 完整套件 | `uv run python -m unittest discover test` | Ran 154 tests；OK |
+| Frontend 完整套件 | lint；Vitest；production build | lint/build 通过；115 files，899 tests passed |
+| Repository | CodeGraph 同步；生产旧路径、shim AST、跨域深层导入、F821/F401（迁移 owner）、`git diff --check` | 通过 |
+
+停止点：第 7 批的 campaigns、communications、workspace 所有权与公共入口均已落地；legacy 路径
+只承担兼容 re-export。第 8 批只处理 Electron main/preload/IPC 的进程内模块化，不改变后端、前端、
+CLI、HTTP/Agent/IPC 合同或分发资源相对路径。
