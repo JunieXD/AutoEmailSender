@@ -1,8 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  calculateDevelopmentCliFingerprint,
   getDevelopmentCliBuildCommands,
   prepareDevelopmentCli,
   resolveDevelopmentCliExecutable,
@@ -16,7 +18,7 @@ async function createRepositoryFixture(): Promise<string> {
   const repoRoot = await mkdtemp(path.join(tmpdir(), "auto-email-sender-dev-cli-"));
   temporaryDirectories.push(repoRoot);
   await mkdir(path.join(repoRoot, "cli", "src", "auto_email_sender_cli"), { recursive: true });
-  await mkdir(path.join(repoRoot, "scripts"), { recursive: true });
+  await mkdir(path.join(repoRoot, "scripts", "build"), { recursive: true });
   await writeFile(path.join(repoRoot, "cli", "pyproject.toml"), "[project]\nname='fixture'\n", "utf8");
   await writeFile(path.join(repoRoot, "cli", "uv.lock"), "version = 1\n", "utf8");
   await writeFile(
@@ -27,12 +29,22 @@ async function createRepositoryFixture(): Promise<string> {
   await writeFile(path.join(repoRoot, "scripts", "build-cli.sh"), "#!/usr/bin/env bash\n", "utf8");
   await writeFile(path.join(repoRoot, "scripts", "build-cli.ps1"), "param()\n", "utf8");
   await writeFile(
-    path.join(repoRoot, "scripts", "generate_cli_build_identity.py"),
+    path.join(repoRoot, "scripts", "build", "build-cli.sh"),
+    "#!/usr/bin/env bash\n",
+    "utf8",
+  );
+  await writeFile(
+    path.join(repoRoot, "scripts", "build", "build-cli.ps1"),
+    "param()\n",
+    "utf8",
+  );
+  await writeFile(
+    path.join(repoRoot, "scripts", "build", "generate_cli_build_identity.py"),
     "# identity generator\n",
     "utf8",
   );
   await writeFile(
-    path.join(repoRoot, "scripts", "verify_cli_binary.py"),
+    path.join(repoRoot, "scripts", "build", "verify_cli_binary.py"),
     "# binary verifier\n",
     "utf8",
   );
@@ -75,12 +87,28 @@ describe("development CLI preparation", () => {
     expect(runBuild).toHaveBeenCalledTimes(2);
 
     await writeFile(
-      path.join(repoRoot, "scripts", "verify_cli_binary.py"),
-      "# updated binary verifier\n",
+      path.join(repoRoot, "scripts", "build", "build-cli.sh"),
+      "#!/usr/bin/env bash\n# updated build implementation\n",
       "utf8",
     );
     await expect(prepareDevelopmentCli(options)).resolves.toMatchObject({ state: "built" });
     expect(runBuild).toHaveBeenCalledTimes(3);
+
+    await writeFile(
+      path.join(repoRoot, "scripts", "build", "verify_cli_binary.py"),
+      "# updated binary verifier\n",
+      "utf8",
+    );
+    await expect(prepareDevelopmentCli(options)).resolves.toMatchObject({ state: "built" });
+    expect(runBuild).toHaveBeenCalledTimes(4);
+  });
+
+  it("calculates a fingerprint from the current repository topology", async () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+    await expect(
+      calculateDevelopmentCliFingerprint(repoRoot, "darwin", "arm64"),
+    ).resolves.toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("selects the Windows executable and falls back to Windows PowerShell", async () => {

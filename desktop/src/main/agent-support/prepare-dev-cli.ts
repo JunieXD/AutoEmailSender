@@ -128,13 +128,16 @@ export async function calculateDevelopmentCliFingerprint(
   arch: string,
 ): Promise<string> {
   const cliDirectory = path.join(repoRoot, "cli");
+  const scriptsDirectory = path.join(repoRoot, "scripts");
+  const buildScriptsDirectory = path.join(scriptsDirectory, "build");
   const buildScript = platform === "win32" ? "build-cli.ps1" : "build-cli.sh";
   const inputPaths = [
     path.join(cliDirectory, "pyproject.toml"),
     path.join(cliDirectory, "uv.lock"),
-    path.join(repoRoot, "scripts", buildScript),
-    path.join(repoRoot, "scripts", "generate_cli_build_identity.py"),
-    path.join(repoRoot, "scripts", "verify_cli_binary.py"),
+    path.join(scriptsDirectory, buildScript),
+    path.join(buildScriptsDirectory, buildScript),
+    path.join(buildScriptsDirectory, "generate_cli_build_identity.py"),
+    path.join(buildScriptsDirectory, "verify_cli_binary.py"),
     ...await collectInputFiles(path.join(cliDirectory, "src")),
   ].sort((left, right) => left.localeCompare(right));
   const hash = createHash("sha256");
