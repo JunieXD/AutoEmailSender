@@ -15,7 +15,7 @@ import {
   listProfessors,
   listProfessorsForManagement,
   updateProfessorTags,
-} from "@/lib/api/professorsApi";
+} from "@/entities/professor/api/professors";
 import type {
   IdentityDTO,
   LLMProfileDTO,
@@ -185,7 +185,7 @@ vi.mock("@/features/onboarding/client/getOnboardingState", () => ({
   }),
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   bulkUpdateProfessorTags: vi.fn(),

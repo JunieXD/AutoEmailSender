@@ -96,8 +96,8 @@ import {
   listProfessorInformationEnrichmentJobs,
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
-} from "@/lib/api/professorInformationEnrichmentApi";
-import { getProfessor } from "@/lib/api/professorsApi";
+} from "@/entities/professor/api/informationEnrichment";
+import { getProfessor } from "@/entities/professor/api/professors";
 import {
   cancelCrawlJob,
   approveCrawlCandidates,

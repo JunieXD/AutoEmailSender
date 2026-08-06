@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 4C 批已完成，第 4D 批待开始
+状态：已确认，第 4 批已完成，第 5 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -160,7 +160,7 @@ cli/src/auto_email_sender_cli/
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
-| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 执行中（4A～4C 已完成；4D 待开始） | UI/Agent 路由和前端实体边界完成 |
+| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
@@ -700,3 +700,70 @@ backend/app/modules/community/
 
 停止点：Backend professors/community 的 UI 与 Agent 能力已迁入领域目录。第 4D 只收敛 Frontend
 professor/community 的实体 API、类型和依赖方向，不改页面行为或再次调整 Backend 合同。
+
+### 第 4D 批：Frontend professor/community 实体边界（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+frontend/src/entities/
+├── professor/
+│   ├── api/
+│   │   ├── professors.ts
+│   │   └── informationEnrichment.ts
+│   ├── model/types.ts
+│   └── index.ts
+└── community-mentor/
+    ├── api/communityMentors.ts
+    ├── model/types.ts
+    └── index.ts
+```
+
+计划范围：
+
+- 将 professor 核心/补全与 community DTO 的单一事实来源迁入实体 model，将对应 HTTP client 迁入实体 API。
+- Pages、context、组件和领域辅助代码通过实体公共入口使用 API；旧 `lib/api` 与 `types` 路径保留纯 re-export。
+- 将 Frontend 架构门禁增强为通用的“旧层只能纯 re-export 到新层”结构校验，不增加具体文件边白名单。
+- 更新 Vitest mock 路径和 API 对象一致性测试，保持现有模块测试隔离方式。
+
+本批不变量：
+
+- HTTP 路径、参数、请求体、下载方式、DTO 字段和状态文案不变。
+- Professors/Community/Tasks/Home/CreateTask 页面状态、通知、选择、缓存与交互行为不变。
+- 不调整视觉结构、Backend、Desktop IPC、路由 URL、依赖或锁文件。
+- 兼容入口不得包含运行逻辑，不新增 reviewed legacy violation。
+
+计划验证：Frontend 架构与兼容门禁、API client、Professors/Community/Tasks/Home/CreateTask 和通知定向
+测试，以及完整 lint、Vitest 与 production build；补充 Backend/CLI 合同回归确认跨进程路径未漂移。
+
+实际结果：
+
+- professor 核心/补全和 community DTO 的单一事实来源已迁入 `entities/*/model/types.ts`，对应 API
+  实现已迁入实体 `api/`；页面与组件使用实体 API 子入口，旧 `types` 与三个 `lib/api` 文件仅 re-export。
+- Frontend 架构门禁新增通用纯 re-export 识别：旧 API 层只有文件全部由带模块目标的 export declaration
+  组成时才可指向 entities；未新增具体边白名单。
+- 尚在 legacy 层的通知 context 与 community catalog cache 继续经过受门禁约束的兼容入口，避免形成
+  legacy low-level -> entities 的反向依赖；其余直接调用者和 Vitest mocks 已迁到实体路径。
+- HTTP 路径、请求体、下载、DTO 字段、状态标签、页面行为、Backend/CLI 合同、依赖和锁文件均未改变。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Frontend 门禁与兼容 | 架构边界、三类旧 API 对象一致性、旧 types value 一致性 | 通过：2 files，5 tests |
+| Frontend 定向 | API、Professors/Community/Tasks/Home/CreateTask、通知与选择 | 18 files，226 tests passed |
+| Frontend lint | `npm run lint` | 通过 |
+| Frontend 完整套件 | `npm run test` | 115 files，899 tests passed |
+| Frontend build | `npm run build` | TypeScript 与 Vite production build 通过 |
+| Backend 合同 | API import、professors/enrichment/community 兼容入口 | 12 tests passed |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Repository | CodeGraph 同步；生产旧路径/DTO 单一来源审计；`git diff --check` | 通过 |
+
+验证备注：首次将完整 Vitest 与 build 并行执行时，Token 分页焦点测试出现 1 次时序失败；该文件独立
+复跑 12/12 通过，随后串行完整套件 899/899 通过，确认与本批模块路径变更无关。
+
+停止点：第 4 批 Backend 与 Frontend 边界均已完成。第 5 批开始前必须先定界 matching 的 job/run/cache
+所有权与 llm endpoint/thinking/structured-output adaptation 的现有循环，不把 crawler worker 一并迁入。

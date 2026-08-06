@@ -79,6 +79,26 @@ const importSpecifiers = (file: string): string[] => {
   return imports;
 };
 
+const isPureReExportCompatibilityModule = (file: string): boolean => {
+  const sourceText = readFileSync(file, "utf8");
+  const sourceFile = ts.createSourceFile(
+    file,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  return (
+    sourceFile.statements.length > 0 &&
+    sourceFile.statements.every(
+      (statement) =>
+        ts.isExportDeclaration(statement) &&
+        statement.moduleSpecifier !== undefined &&
+        ts.isStringLiteral(statement.moduleSpecifier),
+    )
+  );
+};
+
 const resolveInternalImport = (source: string, specifier: string): string | null => {
   let unresolved: string;
   if (specifier.startsWith("@/")) unresolved = path.join(srcRoot, specifier.slice(2));
@@ -157,7 +177,14 @@ const collectViolations = (): Set<string> => {
   for (const source of sourceFiles) {
     for (const specifier of importSpecifiers(source)) {
       const target = resolveInternalImport(source, specifier);
-      if (target && isForbidden(classify(source), classify(target))) {
+      if (!target) continue;
+      const sourceBoundary = classify(source);
+      const targetBoundary = classify(target);
+      const isVerifiedCompatibilityEdge =
+        sourceBoundary.layer === "legacy-lib-api" &&
+        targetBoundary.layer === "entities" &&
+        isPureReExportCompatibilityModule(source);
+      if (isForbidden(sourceBoundary, targetBoundary) && !isVerifiedCompatibilityEdge) {
         violations.add(`${toRelative(source)} -> ${toRelative(target)}`);
       }
     }

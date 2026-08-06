@@ -107,6 +107,10 @@ Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在
 | `entities` | 实体模型、实体 API、实体 UI | professor、identity、task、material |
 | `shared` | 无业务所有权的技术与 UI 基础 | HTTP client、dialog、date、desktop bridge |
 
+第 4D 已建立 `entities/professor` 与 `entities/community-mentor`：实体 model 拥有 DTO，实体 API
+拥有 HTTP 请求合同，页面与上下文通过实体 `index.ts` 使用能力。旧 `types` 和 `lib/api` 仅作为可静态
+验证的纯 re-export 兼容入口，待第 9 批确认所有调用方后清理。
+
 迁移时禁止仅因“多个地方使用”就把领域代码放入 `shared`。只有在调用方来自多个领域且代码本身没有业务术语时，才可进入 `shared`。
 
 ## 跨进程边界

@@ -177,7 +177,7 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
   restoreMatchAnalysisJob: apiMocks.restoreMatchAnalysisJob,
 }));
 
-vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs:
     apiMocks.listProfessorInformationEnrichmentJobs,
   listProfessorInformationEnrichmentItems:
@@ -192,7 +192,7 @@ vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
     apiMocks.restoreProfessorInformationEnrichmentJob,
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   getProfessor: apiMocks.getProfessor,
   updateProfessor: apiMocks.updateProfessor,
 }));

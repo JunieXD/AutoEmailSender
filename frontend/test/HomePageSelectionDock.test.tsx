@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listProfessors } from "@/lib/api/professorsApi";
+import { listProfessors } from "@/entities/professor/api/professors";
 import type {
   IdentityDTO,
   LLMProfileDTO,
@@ -41,7 +41,7 @@ vi.mock("@/context/SelectionContext", () => ({
   }),
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   listProfessors: vi.fn(),
 }));
 

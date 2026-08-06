@@ -53,7 +53,7 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
   retryFailedMatchAnalysisJob: vi.fn(),
 }));
 
-vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs: vi.fn().mockResolvedValue([]),
   listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
   cancelProfessorInformationEnrichmentJob: vi.fn(),

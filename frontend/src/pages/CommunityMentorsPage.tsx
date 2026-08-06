@@ -40,7 +40,7 @@ import {
   importCommunityMentors,
   listCommunityMentors,
   previewCommunityMentorImport,
-} from '@/lib/api/communityMentorsApi';
+} from '@/entities/community-mentor/api/communityMentors';
 import {
   getCommunityMentorCatalogSessionSnapshot,
   requestCommunityMentorCatalog,

@@ -7,7 +7,7 @@ import {
   listProfessorInformationEnrichmentJobs,
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
-} from "@/lib/api/professorInformationEnrichmentApi";
+} from "@/entities/professor/api/informationEnrichment";
 
 const mockedApiFetch = vi.hoisted(() => vi.fn());
 

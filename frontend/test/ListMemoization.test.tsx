@@ -82,7 +82,7 @@ vi.mock("@/features/onboarding/client/getOnboardingState", () => ({
   }),
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   bulkUpdateProfessorTags: vi.fn(),

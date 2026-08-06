@@ -63,7 +63,7 @@ import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
-import { downloadCommunitySharePackage } from "@/lib/api/communityMentorsApi";
+import { downloadCommunitySharePackage } from "@/entities/community-mentor/api/communityMentors";
 import {
   COMMUNITY_BATCH_CONTRIBUTION_URL,
   buildCommunityBatchContributionUrl,
@@ -74,7 +74,7 @@ import {
   createSingleProfessorInformationEnrichment,
   getActiveProfessorInformationEnrichment,
   getProfessorInformationEnrichmentJob,
-} from "@/lib/api/professorInformationEnrichmentApi";
+} from "@/entities/professor/api/informationEnrichment";
 import {
   archiveProfessor,
   bulkUpdateProfessorTags,
@@ -93,7 +93,7 @@ import {
   updateProfessor,
   updateProfessorNote,
   updateProfessorTags,
-} from "@/lib/api/professorsApi";
+} from "@/entities/professor/api/professors";
 import type {
   CrawlJobEntryTypeDTO,
   ProfessorImportFileResultDTO,

@@ -36,7 +36,7 @@ vi.mock("@/lib/useConfirmDialog", () => ({
   }),
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   listProfessors: mockedListProfessors,
 }));
 

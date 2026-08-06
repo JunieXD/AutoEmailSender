@@ -31,7 +31,7 @@ const notificationMocks = vi.hoisted(() => ({
 
 const openExternalHttpUrl = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/api/communityMentorsApi', () => ({
+vi.mock('@/entities/community-mentor/api/communityMentors', () => ({
   getCommunityMentorCatalog: (...args: unknown[]) => apiMocks.getCatalog(...args),
   listCommunityMentors: (...args: unknown[]) => apiMocks.listRecords(...args),
   previewCommunityMentorImport: (...args: unknown[]) => apiMocks.preview(...args),

@@ -16,7 +16,7 @@ import {
   clearBatchResendPrefillContext,
   readBatchResendPrefillContext,
 } from '@/features/batch-tasks/client/batchTaskResendPrefill';
-import { listProfessors } from '@/lib/api/professorsApi';
+import { listProfessors } from '@/entities/professor/api/professors';
 import { getPageItems, getTotalPages, PAGE_SIZE } from '@/lib/pagination';
 import { textToEmailHtml } from '@/lib/richEmail';
 import { usePaginationState } from '@/lib/usePaginationState';

@@ -27,7 +27,7 @@ vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   listProfessors: mockedListProfessors,
   listProfessorTags: mockedListProfessorTags,
 }));

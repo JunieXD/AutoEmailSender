@@ -7,7 +7,7 @@ import {
   normalizeExternalHttpUrl,
   openExternalHttpUrl,
 } from "@/lib/externalUrls";
-import { updateProfessor } from "@/lib/api/professorsApi";
+import { updateProfessor } from "@/entities/professor/api/professors";
 import type {
   ProfessorDTO,
   ProfessorManagementItemDTO,

@@ -78,7 +78,7 @@ import {
   listProfessors,
   updateProfessorNote,
   updateProfessorTags as updateProfessorTagsRequest,
-} from "@/lib/api/professorsApi";
+} from "@/entities/professor/api/professors";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
 import { parseApiDateTime } from "@/lib/dateTime";
 import {

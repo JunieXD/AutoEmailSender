@@ -16,7 +16,7 @@ vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   listProfessorsForManagement,
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock("@/lib/api/professorsApi", () => ({
   updateProfessor: vi.fn(),
 }));
 
-vi.mock("@/lib/api/professorInformationEnrichmentApi", () => ({
+vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   createSingleProfessorInformationEnrichment: vi.fn(),
   getActiveProfessorInformationEnrichment: vi
     .fn()

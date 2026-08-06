@@ -47,7 +47,7 @@ vi.mock("@/context/SelectionContext", () => ({
   }),
 }));
 
-vi.mock("@/lib/api/professorsApi", () => ({
+vi.mock("@/entities/professor/api/professors", () => ({
   listProfessors,
   listProfessorTags,
   updateProfessorNote,
