@@ -1,10 +1,6 @@
-"""Compatibility exports for migrated identity and material schemas."""
+"""Stable facade for the identity-profile slice."""
 
-from app.modules.identities.materials.schemas import (
-    IdentityMaterialRead,
-    IdentityMaterialTypeRead,
-)
-from app.modules.identities.profiles.schemas import (
+from .schemas import (
     ConnectionTestResult,
     IdentityProfileBase,
     IdentityProfileCreate,
@@ -13,15 +9,15 @@ from app.modules.identities.profiles.schemas import (
     IdentityTemplateImportResult,
     OutreachGenerationMode,
 )
+from .serializer import serialize_identity
 
 __all__ = [
     "ConnectionTestResult",
-    "IdentityMaterialRead",
-    "IdentityMaterialTypeRead",
     "IdentityProfileBase",
     "IdentityProfileCreate",
     "IdentityProfileRead",
     "IdentityProfileUpdate",
     "IdentityTemplateImportResult",
     "OutreachGenerationMode",
+    "serialize_identity",
 ]

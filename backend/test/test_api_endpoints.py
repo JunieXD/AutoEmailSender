@@ -87,8 +87,14 @@ class ApiEndpointTests(unittest.TestCase):
         created_identity = next(item for item in identities if item["id"] == identity_id)
 
         with (
-            patch("app.api.identities.test_smtp_connection", AsyncMock(return_value=(True, "SMTP 连接测试成功"))),
-            patch("app.api.identities.test_imap_connection", AsyncMock(return_value=(True, "IMAP 连接测试成功"))),
+            patch(
+                "app.modules.identities.profiles.api.test_smtp_connection",
+                AsyncMock(return_value=(True, "SMTP 连接测试成功")),
+            ),
+            patch(
+                "app.modules.identities.profiles.api.test_imap_connection",
+                AsyncMock(return_value=(True, "IMAP 连接测试成功")),
+            ),
             patch(
                 "app.api.llm_profiles.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
@@ -127,7 +133,7 @@ class ApiEndpointTests(unittest.TestCase):
         raw_error = "SMTP 连接失败: (550, b'Requested action aborted: flow over limit')"
 
         with patch(
-            "app.api.identities.test_smtp_connection",
+            "app.modules.identities.profiles.api.test_smtp_connection",
             AsyncMock(return_value=(False, raw_error)),
         ):
             response = self.client.post(f"/api/identities/{identity_id}/smtp-test")

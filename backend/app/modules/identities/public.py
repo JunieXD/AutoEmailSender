@@ -16,14 +16,38 @@ from .communication_groups.public import (
     serialize_communication_group,
     update_communication_group_record,
 )
+from .materials.public import (
+    IdentityMaterialRead,
+    IdentityMaterialTypeRead,
+    serialize_material,
+)
+from .profiles.public import (
+    ConnectionTestResult,
+    IdentityProfileBase,
+    IdentityProfileCreate,
+    IdentityProfileRead,
+    IdentityProfileUpdate,
+    IdentityTemplateImportResult,
+    OutreachGenerationMode,
+    serialize_identity,
+)
 
 __all__ = [
     "CommunicationGroupCleanupResult",
     "CommunicationGroupMutationError",
+    "ConnectionTestResult",
     "IdentityCommunicationGroupMemberRead",
     "IdentityCommunicationGroupRead",
     "IdentityCommunicationGroupWrite",
     "IdentityCommunicationScope",
+    "IdentityMaterialRead",
+    "IdentityMaterialTypeRead",
+    "IdentityProfileBase",
+    "IdentityProfileCreate",
+    "IdentityProfileRead",
+    "IdentityProfileUpdate",
+    "IdentityTemplateImportResult",
+    "OutreachGenerationMode",
     "cleanup_communication_group_after_identity_delete",
     "create_communication_group_record",
     "delete_communication_group_record",
@@ -31,5 +55,7 @@ __all__ = [
     "list_communication_group_records",
     "resolve_identity_communication_scope",
     "serialize_communication_group",
+    "serialize_identity",
+    "serialize_material",
     "update_communication_group_record",
 ]

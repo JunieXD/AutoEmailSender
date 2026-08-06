@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，已完成第 3A 批
+状态：已确认，第 3B 批已完成，第 3C 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -159,7 +159,7 @@ cli/src/auto_email_sender_cli/
 |---|---|---|---|
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
-| 3 | `identities`：身份、材料、通信组 | 执行中（3A 已完成） | 每个子切片独立迁移并全绿 |
+| 3 | `identities`：身份、材料、通信组 | 执行中（3A、3B 已完成；3C 待开始） | 每个子切片独立迁移并全绿 |
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 待开始 | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
@@ -396,3 +396,71 @@ backend/app/modules/identities/
 
 停止点：第 3B 子切片尚未选择。继续前必须分别评估身份主体与材料的依赖半径；
 不得因同属 identities 就把两者合并迁移。
+
+### 第 3B 批：`identities/profiles`（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/identities/
+├── public.py
+├── profiles/
+│   ├── __init__.py
+│   ├── api.py
+│   ├── schemas.py
+│   ├── serializer.py
+│   └── public.py
+└── materials/
+    ├── __init__.py
+    ├── schemas.py
+    ├── serializer.py
+    └── public.py
+```
+
+计划范围：
+
+- 将 `app.api.identities` 的身份 CRUD、默认身份、连接测试和模板导入 adapter 迁入 profiles。
+- 将 `app.schemas.identity` 拆为 profiles DTO 与 materials DTO；旧路径统一 re-export。
+- 将 `app.api.identity_serializers` 拆为 profiles 与 materials serializer。
+- 组合根和生产调用方改用 identities 公共入口；旧 API/serializer/schema 路径保留兼容。
+- `app.schemas` 对身份 DTO 使用懒加载兼容，避免 `ApiSchema` 初始化环。
+
+本批不变量：
+
+- `/api/identities` 全部路径、方法、DTO、错误 detail、连接测试和模板导入行为不变。
+- 身份删除、通信组清理、匹配记录清理、默认身份接替与操作日志语义不变。
+- 只建立 materials 的 DTO/serializer 基础，不迁移上传、删除、主材料或文件系统行为。
+- 不移动 ORM、不修改 Alembic、Frontend、CLI 或跨进程合同。
+- 新模块不依赖旧 `app.api`，并偿还 `test_compose_runtime -> app.api.identity_serializers` 门禁例外。
+
+计划验证：身份 API/操作日志/删除关联测试、serializer import boundary、架构门禁、
+相关 Agent/Frontend 测试以及 Backend 完整 unittest。
+
+实际结果：
+
+- 身份 CRUD、默认身份、SMTP/IMAP 测试和模板导入 adapter 已迁入
+  `backend/app/modules/identities/profiles/`；组合根直接注册新 router。
+- 身份 DTO/serializer 与材料 DTO/serializer 已拆分到 profiles 和 materials 子切片，
+  `backend/app/modules/identities/public.py` 暴露稳定领域入口。
+- `app.api.identities`、`app.api.identity_serializers`、`app.schemas.identity` 保留为纯兼容导出，
+  并由对象一致性测试保护；生产调用方不再依赖这些旧路径。
+- `app.schemas` 聚合入口改为全量懒加载，在保留历史导入合同的同时消除材料 DTO 初始化环。
+- 已偿还 `test_compose_runtime -> app.api.identity_serializers` 门禁例外；未移动材料生命周期、
+  ORM 或 Alembic，未改变 HTTP、Agent、CLI、Frontend 或打包合同。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构门禁、API import boundary、三类旧入口对象一致性与聚合 schema 懒加载 | 8 tests passed |
+| Backend 定向 | 身份 API、Agent API、操作日志、身份删除/匹配与序列化关联流程 | 304 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1706 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | CLI 命令与 Agent client | 81 tests passed |
+| Frontend 合同 | Profile 模板导入与 API client | 2 files，20 tests passed |
+| Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
+
+停止点：材料 DTO 与序列化已经稳定，但上传、删除、主材料选择、下载和文件清理行为仍在
+旧 API/service 中。第 3C 必须先重新定界这些行为与任务、批量任务、匹配和 Agent 变更计划的关系。

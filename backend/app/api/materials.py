@@ -8,13 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.identity_serializers import serialize_material
 from app.core.database import get_async_session
+from app.modules.identities.public import IdentityMaterialRead, serialize_material
 from app.models import (
     IdentityMaterial,
     IdentityMaterialType,
 )
-from app.schemas.identity import IdentityMaterialRead
 from app.services.file_storage import (
     delete_file,
 )

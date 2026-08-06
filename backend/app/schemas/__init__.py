@@ -1,66 +1,51 @@
-from app.schemas.batch_task import (
-    BatchTaskActionResponse,
-    BatchTaskCardRead,
-    BatchTaskItemRead,
-    CreateBatchTaskRequest,
-)
-from app.schemas.email_task import (
-    EmailTaskApprovalRequest,
-    EmailTaskPrimaryMaterialRequest,
-    EmailTaskScheduleRequest,
-)
-from app.schemas.diagnostics import (
-    OperationLogExportResponse,
-    OperationLogListResponse,
-    OperationLogRead,
-)
-from app.schemas.identity import (
-    ConnectionTestResult,
-    IdentityMaterialRead,
-    IdentityProfileCreate,
-    IdentityProfileRead,
-    IdentityProfileUpdate,
-)
-from app.schemas.llm_profile import (
-    LLMProfileCreate,
-    LLMProfileModelsResult,
-    LLMProfileRead,
-    LLMProfileTestResult,
-    LLMProfileUpdate,
-)
-from app.schemas.match_analysis_job import (
-    CreateMatchAnalysisJobRequest,
-    MatchAnalysisJobActionResponse,
-    MatchAnalysisJobItemRead,
-    MatchAnalysisJobRead,
-)
-from app.schemas.professor import (
-    ProfessorDashboardItemRead,
-    ProfessorImportResult,
-    ProfessorRead,
-)
-from app.schemas.workspace import (
-    WorkspaceMessageRead,
-    WorkspaceThreadRead,
-)
+from importlib import import_module
 
 
-_COMMUNICATION_GROUP_SCHEMA_EXPORTS = frozenset(
-    {
-        "IdentityCommunicationGroupMemberRead",
-        "IdentityCommunicationGroupRead",
-        "IdentityCommunicationGroupWrite",
-    },
-)
+_SCHEMA_EXPORT_MODULES = {
+    "BatchTaskActionResponse": "app.schemas.batch_task",
+    "BatchTaskCardRead": "app.schemas.batch_task",
+    "BatchTaskItemRead": "app.schemas.batch_task",
+    "ConnectionTestResult": "app.modules.identities.profiles.schemas",
+    "CreateBatchTaskRequest": "app.schemas.batch_task",
+    "CreateMatchAnalysisJobRequest": "app.schemas.match_analysis_job",
+    "EmailTaskApprovalRequest": "app.schemas.email_task",
+    "EmailTaskPrimaryMaterialRequest": "app.schemas.email_task",
+    "EmailTaskScheduleRequest": "app.schemas.email_task",
+    "IdentityCommunicationGroupMemberRead": (
+        "app.modules.identities.communication_groups.schemas"
+    ),
+    "IdentityCommunicationGroupRead": "app.modules.identities.communication_groups.schemas",
+    "IdentityCommunicationGroupWrite": "app.modules.identities.communication_groups.schemas",
+    "IdentityMaterialRead": "app.modules.identities.materials.schemas",
+    "IdentityProfileCreate": "app.modules.identities.profiles.schemas",
+    "IdentityProfileRead": "app.modules.identities.profiles.schemas",
+    "IdentityProfileUpdate": "app.modules.identities.profiles.schemas",
+    "LLMProfileCreate": "app.schemas.llm_profile",
+    "LLMProfileModelsResult": "app.schemas.llm_profile",
+    "LLMProfileRead": "app.schemas.llm_profile",
+    "LLMProfileTestResult": "app.schemas.llm_profile",
+    "LLMProfileUpdate": "app.schemas.llm_profile",
+    "MatchAnalysisJobActionResponse": "app.schemas.match_analysis_job",
+    "MatchAnalysisJobItemRead": "app.schemas.match_analysis_job",
+    "MatchAnalysisJobRead": "app.schemas.match_analysis_job",
+    "OperationLogExportResponse": "app.schemas.diagnostics",
+    "OperationLogListResponse": "app.schemas.diagnostics",
+    "OperationLogRead": "app.schemas.diagnostics",
+    "ProfessorDashboardItemRead": "app.schemas.professor",
+    "ProfessorImportResult": "app.schemas.professor",
+    "ProfessorRead": "app.schemas.professor",
+    "WorkspaceMessageRead": "app.schemas.workspace",
+    "WorkspaceThreadRead": "app.schemas.workspace",
+}
 
 
 def __getattr__(name: str) -> object:
-    if name not in _COMMUNICATION_GROUP_SCHEMA_EXPORTS:
+    module_name = _SCHEMA_EXPORT_MODULES.get(name)
+    if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-    from app.modules.identities.communication_groups import schemas
-
-    return getattr(schemas, name)
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
 
 
 __all__ = [

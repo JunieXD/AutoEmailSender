@@ -16,7 +16,6 @@ REVIEWED_LEGACY_VIOLATIONS = {
     "app/schemas/professor.py -> app.services.professor_field_normalization",
     "app/services/agent_drafts.py -> app.api.workspace_support",
     "app/services/crawl_job_runtime.py -> app.agents.faculty_crawler_agent",
-    "app/services/test_compose_runtime.py -> app.api.identity_serializers",
 }
 
 FORBIDDEN_LAYER_IMPORTS = {

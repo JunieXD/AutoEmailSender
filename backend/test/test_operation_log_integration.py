@@ -142,7 +142,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
         identity_id = self._create_identity("smtp-log@example.com")
 
         with patch(
-            "app.api.identities.test_smtp_connection",
+            "app.modules.identities.profiles.api.test_smtp_connection",
             AsyncMock(return_value=(True, "SMTP 连接测试成功")),
         ):
             response = self.client.post(f"/api/identities/{identity_id}/smtp-test")

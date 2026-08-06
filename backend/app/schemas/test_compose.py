@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.schemas.base import ApiSchema
-from app.schemas.identity import IdentityMaterialRead
+from app.modules.identities.materials.public import IdentityMaterialRead
 
 
 class TestComposeIdentityRead(ApiSchema):

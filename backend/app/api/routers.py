@@ -12,7 +12,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.crawl_jobs import router as crawl_jobs_router
 from app.api.diagnostics import router as diagnostics_router
 from app.api.email_tasks import router as email_tasks_router
-from app.api.identities import router as identities_router
+from app.modules.identities.profiles.api import router as identities_router
 from app.api.llm_profiles import router as llm_profiles_router
 from app.api.materials import router as materials_router
 from app.api.outreach_templates import router as outreach_templates_router

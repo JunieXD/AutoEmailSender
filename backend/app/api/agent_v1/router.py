@@ -106,7 +106,6 @@ from app.schemas.diagnostics import (
     OperationLogListResponse,
     OperationLogRead,
 )
-from app.schemas.identity import ConnectionTestResult
 from app.schemas.professor import (
     ProfessorBulkTagsPayload,
     ProfessorTagPayload,
@@ -121,6 +120,7 @@ from app.schemas.professor_information_enrichment import (
 )
 from app.modules.identities.public import (
     CommunicationGroupMutationError,
+    ConnectionTestResult,
     IdentityCommunicationGroupRead,
     IdentityCommunicationGroupWrite,
     create_communication_group_record,

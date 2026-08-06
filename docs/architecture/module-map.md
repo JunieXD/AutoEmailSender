@@ -65,6 +65,12 @@ backend/app/modules/identities/
 领域外调用方统一经 `backend/app/modules/identities/public.py` 进入。材料、身份主体、
 SMTP/IMAP 测试和模板设置不属于本子切片。
 
+## identities 身份主体子切片（第 3B 批）
+
+profiles 拥有身份 CRUD、默认身份、SMTP/IMAP 连接测试、模板导入、身份 DTO 与身份序列化。
+materials 在本批只拥有材料 DTO 与材料序列化，以解除原 `identity.py` 和
+`identity_serializers.py` 的混合职责；材料生命周期行为仍属于第 3C。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

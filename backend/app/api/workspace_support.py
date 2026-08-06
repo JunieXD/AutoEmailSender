@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.identity_serializers import serialize_material
 from app.models import (
     BatchTaskStatus,
     EmailDirection,
@@ -36,7 +35,10 @@ from app.schemas.workspace import (
 )
 from app.services import llm_runtime
 from app.services.communication_events import CommunicationEvent, load_communication_events
-from app.modules.identities.public import resolve_identity_communication_scope
+from app.modules.identities.public import (
+    resolve_identity_communication_scope,
+    serialize_material,
+)
 from app.services.match_results import (
     apply_match_result_view_to_task,
     load_resolved_match_result,
