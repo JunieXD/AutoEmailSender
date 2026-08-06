@@ -46,7 +46,7 @@ from app.services.agent_mutations import (
     normalize_idempotency_key,
 )
 from app.services.file_storage import delete_file
-from app.services.material_mutations import (
+from app.modules.identities.public import (
     MaterialMutationError,
     delete_identity_material_record,
     prepare_material_deletion_snapshot,

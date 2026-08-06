@@ -8,7 +8,8 @@
 - 已完成：第 2 批——首个领域切片 `system/runtime-settings`。
 - 已完成：第 3A 批——`identities/communication-groups`。
 - 已完成：第 3B 批——`identities/profiles` 与 materials DTO/serializer 基础。
-- 下一阶段：第 3C 批迁移材料行为。
+- 已完成：第 3C 批——`identities/materials` 生命周期行为与 UI adapter。
+- 下一阶段：第 4 批——`professors` 与 `community`。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档

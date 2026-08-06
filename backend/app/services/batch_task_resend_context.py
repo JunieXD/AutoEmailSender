@@ -21,7 +21,7 @@ from app.schemas.batch_task import (
     BatchTaskResendItemRead,
     BatchTaskResendSummaryRead,
 )
-from app.services.materials import material_can_be_primary
+from app.modules.identities.public import material_can_be_primary
 
 SUCCESS_STATUSES = {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
 EXCLUDED_RUNNING_STATUSES = {EmailTaskStatus.SENDING.value}

@@ -35,7 +35,7 @@ from app.services.match_analysis_job_runtime import (
     serialize_match_analysis_job,
     serialize_match_analysis_job_item,
 )
-from app.services.material_mutations import delete_identity_material_record
+from app.modules.identities.public import delete_identity_material_record
 from app.services.task_runtime import (
     MatchAnalysisAlreadyRunningError,
     calculate_task_match_once,
@@ -828,7 +828,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.materials.extract_text_from_document",
+                "app.modules.identities.materials.support.extract_text_from_document",
                 return_value=None,
             ),
             patch(

@@ -19,7 +19,7 @@ from app.schemas.agent import (
     AgentDraftSaveRequest,
 )
 from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest
-from app.services.materials import material_can_be_primary
+from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_result
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (

@@ -72,7 +72,7 @@ from app.services.match_results import (
     resolve_identity_match_scope,
     upsert_identity_professor_match_result,
 )
-from app.services.materials import (
+from app.modules.identities.public import (
     build_material_download_name,
     ensure_material_extracted_text,
     material_can_be_primary,

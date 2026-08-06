@@ -8,7 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.identities.public import serialize_material
+from app.modules.identities.public import (
+    build_material_download_name,
+    ensure_material_extracted_text,
+    serialize_material,
+)
 from app.models import (
     IdentityMaterial,
     IdentityProfile,
@@ -29,7 +33,6 @@ from app.schemas.test_compose import (
 )
 from app.services import llm_runtime, mail_runtime
 from app.services.mail_runtime import MailAttachment
-from app.services.materials import build_material_download_name, ensure_material_extracted_text
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (
     get_default_outreach_template_for_identity,

@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 3B 批已完成，第 3C 批待开始
+状态：已确认，第 3 批已完成，第 4 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -159,7 +159,7 @@ cli/src/auto_email_sender_cli/
 |---|---|---|---|
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
-| 3 | `identities`：身份、材料、通信组 | 执行中（3A、3B 已完成；3C 待开始） | 每个子切片独立迁移并全绿 |
+| 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 待开始 | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
@@ -464,3 +464,65 @@ backend/app/modules/identities/
 
 停止点：材料 DTO 与序列化已经稳定，但上传、删除、主材料选择、下载和文件清理行为仍在
 旧 API/service 中。第 3C 必须先重新定界这些行为与任务、批量任务、匹配和 Agent 变更计划的关系。
+
+### 第 3C 批：`identities/materials` 生命周期行为（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/identities/materials/
+├── api.py
+├── schemas.py
+├── serializer.py
+├── service.py
+├── support.py
+└── public.py
+```
+
+计划范围：
+
+- 将 `app.api.materials` 的上传、设为默认、删除、打开和下载 UI adapter 迁入 materials。
+- 将 `app.services.material_mutations` 的上传、默认材料、删除预览/事务及操作日志协调原样迁入
+  `service.py`，不重写其跨任务、批量任务、试写会话和匹配记录的一致性算法。
+- 将 `app.services.materials` 的可用性、文本提取、引用状态与下载名规则迁入 `support.py`。
+- 组合根、Agent API、Agent change plan 及其他生产调用方改走 identities 公共入口；三个旧路径
+  保留纯 re-export，并增加对象一致性测试。
+- 文件存储、操作日志、任务/批量任务状态协调仍由现有平台/领域服务提供，本批只显式记录依赖边，
+  不把它们复制进 materials。
+
+本批不变量：
+
+- UI 与 Agent 的材料上传、列表、打开、下载、默认选择、删除预览和确认路径/DTO/错误码不变。
+- 删除事务对进行中任务的阻止，以及对安全旧引用、批量任务、试写会话和匹配记录的清理语义不变。
+- 文件保存、提取、删除时机和操作日志事件名不变；不修改数据库 schema、Alembic 或存储目录。
+- 不新增架构门禁例外，不在本批拆分 task/batch/matching 领域实现。
+
+计划验证：材料 UI API 全部删除矩阵、Agent material/revision/change-plan 用例、任务/批量任务/
+匹配关联测试、架构与兼容门禁、相关 CLI/Frontend 合同，以及 Backend 完整 unittest。
+
+实际结果：
+
+- 材料 UI adapter、生命周期事务和辅助规则已迁入
+  `backend/app/modules/identities/materials/{api,service,support}.py`；组合根直接注册新 router。
+- Agent API、Agent change plan、任务、批量任务、workspace/test-compose 等生产调用方已统一改走
+  `app.modules.identities.public`；旧 API 和两个 service 路径只保留纯 re-export。
+- 材料删除事务的阻止、预览指纹、旧引用清理、批量任务完成同步、匹配记录解绑和文件删除时机
+  均保持原样；跨 campaigns/test-compose/matching 的协调边已显式保留，留待对应领域批次收敛。
+- 未修改 ORM、Alembic、HTTP/Agent/CLI/Frontend 合同、锁文件或打包资源路径，未新增门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、profiles/materials 旧入口对象一致性 | 11 tests passed |
+| Backend 定向 | 材料 UI/Agent/change-plan、任务、批量任务、匹配与操作日志流程 | 318 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1709 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | materials 命令、Agent client 与下载处理 | 81 tests passed |
+| Frontend 合同 | API client 与 Profile onboarding/material 交互上下文 | 2 files，33 tests passed |
+| Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
+
+停止点：identities 的通信组、身份主体和材料三个子切片均已迁移。第 4 批开始前必须分别评估
+professors 与 community 的路由、schema、管理/补全服务及前端实体边界，避免把两个领域一次性混迁。

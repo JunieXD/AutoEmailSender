@@ -58,7 +58,7 @@ from app.services.batch_task_status import (
     count_completed_batch_task_items,
     sync_batch_task_completion,
 )
-from app.services.materials import material_can_be_primary
+from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (

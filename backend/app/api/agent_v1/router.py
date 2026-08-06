@@ -121,14 +121,18 @@ from app.schemas.professor_information_enrichment import (
 from app.modules.identities.public import (
     CommunicationGroupMutationError,
     ConnectionTestResult,
+    MaterialMutationError,
+    build_material_download_name,
     IdentityCommunicationGroupRead,
     IdentityCommunicationGroupWrite,
     create_communication_group_record,
     delete_communication_group_record,
     get_communication_group_record,
     list_communication_group_records,
+    set_primary_material_record,
     resolve_identity_communication_scope,
     update_communication_group_record,
+    upload_identity_material_record,
 )
 from app.modules.system.public import (
     RuntimeSettingsRead,
@@ -230,12 +234,6 @@ from app.services.batch_task_resend_context import (
     build_batch_task_resend_context,
 )
 from app.services.agent_mutations import execute_agent_factory_mutation, execute_agent_mutation
-from app.services.material_mutations import (
-    MaterialMutationError,
-    set_primary_material_record,
-    upload_identity_material_record,
-)
-from app.services.materials import build_material_download_name
 from app.services.match_analysis_job_runtime import (
     create_match_analysis_job_record,
     delete_match_analysis_job_record,

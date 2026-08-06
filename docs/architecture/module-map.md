@@ -71,6 +71,13 @@ profiles 拥有身份 CRUD、默认身份、SMTP/IMAP 连接测试、模板导�
 materials 在本批只拥有材料 DTO 与材料序列化，以解除原 `identity.py` 和
 `identity_serializers.py` 的混合职责；材料生命周期行为仍属于第 3C。
 
+## identities 材料生命周期子切片（第 3C 批）
+
+materials 拥有材料上传、默认选择、删除预览与确认、引用一致性、文本提取适用性、下载命名
+和 UI HTTP adapter。删除事务需要协调 campaigns/tasks、test-compose 与 matching 记录；第一轮
+通过这些领域现有服务/模型协作，不复制状态机，也不改变数据库关系。领域外调用方统一通过
+`backend/app/modules/identities/public.py` 使用材料能力。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

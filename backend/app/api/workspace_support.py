@@ -36,6 +36,7 @@ from app.schemas.workspace import (
 from app.services import llm_runtime
 from app.services.communication_events import CommunicationEvent, load_communication_events
 from app.modules.identities.public import (
+    material_can_be_primary,
     resolve_identity_communication_scope,
     serialize_material,
 )
@@ -45,7 +46,6 @@ from app.services.match_results import (
     match_result_is_stale,
 )
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
-from app.services.materials import material_can_be_primary
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (
     get_default_outreach_template_for_identity,
