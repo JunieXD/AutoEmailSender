@@ -10,12 +10,16 @@ from auto_email_sender_cli.capabilities import get_capability
 
 ROOT = Path(__file__).resolve().parents[2]
 COVERAGE_FILE = ROOT / "docs" / "agent_cli_gui_coverage.json"
+FRONTEND_SRC = ROOT / "frontend" / "src"
 API_DIR = ROOT / "frontend" / "src" / "lib" / "api"
 _DIRECT_EXPORT_PATTERN = re.compile(
     r"^\s*export\s+(?:default\s+)?(?:async\s+)?(?:const|function|class)\s+([A-Za-z_$][\w$]*)",
     re.MULTILINE,
 )
 _NAMED_EXPORT_PATTERN = re.compile(r"export\s*\{(?P<body>[^}]*)\}", re.DOTALL)
+_STAR_REEXPORT_PATTERN = re.compile(
+    r"export\s*\*\s*from\s*['\"](?P<target>[^'\"]+)['\"]\s*;?",
+)
 
 
 def extract_exported_actions(source: str) -> set[str]:
@@ -41,6 +45,47 @@ def extract_exported_actions(source: str) -> set[str]:
     return names
 
 
+def extract_exported_actions_from_file(
+    path: Path,
+    *,
+    visited: set[Path] | None = None,
+) -> set[str]:
+    resolved_path = path.resolve()
+    seen = visited if visited is not None else set()
+    if resolved_path in seen:
+        return set()
+    seen.add(resolved_path)
+
+    source = resolved_path.read_text(encoding="utf-8")
+    names = extract_exported_actions(source)
+    for match in _STAR_REEXPORT_PATTERN.finditer(source):
+        target = match.group("target")
+        if target.startswith("@/"):
+            base = FRONTEND_SRC / target.removeprefix("@/")
+        elif target.startswith("."):
+            base = resolved_path.parent / target
+        else:
+            continue
+
+        candidates = (
+            base,
+            Path(f"{base}.ts"),
+            Path(f"{base}.tsx"),
+            base / "index.ts",
+            base / "index.tsx",
+        )
+        reexport_path = next(
+            (candidate for candidate in candidates if candidate.is_file()),
+            None,
+        )
+        if reexport_path is None:
+            raise AssertionError(f"无法解析 Frontend re-export: {resolved_path} -> {target}")
+        names.update(
+            extract_exported_actions_from_file(reexport_path, visited=seen),
+        )
+    return names
+
+
 class GuiCoverageTests(unittest.TestCase):
     def test_every_business_api_module_has_an_explicit_cli_classification(self) -> None:
         document = json.loads(COVERAGE_FILE.read_text(encoding="utf-8"))
@@ -63,9 +108,7 @@ class GuiCoverageTests(unittest.TestCase):
             self.assertTrue(item.get("id"), item)
             self.assertTrue(item.get("reason"), item)
             source = item["source"]
-            exported_names = extract_exported_actions(
-                (API_DIR / source).read_text(encoding="utf-8"),
-            )
+            exported_names = extract_exported_actions_from_file(API_DIR / source)
             classified_actions = item.get("exported_actions")
             self.assertIsInstance(classified_actions, list, item)
             classified_names = {
@@ -137,6 +180,18 @@ class GuiCoverageTests(unittest.TestCase):
         self.assertEqual(
             extract_exported_actions(source),
             {"run", "execute", "fallback", "load"},
+        )
+
+    def test_export_scanner_follows_workspace_star_reexports(self) -> None:
+        self.assertEqual(
+            extract_exported_actions_from_file(API_DIR / "communityMentorsApi.ts"),
+            {
+                "downloadCommunitySharePackage",
+                "getCommunityMentorCatalog",
+                "importCommunityMentors",
+                "listCommunityMentors",
+                "previewCommunityMentorImport",
+            },
         )
 
 

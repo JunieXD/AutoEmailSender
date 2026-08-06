@@ -890,13 +890,13 @@ backend/app/modules/llm/
 | Backend LLM 核心 | runtime/prompt/wire、endpoint/thinking/structured-output adaptation | 157 tests passed |
 | Backend 关联流程 | profile UI、Agent、operation log、crawler、matching、批量草稿与并发 | 543 tests passed |
 | Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1731 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
-| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| CLI 合同与完整套件 | Agent CLI/client；含 Frontend API 覆盖门禁的完整 unittest | 81 tests passed；完整套件 154 tests passed |
 | Frontend 合同 | Profile onboarding、LLM preview/test/default 与模板导入 | 2 files，33 tests passed |
 | Repository | CodeGraph 同步；生产旧路径/公共符号审计；`git diff --check` | 通过 |
 
-验证备注：CLI 完整 153 项额外发现 1 个第 4D 遗留的 community API 纯 re-export 扫描误判；它与本批
-LLM 路径无关，且 Agent/client 合同 81/81 通过。该门禁验证债在第 5B 后以独立修复处理，最终全仓
-验收不得保留失败。
+验证备注：CLI 完整套件首次运行发现 1 个第 4D 遗留的 Frontend `export * from` 兼容入口扫描误判；
+后续独立修复为支持 `@/`/相对路径、`.ts`/`.tsx`/index 解析和循环保护的通用递归扫描器。专项 3/3、
+增加回归用例后的 CLI 完整套件 154/154 通过。
 
 停止点：第 5 批 matching 与 llm 所有权均已归位；LLM 内部 adaptation 协作边已被显式记录而未向
 外扩散。第 6 批只迁移 crawler 的 DTO、UI/Agent adapter、worker/scheduler、页面策略与运行时持久化，
