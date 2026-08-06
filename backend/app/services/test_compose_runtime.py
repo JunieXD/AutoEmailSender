@@ -47,7 +47,7 @@ from app.services.outreach_templates import (
     resolve_outreach_template_config,
 )
 from app.services.rich_text import normalize_email_html, text_to_email_html
-from app.services.runtime_settings import get_runtime_settings
+from app.modules.system.public import get_runtime_settings
 
 
 async def build_test_compose_thread(

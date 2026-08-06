@@ -1,0 +1,318 @@
+# 按领域模块化重构总计划
+
+状态：已确认，已完成第 2 批
+建立日期：2026-08-06
+适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
+
+## 1. 目标
+
+本计划把当前以技术层和文件大小为主的组织方式，渐进调整为高内聚、低耦合、按领域或用户能力组织的模块结构，使人类和 AI 都能在较小且明确的上下文内安全修改代码。
+
+成功标准：
+
+- 一个业务能力的 API、应用逻辑、数据结构和测试能够在同一领域范围内定位。
+- 组合根只负责装配，不保存业务规则。
+- 跨领域依赖只能经过显式公共入口或合同。
+- 前端页面只负责编排，不继续承载大块业务状态与规则。
+- HTTP、Agent API 和 Desktop IPC 合同都有单一事实来源或自动漂移检查。
+- 每次文件移动都能独立构建、测试和回滚。
+
+## 2. 不变量
+
+重构期间必须保持以下行为不变：
+
+- 不改变现有 HTTP 路径、请求/响应字段和状态码。
+- 不改变 Agent API 的权限、安全 DTO、确认、幂等和审计语义。
+- CLI 继续只通过 Agent API 操作应用，不直接访问 SQLite。
+- 不改变数据库 schema；需要 schema 变化时另开功能批次并提供 Alembic revision。
+- 不改变 Electron 分发资源相对路径，除非该批显式包含完整打包验证。
+- 保留 `backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 顶层工作区及独立锁文件。
+- Alembic revision 保持单一时间链，不按领域拆分目录。
+
+## 3. 目标拓扑
+
+### 3.1 仓库根目录
+
+```text
+AutoEmailSender/
+├── backend/
+├── frontend/
+├── desktop/
+├── cli/
+├── website/
+├── contracts/                 # 跨进程、机器可读、可生成或校验的合同
+├── agent-support/             # 产品分发用 Agent 资源
+├── config/                    # 真正跨工作区的静态配置
+├── scripts/
+│   ├── build/
+│   ├── packaging/
+│   ├── quality/
+│   ├── data/
+│   └── release/
+└── docs/
+    ├── architecture/
+    ├── product/
+    ├── development/
+    ├── operations/
+    ├── releases/
+    └── archive/
+```
+
+根目录整理安排在领域代码稳定后执行。为了目录美观而整体迁移到 `apps/` 不在本计划范围内。
+
+### 3.2 后端
+
+```text
+backend/app/
+├── bootstrap/                 # create_app、lifespan、router registry
+├── modules/
+│   ├── identities/
+│   ├── professors/
+│   ├── community/
+│   ├── campaigns/
+│   ├── communications/
+│   ├── workspace/
+│   ├── matching/
+│   ├── crawler/
+│   ├── llm/
+│   ├── automation/
+│   ├── reporting/
+│   └── system/
+├── platform/                  # 数据库、文件系统、HTTP、可观测性等实现
+└── shared/                    # 无领域含义、无反向依赖的小型基础能力
+```
+
+大型领域可逐步采用以下内部结构；小领域不创建空层：
+
+```text
+modules/<domain>/
+├── public.py
+├── domain/
+├── application/
+├── infrastructure/
+└── presentation/http/
+    ├── ui.py
+    ├── agent_v1.py
+    └── schemas.py
+```
+
+第一轮迁移以“先按所有权聚合，再按需要拆层”为原则，不在文件移动批次中强制重写 ORM 或领域模型。
+
+### 3.3 前端
+
+```text
+frontend/src/
+├── main.tsx
+├── app/                       # router、providers、layouts、styles
+├── pages/                     # 薄路由页面
+├── widgets/                   # 页面级复合区块
+├── features/                  # 用户动作
+├── entities/                  # 业务实体
+└── shared/                    # api、platform、ui、lib、hooks、config
+```
+
+目标依赖方向：
+
+```text
+app -> pages -> widgets -> features -> entities -> shared
+```
+
+原有 `components/atoms|molecules|organisms` 按业务所有权逐步迁移，不进行一次性大搬家。真正通用的组件进入 `shared/ui`，领域组件进入对应 `entities`、`features` 或 `widgets`。
+
+### 3.4 Desktop
+
+```text
+desktop/src/
+├── main.ts                    # 薄组合入口
+├── preload.ts                 # 薄桥接入口
+├── main/
+│   ├── bootstrap/
+│   ├── ipc/
+│   ├── backend/
+│   ├── agent-support/
+│   ├── updates/
+│   ├── files/
+│   └── shell/
+├── preload/
+└── contracts/
+```
+
+生产构建与测试 TypeScript 配置最终分离，测试文件不进入生产输出树。
+
+### 3.5 CLI
+
+```text
+cli/src/auto_email_sender_cli/
+├── bootstrap/
+├── commands/<resource>/
+├── transport/
+├── protocol/
+├── catalog/
+└── invocation/
+```
+
+`catalog` 是命令合同、能力、风险和说明的单一注册源；`commands` 只做参数绑定与调用编排，不保存产品业务真相。
+
+## 4. 批次计划
+
+| 批次 | 范围 | 状态 | 完成条件 |
+|---|---|---|---|
+| 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
+| 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
+| 3 | `identities`：身份、材料、通信组 | 待开始 | 每个子切片独立迁移并全绿 |
+| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 待开始 | UI/Agent 路由和前端实体边界完成 |
+| 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
+| 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
+| 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
+| 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
+| 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
+
+批次可以继续拆成更小提交，但不得把两个互不相关的领域迁移混在同一提交中。
+
+## 5. 单批执行协议
+
+每一批严格按以下顺序执行：
+
+1. 用 CodeGraph 和只读检查确认调用方、被调用方、测试和打包路径。
+2. 在本计划中把本批状态改为“执行中”，写明精确文件范围。
+3. 先建立目标目录和公共入口。
+4. 使用兼容 re-export 或薄委托保留旧导入路径。
+5. 使用 `git mv` 或小步补丁迁移；不顺带改业务逻辑。
+6. 运行定向测试。
+7. 运行受影响工作区的完整测试、lint/typecheck 和 build。
+8. 检查 `git diff`、新增反向依赖及构建产物路径。
+9. 更新计划状态、剩余技术债和验证结果后，才开始下一批。
+
+兼容入口要求：
+
+- 只允许导入和 re-export，不新增业务逻辑。
+- 必须在依赖门禁中显式识别。
+- 对外导入全部迁移完成后，在独立清理批次删除。
+
+## 6. 验证矩阵
+
+### Backend
+
+```text
+cd backend
+uv run python -m unittest discover test
+```
+
+### Frontend
+
+```text
+cd frontend
+npm run lint
+npm run test
+npm run build
+```
+
+### CLI
+
+```text
+cd cli
+uv run python -m unittest discover test
+```
+
+涉及 CLI 分发时追加根目录 `scripts/build-cli.*` 和二进制验证。
+
+### Desktop
+
+```text
+cd desktop
+npm run typecheck
+npm run test
+npm run build
+```
+
+### Website 与发布链
+
+只有触及对应路径时执行 website build/test 和 packaging/release 脚本测试；任何打包路径变化都必须执行项目指南列出的完整 release 测试矩阵。
+
+## 7. 停止条件
+
+出现以下任一情况必须停止当前批次，不得用扩大改动范围掩盖问题：
+
+- API、CLI 或 IPC 合同发生非预期变化。
+- 需要数据库迁移才能继续。
+- 必须同时重写多个领域的业务逻辑才能通过测试。
+- 新增循环依赖或新增门禁例外。
+- 完整测试失败且无法证明与本批无关。
+- 打包资源路径无法通过现有测试验证。
+
+## 8. 第 1 批交付物
+
+- 本目录中的计划、模块地图和依赖规则。
+- Backend AST 导入边界测试，冻结当前反向依赖清单。
+- Frontend import 边界测试，冻结现有低层向高层依赖和跨 feature 依赖。
+- CLI import 边界测试，约束 transport/protocol/catalog/commands 的方向。
+- Desktop import 边界测试，保护 main/preload 进程边界并禁止循环依赖。
+- 四个工作区的定向和完整验证结果。
+
+## 9. 执行记录
+
+### 第 1 批：架构基线与边界门禁（已完成）
+
+完成日期：2026-08-06
+
+交付范围：
+
+- 建立本目录中的总计划、模块地图、依赖规则与索引。
+- 增加 Backend、Frontend、CLI、Desktop 导入边界测试。
+- 将现存反向依赖冻结为精确文件边；新增违规会失败，已消失的例外会提示收紧基线。
+- 将 Frontend 架构测试纳入现有 Vitest 配置。
+
+验证结果：
+
+| 工作区 | 验证 | 结果 |
+|---|---|---|
+| Backend | 架构门禁；完整 unittest | 通过：完整套件 1695 passed，1 skipped |
+| Frontend | lint；完整 Vitest；production build | 通过：115 files，899 tests |
+| CLI | 架构门禁；完整 unittest | 通过：完整套件 153 passed |
+| Desktop | 架构门禁；typecheck；完整 Vitest；build | 通过：29 files，246 tests |
+| Repository | `git diff --check` | 通过 |
+
+### 第 2 批：`system/runtime-settings` 首个纵向切片（已完成）
+
+完成日期：2026-08-06
+
+计划文件范围：
+
+- 新增领域入口 `backend/app/modules/system/public.py`，以及切片目录 `backend/app/modules/system/runtime_settings/{__init__.py,api.py,schemas.py,service.py,public.py}`。
+- 将 `backend/app/api/runtime_settings.py`、`backend/app/schemas/runtime_settings.py`、`backend/app/services/runtime_settings.py` 中归属该切片的实现迁入新模块。
+- 旧路径仅保留纯兼容 re-export；组合根、Agent API、CLI 与 Frontend 调用方只在确有必要时更新导入，不改变合同或行为。
+- `backend/app/services/system_settings.py` 先经调用图确认所有权；只有与 runtime settings 不可分割的实现才纳入本批。
+
+本批不变量：
+
+- `/api/runtime-settings` 路径、DTO 字段、状态码保持不变。
+- Agent `/settings`、CLI settings 命令及 Frontend runtime-settings 行为保持不变。
+- 不改变数据库 schema、持久化语义或启动/打包路径。
+- 新模块不依赖旧 `app.api`，不增加任何门禁例外。
+
+实际结果：
+
+- runtime-settings 的 schema、服务、持久化初始化和 UI HTTP adapter 已迁入
+  `backend/app/modules/system/runtime_settings/`。
+- `backend/app/modules/system/public.py` 成为领域外唯一稳定入口；Agent API 和五个
+  后端运行时调用方已改用该入口。
+- `app.api.runtime_settings`、`app.schemas.runtime_settings`、
+  `app.services.runtime_settings`、`app.services.system_settings` 保留为纯兼容导出，
+  并由对象一致性测试保护。
+- 组合根直接注册新模块 router；`/api/runtime-settings` 与 Agent `/settings` 的路径、
+  DTO、状态码、revision、幂等及操作日志语义保持不变。
+- 未修改 Alembic、ORM schema、Frontend/CLI 合同、锁文件或打包资源路径；未新增门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 定向 | 架构门禁、兼容导出、runtime settings API、并发初始化、Agent settings | 14 tests passed |
+| Backend 受影响运行时 | Agent settings、runtime manager、crawler scheduler/runtime | 96 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1698 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | settings update 合并与 Agent 路由用例 | 1 test passed |
+| Frontend 合同 | `OtherSettingsCard` 读取、更新及兼容 payload | 8 tests passed |
+| Repository | CodeGraph 同步；`git diff --check` | 通过 |
+
+停止点：第 3 批 `identities` 尚未开始。开始前必须重新用 CodeGraph 确定第一个
+identities 子切片的所有权和调用边界，不得把身份、材料与通信组一次性混合迁移。

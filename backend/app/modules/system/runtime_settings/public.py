@@ -1,6 +1,6 @@
-"""Compatibility exports for migrated runtime-settings schemas."""
+"""Stable facade for callers outside the runtime-settings slice."""
 
-from app.modules.system.public import (
+from .schemas import (
     DraftRewriteFormality,
     DraftRewriteIntensity,
     DraftRewriteLength,
@@ -9,6 +9,11 @@ from app.modules.system.public import (
     DraftTemplatePreservation,
     RuntimeSettingsRead,
     RuntimeSettingsUpdate,
+)
+from .service import (
+    get_runtime_settings,
+    serialize_runtime_settings,
+    update_runtime_settings,
 )
 
 __all__ = [
@@ -20,4 +25,7 @@ __all__ = [
     "DraftTemplatePreservation",
     "RuntimeSettingsRead",
     "RuntimeSettingsUpdate",
+    "get_runtime_settings",
+    "serialize_runtime_settings",
+    "update_runtime_settings",
 ]

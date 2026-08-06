@@ -20,7 +20,7 @@ from app.api.professor_information_enrichment import (
     professor_router as professor_information_enrichment_professor_router,
     router as professor_information_enrichment_jobs_router,
 )
-from app.api.runtime_settings import router as runtime_settings_router
+from app.modules.system.runtime_settings.api import router as runtime_settings_router
 from app.api.test_compose import router as test_compose_router
 from app.api.token_usage import router as token_usage_router
 from app.api.workspaces import router as workspaces_router

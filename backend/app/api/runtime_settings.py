@@ -1,34 +1,9 @@
-from __future__ import annotations
+"""Compatibility exports for the migrated runtime-settings HTTP adapter."""
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.database import get_async_session
-from app.schemas.runtime_settings import RuntimeSettingsRead, RuntimeSettingsUpdate
-from app.services.runtime_settings import (
-    get_runtime_settings,
-    serialize_runtime_settings,
-    update_runtime_settings,
+from app.modules.system.runtime_settings.api import (
+    patch_runtime_settings,
+    read_runtime_settings,
+    router,
 )
 
-
-router = APIRouter(prefix="/api/runtime-settings", tags=["runtime-settings"])
-
-
-@router.get("", response_model=RuntimeSettingsRead)
-async def read_runtime_settings(
-    session: AsyncSession = Depends(get_async_session),
-) -> RuntimeSettingsRead:
-    settings = await get_runtime_settings(session)
-    await session.commit()
-    return serialize_runtime_settings(settings)
-
-
-@router.patch("", response_model=RuntimeSettingsRead)
-async def patch_runtime_settings(
-    payload: RuntimeSettingsUpdate,
-    session: AsyncSession = Depends(get_async_session),
-) -> RuntimeSettingsRead:
-    settings = await update_runtime_settings(session, payload)
-    await session.commit()
-    return serialize_runtime_settings(settings)
+__all__ = ["patch_runtime_settings", "read_runtime_settings", "router"]

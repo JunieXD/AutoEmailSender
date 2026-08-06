@@ -119,7 +119,13 @@ from app.schemas.professor_information_enrichment import (
     ProfessorInformationEnrichmentJobActionRead,
     ProfessorInformationEnrichmentJobRead,
 )
-from app.schemas.runtime_settings import RuntimeSettingsRead, RuntimeSettingsUpdate
+from app.modules.system.public import (
+    RuntimeSettingsRead,
+    RuntimeSettingsUpdate,
+    get_runtime_settings,
+    serialize_runtime_settings,
+    update_runtime_settings,
+)
 from app.schemas.workspace import WorkspaceSyncWarningRead, WorkspaceThreadRead
 from app.schemas.outreach_template import (
     IdentityDefaultOutreachTemplateUpdate,
@@ -286,11 +292,6 @@ from app.services.professor_information_enrichment import (
     request_professor_information_enrichment_cancel,
     restore_professor_information_enrichment_job_record,
     retry_failed_professor_information_enrichment_job_record,
-)
-from app.services.runtime_settings import (
-    get_runtime_settings,
-    serialize_runtime_settings,
-    update_runtime_settings,
 )
 from app.services.dashboard_stats import build_dashboard_overview
 from app.services.professor_mutations import (

@@ -28,7 +28,7 @@ from app.services.crawl_job_runs import (
     mark_crawl_job_run_paused,
     mark_crawl_job_run_running,
 )
-from app.services.runtime_settings import get_runtime_settings
+from app.modules.system.public import get_runtime_settings
 from app.services.llm_endpoint_adaptation import invalidate_endpoint_adaptation
 from app.services.llm_runtime import (
     LLMRuntimeAdaptation,

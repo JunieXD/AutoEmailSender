@@ -19,7 +19,7 @@ from app.services.batch_draft_generation_runtime import (
 )
 from app.services.crawler_v2_scheduler import run_crawler_v2_once
 from app.services.match_analysis_job_runtime import run_queued_match_analysis_jobs_once
-from app.services.runtime_settings import get_runtime_settings
+from app.modules.system.public import get_runtime_settings
 from app.services.task_runtime import (
     DEFAULT_SEND_INTERVAL_MAX_SECONDS,
     dispatch_due_tasks_once,

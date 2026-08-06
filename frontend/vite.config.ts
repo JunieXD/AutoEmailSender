@@ -32,6 +32,7 @@ const nodeTestFiles = [
   "test/taskCopy.test.ts",
   "test/templatePlaceholders.test.ts",
   "test/validateTaskForm.test.ts",
+  "test/architectureBoundaries.test.ts",
   "vite.config.test.ts",
 ];
 
