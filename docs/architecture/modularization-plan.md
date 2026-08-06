@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 8 批已完成，第 9 批执行中
+状态：已完成（第 1～9 批全部验收通过）
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -165,7 +165,7 @@ cli/src/auto_email_sender_cli/
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 已完成（7A～7C） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 已完成 | main/preload 薄入口、类型单一来源 |
-| 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 执行中 | 构建与发布路径全部验证 |
+| 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 已完成 | 构建与发布路径全部验证 |
 
 批次可以继续拆成更小提交，但不得把两个互不相关的领域迁移混在同一提交中。
 
@@ -1487,9 +1487,10 @@ desktop/src/
 application bootstrap 已分离，两个 Electron 分发入口保持稳定。当前 `tsconfig.json` 仍把测试编译到
 `dist/test`，标准 Vitest 会在本地 build 后重复发现测试；该已确认问题归第 9 批测试拓扑处理。
 
-### 第 9 批：测试拓扑、脚本、文档与遗留清理（执行中）
+### 第 9 批：测试拓扑、脚本、文档与遗留清理（已完成）
 
 开始日期：2026-08-06
+完成日期：2026-08-06
 
 只读审计结果：
 
@@ -1616,3 +1617,30 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | 构建后打包合同 | packaging test | 1 file，18 tests passed |
 | 生产产物 | `dist/src` 文件清单与旧根模块审计 | 仅两个稳定入口及 owner 子树；旧根模块归零 |
 | Repository | CodeGraph；活动旧路径；`git diff --check` | 通过 |
+
+第 9 批与全计划最终验收：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend | 完整 unittest | Ran 1715 tests；OK（1 skipped） |
+| CLI | GUI owner/baseline 定向；完整 unittest | 53 + 154 tests passed |
+| Frontend | lint；完整 Vitest；production build | lint/build 通过；115 files，899 tests passed |
+| Desktop | typecheck；完整 Vitest；production build；构建后 packaging | 17 files，131 tests；packaging 18 tests；typecheck/build 通过 |
+| Website | 完整 Vitest；production build | 4 files，16 tests passed；build 通过 |
+| Release/quality | release notes、Frontend packaging、Node release/Sparkle/拓扑、POSIX prepare/release、Bash syntax | 2 + 2 + 20 tests；两套 POSIX 合同与语法检查通过 |
+| Repository | CodeGraph；活动旧路径与 production bundle；生成产物/缓存；锁文件；`git diff --check` | 通过；清理被忽略的旧 Backend 构建产物 |
+
+最终审计发现并修复 CLI GUI 覆盖门禁仍指向已删除 Frontend API shim 的遗漏；覆盖清单与版本化
+baseline 现使用相对 `frontend/src` 的真实 owner 路径，门禁同时扫描 `lib/api` 与实体 API owner。
+
+显式保留项：
+
+- `scripts/` 根的已公开命令继续作为薄转发 wrapper，并由脚本拓扑门禁限制；它们不是迁移 shim。
+- Frontend `src/types/index.ts` 仍有活动类型聚合调用方，因此保留并验证与 entity owner 同源。
+- `dependency-rules.md` 中冻结的 Backend/Frontend 渐进例外和 CLI `commands/common.py` 聚合热点继续受
+  精确门禁约束；这些是后续功能改动可偿还的边界，不影响本计划各领域 owner 与公共入口成立。
+- 本机未安装 `pwsh`，PowerShell 合同测试由 Windows CI 覆盖；POSIX 对等合同已在本地通过。
+- 本轮未创建 tag、未 push、未发布产物，也未改变数据库、HTTP、Agent、CLI 或 Desktop IPC 合同。
+
+至此第 1～9 批全部完成。后续功能开发应直接遵守 `module-map.md` 与 `dependency-rules.md`，不得恢复
+已删除的兼容入口；新增领域迁移另立批次，不再延长本计划。
