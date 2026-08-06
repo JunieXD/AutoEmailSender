@@ -99,7 +99,7 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
         if await _job_has_available_or_leased_work(session, job_id=job.id, now=now):
             continue
         if job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
-            from app.services.professor_information_enrichment import (
+            from app.modules.professors.public import (
                 finalize_professor_information_enrichment_job,
             )
 

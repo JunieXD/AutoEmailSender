@@ -44,7 +44,7 @@ from app.services.crawler_structured_output import (
     request_crawler_structured_completion,
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
-from app.services.professor_information_enrichment import apply_enrichment_to_professor
+from app.modules.professors.public import apply_enrichment_to_professor
 from app.modules.professors.public import normalize_recent_papers
 
 

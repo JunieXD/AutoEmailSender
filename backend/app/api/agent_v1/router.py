@@ -106,12 +106,6 @@ from app.schemas.diagnostics import (
     OperationLogListResponse,
     OperationLogRead,
 )
-from app.schemas.professor_information_enrichment import (
-    CreateProfessorInformationEnrichmentJobRequest,
-    ProfessorInformationEnrichmentItemRead,
-    ProfessorInformationEnrichmentJobActionRead,
-    ProfessorInformationEnrichmentJobRead,
-)
 from app.modules.identities.public import (
     CommunicationGroupMutationError,
     ConnectionTestResult,
@@ -129,7 +123,11 @@ from app.modules.identities.public import (
     upload_identity_material_record,
 )
 from app.modules.professors.public import (
+    CreateProfessorInformationEnrichmentJobRequest,
     ProfessorBulkTagsPayload,
+    ProfessorInformationEnrichmentItemRead,
+    ProfessorInformationEnrichmentJobActionRead,
+    ProfessorInformationEnrichmentJobRead,
     ProfessorMutationError,
     ProfessorTagPayload,
     ProfessorTagUpdatePayload,
@@ -137,10 +135,18 @@ from app.modules.professors.public import (
     archive_professor_record,
     build_professor_export,
     create_professor_record,
+    create_professor_information_enrichment_job_record,
     create_professor_tag_record,
     get_professor_tag_usage_snapshot,
+    get_professor_information_enrichment_job,
     get_professor_with_tags_or_raise,
     restore_professor_record,
+    delete_professor_information_enrichment_job_record,
+    list_professor_information_enrichment_items,
+    list_professor_information_enrichment_jobs,
+    request_professor_information_enrichment_cancel,
+    restore_professor_information_enrichment_job_record,
+    retry_failed_professor_information_enrichment_job_record,
     set_professor_tags_record,
     update_professor_record,
 )
@@ -289,16 +295,6 @@ from app.services.crawl_job_records import (
     update_faculty_crawl_candidate_record,
 )
 from app.services.crawl_job_events import build_crawl_job_events
-from app.services.professor_information_enrichment import (
-    create_professor_information_enrichment_job_record,
-    delete_professor_information_enrichment_job_record,
-    get_professor_information_enrichment_job,
-    list_professor_information_enrichment_items,
-    list_professor_information_enrichment_jobs,
-    request_professor_information_enrichment_cancel,
-    restore_professor_information_enrichment_job_record,
-    retry_failed_professor_information_enrichment_job_record,
-)
 from app.services.dashboard_stats import build_dashboard_overview
 from app.services.outreach_template_mutations import (
     OutreachTemplateMutationError,

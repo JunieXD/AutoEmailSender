@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 4A 批已完成，第 4B 批待开始
+状态：已确认，第 4B 批已完成，第 4C 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -160,7 +160,7 @@ cli/src/auto_email_sender_cli/
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
-| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 执行中（4A 已完成；4B 待开始） | UI/Agent 路由和前端实体边界完成 |
+| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 执行中（4A～4B 已完成；4C 待开始） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
@@ -586,3 +586,59 @@ backend/app/modules/professors/
 
 停止点：导师核心能力已归位，信息补全仍保留旧 API/schema/service。第 4B 只迁移补全 job 生命周期
 与 crawler worker/scheduler 适配，不混入 community 数据下载、预览或导入。
+
+### 第 4B 批：`professors/enrichment`（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/professors/enrichment/
+├── api.py
+├── schemas.py
+├── service.py
+└── public.py
+```
+
+计划范围：
+
+- 迁移单导师/批量信息补全 UI adapter、DTO 与 job/item 生命周期服务。
+- professors 根公共入口 re-export 补全能力；Agent API、crawler enrichment worker/scheduler 改走该入口。
+- 旧 API/schema/service 路径保留纯兼容导出并增加对象一致性测试。
+- 保留 CrawlJob/CrawlCandidate 持久化、crawler worker 调度与 token metrics 的现有实现；第 6 批再收敛 crawler 所有权。
+
+本批不变量：
+
+- professor enrichment UI/Agent 路径、DTO、状态映射、revision/幂等、取消/重试/删除/恢复语义不变。
+- worker 对导师字段的应用、跳过规则、失败脱敏、token 统计和任务完成判断不变。
+- 不修改 ORM、Alembic、runtime worker 数量或 crawler 队列合同，不新增门禁例外。
+
+计划验证：补全 service/UI/Agent 全流程、crawler v2 worker/scheduler、架构/兼容门禁、相关
+CLI/Frontend 用例，以及 Backend 完整 unittest。
+
+实际结果：
+
+- 补全 UI adapter、DTO 和 job/item 生命周期已迁入
+  `backend/app/modules/professors/enrichment/`，组合根直接注册新 router。
+- Agent API、crawler enrichment worker/scheduler 和本领域测试已统一改走
+  `app.modules.professors.public`；旧 API/schema/service 路径只保留纯 re-export。
+- professors 根门面使用补全能力的懒加载导出，避免
+  `crawler_tools -> professors.public -> enrichment.service -> crawler_tools` 初始化环；核心导师能力仍为直接导出。
+- 状态映射、revision/幂等、取消/重试/删除/恢复、失败脱敏、token 统计及 worker 完成判断均保持原样；
+  未修改 ORM、Alembic、HTTP/Agent/CLI/Frontend 合同或运行时并发配置，未新增门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、4A/4B 旧入口对象一致性与独立导入 | 10 tests passed |
+| Backend 定向 | enrichment service/UI/Agent、crawler worker/scheduler | 334 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1715 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | 补全 API、Tasks/Professors crawler、通知与页面布局 | 8 files，133 tests passed |
+| Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
+
+停止点：补全领域能力已归位；crawler worker/scheduler 与 CrawlJob/CrawlCandidate 的协作边显式保留到
+第 6 批。第 4C 只迁移 community 导师目录、缓存、预览、导入和分享包，不混入 crawler 调度实现。

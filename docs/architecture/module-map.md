@@ -85,6 +85,11 @@ professors 拥有导师 DTO、CRUD/归档、标签、批量变更、样例数据
 `backend/app/modules/professors/public.py` 进入。信息补全作为内部子切片在 4B 迁移，community
 仍是独立领域，不因共享 Professor ORM 而合并所有权。
 
+## professors 信息补全子切片（第 4B 批）
+
+信息补全位于 `backend/app/modules/professors/enrichment/`，拥有补全 DTO、job/item 生命周期和
+UI adapter；它通过现有 crawler worker/scheduler 执行采集，后者在第 6 批迁移前仍是显式外部依赖。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

@@ -1,5 +1,6 @@
 """Stable facade for professor-domain capabilities."""
 
+from importlib import import_module
 from .management import (
     ALLOWED_TITLES,
     PROFESSOR_EXPORT_COLUMNS,
@@ -67,8 +68,45 @@ from .schemas import (
     ProfessorUpsertPayload,
 )
 
+
+_ENRICHMENT_EXPORTS = frozenset(
+    {
+        "CreateProfessorInformationEnrichmentJobRequest",
+        "CreateProfessorInformationEnrichmentRequest",
+        "ProfessorInformationEnrichmentActiveRead",
+        "ProfessorInformationEnrichmentItemRead",
+        "ProfessorInformationEnrichmentJobActionRead",
+        "ProfessorInformationEnrichmentJobRead",
+        "apply_enrichment_to_professor",
+        "create_professor_information_enrichment_job",
+        "create_professor_information_enrichment_job_record",
+        "delete_professor_information_enrichment_job_record",
+        "finalize_professor_information_enrichment_job",
+        "get_active_professor_information_enrichment_job",
+        "get_missing_information_enrichment_fields",
+        "get_professor_information_enrichment_job",
+        "list_professor_information_enrichment_items",
+        "list_professor_information_enrichment_jobs",
+        "request_professor_information_enrichment_cancel",
+        "restore_professor_information_enrichment_job_record",
+        "retry_failed_professor_information_enrichment_job",
+        "retry_failed_professor_information_enrichment_job_record",
+        "serialize_professor_information_enrichment_job",
+    },
+)
+
+
+def __getattr__(name: str) -> object:
+    if name not in _ENRICHMENT_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module("app.modules.professors.enrichment.public"), name)
+    globals()[name] = value
+    return value
+
 __all__ = [
     "ALLOWED_TITLES",
+    "CreateProfessorInformationEnrichmentJobRequest",
+    "CreateProfessorInformationEnrichmentRequest",
     "MAX_PERSONAL_NOTE_LENGTH",
     "PROFESSOR_EXPORT_COLUMNS",
     "PROFESSOR_LEGACY_TEMPLATE_COLUMNS",
@@ -83,6 +121,10 @@ __all__ = [
     "ProfessorImportFileResult",
     "ProfessorImportMutationResult",
     "ProfessorImportResult",
+    "ProfessorInformationEnrichmentActiveRead",
+    "ProfessorInformationEnrichmentItemRead",
+    "ProfessorInformationEnrichmentJobActionRead",
+    "ProfessorInformationEnrichmentJobRead",
     "ProfessorManagementItemRead",
     "ProfessorMutationError",
     "ProfessorNoteUpdatePayload",
@@ -97,17 +139,27 @@ __all__ = [
     "RECENT_PAPERS_MAX_ITEMS",
     "SAMPLE_PROFESSORS",
     "archive_professor_record",
+    "apply_enrichment_to_professor",
     "build_professor_export",
     "build_professor_template",
     "bulk_archive_professor_records",
     "bulk_update_professor_tags_record",
     "create_professor_record",
+    "create_professor_information_enrichment_job",
+    "create_professor_information_enrichment_job_record",
     "create_professor_tag_record",
     "delete_professor_tag_record",
+    "delete_professor_information_enrichment_job_record",
+    "finalize_professor_information_enrichment_job",
+    "get_active_professor_information_enrichment_job",
+    "get_missing_information_enrichment_fields",
+    "get_professor_information_enrichment_job",
     "get_professor_tag_usage_snapshot",
     "get_professor_with_tags_or_raise",
     "import_professor_records",
     "is_valid_professor_email",
+    "list_professor_information_enrichment_items",
+    "list_professor_information_enrichment_jobs",
     "load_or_create_tags_by_names",
     "load_tags_by_ids",
     "normalize_professor_email",
@@ -121,7 +173,12 @@ __all__ = [
     "prepare_professor_import_snapshot",
     "prepare_professor_tag_delete_snapshot",
     "record_professor_event",
+    "request_professor_information_enrichment_cancel",
     "restore_professor_record",
+    "restore_professor_information_enrichment_job_record",
+    "retry_failed_professor_information_enrichment_job",
+    "retry_failed_professor_information_enrichment_job_record",
+    "serialize_professor_information_enrichment_job",
     "set_professor_tags_record",
     "sync_professor_tags",
     "sync_professor_tags_by_names",

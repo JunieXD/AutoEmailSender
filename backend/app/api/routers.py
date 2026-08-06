@@ -18,7 +18,7 @@ from app.modules.identities.materials.api import router as materials_router
 from app.api.outreach_templates import router as outreach_templates_router
 from app.api.match_analysis_jobs import router as match_analysis_jobs_router
 from app.modules.professors.api import router as professors_router
-from app.api.professor_information_enrichment import (
+from app.modules.professors.enrichment.api import (
     professor_router as professor_information_enrichment_professor_router,
     router as professor_information_enrichment_jobs_router,
 )

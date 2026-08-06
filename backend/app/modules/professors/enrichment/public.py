@@ -1,6 +1,14 @@
-"""Compatibility exports for migrated professor-enrichment services."""
+"""Stable facade for professor information-enrichment capabilities."""
 
-from app.modules.professors.enrichment.service import (
+from .schemas import (
+    CreateProfessorInformationEnrichmentJobRequest,
+    CreateProfessorInformationEnrichmentRequest,
+    ProfessorInformationEnrichmentActiveRead,
+    ProfessorInformationEnrichmentItemRead,
+    ProfessorInformationEnrichmentJobActionRead,
+    ProfessorInformationEnrichmentJobRead,
+)
+from .service import (
     apply_enrichment_to_professor,
     create_professor_information_enrichment_job,
     create_professor_information_enrichment_job_record,
@@ -19,6 +27,12 @@ from app.modules.professors.enrichment.service import (
 )
 
 __all__ = [
+    "CreateProfessorInformationEnrichmentJobRequest",
+    "CreateProfessorInformationEnrichmentRequest",
+    "ProfessorInformationEnrichmentActiveRead",
+    "ProfessorInformationEnrichmentItemRead",
+    "ProfessorInformationEnrichmentJobActionRead",
+    "ProfessorInformationEnrichmentJobRead",
     "apply_enrichment_to_professor",
     "create_professor_information_enrichment_job",
     "create_professor_information_enrichment_job_record",

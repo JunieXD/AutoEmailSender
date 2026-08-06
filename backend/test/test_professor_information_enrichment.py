@@ -24,7 +24,7 @@ from app.services.crawler_tools import CandidateEnrichmentPayload
 from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
 from app.services.crawler_v2_scheduler import finalize_idle_jobs
 from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
-from app.services.professor_information_enrichment import (
+from app.modules.professors.public import (
     create_professor_information_enrichment_job,
     finalize_professor_information_enrichment_job,
     get_professor_information_enrichment_job,
