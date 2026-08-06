@@ -782,7 +782,7 @@ export interface MatchAnalysisJobDTO {
   total_cached_tokens: number;
   total_tokens: number;
   identity_id: number;
-  match_source_identity_id?: number;
+  match_source_identity_id?: number | null;
   llm_profile_id: number;
   cancel_requested_at: string | null;
   started_at: string | null;

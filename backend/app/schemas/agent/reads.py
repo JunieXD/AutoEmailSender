@@ -135,7 +135,7 @@ class AgentMatchAnalysisJobRead(ApiSchema):
     total_cached_tokens: int
     total_tokens: int
     identity_id: int
-    match_source_identity_id: int
+    match_source_identity_id: int | None
     llm_profile_id: int
     cancel_requested_at: datetime | None = None
     started_at: datetime | None = None

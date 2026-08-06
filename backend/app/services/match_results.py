@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
-from sqlalchemy import select
+from sqlalchemy import Text, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -156,19 +157,54 @@ async def load_resolved_match_results(
         return ResolvedMatchResults(scope=scope, by_professor_id={})
 
     canonical_rows = list(
-        await session.scalars(
-            select(IdentityProfessorMatchResult)
-            .options(selectinload(IdentityProfessorMatchResult.primary_material))
-            .where(
-                IdentityProfessorMatchResult.identity_id == scope.source_identity_id,
-                IdentityProfessorMatchResult.professor_id.in_(unique_professor_ids),
-            ),
-        ),
+        (
+            await session.execute(
+                select(
+                    IdentityProfessorMatchResult.id.label("result_id"),
+                    IdentityProfessorMatchResult.identity_id,
+                    IdentityProfessorMatchResult.professor_id,
+                    IdentityProfessorMatchResult.llm_profile_id,
+                    IdentityProfessorMatchResult.primary_material_id,
+                    IdentityMaterial.display_name.label("primary_material_name"),
+                    IdentityProfessorMatchResult.source_email_task_id,
+                    IdentityProfessorMatchResult.latest_analysis_run_id,
+                    IdentityProfessorMatchResult.match_score,
+                    IdentityProfessorMatchResult.match_reason,
+                    cast(
+                        IdentityProfessorMatchResult.fit_points,
+                        Text,
+                    ).label("fit_points"),
+                    cast(
+                        IdentityProfessorMatchResult.risk_points,
+                        Text,
+                    ).label("risk_points"),
+                    cast(
+                        IdentityProfessorMatchResult.match_keywords,
+                        Text,
+                    ).label("match_keywords"),
+                    IdentityProfessorMatchResult.analyzed_at,
+                    IdentityProfessorMatchResult.updated_at,
+                )
+                .outerjoin(
+                    IdentityMaterial,
+                    IdentityMaterial.id
+                    == IdentityProfessorMatchResult.primary_material_id,
+                )
+                .where(
+                    IdentityProfessorMatchResult.identity_id
+                    == scope.source_identity_id,
+                    IdentityProfessorMatchResult.professor_id.in_(
+                        unique_professor_ids
+                    ),
+                )
+            )
+        ).mappings(),
     )
-    result_by_professor = {
-        row.professor_id: _view_from_canonical_result(row)
-        for row in canonical_rows
-    }
+    result_by_professor: dict[int, MatchResultView] = {}
+    for row in canonical_rows:
+        view = _view_from_canonical_result(row)
+        if view is not None:
+            result_by_professor[view.professor_id] = view
 
     if include_legacy_task_snapshots:
         missing_professor_ids = [
@@ -191,9 +227,11 @@ async def load_resolved_match_results(
                             ),
                             EmailTask.match_score,
                             EmailTask.match_reason,
-                            EmailTask.fit_points,
-                            EmailTask.risk_points,
-                            EmailTask.match_keywords,
+                            cast(EmailTask.fit_points, Text).label("fit_points"),
+                            cast(EmailTask.risk_points, Text).label("risk_points"),
+                            cast(EmailTask.match_keywords, Text).label(
+                                "match_keywords"
+                            ),
                             EmailTask.created_at,
                             EmailTask.updated_at,
                         )
@@ -205,6 +243,7 @@ async def load_resolved_match_results(
                             EmailTask.identity_id == scope.source_identity_id,
                             EmailTask.professor_id.in_(missing_professor_ids),
                             EmailTask.match_score.is_not(None),
+                            EmailTask.batch_send_canceled_at.is_(None),
                             (
                                 EmailTask.match_source_identity_id.is_(None)
                                 | (
@@ -233,7 +272,9 @@ async def load_resolved_match_results(
                 professor_id = task["professor_id"]
                 if professor_id in result_by_professor:
                     continue
-                result_by_professor[professor_id] = _view_from_legacy_task(task)
+                view = _view_from_legacy_task(task)
+                if view is not None:
+                    result_by_professor[professor_id] = view
 
     return ResolvedMatchResults(
         scope=scope,
@@ -369,34 +410,45 @@ async def _load_identity_for_matching(
 
 
 def _view_from_canonical_result(
-    result: IdentityProfessorMatchResult,
-) -> MatchResultView:
+    result: Mapping[str, Any],
+) -> MatchResultView | None:
+    match_score = _normalize_match_score(result["match_score"])
+    analyzed_at = result["analyzed_at"]
+    updated_at = result["updated_at"]
+    if (
+        match_score is None
+        or not isinstance(analyzed_at, datetime)
+        or not isinstance(updated_at, datetime)
+    ):
+        return None
     return MatchResultView(
-        result_id=result.id,
-        identity_id=result.identity_id,
-        professor_id=result.professor_id,
-        llm_profile_id=result.llm_profile_id,
-        primary_material_id=result.primary_material_id,
-        primary_material_name=(
-            result.primary_material.display_name
-            if result.primary_material is not None
-            else None
+        result_id=result["result_id"],
+        identity_id=result["identity_id"],
+        professor_id=result["professor_id"],
+        llm_profile_id=result["llm_profile_id"],
+        primary_material_id=result["primary_material_id"],
+        primary_material_name=result["primary_material_name"],
+        source_email_task_id=result["source_email_task_id"],
+        latest_analysis_run_id=result["latest_analysis_run_id"],
+        match_score=match_score,
+        match_reason=(
+            result["match_reason"]
+            if isinstance(result["match_reason"], str)
+            else str(result["match_reason"] or "")
         ),
-        source_email_task_id=result.source_email_task_id,
-        latest_analysis_run_id=result.latest_analysis_run_id,
-        match_score=result.match_score,
-        match_reason=result.match_reason,
-        fit_points=tuple(result.fit_points or []),
-        risk_points=tuple(result.risk_points or []),
-        match_keywords=tuple(result.match_keywords or []),
-        analyzed_at=result.analyzed_at,
-        updated_at=result.updated_at,
+        fit_points=_normalize_string_tuple(result["fit_points"]),
+        risk_points=_normalize_string_tuple(result["risk_points"]),
+        match_keywords=_normalize_string_tuple(result["match_keywords"]),
+        analyzed_at=analyzed_at,
+        updated_at=updated_at,
         legacy_task_snapshot=False,
     )
 
 
-def _view_from_legacy_task(task: Mapping[str, Any]) -> MatchResultView:
-    assert task["match_score"] is not None
+def _view_from_legacy_task(task: Mapping[str, Any]) -> MatchResultView | None:
+    match_score = _normalize_match_score(task["match_score"])
+    if match_score is None:
+        return None
     return MatchResultView(
         result_id=None,
         identity_id=task["identity_id"],
@@ -406,12 +458,42 @@ def _view_from_legacy_task(task: Mapping[str, Any]) -> MatchResultView:
         primary_material_name=task["primary_material_name"],
         source_email_task_id=task["task_id"],
         latest_analysis_run_id=None,
-        match_score=task["match_score"],
-        match_reason=task["match_reason"] or "",
-        fit_points=tuple(task["fit_points"] or []),
-        risk_points=tuple(task["risk_points"] or []),
-        match_keywords=tuple(task["match_keywords"] or []),
+        match_score=match_score,
+        match_reason=(
+            task["match_reason"]
+            if isinstance(task["match_reason"], str)
+            else str(task["match_reason"] or "")
+        ),
+        fit_points=_normalize_string_tuple(task["fit_points"]),
+        risk_points=_normalize_string_tuple(task["risk_points"]),
+        match_keywords=_normalize_string_tuple(task["match_keywords"]),
         analyzed_at=task["updated_at"],
         updated_at=task["updated_at"],
         legacy_task_snapshot=True,
     )
+
+
+def _normalize_match_score(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        score = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(0, min(100, score))
+
+
+def _normalize_string_tuple(value: object) -> tuple[str, ...]:
+    """Read JSON/list legacy fields without turning malformed strings into chars."""
+
+    parsed = value
+    if isinstance(parsed, (bytes, bytearray)):
+        parsed = bytes(parsed).decode("utf-8", errors="replace")
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return ()
+    if not isinstance(parsed, (list, tuple)):
+        return ()
+    return tuple(item for item in parsed if isinstance(item, str))

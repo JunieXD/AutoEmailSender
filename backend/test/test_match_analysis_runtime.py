@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.api.identities import delete_identity
 from app.models import (
@@ -21,6 +22,7 @@ from app.models import (
     LLMProfile,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
+    MatchAnalysisJobItemStatus,
     MatchAnalysisRun,
     Professor,
 )
@@ -28,6 +30,10 @@ from app.services import llm_runtime, task_runtime
 from app.services.match_results import (
     load_resolved_match_result,
     match_result_is_stale,
+)
+from app.services.match_analysis_job_runtime import (
+    serialize_match_analysis_job,
+    serialize_match_analysis_job_item,
 )
 from app.services.material_mutations import delete_identity_material_record
 from app.services.task_runtime import (
@@ -225,6 +231,160 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(canonical_results[0].latest_analysis_run_id, second.run_id)
         self.assertNotEqual(first.run_id, second.run_id)
 
+    def test_job_item_serializer_preserves_its_own_historical_score(self) -> None:
+        async def scenario() -> list[int | None]:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, self.email_task_id)
+                assert task is not None
+                task.match_score = 88
+
+                run = MatchAnalysisRun(
+                    email_task_id=task.id,
+                    professor_id=task.professor_id,
+                    identity_id=task.identity_id,
+                    llm_profile_id=task.llm_profile_id,
+                    primary_material_id=task.primary_material_id,
+                    status="succeeded",
+                    success=True,
+                    match_score=41,
+                )
+                job = MatchAnalysisJob(
+                    name="历史匹配任务",
+                    identity_id=task.identity_id,
+                    match_source_identity_id=task.identity_id,
+                    llm_profile_id=task.llm_profile_id,
+                    status="completed",
+                    target_count=3,
+                    succeeded_count=2,
+                )
+                session.add_all([run, job])
+                await session.flush()
+
+                session.add_all(
+                    [
+                        MatchAnalysisJobItem(
+                            job_id=job.id,
+                            professor_id=task.professor_id,
+                            email_task_id=task.id,
+                            match_analysis_run_id=run.id,
+                            status=MatchAnalysisJobItemStatus.SUCCEEDED.value,
+                        ),
+                        MatchAnalysisJobItem(
+                            job_id=job.id,
+                            professor_id=task.professor_id,
+                            email_task_id=task.id,
+                            status=MatchAnalysisJobItemStatus.QUEUED.value,
+                        ),
+                        MatchAnalysisJobItem(
+                            job_id=job.id,
+                            professor_id=task.professor_id,
+                            email_task_id=task.id,
+                            status=MatchAnalysisJobItemStatus.SUCCEEDED.value,
+                        ),
+                    ],
+                )
+                await session.commit()
+
+                items = list(
+                    await session.scalars(
+                        select(MatchAnalysisJobItem)
+                        .options(
+                            selectinload(MatchAnalysisJobItem.professor),
+                            selectinload(MatchAnalysisJobItem.email_task),
+                            selectinload(MatchAnalysisJobItem.match_analysis_run),
+                        )
+                        .where(MatchAnalysisJobItem.job_id == job.id)
+                        .order_by(MatchAnalysisJobItem.id.asc()),
+                    ),
+                )
+                return [
+                    serialize_match_analysis_job_item(item).match_score
+                    for item in items
+                ]
+
+        self.assertEqual(self._run_async(scenario()), [41, None, 88])
+
+    def test_legacy_result_reader_tolerates_malformed_json_columns(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, self.email_task_id)
+                assert task is not None
+                connection = await session.connection()
+                await connection.exec_driver_sql(
+                    """
+                    UPDATE email_tasks
+                    SET match_score = 67,
+                        match_reason = '异常 JSON 的旧结果',
+                        fit_points = 'not-json',
+                        risk_points = '{"unexpected": true}',
+                        match_keywords = '["可用关键词", 2]'
+                    WHERE id = ?
+                    """,
+                    (task.id,),
+                )
+                await session.commit()
+                _, result = await load_resolved_match_result(
+                    session,
+                    active_identity_id=task.identity_id,
+                    professor_id=task.professor_id,
+                )
+                return result
+
+        result = self._run_async(scenario())
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.legacy_task_snapshot)
+        self.assertEqual(result.match_score, 67)
+        self.assertEqual(result.fit_points, ())
+        self.assertEqual(result.risk_points, ())
+        self.assertEqual(result.match_keywords, ("可用关键词",))
+
+    def test_canonical_result_reader_tolerates_malformed_json_columns(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, self.email_task_id)
+                assert task is not None
+                canonical = IdentityProfessorMatchResult(
+                    identity_id=task.identity_id,
+                    professor_id=task.professor_id,
+                    llm_profile_id=task.llm_profile_id,
+                    source_email_task_id=task.id,
+                    match_score=79,
+                    match_reason="异常 JSON 的当前结果",
+                    fit_points=[],
+                    risk_points=[],
+                    match_keywords=[],
+                )
+                session.add(canonical)
+                await session.commit()
+                connection = await session.connection()
+                await connection.exec_driver_sql(
+                    """
+                    UPDATE identity_professor_match_results
+                    SET fit_points = 'not-json',
+                        risk_points = '{"unexpected": true}',
+                        match_keywords = '["当前关键词", 2]'
+                    WHERE id = ?
+                    """,
+                    (canonical.id,),
+                )
+                await session.commit()
+                _, result = await load_resolved_match_result(
+                    session,
+                    active_identity_id=task.identity_id,
+                    professor_id=task.professor_id,
+                )
+                return result
+
+        result = self._run_async(scenario())
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.legacy_task_snapshot)
+        self.assertEqual(result.match_score, 79)
+        self.assertEqual(result.fit_points, ())
+        self.assertEqual(result.risk_points, ())
+        self.assertEqual(result.match_keywords, ("当前关键词",))
+
     def test_shared_group_analysis_uses_source_identity_and_stores_result_under_source(self) -> None:
         (
             source_identity_id,
@@ -335,6 +495,113 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(state["job_item_run_ids"], [None])
         self.assertEqual(state["task_match_source_identity_id"], source_identity_id)
         self.assertIsNone(state["resolved_match_reason"])
+
+    def test_deleting_active_identity_cleans_shared_task_references_with_foreign_keys(self) -> None:
+        source_identity_id, active_identity_id, _ = self._run_async(
+            self._configure_shared_match_source(),
+        )
+        generation = llm_runtime.GeneratedMatchEvaluation(
+            result=llm_runtime.MatchEvaluationResult(
+                match_score=93,
+                match_reason="删除活动身份前的共享结果",
+                fit_points=["信息抽取"],
+                risk_points=[],
+                keywords=["IE"],
+            ),
+            usage=None,
+        )
+        with patch(
+            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            new=AsyncMock(return_value=generation),
+        ):
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id),
+            )
+        self._run_async(
+            self._link_latest_run_to_shared_match_job(
+                source_identity_id,
+                active_identity_id,
+            ),
+        )
+
+        async def scenario() -> dict[str, object]:
+            async with self.session_factory() as session:
+                connection = await session.connection()
+                await connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+                await delete_identity(active_identity_id, session=session)
+                source_identity = await session.get(IdentityProfile, source_identity_id)
+                return {
+                    "source_identity": source_identity,
+                    "results": list(
+                        await session.scalars(select(IdentityProfessorMatchResult)),
+                    ),
+                    "runs": list(await session.scalars(select(MatchAnalysisRun))),
+                    "items": list(
+                        await session.scalars(select(MatchAnalysisJobItem)),
+                    ),
+                    "jobs": list(await session.scalars(select(MatchAnalysisJob))),
+                    "tasks": list(await session.scalars(select(EmailTask))),
+                }
+
+        state = self._run_async(scenario())
+        self.assertIsNotNone(state["source_identity"])
+        results = state["results"]
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0].source_email_task_id)
+        self.assertIsNone(results[0].latest_analysis_run_id)
+        self.assertEqual(state["runs"], [])
+        self.assertEqual(state["items"], [])
+        self.assertEqual(state["jobs"], [])
+        self.assertEqual(state["tasks"], [])
+
+    def test_deleting_match_source_cancels_queued_cross_identity_job(self) -> None:
+        source_identity_id, active_identity_id, _ = self._run_async(
+            self._configure_shared_match_source(),
+        )
+
+        async def scenario() -> tuple[MatchAnalysisJob, MatchAnalysisJobItem]:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, self.email_task_id)
+                assert task is not None
+                job = MatchAnalysisJob(
+                    name="待执行的共享匹配任务",
+                    identity_id=active_identity_id,
+                    match_source_identity_id=source_identity_id,
+                    llm_profile_id=task.llm_profile_id,
+                    status="queued",
+                    target_count=1,
+                )
+                session.add(job)
+                await session.flush()
+                item = MatchAnalysisJobItem(
+                    job_id=job.id,
+                    professor_id=task.professor_id,
+                    email_task_id=task.id,
+                    status=MatchAnalysisJobItemStatus.QUEUED.value,
+                )
+                session.add(item)
+                await session.commit()
+
+                connection = await session.connection()
+                await connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+                await delete_identity(source_identity_id, session=session)
+                saved_job = await session.get(MatchAnalysisJob, job.id)
+                saved_item = await session.get(MatchAnalysisJobItem, item.id)
+                assert saved_job is not None
+                assert saved_item is not None
+                await session.refresh(saved_job)
+                await session.refresh(saved_item)
+                return saved_job, saved_item
+
+        job, item = self._run_async(scenario())
+        self.assertEqual(job.status, "canceled")
+        self.assertIsNone(job.match_source_identity_id)
+        self.assertIsNone(serialize_match_analysis_job(job).match_source_identity_id)
+        self.assertIsNotNone(job.cancel_requested_at)
+        self.assertEqual(job.last_error, "匹配依据身份已删除，任务已取消")
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.CANCELED.value)
+        self.assertEqual(item.skip_reason, "匹配依据身份已删除")
+        self.assertIsNotNone(item.finished_at)
 
     def test_deleting_analysis_material_keeps_result_but_marks_it_stale(self) -> None:
         generation = llm_runtime.GeneratedMatchEvaluation(
@@ -696,6 +963,8 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         active_identity_id: int,
     ) -> dict[str, object]:
         async with self.session_factory() as session:
+            connection = await session.connection()
+            await connection.exec_driver_sql("PRAGMA foreign_keys = ON")
             await delete_identity(source_identity_id, session=session)
             task = await session.get(EmailTask, self.email_task_id)
             assert task is not None
@@ -747,6 +1016,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 identity_id=active_identity_id,
                 match_source_identity_id=source_identity_id,
                 llm_profile_id=task.llm_profile_id,
+                status="completed",
+                target_count=1,
+                succeeded_count=1,
             )
             session.add(job)
             await session.flush()

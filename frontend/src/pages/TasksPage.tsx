@@ -4400,16 +4400,22 @@ export const TasksPage = () => {
                       成功 {job.succeeded_count} / 失败 {job.failed_count} / 跳过 {job.skipped_count} / 共 {job.target_count}
                     </p>
                     <p className="mt-1 text-xs text-stone-500">
-                      {job.match_source_identity_id &&
-                      job.match_source_identity_id !== job.identity_id
-                        ? '组内统一匹配依据'
-                        : '匹配依据'}{' '}
-                      {identities.find(
-                        (identity) =>
-                          identity.id ===
-                          (job.match_source_identity_id ?? job.identity_id),
-                      )?.profile_name ??
-                        `身份 #${job.match_source_identity_id ?? job.identity_id}`}
+                      {job.match_source_identity_id === null ? (
+                        <>匹配依据 原身份已删除</>
+                      ) : (
+                        <>
+                          {job.match_source_identity_id &&
+                          job.match_source_identity_id !== job.identity_id
+                            ? '组内统一匹配依据'
+                            : '匹配依据'}{' '}
+                          {identities.find(
+                            (identity) =>
+                              identity.id ===
+                              (job.match_source_identity_id ?? job.identity_id),
+                          )?.profile_name ??
+                            `身份 #${job.match_source_identity_id ?? job.identity_id}`}
+                        </>
+                      )}
                     </p>
                   </div>
                   <div className="min-w-0 space-y-2">

@@ -69,15 +69,26 @@ def create_communication_group(
             help="确认把已属于其他通信组的身份及其原组成员一并合并。",
         ),
     ] = False,
+    match_source_identity_id: Annotated[
+        int | None,
+        typer.Option(
+            "--match-source-identity-id",
+            min=1,
+            help="可选；统一使用该身份的默认材料计算组内匹配度。",
+        ),
+    ] = None,
 ) -> None:
+    json_body: dict[str, object] = {
+        "identity_ids": identity_ids,
+        "confirm_merge_existing_groups": confirm_merge_existing_groups,
+    }
+    if match_source_identity_id is not None:
+        json_body["match_source_identity_id"] = match_source_identity_id
     run_write_command(
         ctx,
         command="communication-groups.create",
         path="/api/agent/v1/communication-groups",
-        json_body={
-            "identity_ids": identity_ids,
-            "confirm_merge_existing_groups": confirm_merge_existing_groups,
-        },
+        json_body=json_body,
         guide_topic="communication-groups",
         human_formatter=format_detail,
     )
@@ -98,16 +109,40 @@ def update_communication_group(
             help="确认把已属于其他通信组的身份及其原组成员一并合并。",
         ),
     ] = False,
+    match_source_identity_id: Annotated[
+        int | None,
+        typer.Option(
+            "--match-source-identity-id",
+            min=1,
+            help="指定组内统一使用哪个身份的默认材料计算匹配度。",
+        ),
+    ] = None,
+    clear_match_source_identity: Annotated[
+        bool,
+        typer.Option(
+            "--clear-match-source-identity",
+            help="清除统一匹配依据，恢复为各身份独立计算。",
+        ),
+    ] = False,
 ) -> None:
+    if match_source_identity_id is not None and clear_match_source_identity:
+        raise typer.BadParameter(
+            "--match-source-identity-id 与 --clear-match-source-identity 不能同时使用",
+        )
+    json_body: dict[str, object] = {
+        "identity_ids": identity_ids,
+        "confirm_merge_existing_groups": confirm_merge_existing_groups,
+    }
+    if clear_match_source_identity:
+        json_body["match_source_identity_id"] = None
+    elif match_source_identity_id is not None:
+        json_body["match_source_identity_id"] = match_source_identity_id
     run_write_command(
         ctx,
         command="communication-groups.update",
         method="PUT",
         path=f"/api/agent/v1/communication-groups/{group_id}",
-        json_body={
-            "identity_ids": identity_ids,
-            "confirm_merge_existing_groups": confirm_merge_existing_groups,
-        },
+        json_body=json_body,
         guide_topic="communication-groups",
         human_formatter=format_detail,
     )

@@ -2682,7 +2682,7 @@ class CliTests(unittest.TestCase):
             {"candidate_ids": [7, 8], "llm_profile_id": 3},
         )
 
-    def test_communication_group_commands_require_explicit_merge_flag(self) -> None:
+    def test_communication_group_commands_preserve_and_update_match_source(self) -> None:
         fake_client = _FakeAgentClient(
             {
                 "/api/agent/v1/communication-groups": {
@@ -2714,10 +2714,30 @@ class CliTests(unittest.TestCase):
                     "2",
                     "--identity-id",
                     "3",
+                    "--match-source-identity-id",
+                    "2",
                     "--confirm-merge-existing-groups",
                 ],
             )
-            update = self.runner.invoke(
+            update_source = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "communication-groups",
+                    "update",
+                    "12",
+                    "--identity-id",
+                    "2",
+                    "--identity-id",
+                    "3",
+                    "--identity-id",
+                    "4",
+                    "--match-source-identity-id",
+                    "3",
+                ],
+            )
+            preserve_source = self.runner.invoke(
                 app,
                 [
                     "--format",
@@ -2733,12 +2753,35 @@ class CliTests(unittest.TestCase):
                     "4",
                 ],
             )
+            clear_source = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "communication-groups",
+                    "update",
+                    "12",
+                    "--identity-id",
+                    "2",
+                    "--identity-id",
+                    "3",
+                    "--identity-id",
+                    "4",
+                    "--clear-match-source-identity",
+                ],
+            )
             delete = self.runner.invoke(
                 app,
                 ["--format", "json", "communication-groups", "delete", "12"],
             )
 
-        for result in (create, update, delete):
+        for result in (
+            create,
+            update_source,
+            preserve_source,
+            clear_source,
+            delete,
+        ):
             self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertEqual(
             fake_client.calls[0][:2],
@@ -2749,6 +2792,7 @@ class CliTests(unittest.TestCase):
             {
                 "identity_ids": [2, 3],
                 "confirm_merge_existing_groups": True,
+                "match_source_identity_id": 2,
             },
         )
         self.assertEqual(
@@ -2760,12 +2804,64 @@ class CliTests(unittest.TestCase):
             {
                 "identity_ids": [2, 3, 4],
                 "confirm_merge_existing_groups": False,
+                "match_source_identity_id": 3,
             },
         )
         self.assertEqual(
             fake_client.calls[2][:2],
+            ("PUT", "/api/agent/v1/communication-groups/12"),
+        )
+        self.assertEqual(
+            fake_client.json_bodies[2],
+            {
+                "identity_ids": [2, 3, 4],
+                "confirm_merge_existing_groups": False,
+            },
+        )
+        self.assertEqual(
+            fake_client.calls[3][:2],
+            ("PUT", "/api/agent/v1/communication-groups/12"),
+        )
+        self.assertEqual(
+            fake_client.json_bodies[3],
+            {
+                "identity_ids": [2, 3, 4],
+                "confirm_merge_existing_groups": False,
+                "match_source_identity_id": None,
+            },
+        )
+        self.assertEqual(
+            fake_client.calls[4][:2],
             ("POST", "/api/agent/v1/communication-groups/12/delete"),
         )
+
+    def test_communication_group_update_rejects_conflicting_match_source_flags(self) -> None:
+        fake_client = _FakeAgentClient({})
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "communication-groups",
+                    "update",
+                    "12",
+                    "--identity-id",
+                    "2",
+                    "--identity-id",
+                    "3",
+                    "--match-source-identity-id",
+                    "2",
+                    "--clear-match-source-identity",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertIn("不能同时使用", result.output)
+        self.assertEqual(fake_client.calls, [])
 
     def test_settings_update_merges_only_explicit_fields_with_current_settings(self) -> None:
         settings = {

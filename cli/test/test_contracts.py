@@ -104,6 +104,24 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(guide["lifecycle"]["deprecated"])
         self.assertEqual(guide["lifecycle"]["replaced_by"], ["capabilities", "describe"])
 
+    def test_communication_group_contract_exposes_match_source_controls(self) -> None:
+        create = describe_command(app, "communication-groups.create")
+        update = describe_command(app, "communication-groups.update")
+        get = describe_command(app, "communication-groups.get")
+        self.assertIsNotNone(create)
+        self.assertIsNotNone(update)
+        self.assertIsNotNone(get)
+        assert create is not None
+        assert update is not None
+        assert get is not None
+
+        create_properties = create["input"]["schema"]["properties"]
+        update_properties = update["input"]["schema"]["properties"]
+        self.assertIn("match_source_identity_id", create_properties)
+        self.assertIn("match_source_identity_id", update_properties)
+        self.assertIn("clear_match_source_identity", update_properties)
+        self.assertIn("match_source_identity_id", get["output"]["known_fields"])
+
     def test_catalog_revision_includes_each_live_command_contract_revision(self) -> None:
         commands = [
             capability.command

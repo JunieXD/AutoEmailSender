@@ -1941,6 +1941,216 @@ class MigrationScriptTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
+    def test_identity_match_migration_repairs_orphaned_source_identity_ids(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "orphaned-match-source-ids.db"
+        legacy_env = os.environ.copy()
+        legacy_env["DATABASE_URL"] = (
+            f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+        )
+        previous_revision = "20260804_merge_agent_change_recent_papers"
+        self._run_alembic(legacy_env, "upgrade", previous_revision)
+
+        connection = sqlite3.connect(legacy_db_path)
+        identity_id = DatabaseSchemaTests._insert_identity_into(
+            connection,
+            email_address="orphaned-match-source@example.com",
+        )
+        llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+            connection,
+            name="孤立匹配来源迁移模型",
+        )
+        group_id = int(
+            connection.execute(
+                "INSERT INTO identity_communication_groups DEFAULT VALUES",
+            ).lastrowid,
+        )
+        job_id = int(
+            connection.execute(
+                """
+                INSERT INTO match_analysis_jobs (name, identity_id, llm_profile_id)
+                VALUES ('孤立来源任务', ?, ?)
+                """,
+                (identity_id, llm_profile_id),
+            ).lastrowid,
+        )
+        connection.execute(
+            """
+            ALTER TABLE identity_communication_groups
+            ADD COLUMN match_source_identity_id INTEGER
+            """,
+        )
+        connection.execute(
+            """
+            ALTER TABLE match_analysis_jobs
+            ADD COLUMN match_source_identity_id INTEGER
+            """,
+        )
+        missing_identity_id = identity_id + 100_000
+        connection.execute(
+            """
+            UPDATE identity_communication_groups
+            SET match_source_identity_id = ?
+            WHERE id = ?
+            """,
+            (missing_identity_id, group_id),
+        )
+        connection.execute(
+            """
+            UPDATE match_analysis_jobs
+            SET match_source_identity_id = ?
+            WHERE id = ?
+            """,
+            (missing_identity_id, job_id),
+        )
+        connection.commit()
+        connection.close()
+
+        self._run_alembic(legacy_env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(legacy_db_path)
+        group_source_id = upgraded.execute(
+            """
+            SELECT match_source_identity_id
+            FROM identity_communication_groups
+            WHERE id = ?
+            """,
+            (group_id,),
+        ).fetchone()[0]
+        job_source_id = upgraded.execute(
+            """
+            SELECT match_source_identity_id
+            FROM match_analysis_jobs
+            WHERE id = ?
+            """,
+            (job_id,),
+        ).fetchone()[0]
+        group_foreign_keys = upgraded.execute(
+            "PRAGMA foreign_key_list('identity_communication_groups')",
+        ).fetchall()
+        job_foreign_keys = upgraded.execute(
+            "PRAGMA foreign_key_list('match_analysis_jobs')",
+        ).fetchall()
+        version = upgraded.execute(
+            "SELECT version_num FROM alembic_version",
+        ).fetchone()[0]
+        upgraded.close()
+
+        self.assertIsNone(group_source_id)
+        self.assertEqual(job_source_id, identity_id)
+        self.assertTrue(
+            any(
+                row[2] == "identity_profiles"
+                and row[3] == "match_source_identity_id"
+                for row in group_foreign_keys
+            ),
+        )
+        self.assertTrue(
+            any(
+                row[2] == "identity_profiles"
+                and row[3] == "match_source_identity_id"
+                for row in job_foreign_keys
+            ),
+        )
+        self.assertEqual(version, HEAD_REVISION)
+
+    def test_identity_match_migration_rebuilds_incomplete_result_table(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "incomplete-match-results.db"
+        legacy_env = os.environ.copy()
+        legacy_env["DATABASE_URL"] = (
+            f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+        )
+        previous_revision = "20260804_merge_agent_change_recent_papers"
+        self._run_alembic(legacy_env, "upgrade", previous_revision)
+
+        connection = sqlite3.connect(legacy_db_path)
+        identity_id = DatabaseSchemaTests._insert_identity_into(
+            connection,
+            email_address="incomplete-match-result@example.com",
+        )
+        llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+            connection,
+            name="半成品匹配结果迁移模型",
+        )
+        professor_id = DatabaseSchemaTests._insert_professor_into(
+            connection,
+            "incomplete-match-result-professor@example.edu",
+        )
+        task_id = DatabaseSchemaTests._insert_email_task_with_material_into(
+            connection,
+            identity_id,
+            llm_profile_id,
+            professor_id,
+            primary_material_id=None,
+        )
+        connection.execute(
+            """
+            UPDATE email_tasks
+            SET match_score = 77, match_reason = '可恢复的旧匹配结果'
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+        connection.execute(
+            """
+            CREATE TABLE identity_professor_match_results (
+                id INTEGER PRIMARY KEY,
+                identity_id INTEGER NOT NULL,
+                professor_id INTEGER NOT NULL,
+                match_score INTEGER NOT NULL
+            )
+            """,
+        )
+        connection.execute(
+            """
+            INSERT INTO identity_professor_match_results (
+                identity_id, professor_id, match_score
+            ) VALUES (?, ?, 13)
+            """,
+            (identity_id, professor_id),
+        )
+        connection.commit()
+        connection.close()
+
+        self._run_alembic(legacy_env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(legacy_db_path)
+        columns = {
+            row[1]
+            for row in upgraded.execute(
+                "PRAGMA table_info('identity_professor_match_results')",
+            ).fetchall()
+        }
+        row = upgraded.execute(
+            """
+            SELECT source_email_task_id, match_score, match_reason
+            FROM identity_professor_match_results
+            WHERE identity_id = ? AND professor_id = ?
+            """,
+            (identity_id, professor_id),
+        ).fetchone()
+        version = upgraded.execute(
+            "SELECT version_num FROM alembic_version",
+        ).fetchone()[0]
+        upgraded.close()
+
+        self.assertTrue(
+            {
+                "llm_profile_id",
+                "primary_material_id",
+                "source_email_task_id",
+                "latest_analysis_run_id",
+                "match_reason",
+                "fit_points",
+                "risk_points",
+                "match_keywords",
+                "analyzed_at",
+                "created_at",
+                "updated_at",
+            }.issubset(columns),
+        )
+        self.assertEqual(row, (task_id, 77, "可恢复的旧匹配结果"))
+        self.assertEqual(version, HEAD_REVISION)
+
     def test_match_and_batch_fallback_merge_upgrades_from_each_parent(self) -> None:
         parent_revisions = (
             "20260805_batch_draft_fallback",

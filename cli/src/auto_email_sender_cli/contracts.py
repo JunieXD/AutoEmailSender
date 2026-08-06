@@ -567,7 +567,9 @@ _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "workspaces": frozenset(
         {
             "professor", "identity", "llm_profile", "material_options", "current_task",
-            "messages", "communication_scope", "sync_warnings",
+            "messages", "communication_scope", "sync_warnings", "match_source_identity",
+            "match_source_material_id", "match_source_material_name", "match_result_id",
+            "match_analyzed_at", "match_uses_group_source", "match_is_stale",
         },
     ),
     "tasks": frozenset(
@@ -598,7 +600,7 @@ _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
             "can_start_draft_generation", "created_at", "updated_at",
         },
     ),
-    "communication-groups": frozenset({"id", "revision", "members", "created_at", "updated_at"}),
+    "communication-groups": frozenset({"id", "revision", "members", "match_source_identity_id", "created_at", "updated_at"}),
     "test-email": frozenset(
         {
             "completed", "identity", "llm_profile", "material_options", "draft", "history",

@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from app.core.time import utc_now
-
-from sqlalchemy import select, update
+from sqlalchemy import inspect, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import NO_VALUE
 
+from app.core.time import utc_now
 from app.models import (
     EmailTask,
     EmailTaskSource,
@@ -203,7 +203,7 @@ def serialize_match_analysis_job(job: MatchAnalysisJob) -> MatchAnalysisJobRead:
         total_cached_tokens=job.total_cached_tokens,
         total_tokens=job.total_tokens,
         identity_id=job.identity_id,
-        match_source_identity_id=job.match_source_identity_id or job.identity_id,
+        match_source_identity_id=job.match_source_identity_id,
         llm_profile_id=job.llm_profile_id,
         cancel_requested_at=job.cancel_requested_at,
         started_at=job.started_at,
@@ -229,7 +229,7 @@ def serialize_match_analysis_job_item(
         professor_school=item.professor.school,
         email_task_id=item.email_task_id,
         status=item.status,
-        match_score=item.email_task.match_score if item.email_task else None,
+        match_score=match_analysis_job_item_score(item),
         match_analysis_run_id=item.match_analysis_run_id,
         error_message=item.error_message,
         skip_reason=item.skip_reason,
@@ -241,6 +241,44 @@ def serialize_match_analysis_job_item(
         finished_at=item.finished_at,
         updated_at=item.updated_at,
     )
+
+
+def match_analysis_job_item_score(item: MatchAnalysisJobItem) -> int | None:
+    """Return the score produced by this job item, never a newer task snapshot.
+
+    ``EmailTask.match_score`` is retained for compatibility, but it is mutable:
+    a later analysis can overwrite it while an old job remains in the history.
+    The run linked from the item is therefore authoritative.  For legacy rows
+    created before ``match_analysis_run_id`` was persisted, a succeeded item may
+    still use the task snapshot; queued/running items deliberately report no
+    score so an old value is not presented as the pending job's result.
+    """
+
+    item_state = inspect(item)
+    loaded_run = item_state.attrs.match_analysis_run.loaded_value
+    if loaded_run is not NO_VALUE and loaded_run is not None:
+        return _normalize_job_match_score(loaded_run.match_score)
+    if item.match_analysis_run_id is not None:
+        # The caller did not eager-load the run.  Avoid triggering an async lazy
+        # load from this synchronous serializer and avoid falling back to a
+        # potentially newer EmailTask snapshot.
+        return None
+    if item.status != MatchAnalysisJobItemStatus.SUCCEEDED.value:
+        return None
+    loaded_task = item_state.attrs.email_task.loaded_value
+    if loaded_task is NO_VALUE or loaded_task is None:
+        return None
+    return _normalize_job_match_score(loaded_task.match_score)
+
+
+def _normalize_job_match_score(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        score = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(0, min(100, score))
 
 
 async def run_queued_match_analysis_jobs_once(
@@ -358,6 +396,8 @@ async def retry_failed_match_analysis_job_record(
     )
     if not professor_ids:
         raise ValueError("没有可重试的失败项")
+    if job.match_source_identity_id is None:
+        raise ValueError("原匹配依据身份已删除，无法重试，请新建匹配任务")
 
     return await create_match_analysis_job_record(
         session,
@@ -365,7 +405,7 @@ async def retry_failed_match_analysis_job_record(
         llm_profile_id=job.llm_profile_id,
         professor_ids=professor_ids,
         name=f"{job.name} - 重试",
-        match_source_identity_id=job.match_source_identity_id or job.identity_id,
+        match_source_identity_id=job.match_source_identity_id,
         event_name=event_name,
         actor=actor,
     )
@@ -678,6 +718,13 @@ async def _run_match_analysis_job_item(
             item.updated_at = now
             await session.commit()
             return
+        if job.match_source_identity_id is None:
+            item.status = MatchAnalysisJobItemStatus.SKIPPED.value
+            item.skip_reason = "匹配依据身份已删除，无法继续分析"
+            item.finished_at = now
+            item.updated_at = now
+            await session.commit()
+            return
 
         item.status = MatchAnalysisJobItemStatus.RUNNING.value
         item.started_at = now
@@ -689,9 +736,7 @@ async def _run_match_analysis_job_item(
             session_factory,
             job_id,
             item.email_task_id,
-            match_source_identity_id=(
-                job.match_source_identity_id or job.identity_id
-            ),
+            match_source_identity_id=job.match_source_identity_id,
         )
     except (_MatchAnalysisJobCanceled, MatchCalculationCanceledError):
         await _mark_item_canceled(session_factory, item_id)

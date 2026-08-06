@@ -33,6 +33,7 @@ from app.models import (
     LLMProfile,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
+    MatchAnalysisRun,
     OperationLog,
     OutreachTemplate,
     Professor,
@@ -226,6 +227,7 @@ from app.services.identity_communication_groups import resolve_identity_communic
 from app.services.match_analysis_job_runtime import (
     create_match_analysis_job_record,
     delete_match_analysis_job_record,
+    match_analysis_job_item_score,
     request_match_analysis_job_cancel_record,
     restore_match_analysis_job_record,
     retry_failed_match_analysis_job_record,
@@ -2290,6 +2292,10 @@ async def list_agent_match_analysis_job_items(
                 selectinload(MatchAnalysisJobItem.email_task).load_only(
                     EmailTask.id,
                     EmailTask.match_score,
+                ),
+                selectinload(MatchAnalysisJobItem.match_analysis_run).load_only(
+                    MatchAnalysisRun.id,
+                    MatchAnalysisRun.match_score,
                 ),
             )
             .where(MatchAnalysisJobItem.job_id == job_id)
@@ -5793,7 +5799,7 @@ def _serialize_match_analysis_job(job: MatchAnalysisJob) -> AgentMatchAnalysisJo
         total_cached_tokens=job.total_cached_tokens,
         total_tokens=job.total_tokens,
         identity_id=job.identity_id,
-        match_source_identity_id=job.match_source_identity_id or job.identity_id,
+        match_source_identity_id=job.match_source_identity_id,
         llm_profile_id=job.llm_profile_id,
         cancel_requested_at=job.cancel_requested_at,
         started_at=job.started_at,
@@ -5819,7 +5825,7 @@ def _serialize_match_analysis_job_item(
         professor_school=item.professor.school,
         email_task_id=item.email_task_id,
         status=item.status,
-        match_score=item.email_task.match_score if item.email_task else None,
+        match_score=match_analysis_job_item_score(item),
         match_analysis_run_id=item.match_analysis_run_id,
         error_message=item.error_message,
         skip_reason=item.skip_reason,

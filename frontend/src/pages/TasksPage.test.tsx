@@ -985,6 +985,26 @@ describe("TasksPage match analysis notifications", () => {
   });
 });
 
+describe("TasksPage match analysis source identity", () => {
+  it("does not mislabel a deleted source as the active identity", async () => {
+    apiMocks.listMatchAnalysisJobs.mockResolvedValue([
+      buildMatchAnalysisJob({ match_source_identity_id: null }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "匹配分析" }));
+    expect(
+      await screen.findByText("匹配依据 原身份已删除"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("身份 #1")).not.toBeInTheDocument();
+  });
+});
+
 describe("TasksPage match analysis token usage", () => {
   it("shows input, output, cached, and total tokens on the card and in details", async () => {
     const job = buildMatchAnalysisJob({

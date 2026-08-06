@@ -10,6 +10,7 @@ from app.models import (
     EmailTask,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
+    MatchAnalysisRun,
     Professor,
 )
 from app.schemas.match_analysis_job import (
@@ -104,6 +105,10 @@ async def list_match_analysis_job_items(
                 selectinload(MatchAnalysisJobItem.email_task).load_only(
                     EmailTask.id,
                     EmailTask.match_score,
+                ),
+                selectinload(MatchAnalysisJobItem.match_analysis_run).load_only(
+                    MatchAnalysisRun.id,
+                    MatchAnalysisRun.match_score,
                 ),
             )
             .where(MatchAnalysisJobItem.job_id == job_id)

@@ -20,6 +20,7 @@ from app.schemas.agent import (
 )
 from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest
 from app.services.materials import material_can_be_primary
+from app.services.match_results import load_resolved_match_result
 from app.services.operation_logs import record_operation_log
 from app.services.outreach_template_library import (
     get_default_outreach_template_for_identity,
@@ -115,9 +116,14 @@ async def regenerate_agent_draft(
         if task is None:
             raise ValueError("未找到邮件任务")
         _ensure_draft_only_state(task)
+        _, match_result = await load_resolved_match_result(
+            session,
+            active_identity_id=task.identity_id,
+            professor_id=task.professor_id,
+        )
         task.status = (
             EmailTaskStatus.MATCHED.value
-            if task.match_score is not None and bool(task.match_reason)
+            if match_result is not None
             else EmailTaskStatus.DISCOVERED.value
         )
         task.approved_subject = None
@@ -205,6 +211,11 @@ async def _configure_agent_draft(
         if task is None:
             raise ValueError("未找到邮件任务")
         _ensure_draft_only_state(task)
+        _, match_result = await load_resolved_match_result(
+            session,
+            active_identity_id=task.identity_id,
+            professor_id=task.professor_id,
+        )
 
         llm_profile = await session.get(LLMProfile, payload.llm_profile_id)
         if llm_profile is None:
@@ -277,7 +288,7 @@ async def _configure_agent_draft(
             if payload.generation_mode == "manual"
             else (
                 EmailTaskStatus.MATCHED.value
-                if task.match_score is not None and bool(task.match_reason)
+                if match_result is not None
                 else EmailTaskStatus.DISCOVERED.value
             )
         )

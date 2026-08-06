@@ -8,7 +8,7 @@ from app.core.time import utc_now
 from time import perf_counter
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,11 +16,14 @@ from sqlalchemy.orm import selectinload
 from app.api.identity_serializers import serialize_identity
 from app.core.database import get_async_session
 from app.models import (
+    EmailTask,
     IdentityCommunicationGroup,
     IdentityProfessorMatchResult,
     IdentityProfile,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
+    MatchAnalysisJobItemStatus,
+    MatchAnalysisJobStatus,
     MatchAnalysisRun,
 )
 from app.schemas.identity import (
@@ -289,16 +292,64 @@ async def _delete_identity_match_artifacts(
     session: AsyncSession,
     identity_id: int,
 ) -> None:
-    """Remove canonical match data owned by a deleted source identity.
+    """Remove match records that would otherwise keep a deleted identity/task alive.
 
     SQLite does not enforce ``ON DELETE`` actions in the desktop runtime, so
-    cross-identity analysis records must be cleaned explicitly. Task snapshots
-    intentionally retain ``match_source_identity_id`` as historical provenance.
+    cross-identity analysis records must be cleaned explicitly. PostgreSQL does
+    enforce the foreign keys, and the same cleanup is therefore required before
+    SQLAlchemy cascades the identity's email tasks. Task snapshots intentionally
+    retain ``match_source_identity_id`` as historical provenance.
     """
 
     now = utc_now()
+    task_ids = select(EmailTask.id).where(EmailTask.identity_id == identity_id)
+    active_source_job_ids = select(MatchAnalysisJob.id).where(
+        MatchAnalysisJob.match_source_identity_id == identity_id,
+        MatchAnalysisJob.status.in_(
+            [
+                MatchAnalysisJobStatus.QUEUED.value,
+                MatchAnalysisJobStatus.RUNNING.value,
+            ],
+        ),
+    )
+    await session.execute(
+        update(MatchAnalysisJobItem)
+        .where(
+            MatchAnalysisJobItem.job_id.in_(active_source_job_ids),
+            MatchAnalysisJobItem.status.in_(
+                [
+                    MatchAnalysisJobItemStatus.QUEUED.value,
+                    MatchAnalysisJobItemStatus.RUNNING.value,
+                ],
+            ),
+        )
+        .values(
+            status=MatchAnalysisJobItemStatus.CANCELED.value,
+            skip_reason="匹配依据身份已删除",
+            finished_at=now,
+            updated_at=now,
+        ),
+    )
+    await session.execute(
+        update(MatchAnalysisJob)
+        .where(MatchAnalysisJob.id.in_(active_source_job_ids))
+        .values(
+            status=MatchAnalysisJobStatus.CANCELED.value,
+            cancel_requested_at=now,
+            finished_at=now,
+            updated_at=now,
+            last_error="匹配依据身份已删除，任务已取消",
+        ),
+    )
     run_ids = select(MatchAnalysisRun.id).where(
-        MatchAnalysisRun.identity_id == identity_id,
+        or_(
+            # A run normally belongs to the identity used as the match source.
+            MatchAnalysisRun.identity_id == identity_id,
+            # Shared-group jobs can analyse an active identity's task with a
+            # different source identity.  Deleting the task must still remove
+            # the run because ``email_task_id`` is non-null.
+            MatchAnalysisRun.email_task_id.in_(task_ids),
+        ),
     )
     await session.execute(
         update(MatchAnalysisJobItem)
@@ -311,14 +362,38 @@ async def _delete_identity_match_artifacts(
         .values(latest_analysis_run_id=None, updated_at=now),
     )
     await session.execute(
+        update(IdentityProfessorMatchResult)
+        .where(IdentityProfessorMatchResult.source_email_task_id.in_(task_ids))
+        .values(source_email_task_id=None, updated_at=now),
+    )
+    await session.execute(
+        update(MatchAnalysisJobItem)
+        .where(MatchAnalysisJobItem.email_task_id.in_(task_ids))
+        .values(email_task_id=None, updated_at=now),
+    )
+    await session.execute(
         delete(IdentityProfessorMatchResult).where(
             IdentityProfessorMatchResult.identity_id == identity_id,
         ),
     )
     await session.execute(
         delete(MatchAnalysisRun).where(
-            MatchAnalysisRun.identity_id == identity_id,
+            MatchAnalysisRun.id.in_(run_ids),
         ),
+    )
+    # Match-analysis jobs are identity-owned history, just like the email tasks
+    # that feed them.  Delete their items first because the job identity FK is
+    # non-null and has no database-level cascade in older installations.
+    owned_job_ids = select(MatchAnalysisJob.id).where(
+        MatchAnalysisJob.identity_id == identity_id,
+    )
+    await session.execute(
+        delete(MatchAnalysisJobItem).where(
+            MatchAnalysisJobItem.job_id.in_(owned_job_ids),
+        ),
+    )
+    await session.execute(
+        delete(MatchAnalysisJob).where(MatchAnalysisJob.id.in_(owned_job_ids)),
     )
     await session.execute(
         update(MatchAnalysisJob)

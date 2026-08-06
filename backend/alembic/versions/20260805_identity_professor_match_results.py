@@ -22,6 +22,30 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# The canonical result table is derived data: if a desktop upgrade was
+# interrupted after creating only part of it, dropping that incomplete table is
+# safe because the upgrade immediately rebuilds it from EmailTask snapshots.
+_MATCH_RESULT_REQUIRED_COLUMNS = frozenset(
+    {
+        "id",
+        "identity_id",
+        "professor_id",
+        "llm_profile_id",
+        "primary_material_id",
+        "source_email_task_id",
+        "latest_analysis_run_id",
+        "match_score",
+        "match_reason",
+        "fit_points",
+        "risk_points",
+        "match_keywords",
+        "analyzed_at",
+        "created_at",
+        "updated_at",
+    }
+)
+
+
 def upgrade() -> None:
     _create_match_results_table()
     _add_email_task_match_source()
@@ -118,6 +142,12 @@ def downgrade() -> None:
 
 
 def _create_match_results_table() -> None:
+    if "identity_professor_match_results" in _table_names():
+        existing_columns = _column_names("identity_professor_match_results")
+        if not _MATCH_RESULT_REQUIRED_COLUMNS.issubset(existing_columns):
+            # A half-created derived table cannot be trusted.  Recreate it and
+            # let the normal backfill restore all recoverable historical data.
+            op.drop_table("identity_professor_match_results")
     if "identity_professor_match_results" not in _table_names():
         op.create_table(
             "identity_professor_match_results",
@@ -246,20 +276,24 @@ def _add_group_match_source() -> None:
         ["match_source_identity_id"],
         "identity_profiles",
     )
-    if column_missing or foreign_key_missing:
+    if column_missing:
         with op.batch_alter_table("identity_communication_groups") as batch_op:
-            if column_missing:
-                batch_op.add_column(
-                    sa.Column("match_source_identity_id", sa.Integer(), nullable=True)
-                )
-            if foreign_key_missing:
-                batch_op.create_foreign_key(
-                    "fk_identity_communication_groups_match_source_identity_id",
-                    "identity_profiles",
-                    ["match_source_identity_id"],
-                    ["id"],
-                    ondelete="SET NULL",
-                )
+            batch_op.add_column(
+                sa.Column("match_source_identity_id", sa.Integer(), nullable=True)
+            )
+    _clear_invalid_identity_references(
+        "identity_communication_groups",
+        "match_source_identity_id",
+    )
+    if foreign_key_missing:
+        with op.batch_alter_table("identity_communication_groups") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_identity_communication_groups_match_source_identity_id",
+                "identity_profiles",
+                ["match_source_identity_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
     op.create_index(
         "ix_identity_communication_groups_match_source_identity_id",
         "identity_communication_groups",
@@ -295,20 +329,24 @@ def _add_job_match_source() -> None:
         ["match_source_identity_id"],
         "identity_profiles",
     )
-    if column_missing or foreign_key_missing:
+    if column_missing:
         with op.batch_alter_table("match_analysis_jobs") as batch_op:
-            if column_missing:
-                batch_op.add_column(
-                    sa.Column("match_source_identity_id", sa.Integer(), nullable=True)
-                )
-            if foreign_key_missing:
-                batch_op.create_foreign_key(
-                    "fk_match_analysis_jobs_match_source_identity_id",
-                    "identity_profiles",
-                    ["match_source_identity_id"],
-                    ["id"],
-                    ondelete="SET NULL",
-                )
+            batch_op.add_column(
+                sa.Column("match_source_identity_id", sa.Integer(), nullable=True)
+            )
+    _clear_invalid_identity_references(
+        "match_analysis_jobs",
+        "match_source_identity_id",
+    )
+    if foreign_key_missing:
+        with op.batch_alter_table("match_analysis_jobs") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_match_analysis_jobs_match_source_identity_id",
+                "identity_profiles",
+                ["match_source_identity_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
     op.create_index(
         "ix_match_analysis_jobs_match_source_identity_id",
         "match_analysis_jobs",
@@ -552,6 +590,34 @@ def _foreign_key_name(
             name = foreign_key.get("name")
             return str(name) if name else None
     return None
+
+
+def _clear_invalid_identity_references(table_name: str, column_name: str) -> None:
+    """Make an optional identity reference safe before adding its FK.
+
+    Some early desktop builds could persist a source ID before the identity
+    row was committed.  PostgreSQL validates existing rows while creating the
+    constraint, so normalize those orphaned values to the documented "no
+    explicit source" state first.  This is deliberately limited to the new
+    optional source columns; it does not rewrite historical ownership fields.
+    """
+
+    if column_name not in _column_names(table_name):
+        return
+    table = _table(table_name)
+    identities = _table("identity_profiles")
+    column = table.c[column_name]
+    bind = op.get_bind()
+    bind.execute(
+        sa.update(table)
+        .where(
+            column.is_not(None),
+            ~sa.exists(
+                sa.select(identities.c.id).where(identities.c.id == column),
+            ),
+        )
+        .values({column_name: None}),
+    )
 
 
 def _normalize_match_score(value: object) -> int | None:
