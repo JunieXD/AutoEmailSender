@@ -43,6 +43,23 @@ class MatchingModuleCompatibilityTest(unittest.TestCase):
         self.assertIs(legacy.estimate_match_score, scoring.estimate_match_score)
         self.assertIs(legacy.build_draft_email, scoring.build_draft_email)
 
+    def test_task_runtime_analysis_exports_are_compatibility_aliases(self) -> None:
+        from app.modules.matching import task_analysis
+        from app.services import task_runtime
+
+        export_names = (
+            "MatchAnalysisAlreadyRunningError",
+            "MatchCalculationActionResult",
+            "MatchCalculationCanceledError",
+            "MatchUsageSummary",
+            "calculate_task_match",
+            "calculate_task_match_once",
+            "recover_interrupted_match_analysis_runs",
+        )
+        for name in export_names:
+            with self.subTest(name=name):
+                self.assertIs(getattr(task_runtime, name), getattr(task_analysis, name))
+
 
 if __name__ == "__main__":
     unittest.main()

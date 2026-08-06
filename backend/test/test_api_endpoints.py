@@ -58,15 +58,21 @@ class ApiEndpointTests(unittest.TestCase):
             "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
+        self._match_task_analysis_adaptation_patch = patch(
+            "app.modules.matching.task_analysis.llm_runtime.ensure_llm_runtime_adaptation",
+            new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+        )
         self._test_compose_runtime_adaptation_patch = patch(
             "app.modules.communications.test_compose.runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._task_runtime_adaptation_patch.start()
+        self._match_task_analysis_adaptation_patch.start()
         self._test_compose_runtime_adaptation_patch.start()
 
     def tearDown(self) -> None:
         self._test_compose_runtime_adaptation_patch.stop()
+        self._match_task_analysis_adaptation_patch.stop()
         self._task_runtime_adaptation_patch.stop()
         self.client.cookies.clear()
         from app.core.config import get_settings
@@ -3017,7 +3023,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(side_effect=fake_generate_match_evaluation),
         ):
             match_response = self.client.post(
@@ -6490,7 +6496,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(
                 return_value=self._build_match_evaluation_result(
                     match_score=93,
@@ -6871,7 +6877,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = ensure_response.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=18)),
         ):
             response = self.client.post(f"/api/email-tasks/{task_id}/calculate-match")
@@ -6945,7 +6951,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(workspace_before.json()["current_task"]["can_write_follow_up"])
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=92)),
         ):
             response = self.client.post(f"/api/email-tasks/{task_id}/calculate-match")
@@ -6994,7 +7000,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = ensure_response.json()["current_task"]["id"]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(side_effect=AssertionError("不应在缺少研究信息时调用模型")),
         ):
             response = self.client.post(f"/api/email-tasks/{task_id}/calculate-match")
@@ -7054,7 +7060,7 @@ class ApiEndpointTests(unittest.TestCase):
             return self._build_match_evaluation_result(match_score=86)
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(side_effect=fake_generate_match_evaluation),
         ):
             response = self.client.post(f"/api/email-tasks/{task_id}/calculate-match")
@@ -7080,7 +7086,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(run_material_id, material_id)
 
     def test_calculate_match_returns_409_when_run_is_already_running(self) -> None:
-        from app.services.task_runtime import MatchAnalysisAlreadyRunningError
+        from app.modules.matching.public import MatchAnalysisAlreadyRunningError
 
         with patch(
             "app.api.email_tasks.calculate_task_match_once",

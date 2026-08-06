@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 
 from sqlalchemy import inspect, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,19 +21,19 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
+from app.modules.campaigns.public import (
+    get_default_outreach_template_for_identity,
+    resolve_outreach_template_config,
+)
+from app.services.match_results import resolve_identity_match_scope
+from app.services.operation_logs import record_operation_log
+
 from .schemas import MatchAnalysisJobItemRead, MatchAnalysisJobRead
-from app.services.task_runtime import (
+from .task_analysis import (
     MatchAnalysisAlreadyRunningError,
     MatchCalculationCanceledError,
     calculate_task_match,
 )
-from app.services.operation_logs import record_operation_log
-from app.services.match_results import resolve_identity_match_scope
-from app.modules.campaigns.public import (
-    get_default_outreach_template_for_identity,
-)
-from app.modules.campaigns.public import resolve_outreach_template_config
-
 
 _ACTIVE_MATCH_ANALYSIS_JOB_IDS: set[int] = set()
 _MATCH_ANALYSIS_CANCEL_POLL_SECONDS = 0.2

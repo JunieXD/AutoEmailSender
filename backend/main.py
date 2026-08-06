@@ -16,32 +16,31 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import API_ROUTERS
-from app.core.config import get_settings
-from app.core.api_auth import ApiAuthMiddleware
-from app.core.agent_mutation_headers import AgentMutationHeadersMiddleware
 from app.core.agent_api_errors import (
     AgentApiError,
     agent_api_error_handler,
     http_exception_handler,
     request_validation_error_handler,
 )
+from app.core.agent_mutation_headers import AgentMutationHeadersMiddleware
+from app.core.api_auth import ApiAuthMiddleware
+from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.error_formatting import safe_exception_message
 from app.core.migrations import ensure_database_schema
-from app.core.schema_metadata import DatabaseRequiresNewerAppError
 from app.core.request_context import RequestContextMiddleware
+from app.core.schema_metadata import DatabaseRequiresNewerAppError
 from app.core.sqlite_diagnostics import is_sqlite_database_lock_error
 from app.core.startup_logging import write_startup_phase_log
 from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
-from app.services.operation_logs import cleanup_old_operation_logs
-from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
+from app.modules.matching.public import recover_interrupted_match_analysis_runs
 from app.services.batch_draft_generation_runtime import (
     recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,
 )
+from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
+from app.services.operation_logs import cleanup_old_operation_logs
 from app.services.runtime_manager import RuntimeManager
-from app.services.task_runtime import recover_interrupted_match_analysis_runs
-
 
 ensure_windows_proactor_event_loop_policy()
 logger = logging.getLogger(__name__)

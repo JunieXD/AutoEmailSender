@@ -37,7 +37,7 @@ from app.modules.matching.public import (
 class MatchAnalysisJobRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._runtime_adaptation_patch = patch(
-            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.matching.task_analysis.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(
                 return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None),
             ),
@@ -126,7 +126,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
         ):
             processed = self._run_async(
@@ -161,7 +161,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
         ):
             self._run_async(
@@ -200,7 +200,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=93)),
         ):
             processed = self._run_async(
@@ -260,7 +260,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
         ):
             self._run_async(
@@ -295,7 +295,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         failure = RuntimeError("模型临时失败")
         success = self._build_match_evaluation_result(match_score=91)
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(side_effect=[failure, success]),
         ):
             processed = self._run_async(
@@ -342,7 +342,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 return self._build_match_evaluation_result(match_score=88)
 
             with patch(
-                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
                 AsyncMock(side_effect=fake_generate_match_evaluation),
             ):
                 worker = asyncio.create_task(
@@ -478,7 +478,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self._run_async(self._mark_job_running_after_interrupted_worker(job.id))
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
         ):
             processed = self._run_async(
@@ -706,7 +706,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
             return self._build_match_evaluation_result(match_score=88)
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(side_effect=fake_generate_match_evaluation),
         ):
             worker_task = asyncio.create_task(

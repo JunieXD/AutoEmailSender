@@ -10,15 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
-from app.modules.identities.profiles.api import delete_identity
 from app.models import (
     AppSetting,
     Base,
     EmailTask,
     IdentityCommunicationGroup,
     IdentityMaterial,
-    IdentityProfile,
     IdentityProfessorMatchResult,
+    IdentityProfile,
     LLMProfile,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
@@ -26,21 +25,22 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
+from app.modules.identities.profiles.api import delete_identity
+from app.modules.identities.public import delete_identity_material_record
 from app.modules.llm import runtime as llm_runtime
-from app.services import task_runtime
-from app.services.match_results import (
-    load_resolved_match_result,
-    match_result_is_stale,
-)
 from app.modules.matching.public import (
     serialize_match_analysis_job,
     serialize_match_analysis_job_item,
 )
-from app.modules.identities.public import delete_identity_material_record
-from app.services.task_runtime import (
+from app.modules.matching.task_analysis import (
     MatchAnalysisAlreadyRunningError,
     calculate_task_match_once,
     recover_interrupted_match_analysis_runs,
+)
+from app.services import task_runtime
+from app.services.match_results import (
+    load_resolved_match_result,
+    match_result_is_stale,
 )
 
 
@@ -60,7 +60,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self._run_async(self._create_schema())
         self.email_task_id = self._run_async(self._create_email_task())
         self.runtime_adaptation_patcher = patch(
-            "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.matching.task_analysis.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)),
         )
         self.runtime_adaptation_patcher.start()
@@ -156,7 +156,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ):
             result = self._run_async(
@@ -213,7 +213,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         ]
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(side_effect=generations),
         ):
             first = self._run_async(
@@ -404,7 +404,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ) as mocked_generate:
             action_result = self._run_async(
@@ -468,7 +468,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ):
             self._run_async(
@@ -512,7 +512,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             usage=None,
         )
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ):
             self._run_async(
@@ -616,7 +616,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             usage=None,
         )
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ):
             self._run_async(
@@ -658,11 +658,11 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.matching.task_analysis.llm_runtime.ensure_llm_runtime_adaptation",
                 new=AsyncMock(side_effect=fake_ensure),
             ) as adaptation_mock,
             patch(
-                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
                 new=AsyncMock(side_effect=fake_generate),
             ) as generate_mock,
         ):
@@ -686,7 +686,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ) as mocked_generate:
             result = self._run_async(
@@ -716,7 +716,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ) as mocked_generate:
             result = self._run_async(
@@ -746,7 +746,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ) as mocked_generate:
             self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
@@ -761,7 +761,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
                 new=AsyncMock(),
             ) as mocked_generate,
             self.assertRaisesRegex(ValueError, "请到个人页设置默认材料"),
@@ -774,7 +774,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
 
     def test_calculate_match_persists_failed_token_audit(self) -> None:
         with patch(
-            "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(
                 side_effect=llm_runtime.LLMRuntimeError(
                     "模型请求失败",
@@ -833,7 +833,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 return_value=None,
             ),
             patch(
-                "app.services.task_runtime.llm_runtime.generate_match_evaluation",
+                "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
                 new=AsyncMock(),
             ) as mocked_generate,
             self.assertRaisesRegex(ValueError, "默认材料无法提取文本"),

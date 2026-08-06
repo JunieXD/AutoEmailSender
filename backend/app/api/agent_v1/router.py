@@ -311,13 +311,15 @@ from app.modules.campaigns.public import (
 )
 from app.modules.campaigns.public import import_outreach_template_file
 from app.services.task_runtime import (
-    MatchAnalysisAlreadyRunningError,
-    calculate_task_match_once,
     cancel_scheduled_task,
     continue_task_manually,
     start_follow_up_task,
     update_task_outreach_config,
     update_task_primary_material,
+)
+from app.modules.matching.public import (
+    MatchAnalysisAlreadyRunningError,
+    calculate_task_match_once,
 )
 from app.modules.communications.public import (
     build_test_compose_thread,

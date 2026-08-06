@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
 
 from app.core.time import as_utc_aware, local_now as get_local_now, utc_now
@@ -24,7 +22,6 @@ from app.models import (
     EmailTaskStatus,
     IdentityMaterial,
     IdentityProfile,
-    MatchAnalysisRun,
     LLMProfile,
     OutreachTemplate,
     Professor,
@@ -69,11 +66,6 @@ from app.modules.campaigns.public import (
 )
 from app.modules.campaigns.public import sync_batch_task_completion
 from app.modules.communications.public import MailAttachment
-from app.services.match_results import (
-    apply_match_result_snapshot_to_task,
-    resolve_identity_match_scope,
-    upsert_identity_professor_match_result,
-)
 from app.modules.identities.public import (
     build_material_download_name,
     ensure_material_extracted_text,
@@ -96,6 +88,16 @@ from app.modules.campaigns.public import (
 )
 from app.services.rich_text import normalize_email_html, text_to_email_html
 from app.modules.system.public import get_runtime_settings
+from app.modules.matching.public import (
+    INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR as INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR,
+    MatchAnalysisAlreadyRunningError as MatchAnalysisAlreadyRunningError,
+    MatchCalculationActionResult as MatchCalculationActionResult,
+    MatchCalculationCanceledError as MatchCalculationCanceledError,
+    MatchUsageSummary as MatchUsageSummary,
+    calculate_task_match as calculate_task_match,
+    calculate_task_match_once as calculate_task_match_once,
+    recover_interrupted_match_analysis_runs as recover_interrupted_match_analysis_runs,
+)
 
 
 TASK_RELATION_OPTIONS = EMAIL_TASK_RELATION_OPTIONS
@@ -113,7 +115,6 @@ STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
 SCHEDULED_BATCH_SEND_GRACE_PERIOD = timedelta(minutes=2)
 DEFAULT_SEND_INTERVAL_MIN_SECONDS = 1
 DEFAULT_SEND_INTERVAL_MAX_SECONDS = 5
-INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
 WORKSPACE_DRAFT_REWRITE_TIMEOUT = timedelta(minutes=5)
 WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS = int(WORKSPACE_DRAFT_REWRITE_TIMEOUT.total_seconds())
 WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE = "AI 改写超时，请稍后重试"
@@ -146,40 +147,18 @@ def _is_user_removed_batch_item(email_task: EmailTask) -> bool:
     )
 
 
-def _has_professor_match_evidence(professor: Professor) -> bool:
-    return bool((professor.research_direction or "").strip()) or any(
-        str(paper).strip() for paper in professor.recent_papers or []
-    )
 
 
 def _has_professor_research_direction(professor: Professor) -> bool:
     return bool((professor.research_direction or "").strip())
 
 
-@dataclass(slots=True)
-class MatchUsageSummary:
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    cached_tokens: int | None = None
 
 
-@dataclass(slots=True)
-class MatchCalculationActionResult:
-    professor_id: int
-    identity_id: int
-    match_source_identity_id: int
-    llm_profile_id: int
-    usage: MatchUsageSummary
-    run_id: int | None = None
 
 
-class MatchAnalysisAlreadyRunningError(RuntimeError):
-    pass
 
 
-class MatchCalculationCanceledError(RuntimeError):
-    pass
 
 
 async def process_pending_drafts_once(
@@ -603,26 +582,6 @@ async def recover_stale_sending_tasks(
         return len(tasks)
 
 
-async def recover_interrupted_match_analysis_runs(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    now: datetime | None = None,
-) -> int:
-    resolved_now = as_utc_aware(now) if now is not None else utc_now()
-    async with session_factory() as session:
-        runs = list(
-            await session.scalars(
-                select(MatchAnalysisRun).where(MatchAnalysisRun.status == "running"),
-            ),
-        )
-        for run in runs:
-            run.status = "failed"
-            run.success = False
-            run.error_kind = "interrupted"
-            run.error_message = INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR
-            run.finished_at = resolved_now
-        await session.commit()
-        return len(runs)
 
 
 async def generate_task_draft(
@@ -917,201 +876,6 @@ async def generate_task_draft(
         return task_identity
 
 
-async def calculate_task_match(
-    session_factory: async_sessionmaker[AsyncSession],
-    task_id: int,
-    *,
-    force: bool,
-    ignore_batch_status: bool = False,
-    cancel_requested: Callable[[], Awaitable[bool]] | None = None,
-    llm_profile_id: int | None = None,
-    match_source_identity_id: int | None = None,
-) -> MatchCalculationActionResult:
-    async with session_factory() as session:
-        task = await _load_email_task(session, task_id)
-        if not task:
-            raise ValueError(f"EmailTask {task_id} 不存在")
-        match_scope = await resolve_identity_match_scope(
-            session,
-            active_identity_id=task.identity_id,
-            match_source_identity_id=match_source_identity_id,
-        )
-        runtime_llm_profile = await _resolve_runtime_llm_profile(session, task, llm_profile_id)
-        if (
-            task.batch_task
-            and task.batch_task.status != BatchTaskStatus.RUNNING.value
-            and not ignore_batch_status
-        ):
-            return _match_action_result(
-                task,
-                match_source_identity_id=match_scope.source_identity_id,
-            )
-        try:
-            match_material = await _resolve_match_primary_material(
-                session,
-                match_scope.source_identity,
-            )
-        except ValueError:
-            if force:
-                raise
-            return _match_action_result(
-                task,
-                match_source_identity_id=match_scope.source_identity_id,
-            )
-        ensure_material_extracted_text(match_material)
-        if not _has_professor_match_evidence(task.professor):
-            raise ValueError("缺少研究方向或近期论文，暂不能分析匹配度")
-        if not force and task.status in {
-            EmailTaskStatus.MATCHED.value,
-            EmailTaskStatus.REVIEW_REQUIRED.value,
-            EmailTaskStatus.APPROVED.value,
-            EmailTaskStatus.SCHEDULED.value,
-            EmailTaskStatus.SENT.value,
-            EmailTaskStatus.REPLY_DETECTED.value,
-        }:
-            return _match_action_result(
-                task,
-                match_source_identity_id=match_scope.source_identity_id,
-            )
-
-        task.llm_profile_id = runtime_llm_profile.id
-        runtime_settings = await get_runtime_settings(session)
-        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, runtime_llm_profile)
-        run = await _create_running_match_analysis_run(
-            session,
-            task,
-            match_identity=match_scope.source_identity,
-            primary_material=match_material,
-        )
-        await session.commit()
-        try:
-            generation = await llm_runtime.generate_match_evaluation(
-                identity=match_scope.source_identity,
-                primary_material=match_material,
-                llm_profile=runtime_llm_profile,
-                professor=task.professor,
-                available_materials=list(match_scope.source_identity.materials),
-                intended_research_direction=runtime_settings.intended_research_direction,
-                session=session,
-                adaptation=adaptation,
-            )
-        except asyncio.CancelledError:
-            _mark_match_analysis_run_failed(
-                run,
-                error_kind="canceled",
-                error_message="匹配分析任务已取消",
-            )
-            task.updated_at = utc_now()
-            await session.commit()
-            raise
-        except llm_runtime.LLMRuntimeError as exc:
-            _mark_match_analysis_run_failed(
-                run,
-                error_kind="llm_runtime",
-                error_message=str(exc),
-                duration_ms=exc.duration_ms,
-                endpoint_kind=exc.endpoint_kind,
-                status_code=exc.status_code,
-            )
-            task.last_error = str(exc)
-            task.updated_at = utc_now()
-            await session.commit()
-            return _match_action_result(
-                task,
-                match_source_identity_id=match_scope.source_identity_id,
-                run_id=run.id,
-            )
-        except Exception as exc:
-            _mark_match_analysis_run_failed(
-                run,
-                error_kind="unexpected",
-                error_message=str(exc),
-            )
-            task.last_error = str(exc)
-            task.updated_at = utc_now()
-            await session.commit()
-            raise
-
-        if cancel_requested is not None and await cancel_requested():
-            _mark_match_analysis_run_failed(
-                run,
-                error_kind="canceled",
-                error_message="匹配分析任务已取消",
-            )
-            task.updated_at = utc_now()
-            await session.commit()
-            raise MatchCalculationCanceledError("匹配分析任务已取消")
-
-        result = generation.result
-        run.status = "succeeded"
-        run.success = True
-        run.match_score = result.match_score
-        run.match_reason = result.match_reason
-        run.fit_points = list(result.fit_points)
-        run.risk_points = list(result.risk_points)
-        run.match_keywords = list(result.keywords)
-        run.prompt_tokens = generation.usage.prompt_tokens if generation.usage else None
-        run.completion_tokens = generation.usage.completion_tokens if generation.usage else None
-        run.total_tokens = generation.usage.total_tokens if generation.usage else None
-        run.cached_tokens = generation.usage.cached_tokens if generation.usage else None
-        run.duration_ms = generation.duration_ms
-        run.endpoint_kind = generation.endpoint_kind
-        run.status_code = generation.status_code
-        run.prompt_hash = generation.prompt_hash
-        run.stable_prefix_hash = generation.stable_prefix_hash
-        run.error_kind = None
-        run.error_message = None
-        run.finished_at = utc_now()
-        canonical_result = await upsert_identity_professor_match_result(
-            session,
-            identity_id=match_scope.source_identity_id,
-            professor_id=task.professor_id,
-            llm_profile_id=runtime_llm_profile.id,
-            primary_material_id=match_material.id,
-            source_email_task_id=task.id,
-            analysis_run=run,
-            match_score=result.match_score,
-            match_reason=result.match_reason,
-            fit_points=result.fit_points,
-            risk_points=result.risk_points,
-            match_keywords=result.keywords,
-        )
-        apply_match_result_snapshot_to_task(
-            task,
-            match_source_identity_id=match_scope.source_identity_id,
-            match_score=result.match_score,
-            match_reason=result.match_reason,
-            fit_points=result.fit_points,
-            risk_points=result.risk_points,
-            match_keywords=result.keywords,
-        )
-        if task.status in {
-            EmailTaskStatus.DISCOVERED.value,
-            EmailTaskStatus.MATCHED.value,
-            EmailTaskStatus.DRAFT_FAILED.value,
-        }:
-            task.status = EmailTaskStatus.MATCHED.value
-        task.updated_at = utc_now()
-        task.last_error = None
-        await _record_email_task_log(
-            session,
-            task,
-            "email_task.match_calculated",
-            metadata={
-                "match_analysis_run_id": run.id,
-                "match_result_id": canonical_result.id,
-                "match_source_identity_id": match_scope.source_identity_id,
-                "match_score": result.match_score,
-                "force": force,
-            },
-        )
-        await session.commit()
-        return _match_action_result(
-            task,
-            match_source_identity_id=match_scope.source_identity_id,
-            usage=_match_usage_summary(generation.usage),
-            run_id=run.id,
-        )
 
 
 async def regenerate_task_draft(
@@ -1381,111 +1145,16 @@ async def preview_task_draft(
         )
 
 
-def _match_usage_summary(
-    usage: llm_runtime.ChatCompletionUsage | None,
-) -> MatchUsageSummary:
-    if usage is None:
-        return MatchUsageSummary()
-    return MatchUsageSummary(
-        prompt_tokens=usage.prompt_tokens,
-        completion_tokens=usage.completion_tokens,
-        total_tokens=usage.total_tokens,
-        cached_tokens=usage.cached_tokens,
-    )
 
 
-def _match_action_result(
-    task: EmailTask,
-    *,
-    match_source_identity_id: int | None = None,
-    usage: MatchUsageSummary | None = None,
-    run_id: int | None = None,
-) -> MatchCalculationActionResult:
-    return MatchCalculationActionResult(
-        professor_id=task.professor_id,
-        identity_id=task.identity_id,
-        match_source_identity_id=match_source_identity_id or task.identity_id,
-        llm_profile_id=task.llm_profile_id,
-        usage=usage or MatchUsageSummary(),
-        run_id=run_id,
-    )
 
 
-async def _create_running_match_analysis_run(
-    session: AsyncSession,
-    task: EmailTask,
-    *,
-    match_identity: IdentityProfile,
-    primary_material: IdentityMaterial,
-) -> MatchAnalysisRun:
-    run = MatchAnalysisRun(
-        email_task_id=task.id,
-        professor_id=task.professor_id,
-        identity_id=match_identity.id,
-        llm_profile_id=task.llm_profile_id,
-        primary_material_id=primary_material.id,
-        status="running",
-        success=False,
-        started_at=utc_now(),
-    )
-    session.add(run)
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise MatchAnalysisAlreadyRunningError("该任务正在分析中") from exc
-    return run
 
 
-async def _resolve_match_primary_material(
-    session: AsyncSession,
-    identity: IdentityProfile,
-) -> IdentityMaterial:
-    material = identity.current_primary_material
-    if material is None:
-        material_id = identity.current_primary_material_id
-        if material_id is not None:
-            material = await session.get(IdentityMaterial, material_id)
-    if material is None:
-        raise ValueError("请到个人页设置默认材料")
-    if material.identity_id != identity.id:
-        raise ValueError("匹配依据身份的默认材料归属不正确")
-    if not material_can_be_primary(material):
-        raise ValueError("个人页默认材料不支持匹配分析")
-    return material
 
 
-def _mark_match_analysis_run_failed(
-    run: MatchAnalysisRun,
-    *,
-    error_kind: str,
-    error_message: str,
-    duration_ms: int | None = None,
-    endpoint_kind: str | None = None,
-    status_code: int | None = None,
-) -> None:
-    run.status = "failed"
-    run.success = False
-    run.error_kind = error_kind
-    run.error_message = error_message
-    run.duration_ms = duration_ms
-    run.endpoint_kind = endpoint_kind
-    run.status_code = status_code
-    run.finished_at = utc_now()
 
 
-async def calculate_task_match_once(
-    session_factory: async_sessionmaker[AsyncSession],
-    task_id: int,
-    *,
-    llm_profile_id: int | None = None,
-) -> MatchCalculationActionResult:
-    return await calculate_task_match(
-        session_factory,
-        task_id,
-        force=True,
-        llm_profile_id=llm_profile_id,
-    )
 
 
 async def update_task_primary_material(

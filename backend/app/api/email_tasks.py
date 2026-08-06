@@ -5,6 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.workspace_support import build_workspace_thread
 from app.core.database import get_async_session, get_session_factory
+from app.modules.matching.public import (
+    MatchAnalysisAlreadyRunningError,
+    calculate_task_match_once,
+)
 from app.schemas.email_task import (
     DraftPreviewRead,
     EmailTaskApprovalRequest,
@@ -19,15 +23,13 @@ from app.schemas.email_task import (
 from app.schemas.workspace import WorkspaceThreadRead
 from app.services import llm_runtime
 from app.services.task_runtime import (
-    approve_draft_task,
     approve_and_schedule_task,
     approve_and_send_task,
-    calculate_task_match_once,
+    approve_draft_task,
     cancel_scheduled_task,
     continue_task_manually,
-    MatchAnalysisAlreadyRunningError,
-    regenerate_task_draft,
     preview_task_draft,
+    regenerate_task_draft,
     rewrite_task_draft,
     save_task_draft,
     start_follow_up_task,
