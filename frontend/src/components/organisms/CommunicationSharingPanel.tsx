@@ -151,7 +151,7 @@ export const CommunicationSharingPanel = () => {
       .map((member) => `${member.profile_name}（${member.email_address}）`)
       .join('、');
     return confirm({
-      title: '合并已有通信共享组？',
+      title: '合并已有共享组？',
       description: affectedMembers
         ? `所选身份已属于其他共享组。确认后会一并合并这些成员：${affectedMembers}`
         : '所选身份已属于其他共享组。确认后会把相关组的全部成员合并到一起。',
@@ -174,7 +174,7 @@ export const CommunicationSharingPanel = () => {
 
   const saveGroup = async () => {
     if (selectedMemberIds.length < 2) {
-      notifyFormErrors('请检查共享成员', ['通信共享组至少需要两个身份']);
+      notifyFormErrors('请检查共享成员', ['共享组至少需要两个身份']);
       return;
     }
 
@@ -207,13 +207,13 @@ export const CommunicationSharingPanel = () => {
       setSelectedMemberIds([]);
       setSelectedMatchSourceIdentityId(null);
       notifySuccess(
-        editorId === 'new' ? '通信共享组已创建' : '通信共享组已更新',
-        '通信范围和匹配度口径已经应用到首页、工作区和统计面板。',
+        editorId === 'new' ? '共享组已创建' : '共享组已更新',
+        '组内身份现在共享通信记录；匹配度显示方式已应用到首页、工作区和统计面板。',
       );
     } catch (error) {
       notifyError(
-        '保存通信共享组失败',
-        error instanceof Error ? error.message : '保存通信共享组失败',
+        '保存共享组失败',
+        error instanceof Error ? error.message : '保存共享组失败',
       );
     } finally {
       setSaving(false);
@@ -223,7 +223,8 @@ export const CommunicationSharingPanel = () => {
   const dissolveGroup = async (group: IdentityCommunicationGroupDTO) => {
     const confirmed = await confirm({
       title: `解散“${getGroupLabel(group)}”共享组？`,
-      description: '解散只会停止合并展示，不会删除任何身份、任务或通信记录。',
+      description:
+        '解散只会停止共享通信记录和匹配度显示关联，不会删除任何身份、任务或通信记录。',
       confirmLabel: '解散共享组',
       cancelLabel: '取消',
       tone: 'danger',
@@ -241,11 +242,11 @@ export const CommunicationSharingPanel = () => {
         setSelectedMemberIds([]);
         setSelectedMatchSourceIdentityId(null);
       }
-      notifySuccess('通信共享组已解散', '身份和原有通信记录均已保留。');
+      notifySuccess('共享组已解散', '身份和原有通信记录均已保留。');
     } catch (error) {
       notifyError(
-        '解散通信共享组失败',
-        error instanceof Error ? error.message : '解散通信共享组失败',
+        '解散共享组失败',
+        error instanceof Error ? error.message : '解散共享组失败',
       );
     } finally {
       setDeletingGroupId(null);
@@ -259,19 +260,19 @@ export const CommunicationSharingPanel = () => {
           type="button"
           aria-expanded={open}
           aria-controls="communication-sharing-card-content"
-          aria-label={open ? '收起通信记录共享' : '展开通信记录共享'}
+          aria-label={open ? '收起多身份共享' : '展开多身份共享'}
           onClick={toggleOpen}
           className="collapsible-card-toggle flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition hover:bg-stone-50 active:bg-stone-50"
         >
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl font-semibold text-stone-900">通信记录共享</h2>
+              <h2 className="text-xl font-semibold text-stone-900">多身份共享</h2>
               <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600">
                 {summary}
               </span>
             </div>
             <p className="mt-2 text-sm leading-6 text-stone-600">
-              合并组内身份的真实收发记录，并可统一匹配度依据；发件配置与任务仍分别管理。
+              将多个发件身份组成共享组：组内共享真实收发记录，并可统一显示某个身份的匹配度结果；邮箱配置和任务仍各自独立。
             </p>
           </div>
           <ChevronDown
@@ -292,7 +293,7 @@ export const CommunicationSharingPanel = () => {
             <div className="collapsible-card-body min-h-0 px-6">
               <div className="mt-5 pb-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold text-stone-900">共享组管理</h3>
+                  <h3 className="text-base font-semibold text-stone-900">共享组</h3>
                   <button
                     type="button"
                     onClick={beginCreate}
@@ -300,14 +301,14 @@ export const CommunicationSharingPanel = () => {
                     className="ui-btn-secondary shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Plus className="h-4 w-4" />
-                    创建共享组
+                    新建共享组
                   </button>
                 </div>
 
                 <div className="mt-4 divide-y divide-stone-100 border-y border-stone-200">
                   {communicationGroups.length === 0 ? (
                     <div className="py-4 text-sm text-stone-500">
-                      当前没有共享组，各身份只显示自己的通信记录。
+                      当前没有共享组，各身份的通信记录和匹配度均独立显示。
                     </div>
                   ) : (
                     communicationGroups.map((group) => (
@@ -329,15 +330,15 @@ export const CommunicationSharingPanel = () => {
                           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary">
                             <Sparkles className="h-3.5 w-3.5" />
                             {getGroupMatchSourceName(group)
-                              ? `匹配度统一依据 ${getGroupMatchSourceName(group)}`
-                              : '匹配度各身份独立'}
+                              ? `通信记录已共享 · 匹配度统一使用 ${getGroupMatchSourceName(group)}`
+                              : '通信记录已共享 · 匹配度各自独立'}
                           </div>
                         </div>
                         <div className="flex shrink-0 gap-2">
                           <button
                             type="button"
                             aria-label={`编辑 ${getGroupLabel(group)}`}
-                            title="编辑成员"
+                            title="编辑共享组"
                             onClick={() => beginEdit(group)}
                             disabled={saving || deletingGroupId !== null}
                             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-stone-200 text-stone-600 transition hover:bg-stone-50 active:translate-y-px disabled:opacity-50"
@@ -369,10 +370,10 @@ export const CommunicationSharingPanel = () => {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <h3 className="text-sm font-semibold text-stone-900">
-                          {editingGroup ? '编辑共享成员' : '创建通信共享组'}
+                          {editingGroup ? '编辑共享组' : '新建共享组'}
                         </h3>
                         <p className="mt-1 text-xs leading-5 text-stone-500">
-                          至少选择两个身份。选择其他组成员时，保存前会要求确认合并。
+                          选择共享成员，并设置组内匹配度的显示方式。选择其他组成员时，保存前会要求确认合并。
                         </p>
                       </div>
                       <button
@@ -426,10 +427,10 @@ export const CommunicationSharingPanel = () => {
 
                     <fieldset className="mt-5 rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
                       <legend className="px-1 text-sm font-semibold text-stone-900">
-                        匹配度口径
+                        匹配度显示方式
                       </legend>
                       <p className="mt-1 text-xs leading-5 text-stone-500">
-                        统一后，组内所有身份都显示所选身份的分数、理由、契合点、风险点和关键词。
+                        统一后，组内所有身份都会显示所选身份的匹配分数、分析理由和建议。
                       </p>
                       <div className="mt-3 grid gap-2">
                         <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 bg-white px-3 py-3 transition hover:bg-stone-50">
@@ -443,10 +444,10 @@ export const CommunicationSharingPanel = () => {
                           />
                           <span>
                             <span className="block text-sm font-medium text-stone-900">
-                              各身份独立
+                              各自显示自己的匹配度
                             </span>
                             <span className="mt-0.5 block text-xs leading-5 text-stone-500">
-                              每个身份分别使用自己的默认材料和匹配结果。
+                              每个身份显示使用自己默认材料生成的分数、分析理由和建议。
                             </span>
                           </span>
                         </label>
@@ -469,7 +470,7 @@ export const CommunicationSharingPanel = () => {
                               />
                               <span className="min-w-0">
                                 <span className="block text-sm font-medium text-stone-900">
-                                  统一使用 {getIdentityName(identity)}
+                                  统一显示 {getIdentityName(identity)} 的匹配度
                                 </span>
                                 <span className="mt-0.5 block text-xs leading-5 text-stone-500">
                                   默认材料：

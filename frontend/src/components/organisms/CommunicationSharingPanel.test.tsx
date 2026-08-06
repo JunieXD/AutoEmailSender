@@ -96,7 +96,7 @@ const makeGroup = (
 
 const expandPanel = () => {
   fireEvent.click(
-    screen.getByRole('button', { name: '展开通信记录共享' }),
+    screen.getByRole('button', { name: '展开多身份共享' }),
   );
 };
 
@@ -121,27 +121,35 @@ describe('CommunicationSharingPanel', () => {
   it('uses the same collapsed summary pattern as the other settings cards', () => {
     render(<CommunicationSharingPanel />);
 
-    const toggle = screen.getByRole('button', { name: '展开通信记录共享' });
+    const toggle = screen.getByRole('button', { name: '展开多身份共享' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('heading', { name: '多身份共享' })).toBeInTheDocument();
+    expect(
+      screen.getByText(/组内共享真实收发记录，并可统一显示某个身份的匹配度结果/),
+    ).toBeInTheDocument();
     expect(screen.getByText('未创建共享组')).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: '创建共享组' }),
+      screen.queryByRole('button', { name: '新建共享组' }),
     ).not.toBeInTheDocument();
 
     expandPanel();
 
     expect(
-      screen.getByRole('button', { name: '收起通信记录共享' }),
+      screen.getByRole('button', { name: '收起多身份共享' }),
     ).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: '创建共享组' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建共享组' })).toBeInTheDocument();
   });
 
   it('creates a group with the current identity preselected', async () => {
     render(<CommunicationSharingPanel />);
 
     expandPanel();
-    fireEvent.click(screen.getByRole('button', { name: '创建共享组' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建共享组' }));
     expect(screen.getByRole('checkbox', { name: /A/ })).toBeChecked();
+    expect(screen.getByText('匹配度显示方式')).toBeInTheDocument();
+    expect(
+      screen.getByRole('radio', { name: /各自显示自己的匹配度/ }),
+    ).toBeChecked();
     fireEvent.click(screen.getByRole('checkbox', { name: /B/ }));
     fireEvent.click(screen.getByRole('button', { name: '保存共享组' }));
 
@@ -184,7 +192,7 @@ describe('CommunicationSharingPanel', () => {
 
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '合并已有通信共享组？' }),
+        expect.objectContaining({ title: '合并已有共享组？' }),
       );
       expect(apiMocks.updateCommunicationGroup).toHaveBeenCalledWith(10, {
         identity_ids: [1, 2, 3],
@@ -211,10 +219,12 @@ describe('CommunicationSharingPanel', () => {
     render(<CommunicationSharingPanel />);
     expandPanel();
 
-    expect(screen.getByText('匹配度统一依据 A')).toBeInTheDocument();
+    expect(
+      screen.getByText('通信记录已共享 · 匹配度统一使用 A'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '编辑 A、B' }));
-    expect(screen.getByRole('radio', { name: /统一使用 A/ })).toBeChecked();
-    fireEvent.click(screen.getByRole('radio', { name: /统一使用 B/ }));
+    expect(screen.getByRole('radio', { name: /统一显示 A 的匹配度/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /统一显示 B 的匹配度/ }));
     fireEvent.click(screen.getByRole('button', { name: '保存共享组' }));
 
     await waitFor(() => {
@@ -243,8 +253,12 @@ describe('CommunicationSharingPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '编辑 A、B 等 3 个身份' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /^Aa@example\.com/ }));
 
-    expect(screen.getByRole('radio', { name: /各身份独立/ })).toBeChecked();
-    expect(screen.queryByRole('radio', { name: /统一使用 A/ })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('radio', { name: /各自显示自己的匹配度/ }),
+    ).toBeChecked();
+    expect(
+      screen.queryByRole('radio', { name: /统一显示 A 的匹配度/ }),
+    ).not.toBeInTheDocument();
   });
 
   it('dissolves a group without deleting identities', async () => {
@@ -279,13 +293,13 @@ describe('CommunicationSharingPanel', () => {
     render(<CommunicationSharingPanel />);
 
     expandPanel();
-    fireEvent.click(screen.getByRole('button', { name: '创建共享组' }));
+    fireEvent.click(screen.getByRole('button', { name: '新建共享组' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /B/ }));
     fireEvent.click(screen.getByRole('button', { name: '保存共享组' }));
 
     await waitFor(() => {
       expect(notificationMocks.notifyError).toHaveBeenCalledWith(
-        '保存通信共享组失败',
+        '保存共享组失败',
         '数据库写入失败',
       );
     });
