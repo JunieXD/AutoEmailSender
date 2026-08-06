@@ -1,0 +1,65 @@
+name: Agent CLI binaries
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "cli/src/**"
+      - "cli/pyproject.toml"
+      - "cli/uv.lock"
+      - "scripts/build-cli.ps1"
+      - "scripts/build-cli.sh"
+      - "scripts/build/build-cli.ps1"
+      - "scripts/build/build-cli.sh"
+      - "scripts/build/generate_cli_build_identity.py"
+      - "scripts/build/verify_cli_binary.py"
+      - ".github/workflows/cli-binaries.yml"
+  pull_request:
+    paths:
+      - "cli/src/**"
+      - "cli/pyproject.toml"
+      - "cli/uv.lock"
+      - "scripts/build-cli.ps1"
+      - "scripts/build-cli.sh"
+      - "scripts/build/build-cli.ps1"
+      - "scripts/build/build-cli.sh"
+      - "scripts/build/generate_cli_build_identity.py"
+      - "scripts/build/verify_cli_binary.py"
+      - ".github/workflows/cli-binaries.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-cli:
+    name: Frozen CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build and verify frozen CLI (macOS)
+        if: runner.os == 'macOS'
+        run: ./scripts/build/build-cli.sh --clean
+
+      - name: Build and verify frozen CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build/build-cli.ps1 -Clean

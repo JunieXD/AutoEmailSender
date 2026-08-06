@@ -2,6 +2,10 @@ name: Agent CLI
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
     paths:
       - "cli/**"
       - "agent-support/skills/auto-email-sender/**"
@@ -11,7 +15,9 @@ on:
       - "scripts/build/build-cli.sh"
       - "scripts/build/generate_cli_build_identity.py"
       - "scripts/build/verify_cli_binary.py"
+      - "scripts/quality/cli-workflow.test.mjs"
       - ".github/workflows/cli.yml"
+      - ".github/workflows/cli-binaries.yml"
   pull_request:
     paths:
       - "cli/**"
@@ -22,20 +28,53 @@ on:
       - "scripts/build/build-cli.sh"
       - "scripts/build/generate_cli_build_identity.py"
       - "scripts/build/verify_cli_binary.py"
+      - "scripts/quality/cli-workflow.test.mjs"
       - ".github/workflows/cli.yml"
+      - ".github/workflows/cli-binaries.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  contract-tests:
+  ubuntu-contract-tests:
+    name: CLI contract tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: cli
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify CLI workflow topology
+        working-directory: .
+        run: node scripts/quality/cli-workflow.test.mjs
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install CLI dependencies
+        run: uv sync --dev
+
+      - name: Run CLI contract tests
+        run: uv run python -m unittest discover test
+
+  cross-platform-contract-tests:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     name: CLI contract tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
           - macos-latest
           - windows-latest
 
@@ -60,14 +99,3 @@ jobs:
 
       - name: Run CLI contract tests
         run: uv run python -m unittest discover test
-
-      - name: Build and verify frozen CLI (POSIX)
-        if: runner.os != 'Windows'
-        working-directory: .
-        run: ./scripts/build/build-cli.sh --clean
-
-      - name: Build and verify frozen CLI (Windows)
-        if: runner.os == 'Windows'
-        working-directory: .
-        shell: pwsh
-        run: ./scripts/build/build-cli.ps1 -Clean
