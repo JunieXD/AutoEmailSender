@@ -158,7 +158,7 @@ from app.modules.system.public import (
     update_runtime_settings,
 )
 from app.schemas.workspace import WorkspaceSyncWarningRead, WorkspaceThreadRead
-from app.schemas.outreach_template import (
+from app.modules.campaigns.public import (
     IdentityDefaultOutreachTemplateUpdate,
     OutreachTemplateCreate,
     OutreachTemplateUpdate,
@@ -170,7 +170,7 @@ from app.modules.community.public import (
     CommunityRecordSelectionPayload,
     CommunityRecordsRead,
 )
-from app.schemas.batch_task import BatchTaskResendContextRead
+from app.modules.campaigns.public import BatchTaskResendContextRead
 from app.modules.crawler.public import (
     CrawlCandidateUpdatePayload,
     CrawlJobEnrichResult,
@@ -232,7 +232,7 @@ from app.modules.community.public import (
     build_community_share_package,
     sync_community_link_lifecycle,
 )
-from app.services.agent_campaigns import (
+from app.modules.campaigns.public import (
     archive_agent_campaign,
     cancel_agent_campaign_item_send,
     get_agent_campaign,
@@ -245,7 +245,7 @@ from app.services.agent_campaigns import (
     start_agent_campaign_draft_generation,
     stop_agent_campaign,
 )
-from app.services.batch_task_resend_context import (
+from app.modules.campaigns.public import (
     BatchTaskResendContextError,
     build_batch_task_resend_context,
 )
@@ -296,7 +296,7 @@ from app.modules.crawler.public import (
 )
 from app.modules.crawler.public import build_crawl_job_events
 from app.services.dashboard_stats import build_dashboard_overview
-from app.services.outreach_template_mutations import (
+from app.modules.campaigns.public import (
     OutreachTemplateMutationError,
     create_outreach_template_record,
     duplicate_outreach_template_record,
@@ -304,12 +304,12 @@ from app.services.outreach_template_mutations import (
     set_default_outreach_template_record,
     update_outreach_template_record,
 )
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     apply_template_to_identity_legacy_fields,
     clear_identity_default_template,
     get_outreach_template,
 )
-from app.services.outreach_templates import import_outreach_template_file
+from app.modules.campaigns.public import import_outreach_template_file
 from app.services.task_runtime import (
     MatchAnalysisAlreadyRunningError,
     calculate_task_match_once,

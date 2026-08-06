@@ -123,6 +123,16 @@ worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、sch
 负责 claim/finalize，page/chunk/enrichment workers 只处理各自 work item。RuntimeManager 仅通过
 `crawler.public` 启动 worker；worker 通过域内相对导入使用 6A 的持久化、页面、LLM 与策略能力。
 
+## campaigns 活动与模板子切片（第 7A 批，已完成）
+
+`backend/app/modules/campaigns/` 拥有 Agent campaign 用例、batch DTO、排期/完成状态/item/resend
+规则、无研究方向草稿回退，以及 outreach template 的 DTO、UI adapter、库、变更、导入和渲染。
+领域外统一经 `campaigns.public` 使用这些能力；模板 UI router 只由组合根直接注册。
+
+`api/batch_tasks.py`、`batch_draft_generation_runtime.py` 与 `task_runtime.py` 仍同时编排
+workspace/communications，分别留到 7C 和 7B/7C 拆分。BatchTask、EmailTask、OutreachTemplate ORM
+继续属于 `app.models` registry，不在本轮文件所有权迁移中拆表或复制。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

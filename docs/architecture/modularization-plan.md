@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 6 批已完成，第 7 批待开始
+状态：已确认，第 7A 批已完成，第 7B 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -163,7 +163,7 @@ cli/src/auto_email_sender_cli/
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
-| 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
+| 7 | `campaigns`、`communications`、`workspace` | 执行中（7A 已完成） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
@@ -1064,3 +1064,87 @@ Backend 完整 unittest；结束前 CodeGraph 和生产旧 crawler 路径审计�
 停止点：crawler 的 DTO、持久化、页面/LLM 策略、UI/Agent adapters、job 编排、scheduler 与 workers
 均已归位，领域外只通过公共入口交互。第 7 批开始前必须分别定界 campaigns、communications、workspace，
 按单领域子批迁移，不把三个状态机一次性混在同一提交中。
+
+### 第 7A 批：`campaigns` 活动、模板与批量草稿规则（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/campaigns/
+├── agent.py
+├── schemas.py
+├── scheduling.py
+├── status.py
+├── item_actions.py
+├── resend.py
+├── public.py
+├── drafts/
+│   └── fallback.py
+└── templates/
+    ├── api.py
+    ├── schemas.py
+    ├── library.py
+    ├── mutations.py
+    └── rendering.py
+```
+
+计划范围：
+
+- 迁移 Agent campaign 的查询、创建、草稿生成、暂停/恢复/停止、归档/恢复、发送计划和 item 操作；
+  Agent router、change plan 与其他调用方统一经 `campaigns.public` 使用这些用例。
+- 迁移 batch DTO、排期计算、完成状态、item 下一动作、重发上下文和无研究方向草稿回退规则；
+  身份材料、matching、RuntimeManager 与旧 batch UI adapter 只经公共入口调用。
+- 迁移 outreach template DTO、UI adapter、模板库/变更、导入/渲染/快照能力；组合根直接注册新模板
+  router，identities、matching、LLM、workspace/test-compose 与 Agent 调用方经公共入口协作。
+- 已迁移的旧 API/schema/service 路径只保留纯 re-export，新增完整公共符号对象一致性、公共门面和
+  独立导入测试；生产代码对这些旧路径的依赖在本批结束时归零。
+- `api/batch_tasks.py` 暂保留为 UI adapter：其 batch item thread/approve 路由直接依赖 workspace
+  投影与动作，待 7C 建立 `workspace.public` 后再迁入 campaigns，避免本提交混入 workspace 状态机。
+- `services/batch_draft_generation_runtime.py` 暂保留：文件同时含 batch draft worker 与 workspace
+  rewrite 恢复，7C 先提取 workspace 恢复后，再将剩余 worker 归入 campaigns。
+- `services/task_runtime.py`、EmailTask/BatchTask/OutreachTemplate ORM 与 Agent schema 聚合暂不迁移；
+  task runtime 将在 7B/7C 按 dispatch/IMAP 与 workspace/manual task 所有权拆分，ORM 继续留在
+  `app.models`。
+
+本批不变量：
+
+- `/api/outreach-templates`、Agent campaigns/templates、batch DTO、revision/幂等、确认和审计合同不变。
+- campaign 创建/恢复/发送快照指纹、排期窗口/抖动、状态计数、item 删除/取消/恢复和草稿回退语义不变。
+- 模板导入、HTML/文本归一化、占位符、默认模板/身份 legacy 字段同步及 operation log 时序不变。
+- 不修改 ORM、Alembic、HTTP/Agent/CLI/Frontend 字段、workspace/SMTP/IMAP 行为、依赖或锁文件；
+  不新增门禁例外，不在文件迁移中重写大型业务算法。
+
+计划验证：campaign/template UI 与 Agent 全生命周期、change plans、batch 排期/状态/item/resend/fallback、
+模板导入/渲染/身份默认值、批量草稿与 workspace 协作回归、架构/API import/兼容门禁，相关 CLI/Frontend
+合同，以及 Backend 完整 unittest；结束前同步 CodeGraph，审计已迁移旧路径和 `git diff --check`。
+
+实际结果：
+
+- Agent campaign 用例、batch DTO/规则/重发上下文/草稿回退，以及 outreach template 的 DTO、UI adapter、
+  库、变更、导入和渲染已迁入 `backend/app/modules/campaigns/`；组合根直接注册新模板 router。
+- Agent router、change plans、identities、matching、LLM、旧 batch/workspace adapters、task runtime 与
+  test-compose 等生产调用方统一经 `campaigns.public` 使用领域能力；schema 聚合直接指向新 DTO 所有者。
+- `resend` 依赖 identities、Agent 用例依赖 Agent schema，为避免基础模板/状态调用连带加载高层适配器，
+  公共门面对这两组符号采用按需导出；其余合同保持静态显式导入，既有独立导入顺序全部通过。
+- 12 个旧 API/schema/service 路径只保留纯 re-export；完整本地公共符号对象一致性、公共门面、
+  schema 聚合及独立进程导入均有测试保护，生产旧路径审计为零。
+- 按计划保留混合 workspace 依赖的 batch UI adapter、batch draft worker 和 `task_runtime.py`，未修改
+  ORM、Alembic、HTTP/Agent/CLI/Frontend 合同、状态机、依赖或锁文件，未新增门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、12 类完整公共符号、门面与独立导入 | 8 tests passed |
+| Backend 定向 | campaigns/templates、Agent/change plans、batch 排期/草稿、materials/workspace/LLM 协作 | 195 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1738 tests；OK（1 skipped）；packaged self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | Tasks/CreateTask、模板编辑/导入、batch API 与通知 | 12 files，136 tests passed |
+| Repository | CodeGraph 同步；12 个 shim AST 审计；生产旧路径审计；`git diff --check` | 通过 |
+
+停止点：campaign 活动、模板与纯 batch 规则已归位。第 7B 只迁移 SMTP/IMAP、邮件历史、回复检测与
+delivery runtime；不迁移单导师 workspace 审核/重写状态机。第 7C 在 communications 公共入口稳定后，
+拆分 `task_runtime.py`，再收口 batch UI adapter 与 batch draft worker。

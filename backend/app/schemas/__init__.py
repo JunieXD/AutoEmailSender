@@ -2,11 +2,11 @@ from importlib import import_module
 
 
 _SCHEMA_EXPORT_MODULES = {
-    "BatchTaskActionResponse": "app.schemas.batch_task",
-    "BatchTaskCardRead": "app.schemas.batch_task",
-    "BatchTaskItemRead": "app.schemas.batch_task",
+    "BatchTaskActionResponse": "app.modules.campaigns.schemas",
+    "BatchTaskCardRead": "app.modules.campaigns.schemas",
+    "BatchTaskItemRead": "app.modules.campaigns.schemas",
     "ConnectionTestResult": "app.modules.identities.profiles.schemas",
-    "CreateBatchTaskRequest": "app.schemas.batch_task",
+    "CreateBatchTaskRequest": "app.modules.campaigns.schemas",
     "CreateMatchAnalysisJobRequest": "app.modules.matching.schemas",
     "EmailTaskApprovalRequest": "app.schemas.email_task",
     "EmailTaskPrimaryMaterialRequest": "app.schemas.email_task",

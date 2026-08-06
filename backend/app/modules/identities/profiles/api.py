@@ -32,7 +32,7 @@ from .schemas import (
     IdentityProfileUpdate,
     IdentityTemplateImportResult,
 )
-from app.schemas.outreach_template import IdentityDefaultOutreachTemplateUpdate
+from app.modules.campaigns.public import IdentityDefaultOutreachTemplateUpdate
 from app.services.file_storage import delete_file
 from ..communication_groups.public import (
     cleanup_communication_group_after_identity_delete,
@@ -40,7 +40,7 @@ from ..communication_groups.public import (
 from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache_in_session
 from app.services.mail_runtime import test_imap_connection, test_smtp_connection
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     apply_template_to_identity_legacy_fields,
     clear_identity_default_template,
     create_template_from_legacy_identity,
@@ -49,7 +49,7 @@ from app.services.outreach_template_library import (
     normalize_nullable_template_text,
     sync_template_to_default_identities,
 )
-from app.services.outreach_templates import (
+from app.modules.campaigns.public import (
     OUTREACH_GENERATION_MODE_LLM,
     OUTREACH_GENERATION_MODE_TEMPLATE,
     import_outreach_template_file,

@@ -34,11 +34,11 @@ from app.schemas.test_compose import (
 from app.services import llm_runtime, mail_runtime
 from app.services.mail_runtime import MailAttachment
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
 )
-from app.services.outreach_templates import (
+from app.modules.campaigns.public import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     TEST_RECIPIENT_NAME,
     build_outreach_template_snapshot_config,

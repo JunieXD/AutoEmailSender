@@ -591,7 +591,7 @@ def build_email_message(
     body_html: str | None,
     attachments: list[MailAttachment],
 ) -> EmailMessage:
-    from app.services.outreach_templates import get_identity_sender_name
+    from app.modules.campaigns.public import get_identity_sender_name
 
     message = EmailMessage()
     message["From"] = formataddr((get_identity_sender_name(identity), identity.email_address))

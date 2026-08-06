@@ -22,11 +22,11 @@ from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDra
 from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_result
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
 )
-from app.services.outreach_templates import (
+from app.modules.campaigns.public import (
     OUTREACH_GENERATION_MODE_LLM,
     OUTREACH_GENERATION_MODE_TEMPLATE,
     get_outreach_template_defaults_validation_error,

@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskCancellationReason, EmailTaskSource, EmailTaskStatus, Professor
-from app.services.batch_task_item_actions import (
+from app.modules.campaigns.public import (
     batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
 )
-from app.services.batch_draft_fallback import (
+from app.modules.campaigns.public import (
     build_missing_research_fallback_for_task,
 )
 from app.services.task_runtime import (

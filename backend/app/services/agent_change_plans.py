@@ -68,7 +68,7 @@ from app.modules.identities.public import (
 )
 from app.services.operation_logs import record_operation_log
 from app.services.agent_plan_effects import resolve_agent_plan_effects
-from app.services.outreach_template_mutations import (
+from app.modules.campaigns.public import (
     OutreachTemplateMutationError,
     archive_outreach_template_record,
     get_outreach_template_or_raise,
@@ -84,7 +84,7 @@ from app.modules.community.public import (
     import_community_records,
     sync_community_link_lifecycle,
 )
-from app.services.agent_campaigns import (
+from app.modules.campaigns.public import (
     execute_campaign_create_snapshot,
     execute_campaign_restore_send_snapshot,
     execute_campaign_resume_snapshot,

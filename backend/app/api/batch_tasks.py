@@ -24,7 +24,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.schemas.batch_task import (
+from app.modules.campaigns.public import (
     BatchTaskActionResponse,
     BatchTaskBulkApproveDraftsRequest,
     BatchTaskBulkApproveDraftsResponse,
@@ -36,36 +36,36 @@ from app.schemas.batch_task import (
 from app.schemas.email_task import EmailTaskApprovalRequest
 from app.schemas.workspace import WorkspaceThreadRead
 from app.api.workspace_support import build_workspace_thread_for_task
-from app.services.batch_schedule import (
+from app.modules.campaigns.public import (
     build_jittered_batch_schedule,
     has_future_batch_window,
     normalize_scheduled_dates,
 )
-from app.services.batch_draft_fallback import (
+from app.modules.campaigns.public import (
     DRAFT_GENERATION_SOURCE_TEMPLATE,
     build_initial_batch_draft,
 )
-from app.services.batch_task_item_actions import (
+from app.modules.campaigns.public import (
     batch_item_uses_llm_generation,
     normalize_batch_item_generation_mode,
     resolve_batch_task_item_next_action,
 )
-from app.services.batch_task_resend_context import (
+from app.modules.campaigns.public import (
     BatchTaskResendContextError,
     build_batch_task_resend_context,
 )
-from app.services.batch_task_status import (
+from app.modules.campaigns.public import (
     count_completed_batch_task_items,
     sync_batch_task_completion,
 )
 from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
 )
-from app.services.outreach_templates import (
+from app.modules.campaigns.public import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     get_outreach_template_defaults_validation_error,
     resolve_outreach_template_config,

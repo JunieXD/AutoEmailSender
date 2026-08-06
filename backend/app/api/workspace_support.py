@@ -47,10 +47,10 @@ from app.services.match_results import (
 )
 from app.services.mail_runtime import strip_quoted_reply_html, strip_quoted_reply_text
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
 )
-from app.services.outreach_templates import (
+from app.modules.campaigns.public import (
     RenderedOutreachTemplate,
     build_outreach_template_snapshot_config,
     get_identity_sender_name,

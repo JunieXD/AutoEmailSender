@@ -30,10 +30,10 @@ from app.services.task_runtime import (
 )
 from app.services.operation_logs import record_operation_log
 from app.services.match_results import resolve_identity_match_scope
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
 )
-from app.services.outreach_templates import resolve_outreach_template_config
+from app.modules.campaigns.public import resolve_outreach_template_config
 
 
 _ACTIVE_MATCH_ANALYSIS_JOB_IDS: set[int] = set()

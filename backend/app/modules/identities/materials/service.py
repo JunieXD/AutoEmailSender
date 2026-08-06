@@ -21,11 +21,11 @@ from app.models import (
     MatchAnalysisRun,
     TestComposeSession,
 )
-from app.services.batch_task_item_actions import (
+from app.modules.campaigns.public import (
     batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
 )
-from app.services.batch_task_status import should_mark_batch_task_completed, sync_batch_task_completion
+from app.modules.campaigns.public import should_mark_batch_task_completed, sync_batch_task_completion
 from app.services.file_storage import build_display_name, save_upload
 from app.services.agent_mutations import fingerprint
 from .support import (

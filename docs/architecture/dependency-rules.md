@@ -54,6 +54,16 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
 - `app.schemas` 使用懒加载保留三个通信组 DTO 的历史聚合导出，禁止在该聚合入口
   重新加入对 identities 公共门面的急加载，否则会与 `ApiSchema` 形成初始化环。
 
+### 已落地的 campaigns 领域入口
+
+- 领域外代码只能经 `app.modules.campaigns.public` 使用 campaign、batch 规则和 outreach template 能力。
+- `app.modules.campaigns.templates.api` 只由组合根注册，不作为业务调用入口。
+- `campaigns.public` 对依赖 identities 的 resend 和依赖 Agent schema 的 Agent 用例按需导出；
+  低层模板、排期、状态和 DTO 使用者不得被迫加载高层 Agent adapter。
+- 旧 `app.api.outreach_templates`、`app.schemas.batch_task`、
+  `app.schemas.outreach_template` 及对应 `app.services.agent_campaigns|batch_*|outreach_*`
+  路径仅作兼容 re-export；新生产代码不得引用。
+
 ## 3. Frontend 渐进门禁
 
 目标依赖方向：

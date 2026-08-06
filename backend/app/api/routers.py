@@ -15,7 +15,7 @@ from app.api.email_tasks import router as email_tasks_router
 from app.modules.identities.profiles.api import router as identities_router
 from app.modules.llm.api import router as llm_profiles_router
 from app.modules.identities.materials.api import router as materials_router
-from app.api.outreach_templates import router as outreach_templates_router
+from app.modules.campaigns.templates.api import router as outreach_templates_router
 from app.modules.matching.api import router as match_analysis_jobs_router
 from app.modules.professors.api import router as professors_router
 from app.modules.professors.enrichment.api import (

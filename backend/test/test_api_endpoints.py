@@ -3671,7 +3671,7 @@ class ApiEndpointTests(unittest.TestCase):
             "app.services.task_runtime.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result(message_id="<subject-render@example.com>", provider_payload={})),
         ) as mocked_send, patch(
-            "app.services.outreach_templates.datetime",
+            "app.modules.campaigns.templates.rendering.datetime",
         ) as mocked_datetime:
             from datetime import UTC, datetime
 

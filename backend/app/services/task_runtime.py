@@ -55,17 +55,17 @@ from app.services.imap_sync_state import (
     prepare_recent_v2_bulk_sent_batch,
     reset_professor_scans_to_pending,
 )
-from app.services.batch_schedule import (
+from app.modules.campaigns.public import (
     has_future_batch_window,
     is_batch_window_expired,
     is_datetime_in_batch_window,
     normalize_scheduled_dates,
 )
-from app.services.batch_draft_fallback import (
+from app.modules.campaigns.public import (
     DRAFT_GENERATION_SOURCE_LLM,
     DRAFT_GENERATION_SOURCE_TEMPLATE,
 )
-from app.services.batch_task_status import sync_batch_task_completion
+from app.modules.campaigns.public import sync_batch_task_completion
 from app.services.mail_runtime import MailAttachment, ReceivedEmail
 from app.services.match_results import (
     apply_match_result_snapshot_to_task,
@@ -78,11 +78,11 @@ from app.modules.identities.public import (
     material_can_be_primary,
 )
 from app.services.operation_logs import record_operation_log
-from app.services.outreach_template_library import (
+from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
 )
-from app.services.outreach_templates import (
+from app.modules.campaigns.public import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     build_outreach_template_snapshot_config,
     build_send_template_context,

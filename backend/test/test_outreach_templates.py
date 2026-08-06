@@ -39,10 +39,10 @@ class OutreachTemplateImportTests(unittest.TestCase):
         extracted_text = "老师您好：\n\n我是张三，想向您请教科研方向。\n\n已附上简历\n\n期待交流"
 
         with patch(
-            "app.services.outreach_templates._convert_docx_template_to_html",
+            "app.modules.campaigns.templates.rendering._convert_docx_template_to_html",
             return_value=converted_html,
         ), patch(
-            "app.services.outreach_templates._extract_docx_template_to_text",
+            "app.modules.campaigns.templates.rendering._extract_docx_template_to_text",
             return_value=extracted_text,
             create=True,
         ):
