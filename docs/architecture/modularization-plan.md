@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 8 批已完成，第 9 批待开始
+状态：已确认，第 8 批已完成，第 9 批执行中
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -165,7 +165,7 @@ cli/src/auto_email_sender_cli/
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 已完成（7A～7C） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 已完成 | main/preload 薄入口、类型单一来源 |
-| 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
+| 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 执行中 | 构建与发布路径全部验证 |
 
 批次可以继续拆成更小提交，但不得把两个互不相关的领域迁移混在同一提交中。
 
@@ -1486,3 +1486,52 @@ desktop/src/
 停止点：Desktop 的跨进程类型、channel、preload bridge、main-process capability owner、IPC 注册和
 application bootstrap 已分离，两个 Electron 分发入口保持稳定。当前 `tsconfig.json` 仍把测试编译到
 `dist/test`，标准 Vitest 会在本地 build 后重复发现测试；该已确认问题归第 9 批测试拓扑处理。
+
+### 第 9 批：测试拓扑、脚本、文档与遗留清理（执行中）
+
+开始日期：2026-08-06
+
+只读审计结果：
+
+- Desktop 的生产 `tsconfig.json` 同时 include `src` 与 `test`，所以 `npm run build` 会生成
+  `dist/test`；随后 `npm run test` 同时发现 source/dist 两套测试。Backend、Frontend、CLI、Website
+  的生产构建与测试发现边界当前没有同类产物污染。
+- `scripts/` 现有 36 个脚本/测试平铺在根目录，可明确归入 build、packaging、quality、data、release；
+  `.github`、Desktop packaging、AGENTS、仓库 skills 与运维文档共同引用这些路径。
+- `docs/superpowers/{specs,plans}` 是历史设计/实施记录，可整体迁入 archive 并保持内部相对链接；根目录
+  其余文档可按 product、development、operations 分类，`architecture` 与 `releases` 保持稳定。
+- Backend、Frontend 与 Desktop 均有迁移期兼容 re-export。删除前必须逐项证明生产调用、普通测试、
+  workflow 与打包入口均不再引用；活动聚合入口（例如 Frontend 通用 types barrel）不得误删。
+
+计划分段：
+
+- 9A 分离 Desktop production/test TypeScript 配置，production build 先清理旧 `dist` 且只编译生产
+  源码；Vitest 显式排除 build/release 产物。增加产物拓扑门禁，保证 build 后标准测试只运行 source。
+- 9B 将脚本实现与同类测试归入 `scripts/{build,packaging,quality,data,release}`，同步 workflow、package、
+  docs、AGENTS 和仓库 skills。已写入开发/发布流程的 build/release/Playwright 根命令保留薄转发入口，
+  其余调用方直接使用 owner；包装入口只转发参数，不复制逻辑。
+- 9C 将历史 `docs/superpowers` 整体迁入 `docs/archive/superpowers`，把根目录文档归入 product、
+  development、operations，并更新代码、测试、网站、skills 与文档链接。新增文档地图，明确活动文档、
+  机器校验资产、release notes 与 archive 的所有权。
+- 9D 按 Backend、Frontend、Desktop 分组删除已确认无调用的兼容 shim，移除只验证旧入口的测试，
+  保留并加强 owner/public façade/边界测试。任何仍有生产或工具调用的入口必须先迁移调用方；无法证明
+  安全删除的入口记录为显式保留项，不以目录整洁为由强删。
+
+依赖与兼容策略：
+
+- 不改变 HTTP、Agent、CLI、Desktop IPC、数据库、业务状态机、锁文件或发布产物名称。
+- 稳定根命令入口属于开发者合同，可作为薄 wrapper 保留；Python/TypeScript 迁移 shim 不再有内部
+  调用后删除，不把临时兼容层永久当公共 API。
+- 测试文件可与 owner 同目录或留在工作区 test 根，但 production compiler、bundler 与 packager 不得
+  收录测试、fixtures、cache 或历史 build 产物。
+- 文档移动必须使用 `git mv`，并通过全仓旧路径审计确认没有悬空引用；archive 不参与产品运行时。
+
+计划验证：
+
+1. 每个分段先运行受影响的结构门禁与定向测试，再运行对应工作区 typecheck/lint、完整测试和 build。
+2. 脚本批运行 POSIX release-note、prepare-release、release dry-run、Sparkle/packaging 测试；PowerShell
+   可用时运行对应 `.ps1` 测试。遵循 `auto-email-sender-release` skill，不绕过失败或发版前置检查。
+3. 遗留清理后运行 Backend、Frontend、CLI、Desktop、Website 全量测试与生产构建，并执行发布/打包
+   合同测试；不创建 tag、不推送、不发布产物。
+4. 最终同步 CodeGraph，审计旧代码/文档/脚本路径、跨域/跨进程反向依赖、测试产物、缓存、锁文件、
+   `git status` 与 `git diff --check`。更新实际结果和剩余保留项后才宣告全部批次完成。
