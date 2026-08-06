@@ -31,20 +31,33 @@ describe("desktop development", () => {
 
   it("separates production, preload, and test TypeScript builds", () => {
     const packageJson = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as {
-      scripts: { build: string; clean: string; typecheck: string };
+      scripts: { build: string; "build:preload": string; clean: string; typecheck: string };
     };
     const productionConfig = JSON.parse(
       readFileSync(path.resolve("tsconfig.json"), "utf8"),
     ) as { include: string[] };
+    const preloadConfig = JSON.parse(
+      readFileSync(path.resolve("tsconfig.preload.json"), "utf8"),
+    ) as { compilerOptions: { module: string; noEmit: boolean }; include: string[] };
     const testConfig = JSON.parse(
       readFileSync(path.resolve("tsconfig.test.json"), "utf8"),
     ) as { compilerOptions: { noEmit: boolean }; include: string[] };
     const vitestConfig = readFileSync(path.resolve("vitest.config.ts"), "utf8");
 
     expect(packageJson.scripts.build).toContain("npm run clean");
+    expect(packageJson.scripts.build).toContain("npm run build:preload");
     expect(packageJson.scripts.clean).toContain("rmSync('dist'");
     expect(packageJson.scripts.typecheck).toContain("tsconfig.test.json");
     expect(productionConfig.include).toEqual(["src/**/*.ts"]);
+    expect(preloadConfig.compilerOptions).toMatchObject({
+      module: "CommonJS",
+      noEmit: true,
+    });
+    expect(preloadConfig.include).toEqual([
+      "src/preload.ts",
+      "src/preload/**/*.ts",
+      "src/contracts/**/*.ts",
+    ]);
     expect(testConfig.compilerOptions.noEmit).toBe(true);
     expect(testConfig.include).toContain("test/**/*.ts");
     expect(vitestConfig).toContain('"**/dist/**"');
@@ -53,10 +66,25 @@ describe("desktop development", () => {
 });
 
 describe("windows installer packaging", () => {
-  it("builds preload as CommonJS for Electron sandbox preload", () => {
-    const packageJson = readFileSync(path.resolve("package.json"), "utf8");
+  it("bundles the sandbox preload as standalone CommonJS", () => {
+    const packageJson = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as {
+      scripts: { "build:preload": string };
+    };
+    const applicationSource = readFileSync(
+      path.resolve("src", "main", "bootstrap", "application.ts"),
+      "utf8",
+    );
+    const preloadBuild = packageJson.scripts["build:preload"];
 
-    expect(packageJson).toContain("tsconfig.preload.json");
+    expect(preloadBuild).toContain("tsconfig.preload.json");
+    expect(preloadBuild).toContain("--bundle");
+    expect(preloadBuild).toContain("--format=cjs");
+    expect(preloadBuild).toContain("--external:electron");
+    expect(preloadBuild).toContain("--outfile=dist/src/preload.js");
+    expect(applicationSource).toContain(
+      'preload: path.join(app.getAppPath(), "dist", "src", "preload.js")',
+    );
+    expect(applicationSource).toContain("sandbox: true");
   });
 
   it("uses the project icon for Windows builds", () => {

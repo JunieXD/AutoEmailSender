@@ -218,6 +218,7 @@ async function createWindow(): Promise<void> {
       preload: path.join(app.getAppPath(), "dist", "src", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   mainWindow.setMenuBarVisibility(false);

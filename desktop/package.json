@@ -7,7 +7,8 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.preload.json",
+    "build:preload": "tsc -p tsconfig.preload.json && esbuild src/preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/src/preload.js",
+    "build": "npm run clean && tsc -p tsconfig.json && npm run build:preload",
     "test": "vitest run",
     "dev": "npm run build && node dist/src/main/agent-support/prepare-dev-cli.js && electron . --dev",
     "setup:sparkle": "../scripts/build/setup-sparkle.sh",
@@ -26,6 +27,7 @@
     "@types/node": "^24.12.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.4"
   }

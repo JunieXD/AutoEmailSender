@@ -6,8 +6,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "rootDir": ".",
-    "outDir": "dist",
+    "noEmit": true,
     "types": ["node", "vitest"]
   },
   "include": ["src/preload.ts", "src/preload/**/*.ts", "src/contracts/**/*.ts"]
