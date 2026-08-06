@@ -96,6 +96,12 @@ UI adapter；它通过现有 crawler worker/scheduler 执行采集，后者在�
 导入生命周期和安全分享包。它通过 `professors` 公共能力复用字段规范化，并暂时直接协调
 Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在不改变数据库关系的前提下保留。
 
+## matching 子切片（第 5A 批，已完成）
+
+`backend/app/modules/matching/` 拥有启发式评分、基础草稿规则和 match analysis job/item 生命周期。
+它通过 identities/professors 的实体与匹配范围合同读取输入，并暂时调用 campaigns/workspace 侧的
+`task_runtime.calculate_task_match` 执行 LLM 分析；该跨领域编排边留待第 7 批收敛。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

@@ -13,7 +13,8 @@
 - 已完成：第 4B 批——`professors/enrichment` 导师信息补全子切片。
 - 已完成：第 4C 批——`community/mentors` 社区导师库子切片。
 - 已完成：第 4D 批——Frontend professor/community 实体 API 边界收敛。
-- 下一阶段：第 5 批——`matching` 与 `llm`。
+- 已完成：第 5A 批——`matching` 核心与 analysis jobs。
+- 下一阶段：第 5B 批——`llm` profile、runtime 与 adaptation。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档

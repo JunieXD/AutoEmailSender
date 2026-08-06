@@ -5,7 +5,7 @@ import unittest
 from app.models.identity_material import IdentityMaterial
 from app.models.identity_profile import IdentityProfile
 from app.models.professor import Professor
-from app.services.matching import build_draft_email, estimate_match_score
+from app.modules.matching.public import build_draft_email, estimate_match_score
 
 
 class MatchingServiceTests(unittest.TestCase):

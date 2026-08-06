@@ -6023,7 +6023,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(len(listed.json()), 1)
 
-        from app.services.match_analysis_job_runtime import (
+        from app.modules.matching.public import (
             serialize_match_analysis_job_item,
         )
 
@@ -6034,7 +6034,7 @@ class ApiEndpointTests(unittest.TestCase):
             return serialize_match_analysis_job_item(item)
 
         with patch(
-            "app.api.match_analysis_jobs.serialize_match_analysis_job_item",
+            "app.modules.matching.api.serialize_match_analysis_job_item",
             side_effect=capture_match_item_projection,
         ):
             items = self.client.get(

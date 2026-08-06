@@ -250,7 +250,7 @@ from app.services.batch_task_resend_context import (
     build_batch_task_resend_context,
 )
 from app.services.agent_mutations import execute_agent_factory_mutation, execute_agent_mutation
-from app.services.match_analysis_job_runtime import (
+from app.modules.matching.public import (
     create_match_analysis_job_record,
     delete_match_analysis_job_record,
     match_analysis_job_item_score,

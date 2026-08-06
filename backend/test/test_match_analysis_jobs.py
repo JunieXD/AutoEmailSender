@@ -27,7 +27,7 @@ from app.models import (
     Professor,
 )
 from app.services import llm_runtime
-from app.services.match_analysis_job_runtime import (
+from app.modules.matching.public import (
     create_match_analysis_job,
     request_match_analysis_job_cancel,
     run_queued_match_analysis_jobs_once,

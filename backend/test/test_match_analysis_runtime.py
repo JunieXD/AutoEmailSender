@@ -31,7 +31,7 @@ from app.services.match_results import (
     load_resolved_match_result,
     match_result_is_stale,
 )
-from app.services.match_analysis_job_runtime import (
+from app.modules.matching.public import (
     serialize_match_analysis_job,
     serialize_match_analysis_job_item,
 )

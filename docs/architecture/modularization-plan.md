@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 4 批已完成，第 5 批待开始
+状态：已确认，第 5A 批已完成，第 5B 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -161,7 +161,7 @@ cli/src/auto_email_sender_cli/
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
-| 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
+| 5 | `matching` 与 `llm` | 执行中（5A 已完成，5B 待开始） | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
@@ -767,3 +767,62 @@ frontend/src/entities/
 
 停止点：第 4 批 Backend 与 Frontend 边界均已完成。第 5 批开始前必须先定界 matching 的 job/run/cache
 所有权与 llm endpoint/thinking/structured-output adaptation 的现有循环，不把 crawler worker 一并迁入。
+
+### 第 5A 批：`matching` 核心与 analysis jobs（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/matching/
+├── api.py
+├── schemas.py
+├── scoring.py
+├── job_runtime.py
+└── public.py
+```
+
+计划范围：
+
+- 迁移启发式匹配分数/基础草稿规则，以及 match analysis job 的 DTO、UI adapter 和完整生命周期 runtime。
+- 组合根、Agent API、RuntimeManager 与 schema/service 聚合入口改走 matching 公共入口。
+- 旧 API/schema/service 路径保留纯 re-export，并新增对象一致性测试。
+- 保留 MatchAnalysisJob/Item/Run、IdentityProfessorMatchResult ORM 与 `task_runtime.calculate_task_match` 的现有协作边。
+
+本批不变量：
+
+- `/api/match-analysis-jobs` 与 Agent 路径、DTO、revision/幂等、取消/重试/删除/恢复和 worker 语义不变。
+- 匹配证据判定、共享身份范围、任务复用、并发锁、token 汇总、错误脱敏和持久化顺序不变。
+- 不修改 ORM、Alembic、LLM prompt/请求、crawler、runtime worker 数量或外部合同。
+- 不重写约 1000 行 job runtime，不新增门禁例外。
+
+计划验证：scoring、analysis job UI/Agent/runtime/worker、并发与持久化、架构/兼容门禁、相关
+CLI/Frontend 合同，以及 Backend 完整 unittest。
+
+实际结果：
+
+- 启发式评分、基础草稿规则、match analysis DTO/UI adapter 与完整 job/item/runtime 生命周期已迁入
+  `backend/app/modules/matching/`，组合根直接注册新 router。
+- Agent API、RuntimeManager 及 schema/service 聚合入口已统一改走 matching 公共入口；旧
+  API/schema/service 路径只保留纯 re-export，并新增新旧入口对象一致性和独立导入测试。
+- 既有测试的运行时 patch 已改指向新实现所有者；生产代码不再依赖旧 matching 路径。
+- MatchAnalysisJob/Item/Run、IdentityProfessorMatchResult ORM 与
+  `task_runtime.calculate_task_match` 的协作边保持原样；revision/幂等、取消/重试/删除/恢复、
+  worker、token 汇总、错误脱敏和持久化顺序均未改变。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、matching 旧入口对象一致性与独立导入 | 8 tests passed |
+| Backend 定向 | scoring、analysis job UI/Agent/runtime/worker、并发与持久化 | 311 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1723 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | matching/analysis job API、Tasks、Workspace 与通知相关用例 | 13 files，165 tests passed |
+| Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
+
+停止点：matching 领域实现与兼容边界已归位；跨领域调用
+`task_runtime.calculate_task_match` 明确保留至第 7 批。第 5B 只迁移 LLM profile、runtime 与
+endpoint/thinking/structured-output adaptation，不混入 crawler 或 campaign 行为调整。
