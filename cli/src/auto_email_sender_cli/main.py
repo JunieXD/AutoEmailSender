@@ -1023,4 +1023,12 @@ def _format_description_human(description: dict[str, object]) -> str:
 
 
 def run() -> None:
+    _configure_standard_stream_encoding()
     app()
+
+
+def _configure_standard_stream_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")

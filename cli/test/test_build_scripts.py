@@ -97,6 +97,32 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("stderr:", message)
         self.assertFalse(run_process.call_args.kwargs["check"])
 
+    def test_cli_entrypoint_forces_utf8_for_redirected_machine_output(self) -> None:
+        environment = os.environ.copy()
+        environment["PYTHONIOENCODING"] = "cp1252"
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "auto_email_sender_cli",
+                "--format",
+                "json",
+                "capabilities",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+        )
+
+        self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+        payload = json.loads(completed.stdout)
+        summaries = [item["summary"] for item in payload["data"]["items"]]
+        self.assertTrue(any("导师" in summary for summary in summaries))
+
     def test_generated_build_identity_hook_uses_string_environment_values(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         generator = repo_root / "scripts" / "generate_cli_build_identity.py"
