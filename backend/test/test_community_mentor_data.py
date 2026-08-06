@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.migrations import get_alembic_config
 from app.models import Base, Professor, ProfessorCommunityLink
-from app.schemas.community_mentor import (
+from app.modules.community.public import (
     CommunityImportPayload,
     CommunityImportItemPayload,
     CommunityMentorComparisonRead,
@@ -28,7 +28,7 @@ from app.schemas.community_mentor import (
     CommunityPreviewPayload,
     CommunityRevocationRecord,
 )
-from app.services.community_mentor_data import (
+from app.modules.community.public import (
     CommunityDataError,
     CommunityMentorDataService,
     build_community_comparisons,
@@ -514,7 +514,7 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         service = self._service(_transport_for_payloads(_dataset_payloads()))
         await service.get_catalog(force_refresh=True)
 
-        with patch("app.services.community_mentor_data.MAX_LOADED_RECORDS", 0):
+        with patch("app.modules.community.mentors.service.MAX_LOADED_RECORDS", 0):
             with self.assertRaises(CommunityDataError) as raised:
                 await service.load_records(
                     dataset_version=DATASET_VERSION,
@@ -930,7 +930,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             await session.flush()
 
             with patch(
-                "app.services.community_mentor_data.QUERY_IN_BATCH_SIZE",
+                "app.modules.community.mentors.service.QUERY_IN_BATCH_SIZE",
                 2,
             ):
                 comparisons = await build_community_comparisons(session, records)
@@ -1078,7 +1078,7 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             source_url="https://example.edu/source",
         )
 
-        with patch("app.services.community_mentor_data.COMMUNITY_SHARE_MAX_BYTES", 1):
+        with patch("app.modules.community.mentors.service.COMMUNITY_SHARE_MAX_BYTES", 1):
             with self.assertRaisesRegex(ValueError, "超过 5 MiB"):
                 build_community_share_package([professor])
 
@@ -1274,7 +1274,7 @@ class CommunityApiTests(unittest.TestCase):
             get_agent_community_mentor_data_service,
             get_agent_community_mentor_data_service_factory,
         )
-        from app.api.community_mentors import get_community_mentor_data_service
+        from app.modules.community.mentors.api import get_community_mentor_data_service
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
         from main import create_app

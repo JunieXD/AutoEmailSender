@@ -33,7 +33,7 @@ from app.schemas.agent import (
     AgentChangePlanRead,
     AgentPlanExecuteRequest,
 )
-from app.schemas.community_mentor import (
+from app.modules.community.public import (
     CommunityImportItemPayload,
     CommunityImportPayload,
     CommunityMentorComparisonRead,
@@ -77,7 +77,7 @@ from app.services.crawl_job_records import (
     CrawlJobRecordError,
     retry_faculty_crawl_job_record,
 )
-from app.services.community_mentor_data import (
+from app.modules.community.public import (
     CommunityDataError,
     CommunityMentorDataService,
     build_community_comparisons,

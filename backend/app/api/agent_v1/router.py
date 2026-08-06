@@ -163,7 +163,7 @@ from app.schemas.outreach_template import (
     OutreachTemplateCreate,
     OutreachTemplateUpdate,
 )
-from app.schemas.community_mentor import (
+from app.modules.community.public import (
     CommunityCatalogRead,
     CommunityImportPayload,
     CommunityPreviewPayload,
@@ -224,7 +224,7 @@ from app.services.agent_change_plans import (
     execute_change_plan,
     get_change_plan,
 )
-from app.services.community_mentor_data import (
+from app.modules.community.public import (
     CommunityDataError,
     CommunityMentorDataService,
     build_community_comparisons,

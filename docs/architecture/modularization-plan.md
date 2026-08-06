@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 4B 批已完成，第 4C 批待开始
+状态：已确认，第 4C 批已完成，第 4D 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -160,7 +160,7 @@ cli/src/auto_email_sender_cli/
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
-| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 执行中（4A～4B 已完成；4C 待开始） | UI/Agent 路由和前端实体边界完成 |
+| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 执行中（4A～4C 已完成；4D 待开始） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
@@ -642,3 +642,61 @@ CLI/Frontend 用例，以及 Backend 完整 unittest。
 
 停止点：补全领域能力已归位；crawler worker/scheduler 与 CrawlJob/CrawlCandidate 的协作边显式保留到
 第 6 批。第 4C 只迁移 community 导师目录、缓存、预览、导入和分享包，不混入 crawler 调度实现。
+
+### 第 4C 批：`community/mentors`（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/community/
+├── public.py
+└── mentors/
+    ├── api.py
+    ├── schemas.py
+    ├── service.py
+    └── public.py
+```
+
+计划范围：
+
+- 迁移社区导师数据合同、目录/分片下载与缓存、完整性校验、预览比较、导入生命周期和分享包。
+- community 根公共入口向 Agent API 与 change-plan 提供显式合同；组合根直接注册新 UI adapter。
+- 旧 API/schema/service 路径保留纯兼容导出，并将既有测试的常量 monkeypatch 指向新 service 所有者。
+- 保留 Professor/ProfessorCommunityLink ORM、professors 写入与 operation log 的现有协作边，不改数据库关系。
+
+本批不变量：
+
+- `/api/community-mentors` 与 Agent community 路径、请求/响应 DTO、错误码、revision/幂等和确认语义不变。
+- 下载上限、SHA-256/manifest 校验、缓存淘汰、版本兼容、选择限制、比较 token、生命周期阻止和导入事务不变。
+- 分享包字段、公式注入防护和 5 MiB 上限不变；不修改 ORM、Alembic、远端数据格式或 Frontend 合同。
+- 不重写约 1600 行数据服务算法，不新增门禁例外。
+
+计划验证：community schema/service/cache/import/share、UI/Agent/change-plan、数据库迁移、架构/兼容门禁、
+相关 CLI/Frontend 合同，以及 Backend 完整 unittest。
+
+实际结果：
+
+- 社区导师 DTO、远端目录/分片缓存与完整性校验、比较预览、导入生命周期和安全分享包已原样迁入
+  `backend/app/modules/community/mentors/`，组合根直接注册新 router。
+- Agent API 与 Agent change-plan 已统一改走 `app.modules.community.public`；旧 API/schema/service
+  路径只保留纯 re-export，既有常量 monkeypatch 已指向新 service 的真实所有者。
+- 新增 community 根公共入口和新旧入口对象一致性测试；完整导出集合审计确认兼容对象均引用新实现。
+- Professor/ProfessorCommunityLink、operation log 和 professors 规范化的协作边保持不变；缓存、校验、
+  生命周期、比较 token、导入事务、分享包防护及外部 HTTP/Agent/Frontend 合同均未改变。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、三类旧入口与根 public、独立导入 | 8 tests passed |
+| Backend 定向 | schema、下载/cache、校验、比较、UI/Agent/change-plan、导入、迁移、分享包 | 45 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1719 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | CommunityMentors 页面、API client、链接与 Professors 布局 | 4 files，74 tests passed |
+| Repository | CodeGraph 同步；生产旧路径/兼容导出审计；`git diff --check` | 通过 |
+
+停止点：Backend professors/community 的 UI 与 Agent 能力已迁入领域目录。第 4D 只收敛 Frontend
+professor/community 的实体 API、类型和依赖方向，不改页面行为或再次调整 Backend 合同。

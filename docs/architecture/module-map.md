@@ -90,6 +90,12 @@ professors 拥有导师 DTO、CRUD/归档、标签、批量变更、样例数据
 信息补全位于 `backend/app/modules/professors/enrichment/`，拥有补全 DTO、job/item 生命周期和
 UI adapter；它通过现有 crawler worker/scheduler 执行采集，后者在第 6 批迁移前仍是显式外部依赖。
 
+## community 导师库子切片（第 4C 批）
+
+`backend/app/modules/community/mentors/` 拥有远端数据合同、目录/分片缓存与校验、导师比较预览、
+导入生命周期和安全分享包。它通过 `professors` 公共能力复用字段规范化，并暂时直接协调
+Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在不改变数据库关系的前提下保留。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |
