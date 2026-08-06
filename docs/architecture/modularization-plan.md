@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 7A、7B 批已完成，第 7C 批待执行
+状态：已确认，第 7A、7B 批已完成，第 7C 批执行中
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -163,7 +163,7 @@ cli/src/auto_email_sender_cli/
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
-| 7 | `campaigns`、`communications`、`workspace` | 执行中（7C 待执行） | 任务、草稿、发送、收信的依赖方向单向化 |
+| 7 | `campaigns`、`communications`、`workspace` | 执行中（7C） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
@@ -1263,3 +1263,73 @@ CodeGraph，审计已迁移旧路径、跨域依赖和 `git diff --check`。
 停止点：communications 的 transport、同步、历史投影和 test-compose 已归位。第 7C 只迁移
 email-task/workspace 状态机、发送队列编排、batch HTTP adapter 与 draft worker；communications 不得
 反向依赖 workspace，campaigns 只通过 workspace 公共合同触发任务动作。
+
+### 第 7C 批：`workspace`、email-task 状态机与发送编排（执行中）
+
+开始日期：2026-08-06
+
+CodeGraph 定界结果：
+
+- 剩余 `services/task_runtime.py` 包含三个不同闭包：matching task analysis、workspace 草稿/审核/后续
+  动作状态机，以及 delivery 到期选择/身份发送窗口/SMTP 提交；不能继续作为单一 runtime 整体迁移。
+- `api/workspace_support.py` 是 workspace thread 投影与 task bootstrap owner；`api/workspaces.py` 和
+  `api/email_tasks.py` 是该领域的 UI adapters。`api/batch_tasks.py` 仍拥有 campaign HTTP 编排，但通过
+  task runtime 调用 workspace 动作。
+- `services/batch_draft_generation_runtime.py` 是 campaign worker：它负责 claim/cancel/recovery，实际单封
+  草稿生成必须委托 workspace；RuntimeManager 只应依赖两个领域的公共入口。
+
+计划目标拓扑：
+
+```text
+backend/app/modules/
+├── matching/
+│   └── task_analysis.py
+├── workspace/
+│   ├── __init__.py
+│   ├── public.py
+│   ├── api.py
+│   ├── schemas.py
+│   ├── thread.py
+│   └── tasks/
+│       ├── __init__.py
+│       ├── api.py
+│       ├── schemas.py
+│       ├── runtime.py
+│       └── delivery.py
+└── campaigns/
+    ├── batch_tasks/
+    │   ├── __init__.py
+    │   └── api.py
+    └── drafts/
+        └── runtime.py
+```
+
+计划分段：
+
+- 7C1 将 task-level match calculation、运行记录恢复、结果/异常 DTO 与专用 helper 迁入
+  `matching.task_analysis`，由 `matching.public` 提供；matching job runtime 改为域内调用。
+- 7C2 建立 workspace façade，迁移 workspace/email-task schemas、thread projection 与 UI adapters；将
+  草稿生成/改写/审核/手动继续/跟进状态机放入 `tasks.runtime`，将到期选择、发送窗口、恢复与 SMTP
+  提交放入 `tasks.delivery`。两者只共享域内 helper，不经 legacy service 互调。
+- 7C3 将 batch UI adapter 迁入 `campaigns.batch_tasks`，batch draft claim/recovery worker 迁入
+  `campaigns.drafts.runtime`；campaign adapter/worker 只经 `workspace.public` 触发单封任务动作，
+  RuntimeManager、startup 与 Agent 调用方只依赖领域 façade。
+
+兼容与依赖策略：
+
+- `app.api.batch_tasks|email_tasks|workspaces|workspace_support`、
+  `app.schemas.email_task|workspace`、`app.services.batch_draft_generation_runtime|task_runtime` 在本批保留
+  纯 re-export；生产调用方、测试 patch 和组合根全部迁到新 owner。第 9 批再按审计结果删除兼容入口。
+- matching task analysis 不依赖 workspace；workspace 通过 `matching.public`、`campaigns.public`、
+  `communications.public`、`identities.public` 与 `llm.public` 协作。communications 禁止反向依赖
+  workspace；campaign core 不依赖 workspace，只有 batch adapter/worker 可以调用 workspace 用例。
+- 不复制或重写 EmailTask 状态机，不改变 worker interval/concurrency、SMTP 时序、批量窗口、事务边界、
+  HTTP/Agent/CLI/Frontend 合同、ORM、Alembic、依赖和锁文件。
+
+计划验证：
+
+1. 每个子段先运行架构/API import/owner 兼容门禁及对应 matching、workspace、delivery、batch worker 测试。
+2. 运行 Agent/change-plan、runtime manager、operation log、startup、共享身份通信和 API endpoint 回归。
+3. 运行 Backend 完整 unittest，CLI 完整/Agent 合同，Frontend lint、完整 Vitest 与 production build。
+4. 同步 CodeGraph，审计生产 legacy 路径归零、shim AST 纯度、跨领域深层导入、静态未使用导入和
+   `git diff --check`，再更新本节实绩并进入第 8 批。

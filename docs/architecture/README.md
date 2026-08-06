@@ -19,7 +19,7 @@
 - 已完成：第 6B 批——`crawler` adapters、job runtime 与 workers。
 - 已完成：第 7A 批——`campaigns` 活动、模板与批量草稿规则。
 - 已完成：第 7B 批——`communications` 传输、同步与邮件历史。
-- 下一阶段：第 7C 批——`workspace`、email-task 状态机与发送编排。
+- 执行中：第 7C 批——`workspace`、email-task 状态机与发送编排。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档
