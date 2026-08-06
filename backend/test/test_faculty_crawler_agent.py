@@ -20,7 +20,7 @@ from app.modules.crawler.agent import (
 from app.models import LLMProfile
 from app.modules.crawler.pages.tools import CrawlToolContext
 from app.modules.crawler.pages.tools import PageSnapshot
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.runtime import LLMRuntimeAdaptation
 
 
 class FacultyCrawlerAgentSaveResultTests(unittest.TestCase):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.models import IdentityProfile, Professor
-from app.services.outreach_templates import build_template_context
+from app.modules.campaigns.templates.rendering import build_template_context
 from app.services.template_draft_rewrite import (
     apply_draft_rewrite_replacements,
     build_draft_rewrite_document,

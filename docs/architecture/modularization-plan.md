@@ -1548,7 +1548,12 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
   历史规格/实施记录整体迁入 `docs/archive/superpowers`，正文作为历史快照保留。`docs/README.md`、archive
   说明和文档拓扑门禁明确活动来源、机器校验资产、release notes、screenshots 与归档边界，并验证活动
   Markdown 本地链接可解析。
-- 9D 待执行：按实际引用审计删除 Backend、Frontend、Desktop 迁移 shim。
+- 9D Backend 已完成：删除 96 个纯迁移 shim（17 个 API、14 个 schema、64 个 service、1 个 agent），
+  清理 `app.services` 中无调用的领域聚合导出；生产入口、普通测试和活动文档均已改用 owner/public
+  façade。只验证旧入口的断言已移除，模块测试保留并加强 owner、公共 façade、schema 聚合与组合根
+  边界；通用 AST 门禁禁止 legacy 技术层重新引入指向 `app.modules` 的纯 re-export 文件。
+- 9D Frontend 待执行：迁移 2 个剩余生产调用方，删除 3 个实体 API shim，收紧兼容测试与架构特例。
+- 9D Desktop 待执行：删除 13 个根 service shim 与 `types.ts`，同步 IPC 合同和 import 边界测试。
 
 9A 验证结果：
 
@@ -1579,3 +1584,12 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | Backend | thinking adaptation owner 定向回归 | 37 tests passed |
 | Website | 完整 Vitest；production build | 4 files、16 tests passed；build 通过 |
 | Repository | CodeGraph；活动旧文档路径审计；`git diff --check` | 通过；archive 内历史路径按说明保留 |
+
+9D Backend 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend owner/边界 | 架构、API import、owner/public façade 与 schema 聚合 | 24 tests passed |
+| Backend 定向回归 | identities/campaigns/system/matching/templates/workspace/LLM；crawler/Agent | 218 + 273 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover -s test -b` | Ran 1715 tests；OK（1 skipped） |
+| Repository | CodeGraph；96 个删除模块活动引用；AST shim 门禁；`git diff --check` | 通过 |

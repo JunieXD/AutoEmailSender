@@ -42,7 +42,7 @@ from app.modules.crawler.llm.structured_output import (
     CandidateFieldConfidenceWire,
     ProfessorCandidateWirePayload,
 )
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
     LLMRuntimeAdaptation,
@@ -2172,7 +2172,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(unselected.email)
 
     async def test_enrich_selected_crawl_candidates_passes_runtime_adaptation_to_context(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )
@@ -2596,7 +2596,7 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
         self.assertIs(run_mock.call_args.args[0].llm_adaptation, adaptation)
 
     async def test_thinking_adaptation_failure_marks_job_failed_and_skips_run(self) -> None:
-        from app.services.thinking_adaptation import ThinkingAdaptationFailed
+        from app.modules.llm.adaptation.thinking import ThinkingAdaptationFailed
 
         job_id = await _seed_queued_crawl_job_with_default_profile(self.session_factory)
 

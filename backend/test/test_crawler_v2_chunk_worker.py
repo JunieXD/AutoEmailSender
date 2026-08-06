@@ -23,7 +23,7 @@ from app.modules.crawler.v2.chunk_worker import (
 )
 from app.modules.crawler.pages.tools import ProfessorCandidatePayload
 from app.modules.crawler.llm.structured_output import V2ChunkWirePayload
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
     LLMRuntimeAdaptation,

@@ -12,7 +12,7 @@ from app.modules.crawler.llm.structured_output import (
     ProfessorCandidateWirePayload,
     V2ProfileExtractionWirePayload,
 )
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
     LLMRuntimeAdaptation,

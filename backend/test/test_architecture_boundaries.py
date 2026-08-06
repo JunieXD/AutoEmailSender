@@ -19,6 +19,13 @@ FORBIDDEN_LAYER_IMPORTS = {
     "services": {"api", "agents"},
 }
 
+LEGACY_LAYER_ROOTS = (
+    APP_ROOT / "api",
+    APP_ROOT / "schemas",
+    APP_ROOT / "services",
+    APP_ROOT / "agents",
+)
+
 
 def _module_name(path: Path) -> str:
     relative = path.relative_to(BACKEND_ROOT).with_suffix("")
@@ -103,6 +110,44 @@ def _module_boundary_violations() -> set[str]:
     return violations
 
 
+def _legacy_module_reexport_shims() -> set[str]:
+    shims: set[str] = set()
+    for root in LEGACY_LAYER_ROOTS:
+        for source in sorted(root.rglob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            imports_domain_module = False
+            is_pure_reexport = True
+            for node in tree.body:
+                if (
+                    isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                ):
+                    continue
+                if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                    continue
+                if isinstance(node, ast.ImportFrom):
+                    imports_domain_module |= (node.module or "").startswith("app.modules")
+                    continue
+                if isinstance(node, ast.Import):
+                    imports_domain_module |= any(
+                        alias.name.startswith("app.modules") for alias in node.names
+                    )
+                    continue
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if all(
+                        isinstance(target, ast.Name) and target.id == "__all__"
+                        for target in targets
+                    ):
+                        continue
+                is_pure_reexport = False
+                break
+            if imports_domain_module and is_pure_reexport:
+                shims.add(source.relative_to(BACKEND_ROOT).as_posix())
+    return shims
+
+
 class ArchitectureBoundaryTests(unittest.TestCase):
     def test_legacy_layer_violations_match_reviewed_baseline(self) -> None:
         actual = _legacy_layer_violations()
@@ -117,6 +162,9 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_domain_modules_use_public_cross_domain_boundaries(self) -> None:
         self.assertEqual(_module_boundary_violations(), set())
+
+    def test_legacy_layers_do_not_reintroduce_module_reexport_shims(self) -> None:
+        self.assertEqual(_legacy_module_reexport_shims(), set())
 
 
 if __name__ == "__main__":

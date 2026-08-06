@@ -21,7 +21,7 @@ from app.modules.crawler.v2.routing import (
     _invoke_structured_routing_phase,
     invoke_v2_page_routing_agent,
 )
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
     LLMRuntimeAdaptation,

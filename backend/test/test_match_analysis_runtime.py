@@ -37,7 +37,7 @@ from app.modules.matching.task_analysis import (
     calculate_task_match_once,
     recover_interrupted_match_analysis_runs,
 )
-from app.services import task_runtime
+from app.modules.matching import task_analysis as task_runtime
 from app.services.match_results import (
     load_resolved_match_result,
     match_result_is_stale,

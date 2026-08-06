@@ -1327,7 +1327,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_build_draft_rewrite_prompt_uses_source_blocks_and_style_spans(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
-        from app.services.outreach_templates import build_template_context
+        from app.modules.campaigns.templates.rendering import build_template_context
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
         identity = IdentityProfile(
@@ -1692,7 +1692,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     def test_draft_rewrite_prompts_preserve_literal_dates_by_default(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
-        from app.services.outreach_templates import build_template_context
+        from app.modules.campaigns.templates.rendering import build_template_context
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
         identity = IdentityProfile(

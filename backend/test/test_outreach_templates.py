@@ -13,7 +13,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
     FIXTURE_DIR = Path(__file__).with_name("fixtures") / "template_samples"
 
     def test_html_to_text_keeps_inline_formatting_in_same_paragraph(self) -> None:
-        from app.services.outreach_templates import html_to_text
+        from app.modules.campaigns.templates.rendering import html_to_text
 
         html = (
             "<p>尊敬的{{name}}教授：</p>"
@@ -29,7 +29,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
         )
 
     def test_docx_import_prefers_html_and_raw_text_from_source(self) -> None:
-        from app.services.outreach_templates import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import import_outreach_template_file
 
         converted_html = (
             "<p><strong>老师您好：</strong></p>"
@@ -54,7 +54,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
         self.assertEqual(result.body_text, extracted_text)
 
     def test_docx_fixture_import_builds_email_ready_html(self) -> None:
-        from app.services.outreach_templates import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import import_outreach_template_file
 
         fixture = self.FIXTURE_DIR / "taoci.docx"
         result = import_outreach_template_file(fixture.name, fixture.read_bytes())
@@ -75,7 +75,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Pt
 
-        from app.services.outreach_templates import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import import_outreach_template_file
 
         document = Document()
         heading = document.add_heading("[推免自荐] 陈帆", level=1)
@@ -118,7 +118,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
         self.assertIn("专业第一", result.body_text)
 
     def test_docx_fixture_keeps_reference_html_block_structure(self) -> None:
-        from app.services.outreach_templates import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import import_outreach_template_file
 
         docx_fixture = self.FIXTURE_DIR / "taoci.docx"
         htm_fixture = self.FIXTURE_DIR / "taoci.htm"
@@ -142,7 +142,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
 
     def test_rendered_imported_docx_html_keeps_email_styles(self) -> None:
         from app.models import IdentityProfile, Professor
-        from app.services.outreach_templates import (
+        from app.modules.campaigns.templates.rendering import (
             import_outreach_template_file,
             render_outreach_template,
         )
@@ -185,7 +185,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
 
     def test_template_context_uses_sender_name_field(self) -> None:
         from app.models import IdentityProfile, Professor
-        from app.services.outreach_templates import render_outreach_template
+        from app.modules.campaigns.templates.rendering import render_outreach_template
 
         identity = IdentityProfile(
             name="内部配置",
@@ -211,7 +211,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
         self.assertIn("我是王同学", rendered.body_html)
 
     def test_send_date_context_uses_local_date_without_zero_padding(self) -> None:
-        from app.services.outreach_templates import build_send_date_context
+        from app.modules.campaigns.templates.rendering import build_send_date_context
 
         local_timezone = timezone(timedelta(hours=-7))
         context = build_send_date_context(
@@ -230,7 +230,7 @@ class OutreachTemplateImportTests(unittest.TestCase):
 
     def test_template_rendering_preserves_send_date_until_send_context(self) -> None:
         from app.models import IdentityProfile, Professor
-        from app.services.outreach_templates import (
+        from app.modules.campaigns.templates.rendering import (
             build_send_template_context,
             render_outreach_template,
             render_template_with_context,

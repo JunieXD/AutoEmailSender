@@ -12,8 +12,8 @@ from openai import APIResponseValidationError, APIStatusError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import LLMProfile
-from app.services.llm_endpoint_adaptation import get_cached_endpoint_kind, record_endpoint_adaptation
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.adaptation.endpoint import get_cached_endpoint_kind, record_endpoint_adaptation
+from app.modules.llm.runtime import LLMRuntimeAdaptation
 from test.schema_database import create_schema_sqlite_database
 
 

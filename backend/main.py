@@ -38,7 +38,7 @@ from app.modules.campaigns.public import (
     recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,
 )
-from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
+from app.modules.crawler.public import recover_interrupted_crawl_jobs
 from app.services.operation_logs import cleanup_old_operation_logs
 from app.services.runtime_manager import RuntimeManager
 

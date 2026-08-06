@@ -3,7 +3,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.services.batch_schedule import (
+from app.modules.campaigns.scheduling import (
     build_jittered_batch_schedule,
     has_future_batch_window,
     is_batch_window_expired,

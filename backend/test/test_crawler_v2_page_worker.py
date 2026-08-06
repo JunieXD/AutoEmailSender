@@ -14,7 +14,7 @@ from test.schema_database import create_schema_sqlite_database
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
 from app.modules.crawler.pages.tools import BrowserPaginationExpansion, PageSnapshot
-from app.services.llm_runtime import LLMRuntimeAdaptation
+from app.modules.llm.runtime import LLMRuntimeAdaptation
 from app.modules.crawler.v2.page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 from app.modules.crawler.v2.routing import (
     IFRAME_DISCOVERY_REASON,
@@ -28,7 +28,7 @@ from app.modules.crawler.v2.scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_profile_extraction_adaptation_cache_is_committed_before_session_closes(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )

@@ -9,15 +9,15 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.communication_groups import (
+from app.modules.identities.communication_groups.api import (
     create_communication_group,
     delete_communication_group,
     list_communication_groups,
     update_communication_group,
 )
 from app.models import IdentityCommunicationGroup, IdentityProfile, OperationLog
-from app.schemas.communication_group import IdentityCommunicationGroupWrite
-from app.services.identity_communication_groups import (
+from app.modules.identities.communication_groups.schemas import IdentityCommunicationGroupWrite
+from app.modules.identities.communication_groups.scope import (
     cleanup_communication_group_after_identity_delete,
     resolve_identity_communication_scope,
 )

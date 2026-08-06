@@ -8,18 +8,18 @@ import unittest
 
 
 class ApiImportBoundaryTest(unittest.TestCase):
-    def test_identity_serializers_import_does_not_load_route_modules(self) -> None:
+    def test_identity_owner_serializer_import_does_not_load_route_modules(self) -> None:
         script = """
 import importlib
 import json
 import sys
 
-importlib.import_module("app.api.identity_serializers")
+importlib.import_module("app.modules.identities.profiles.serializer")
 print(json.dumps({name: name in sys.modules for name in [
-    "app.api.batch_tasks",
-    "app.api.crawl_jobs",
-    "app.api.test_compose",
-    "app.api.workspaces",
+    "app.modules.campaigns.batch_tasks.api",
+    "app.modules.crawler.api",
+    "app.modules.communications.test_compose.api",
+    "app.modules.workspace.api",
 ]}))
 """
         result = subprocess.run(
@@ -30,10 +30,10 @@ print(json.dumps({name: name in sys.modules for name in [
         )
         loaded_modules = json.loads(result.stdout)
 
-        self.assertFalse(loaded_modules["app.api.batch_tasks"])
-        self.assertFalse(loaded_modules["app.api.crawl_jobs"])
-        self.assertFalse(loaded_modules["app.api.test_compose"])
-        self.assertFalse(loaded_modules["app.api.workspaces"])
+        self.assertFalse(loaded_modules["app.modules.campaigns.batch_tasks.api"])
+        self.assertFalse(loaded_modules["app.modules.crawler.api"])
+        self.assertFalse(loaded_modules["app.modules.communications.test_compose.api"])
+        self.assertFalse(loaded_modules["app.modules.workspace.api"])
 
     def test_router_aggregation_loads_expected_routers(self) -> None:
         routers = importlib.import_module("app.api.routers")

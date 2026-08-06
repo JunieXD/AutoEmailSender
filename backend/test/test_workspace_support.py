@@ -28,7 +28,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services.outreach_templates import RenderedOutreachTemplate
+from app.modules.campaigns.templates.rendering import RenderedOutreachTemplate
 from test.schema_database import create_schema_sqlite_database
 
 

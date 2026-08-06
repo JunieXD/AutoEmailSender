@@ -630,7 +630,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertIn("[REDACTED]", serialized)
 
     def test_agent_can_safely_manage_default_llm_profile_and_test_saved_connection(self) -> None:
-        from app.services.llm_runtime import LLMModelCatalogResult, LLMProbeResult
+        from app.modules.llm.runtime import LLMModelCatalogResult, LLMProbeResult
 
         first_profile_id = self._create_llm_profile()
         second_profile = self.client.post(

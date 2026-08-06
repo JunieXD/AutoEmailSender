@@ -15,7 +15,7 @@ from unittest.mock import patch
 from alembic import command
 from alembic.script import ScriptDirectory
 from app.core.config import get_settings
-from app.services.outreach_templates import import_outreach_template_file
+from app.modules.campaigns.templates.rendering import import_outreach_template_file
 from app.core.migrations import get_alembic_config, get_head_revision
 from test.migrated_database import create_migrated_sqlite_database
 

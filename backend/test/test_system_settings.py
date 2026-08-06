@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Base
-from app.services.system_settings import get_or_create_app_settings
+from app.modules.system.runtime_settings.service import get_or_create_app_settings
 
 
 class SystemSettingsTests(unittest.TestCase):

@@ -25,7 +25,7 @@ from app.models import (
 )
 from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
 from app.modules.crawler.llm.structured_output import CandidateEnrichmentWirePayload
-from app.services.llm_runtime import (
+from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
     LLMRuntimeAdaptation,
@@ -36,7 +36,7 @@ from app.modules.crawler.v2.enrichment_worker import enrich_candidate_once, run_
 
 class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_enrichment_adaptation_cache_is_committed_before_context_session_closes(self) -> None:
-        from app.services.llm_endpoint_adaptation import (
+        from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
         )

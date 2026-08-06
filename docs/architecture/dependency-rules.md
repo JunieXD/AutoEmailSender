@@ -5,7 +5,8 @@
 - 依赖必须指向更稳定、更底层的抽象。
 - 组合根可以知道所有模块，业务模块不能反向知道组合根。
 - 跨模块访问使用 `public.py`、`index.ts`、消息或版本化合同。
-- 兼容 shim 可以从旧路径导入新模块，但必须是纯 re-export，并在门禁中显式登记。
+- 兼容 shim 只允许在明确的迁移批次内临时存在，必须是纯 re-export、在门禁中登记，并在调用方
+  迁移完成后删除；Backend 技术层当前禁止重新引入指向领域模块的纯 re-export 文件。
 - 门禁例外是待偿还技术债；删除例外是进展，增加例外需要先更新架构文档并说明退出批次。
 
 ## 2. Backend 当前层级门禁
@@ -32,18 +33,14 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
 - 领域外代码只能经 `app.modules.system.public` 使用 runtime-settings 能力。
 - `app.modules.system.runtime_settings.public` 是 system 领域内的切片门面，由领域入口转发。
 - `app.modules.system.runtime_settings.api` 只由组合根注册，不作为业务调用入口。
-- 旧 `app.api.runtime_settings`、`app.schemas.runtime_settings`、
-  `app.services.runtime_settings`、`app.services.system_settings` 仅作兼容 re-export；
-  新代码不得继续引用这些路径。
+- 迁移期 runtime-settings 技术层 shim 已在第 9 批删除；不得恢复旧入口。
 
 ### 已落地的 identities 领域入口
 
 - 领域外代码只能经 `app.modules.identities.public` 使用通信组能力。
 - `app.modules.identities.communication_groups.public` 是 identities 领域内的切片门面。
 - `app.modules.identities.communication_groups.api` 只由组合根注册，不作为业务调用入口。
-- 旧 `app.api.communication_groups`、`app.schemas.communication_group`、
-  `app.services.communication_group_mutations`、
-  `app.services.identity_communication_groups` 仅作兼容 re-export；新代码不得引用。
+- 迁移期通信组技术层 shim 已在第 9 批删除；不得恢复旧入口。
 - `app.schemas` 使用懒加载保留三个通信组 DTO 的历史聚合导出，禁止在该聚合入口
   重新加入对 identities 公共门面的急加载，否则会与 `ApiSchema` 形成初始化环。
 
@@ -53,9 +50,7 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
 - `app.modules.campaigns.templates.api` 只由组合根注册，不作为业务调用入口。
 - `campaigns.public` 对依赖 identities 的 resend 和依赖 Agent schema 的 Agent 用例按需导出；
   低层模板、排期、状态和 DTO 使用者不得被迫加载高层 Agent adapter。
-- 旧 `app.api.outreach_templates`、`app.schemas.batch_task`、
-  `app.schemas.outreach_template` 及对应 `app.services.agent_campaigns|batch_*|outreach_*`
-  路径仅作兼容 re-export；新生产代码不得引用。
+- 迁移期 campaign、batch 与 outreach-template 技术层 shim 已在第 9 批删除；不得恢复旧入口。
 
 ### 已落地的 communications 领域入口
 
@@ -65,11 +60,8 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   campaigns 或 LLM 高层模块。
 - IMAP 同步、历史扫描与回复检测由 `app.modules.communications.imap.sync` 拥有；领域外调用方只能经
   `app.modules.communications.public` 调用，communications 不得反向导入 workspace/campaigns runtime。
-- `app.services.task_runtime` 仅为原同步公开符号提供对象级兼容别名；生产代码不得再从该路径调用
-  IMAP 同步或回复识别能力。
-- 旧 `app.api.test_compose`、`app.schemas.test_compose` 及
-  `app.services.mail_runtime|imap_*|email_*|communication_events|smtp_error_explanations|test_compose_runtime`
-  仅作兼容 re-export；新生产代码不得引用。
+- 迁移期 communications、IMAP 与 test-compose 技术层 shim 已在第 9 批删除；领域外调用必须经
+  `app.modules.communications.public`。
 
 ### 已落地的 workspace 领域入口
 
@@ -79,13 +71,11 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   身份发送窗口、发送恢复和 SMTP 提交。两者只使用域内相对导入协作。
 - workspace 只能经 `campaigns.public`、`communications.public`、`identities.public`、
   `matching.public`、`llm.public` 与其他领域协作；communications 不得反向依赖 workspace。
-- 旧 `app.api.email_tasks|workspaces|workspace_support`、`app.schemas.email_task|workspace` 和
-  `app.services.task_runtime` 仅作兼容 re-export；生产代码不得引用。兼容入口由第 9 批统一审计清理。
+- 迁移期 workspace、email-task 与 task-runtime 技术层 shim 已在第 9 批删除；不得恢复旧入口。
 - batch HTTP adapter 与 draft claim/recovery worker 分别由
   `app.modules.campaigns.batch_tasks.api`、`app.modules.campaigns.drafts.runtime` 拥有；worker 仅经
   `workspace.public` 调用单封任务用例，领域外 worker 调用方仅经 `campaigns.public`。
-- 旧 `app.api.batch_tasks` 与 `app.services.batch_draft_generation_runtime` 仅作兼容 re-export；生产代码
-  不得引用。兼容入口由第 9 批统一审计清理。
+- 迁移期 batch adapter 与 draft worker 技术层 shim 已在第 9 批删除；不得恢复旧入口。
 
 ## 3. Frontend 渐进门禁
 
