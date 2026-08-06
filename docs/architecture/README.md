@@ -9,7 +9,8 @@
 - 已完成：第 3A 批——`identities/communication-groups`。
 - 已完成：第 3B 批——`identities/profiles` 与 materials DTO/serializer 基础。
 - 已完成：第 3C 批——`identities/materials` 生命周期行为与 UI adapter。
-- 下一阶段：第 4 批——`professors` 与 `community`。
+- 已完成：第 4A 批——`professors` 核心、标签与导入导出。
+- 下一阶段：第 4B 批——导师信息补全子切片。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档

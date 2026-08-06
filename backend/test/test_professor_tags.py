@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
 from test.migrated_database import create_migrated_sqlite_database
-from app.services.professor_management import (
+from app.modules.professors.public import (
     PROFESSOR_LEGACY_TEMPLATE_COLUMNS,
     PROFESSOR_TEMPLATE_COLUMNS,
 )

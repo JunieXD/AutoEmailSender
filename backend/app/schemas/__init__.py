@@ -31,9 +31,9 @@ _SCHEMA_EXPORT_MODULES = {
     "OperationLogExportResponse": "app.schemas.diagnostics",
     "OperationLogListResponse": "app.schemas.diagnostics",
     "OperationLogRead": "app.schemas.diagnostics",
-    "ProfessorDashboardItemRead": "app.schemas.professor",
-    "ProfessorImportResult": "app.schemas.professor",
-    "ProfessorRead": "app.schemas.professor",
+    "ProfessorDashboardItemRead": "app.modules.professors.schemas",
+    "ProfessorImportResult": "app.modules.professors.schemas",
+    "ProfessorRead": "app.modules.professors.schemas",
     "WorkspaceMessageRead": "app.schemas.workspace",
     "WorkspaceThreadRead": "app.schemas.workspace",
 }

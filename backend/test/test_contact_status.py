@@ -11,7 +11,7 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, LLMProfile, Professor
-from app.api.professors import list_professors
+from app.modules.professors.api import list_professors
 from app.services.contact_status import build_contact_status_by_professor
 from test.schema_database import create_schema_sqlite_database
 
@@ -429,7 +429,7 @@ class ContactStatusTests(unittest.TestCase):
 
             async with self.session_factory() as session:
                 with patch(
-                    "app.api.professors.build_contact_status_by_professor",
+                    "app.modules.professors.api.build_contact_status_by_professor",
                     new_callable=AsyncMock,
                 ) as build_status:
                     build_status.return_value = {}
@@ -471,7 +471,7 @@ class ContactStatusTests(unittest.TestCase):
                 await session.commit()
 
                 with patch(
-                    "app.api.professors.build_contact_status_by_professor",
+                    "app.modules.professors.api.build_contact_status_by_professor",
                     new_callable=AsyncMock,
                 ) as build_status:
                     build_status.return_value = {}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.professor_management import normalize_professor_title
+from app.modules.professors.public import normalize_professor_title
 
 
 class ProfessorTitleNormalizationTests(unittest.TestCase):

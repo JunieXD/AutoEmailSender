@@ -45,7 +45,7 @@ from app.schemas.community_mentor import (
     CommunityShardDocument,
 )
 from app.services.operation_logs import record_operation_log
-from app.services.professor_field_normalization import normalize_recent_papers
+from app.modules.professors.public import normalize_recent_papers
 
 
 DEFAULT_COMMUNITY_DATA_BASE_URL = "https://juniexd.github.io/AutoEmailSender-MentorData/"

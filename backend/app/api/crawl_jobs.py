@@ -58,8 +58,11 @@ from app.services.crawl_job_runs import (
     mark_crawl_job_run_running,
 )
 from app.services.operation_logs import record_operation_log
-from app.services.professor_management import is_valid_professor_email, normalize_professor_email
-from app.services.professor_field_normalization import normalize_recent_papers
+from app.modules.professors.public import (
+    is_valid_professor_email,
+    normalize_professor_email,
+    normalize_recent_papers,
+)
 from app.services.crawl_job_runtime import enrich_selected_crawl_candidates
 from app.services.crawler_v2_url_utils import normalize_url
 from app.services.crawler_v2_profile_text_cache import profile_text_cache

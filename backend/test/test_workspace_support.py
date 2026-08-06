@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.professors import list_professors
+from app.modules.professors.api import list_professors
 from app.api.workspace_support import build_workspace_thread, _build_workspace_draft, _serialize_workspace_message
 from app.models import (
     EmailDirection,

@@ -8,8 +8,8 @@ from openpyxl import Workbook, load_workbook
 from pydantic import ValidationError
 
 from app.models import Professor
-from app.schemas.professor import ProfessorUpsertPayload
-from app.services.professor_management import (
+from app.modules.professors.public import (
+    ProfessorUpsertPayload,
     PROFESSOR_EXPORT_COLUMNS,
     PROFESSOR_TEMPLATE_COLUMNS,
     build_professor_export,

@@ -34,14 +34,12 @@ from app.services.crawl_job_runs import (
 from app.services.crawler_tools import validate_safe_public_crawl_url
 from app.services.crawler_v2_profile_text_cache import profile_text_cache
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
-from app.services.professor_field_normalization import (
-    normalize_recent_papers,
-    normalize_research_direction,
-)
-from app.services.professor_management import (
+from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
     normalize_professor_title,
+    normalize_recent_papers,
+    normalize_research_direction,
 )
 
 

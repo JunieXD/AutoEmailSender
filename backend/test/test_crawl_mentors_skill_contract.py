@@ -13,9 +13,9 @@ from zipfile import ZipFile
 from openpyxl import load_workbook
 
 from app.models.professor import Professor, ProfessorTag
-from app.schemas.professor import MAX_PERSONAL_NOTE_LENGTH
-from app.services.professor_field_normalization import RECENT_PAPERS_MAX_ITEMS
-from app.services.professor_management import (
+from app.modules.professors.public import (
+    MAX_PERSONAL_NOTE_LENGTH,
+    RECENT_PAPERS_MAX_ITEMS,
     ALLOWED_TITLES,
     PROFESSOR_LEGACY_TEMPLATE_COLUMNS,
     PROFESSOR_TEMPLATE_COLUMNS,

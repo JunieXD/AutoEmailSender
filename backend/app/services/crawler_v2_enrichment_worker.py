@@ -45,7 +45,7 @@ from app.services.crawler_structured_output import (
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.services.professor_information_enrichment import apply_enrichment_to_professor
-from app.services.professor_field_normalization import normalize_recent_papers
+from app.modules.professors.public import normalize_recent_papers
 
 
 _PROFILE_TEXT_CACHE = profile_text_cache

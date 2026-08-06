@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 3 批已完成，第 4 批待开始
+状态：已确认，第 4A 批已完成，第 4B 批待开始
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -160,7 +160,7 @@ cli/src/auto_email_sender_cli/
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
 | 3 | `identities`：身份、材料、通信组 | 已完成（3A～3C） | 每个子切片独立迁移并全绿 |
-| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 待开始 | UI/Agent 路由和前端实体边界完成 |
+| 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 执行中（4A 已完成；4B 待开始） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
 | 7 | `campaigns`、`communications`、`workspace` | 待开始 | 任务、草稿、发送、收信的依赖方向单向化 |
@@ -526,3 +526,63 @@ backend/app/modules/identities/materials/
 
 停止点：identities 的通信组、身份主体和材料三个子切片均已迁移。第 4 批开始前必须分别评估
 professors 与 community 的路由、schema、管理/补全服务及前端实体边界，避免把两个领域一次性混迁。
+
+### 第 4A 批：`professors` 核心、标签与导入导出（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/professors/
+├── api.py
+├── schemas.py
+├── mutations.py
+├── management.py
+├── normalization.py
+├── samples.py
+└── public.py
+```
+
+计划范围：
+
+- 迁移导师 UI adapter、DTO、CRUD/归档、标签、批量变更、导入变更、导入导出和字段归一化。
+- 组合根、Agent API、Agent change plan、crawler 与其他生产调用方改走 professors 公共入口。
+- 旧 API/schema/service 路径保留纯兼容导出；`app.schemas` 历史聚合导出改指向新 DTO。
+- 从架构门禁中偿还 `schemas.professor -> services.professor_field_normalization` 旧层级例外。
+- 导师信息补全和 community 数据服务留给 4B/4C，不在本子批移动。
+
+本批不变量：
+
+- `/api/professors` 全部 CRUD、标签、批量、归档、样例、模板、导入导出路径和 DTO 不变。
+- Agent professor/tag 相关 revision、幂等、change-plan、操作日志和错误码不变。
+- 不修改 Professor/ProfessorTag ORM、数据库 schema、Alembic、抓取合同或 Frontend 请求合同。
+- 不新增门禁例外，不重写导入解析、邮箱/职称/论文归一化规则。
+
+计划验证：professor management/normalization/tags、UI API、Agent professor/change-plan、crawler 合同、
+架构和兼容门禁、相关 CLI/Frontend 测试，以及 Backend 完整 unittest。
+
+实际结果：
+
+- 导师 UI adapter、DTO、CRUD/归档/标签/批量与导入变更、导入导出、归一化和样例数据已聚合到
+  `backend/app/modules/professors/`，组合根直接注册新 router。
+- Agent、change-plan、crawler、campaign、community 和补全生产调用方已统一改走
+  `app.modules.professors.public`；六个旧路径只保留兼容 re-export。
+- `app.schemas` 聚合出口已指向新 DTO；`schemas.professor` 与 `schemas.crawl_job` 到旧
+  normalization service 的两个门禁例外已删除。
+- 导入解析、邮箱/职称/论文归一化、标签和操作日志行为保持不变；未修改 ORM/Alembic 或外部合同。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、API/schema/service 对象一致性 | 7 tests passed |
+| Backend 定向 | management/normalization/tags、UI/Agent/change-plan、crawler、contact/workspace | 360 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1712 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | professor/material 等 Agent 命令与 client | 81 tests passed |
+| Frontend 合同 | Professors 页面、crawler、通知、选择与 API client | 5 files，79 tests passed |
+| Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
+
+停止点：导师核心能力已归位，信息补全仍保留旧 API/schema/service。第 4B 只迁移补全 job 生命周期
+与 crawler worker/scheduler 适配，不混入 community 数据下载、预览或导入。

@@ -34,15 +34,13 @@ from app.services.crawler_page_fetch_ledger import (
 from app.services.html_text import html_to_text
 from app.services.llm_runtime import LLMRuntimeAdaptation
 from app.services.crawler_structured_output import CANDIDATE_WIRE_PROMPT_CONTRACT
-from app.services.professor_field_normalization import (
+from app.modules.professors.public import (
     RECENT_PAPERS_MAX_ITEMS,
-    normalize_recent_papers,
-    normalize_research_direction,
-)
-from app.services.professor_management import (
     is_valid_professor_email,
     normalize_professor_email,
     normalize_professor_title,
+    normalize_recent_papers,
+    normalize_research_direction,
 )
 
 try:

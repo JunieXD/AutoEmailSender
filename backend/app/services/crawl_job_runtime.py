@@ -60,7 +60,7 @@ from app.services.crawler_tools import (
     ensure_crawl_job_can_continue,
     save_candidates,
 )
-from app.services.professor_field_normalization import normalize_recent_papers
+from app.modules.professors.public import normalize_recent_papers
 
 
 NO_LLM_PROFILE_ERROR = "请先配置可用的 LLM Profile"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.professor_field_normalization import (
+from app.modules.professors.public import (
     RECENT_PAPERS_MAX_ITEMS,
     normalize_recent_papers,
     normalize_research_direction,

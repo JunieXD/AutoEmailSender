@@ -78,6 +78,13 @@ materials 拥有材料上传、默认选择、删除预览与确认、引用一�
 通过这些领域现有服务/模型协作，不复制状态机，也不改变数据库关系。领域外调用方统一通过
 `backend/app/modules/identities/public.py` 使用材料能力。
 
+## professors 核心子切片（第 4A 批）
+
+professors 拥有导师 DTO、CRUD/归档、标签、批量变更、样例数据、导入导出及字段归一化。
+领域外的 Agent、crawler、campaign 与 community 调用方统一经
+`backend/app/modules/professors/public.py` 进入。信息补全作为内部子切片在 4B 迁移，community
+仍是独立领域，不因共享 Professor ORM 而合并所有权。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

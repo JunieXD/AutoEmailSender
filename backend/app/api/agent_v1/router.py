@@ -106,12 +106,6 @@ from app.schemas.diagnostics import (
     OperationLogListResponse,
     OperationLogRead,
 )
-from app.schemas.professor import (
-    ProfessorBulkTagsPayload,
-    ProfessorTagPayload,
-    ProfessorTagUpdatePayload,
-    ProfessorUpsertPayload,
-)
 from app.schemas.professor_information_enrichment import (
     CreateProfessorInformationEnrichmentJobRequest,
     ProfessorInformationEnrichmentItemRead,
@@ -133,6 +127,22 @@ from app.modules.identities.public import (
     resolve_identity_communication_scope,
     update_communication_group_record,
     upload_identity_material_record,
+)
+from app.modules.professors.public import (
+    ProfessorBulkTagsPayload,
+    ProfessorMutationError,
+    ProfessorTagPayload,
+    ProfessorTagUpdatePayload,
+    ProfessorUpsertPayload,
+    archive_professor_record,
+    build_professor_export,
+    create_professor_record,
+    create_professor_tag_record,
+    get_professor_tag_usage_snapshot,
+    get_professor_with_tags_or_raise,
+    restore_professor_record,
+    set_professor_tags_record,
+    update_professor_record,
 )
 from app.modules.system.public import (
     RuntimeSettingsRead,
@@ -290,18 +300,6 @@ from app.services.professor_information_enrichment import (
     retry_failed_professor_information_enrichment_job_record,
 )
 from app.services.dashboard_stats import build_dashboard_overview
-from app.services.professor_mutations import (
-    ProfessorMutationError,
-    archive_professor_record,
-    create_professor_record,
-    create_professor_tag_record,
-    get_professor_with_tags_or_raise,
-    get_professor_tag_usage_snapshot,
-    restore_professor_record,
-    set_professor_tags_record,
-    update_professor_record,
-)
-from app.services.professor_management import build_professor_export
 from app.services.outreach_template_mutations import (
     OutreachTemplateMutationError,
     create_outreach_template_record,

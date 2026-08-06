@@ -11,7 +11,7 @@ from app.services.crawler_tools import (
     validate_safe_public_crawl_url,
 )
 from app.services.crawler_v2_url_utils import normalize_url
-from app.services.professor_field_normalization import normalize_recent_papers
+from app.modules.professors.public import normalize_recent_papers
 
 
 CrawlJobStatusDTO = Literal[

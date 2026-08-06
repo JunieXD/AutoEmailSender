@@ -39,7 +39,22 @@ from app.schemas.community_mentor import (
     CommunityMentorComparisonRead,
 )
 from app.schemas.crawl_job import CrawlJobRetryPayload
-from app.schemas.professor import ProfessorBulkTagsPayload
+from app.modules.professors.public import (
+    ParsedProfessorImport,
+    ProfessorBulkTagsPayload,
+    ProfessorMutationError,
+    bulk_archive_professor_records,
+    bulk_update_professor_tags_record,
+    delete_professor_tag_record,
+    import_professor_records,
+    is_valid_professor_email,
+    normalize_professor_email,
+    parse_professor_import_file,
+    prepare_bulk_professor_archive_snapshot,
+    prepare_bulk_professor_tags_snapshot,
+    prepare_professor_import_snapshot,
+    prepare_professor_tag_delete_snapshot,
+)
 from app.schemas.test_compose import TestComposeMessageSendRequest
 from app.services.agent_mutations import (
     fingerprint,
@@ -57,23 +72,6 @@ from app.services.outreach_template_mutations import (
     OutreachTemplateMutationError,
     archive_outreach_template_record,
     get_outreach_template_or_raise,
-)
-from app.services.professor_mutations import (
-    ProfessorMutationError,
-    bulk_archive_professor_records,
-    bulk_update_professor_tags_record,
-    delete_professor_tag_record,
-    prepare_bulk_professor_archive_snapshot,
-    import_professor_records,
-    prepare_bulk_professor_tags_snapshot,
-    prepare_professor_tag_delete_snapshot,
-    prepare_professor_import_snapshot,
-)
-from app.services.professor_management import (
-    ParsedProfessorImport,
-    is_valid_professor_email,
-    normalize_professor_email,
-    parse_professor_import_file,
 )
 from app.services.crawl_job_records import (
     CrawlJobRecordError,

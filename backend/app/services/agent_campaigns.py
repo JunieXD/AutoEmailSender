@@ -54,7 +54,7 @@ from app.services.outreach_templates import (
 )
 from app.services.rich_text import normalize_email_html, text_to_email_html
 from app.services.agent_mutations import fingerprint
-from app.services.professor_management import is_valid_professor_email
+from app.modules.professors.public import is_valid_professor_email
 
 
 CAMPAIGN_CREATE_SNAPSHOT_VERSION = "1"

@@ -19,7 +19,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.migrations import get_alembic_config, get_head_revision
 from app.services.llm_runtime import LLMRuntimeAdaptation
-from app.services.professor_management import PROFESSOR_TEMPLATE_COLUMNS
+from app.modules.professors.public import PROFESSOR_TEMPLATE_COLUMNS
 from test.migrated_database import create_migrated_sqlite_database
 
 
