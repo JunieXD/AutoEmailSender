@@ -34,21 +34,21 @@ from app.modules.communications.transport import (
     ImapMailboxHistoryHeaderFetchResult,
     ImapMailboxUidSearchResult,
 )
-from app.services.task_runtime import RecentHistoryWindow
-from app.services.task_runtime import _sync_identity_imap_once_unlocked
-from app.services.task_runtime import _sync_identity_targeted_history_once
-from app.services.task_runtime import _sync_recent_sent_history_once
-from app.services.task_runtime import _fetch_missing_history_mailbox_message_bodies
-from app.services.task_runtime import is_imap_incremental_paused
-from app.services.task_runtime import log_imap_history_progress
-from app.services.task_runtime import mark_imap_throttled
-from app.services.task_runtime import poll_imap_history_once
-from app.services.task_runtime import poll_for_replies_once
-from app.services.task_runtime import repair_identity_replies
-from app.services.task_runtime import process_imap_fetched_messages
-from app.services.task_runtime import sync_identity_history_once
-from app.services.task_runtime import sync_identity_imap_once
-from app.services.task_runtime import sync_identity_incremental_once
+from app.modules.communications.imap.sync import RecentHistoryWindow
+from app.modules.communications.imap.sync import _sync_identity_imap_once_unlocked
+from app.modules.communications.imap.sync import _sync_identity_targeted_history_once
+from app.modules.communications.imap.sync import _sync_recent_sent_history_once
+from app.modules.communications.imap.sync import _fetch_missing_history_mailbox_message_bodies
+from app.modules.communications.imap.sync import is_imap_incremental_paused
+from app.modules.communications.imap.sync import log_imap_history_progress
+from app.modules.communications.imap.sync import mark_imap_throttled
+from app.modules.communications.imap.sync import poll_imap_history_once
+from app.modules.communications.imap.sync import poll_for_replies_once
+from app.modules.communications.imap.sync import repair_identity_replies
+from app.modules.communications.imap.sync import process_imap_fetched_messages
+from app.modules.communications.imap.sync import sync_identity_history_once
+from app.modules.communications.imap.sync import sync_identity_imap_once
+from app.modules.communications.imap.sync import sync_identity_incremental_once
 
 
 class ImapSyncRuntimeTestCase(unittest.TestCase):
@@ -798,10 +798,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 )
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[sent_header],
@@ -811,15 +811,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as bulk_fetch_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[sent_body]),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=fake_targeted_headers),
                 ) as targeted_fetch_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),
                 ) as legacy_range_scan_mock,
             ):
@@ -880,10 +880,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 identity_id = identity.id
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[],
@@ -893,11 +893,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as recent_fetch_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult(messages=[], command_count=1)),
                 ) as targeted_fetch_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),
                 ) as legacy_range_scan_mock,
             ):
@@ -981,11 +981,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=fake_recent_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[sent_body]),
                 ),
             ):
@@ -1124,11 +1124,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=fake_targeted_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[full_message]),
                 ),
             ):
@@ -1436,11 +1436,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             with (
                 patch("app.modules.communications.imap.state.utc_now", return_value=datetime(2026, 6, 30, tzinfo=UTC)),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([full_message], 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[full_message]),
                 ),
             ):
@@ -1460,11 +1460,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             identity_id = await self._create_identity_with_imap()
             with (
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_poll_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_poll_once",
                     new=AsyncMock(return_value=2),
                 ) as incremental_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_poll_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_poll_once",
                     new=AsyncMock(return_value=9),
                 ) as history_mock,
             ):
@@ -1480,11 +1480,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             identity_id = await self._create_identity_with_imap()
             with (
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_poll_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_poll_once",
                     new=AsyncMock(return_value=2),
                 ) as incremental_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_poll_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_poll_once",
                     new=AsyncMock(return_value=3),
                 ) as history_mock,
             ):
@@ -1540,7 +1540,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return 1
 
             with patch(
-                "app.services.task_runtime.sync_identity_incremental_poll_once",
+                "app.modules.communications.imap.sync.sync_identity_incremental_poll_once",
                 new=AsyncMock(side_effect=fake_sync),
             ):
                 result = await poll_for_replies_once(self.session_factory)
@@ -1556,7 +1556,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(side_effect=RuntimeError("fetch failed")),
             ):
                 result = await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -1580,7 +1580,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(None, [], None)),
             ):
                 await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -1594,7 +1594,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 after_none = state.last_seen_uid
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(7, [], None)),
             ):
                 await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -1632,7 +1632,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["student@example.com"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(1, [message], 222)),
             ) as mocked:
                 await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -1671,7 +1671,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["student@example.com"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(1, [message], 222)),
             ) as mocked:
                 await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -1711,11 +1711,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             )
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                     new=None,
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages",
                     new=AsyncMock(return_value=(100, [message])),
                 ),
             ):
@@ -1778,7 +1778,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 content="sent content",
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(21, [sent_message], None)),
             ) as mocked:
                 detected = await sync_identity_incremental_once(
@@ -1886,7 +1886,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["outsider@example.edu"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(22, [sent_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
@@ -1933,7 +1933,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 content="old body",
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(24, [old_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
@@ -1992,7 +1992,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["known@example.edu"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(25, [old_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
@@ -2062,7 +2062,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             sent_message.sent_at = sent_at
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(23, [sent_message], None)),
             ):
                 detected = await sync_identity_incremental_once(
@@ -2110,7 +2110,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["student@example.com"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(32, [inbox_message], 777)),
             ):
                 await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -2123,7 +2123,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["prof@example.edu"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(33, [sent_message], 888)),
             ):
                 await self._mark_mailbox_history_completed(identity_id, folder_role="sent", folder="Sent")
@@ -2177,7 +2177,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 to_emails=["student@example.com"],
             )
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(return_value=(31, [message], None)),
             ):
                 detected = await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -2382,7 +2382,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         )
 
     def test_recent_history_window_uses_current_and_previous_calendar_year(self) -> None:
-        from app.services.task_runtime import build_recent_history_window
+        from app.modules.communications.imap.sync import build_recent_history_window
 
         self.assertEqual(
             build_recent_history_window(datetime(2026, 7, 7, 12, 0, tzinfo=UTC)).start_date.isoformat(),
@@ -2454,10 +2454,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return ImapHistoryHeaderFetchResult(messages=[header], command_count=2, exhausted=False)
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.search_mailbox_uids_since_date",
+                    "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
                     new=AsyncMock(
                         return_value=ImapMailboxUidSearchResult(
                             uid_count=1,
@@ -2468,19 +2468,19 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=fake_recent_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[body]),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy uid range scan must not run")),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult(messages=[], command_count=1)),
                 ),
             ):
@@ -2556,9 +2556,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return [body]
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=headers,
@@ -2568,7 +2568,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
             ):
@@ -2661,11 +2661,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=fake_recent_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=AssertionError("non-professor headers do not need bodies")),
                 ),
             ):
@@ -2758,9 +2758,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 content="",
             )
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[header],
@@ -2770,7 +2770,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=AssertionError("body fetch must not run")),
                 ) as body_fetch_mock,
             ):
@@ -2822,10 +2822,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 identity_id = identity.id
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.search_mailbox_uids_since_date",
+                    "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
                     new=AsyncMock(
                         return_value=ImapMailboxUidSearchResult(
                             uid_count=1,
@@ -2835,7 +2835,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=RuntimeError("boom")),
                 ),
             ):
@@ -2936,10 +2936,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 )
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[],
@@ -2949,15 +2949,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=fake_targeted_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[inbox_body]),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy uid range scan must not run")),
                 ) as legacy_scan_mock,
             ):
@@ -3136,10 +3136,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return ImapHistoryHeaderFetchResult(messages=[], command_count=1, exhausted=False)
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[],
@@ -3149,15 +3149,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=fake_targeted_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=AssertionError("empty targeted headers need no bodies")),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy uid range scan must not run")),
                 ),
             ):
@@ -3226,10 +3226,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 state_ids = [pending_state.id, stale_state.id]
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value="Sent")),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[],
@@ -3239,7 +3239,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[],
@@ -3412,7 +3412,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
             ):
@@ -3486,7 +3486,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
             ):
@@ -3534,7 +3534,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 state_id = state.id
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                 new=AsyncMock(return_value=[]),
             ) as body_fetch_mock:
                 async with self.session_factory() as session:
@@ -3585,9 +3585,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 state_id = state.id
 
             with (
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value=None)),
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value=None)),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),
                 ) as legacy_range_scan_mock,
             ):
@@ -3637,10 +3637,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 state_id = state.id
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
-                patch("app.services.task_runtime.get_cached_or_discover_sent_folder", new=AsyncMock(return_value=None)),
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_cached_or_discover_sent_folder", new=AsyncMock(return_value=None)),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("budget should skip IMAP fetch")),
                 ) as header_fetch_mock,
             ):
@@ -3671,11 +3671,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(side_effect=AssertionError("sent discovery should not run")),
                 ) as discover_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("history fetch should not run")),
                 ) as header_fetch_mock,
             ):
@@ -3724,13 +3724,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            logger = logging.getLogger("app.services.task_runtime")
+            logger = logging.getLogger("app.modules.communications.imap.sync")
             was_disabled = logger.disabled
             manager_disabled = logging.root.manager.disable
             logger.disabled = False
             logging.disable(logging.NOTSET)
             try:
-                with self.assertLogs("app.services.task_runtime", level="INFO") as logs:
+                with self.assertLogs("app.modules.communications.imap.sync", level="INFO") as logs:
                     await log_imap_history_progress(
                         self.session_factory,
                         identity_id,
@@ -3777,11 +3777,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             )
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([message], 1)),
                 ) as mocked,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[message]),
                 ),
             ):
@@ -3852,11 +3852,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([header], 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
@@ -3919,13 +3919,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             )
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([header], 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
@@ -3982,11 +3982,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([header], 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[full_message]),
                 ) as body_fetch_mock,
             ):
@@ -4036,11 +4036,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([header], 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[]),
                 ),
             ):
@@ -4083,13 +4083,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             )
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([header], 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
@@ -4139,13 +4139,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 )
             ]
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult(headers, 2)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
@@ -4195,9 +4195,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             await self._mark_targeted_history_baseline_ready(identity_id)
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=RuntimeError("Too many requests")),
                 ) as header_fetch_mock,
             ):
@@ -4260,13 +4260,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 for uid in (201, 202)
             ]
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult(headers, 1)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
@@ -4332,13 +4332,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 ]
 
             with (
-                patch("app.services.task_runtime.get_settings") as settings_mock,
+                patch("app.modules.communications.imap.sync.get_settings") as settings_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult(headers, 1, exhausted=True)),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
             ):
@@ -4398,7 +4398,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(side_effect=RuntimeError("sent failed")),
             ):
                 await sync_identity_incremental_once(
@@ -4431,7 +4431,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(
                         return_value=ImapMailboxHistoryHeaderFetchResult(
                             messages=[],
@@ -4445,7 +4445,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as bootstrap_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                     new=AsyncMock(return_value=(None, [], None)),
                 ) as incremental_mock,
             ):
@@ -4479,7 +4479,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(
                         return_value=ImapMailboxHistoryHeaderFetchResult(
                             messages=[],
@@ -4493,7 +4493,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                     new=AsyncMock(side_effect=AssertionError("incremental fetch should not run")),
                 ) as incremental_mock,
             ):
@@ -4534,11 +4534,11 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("history bootstrap should not run")),
                 ) as bootstrap_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                     new=AsyncMock(side_effect=AssertionError("incremental fetch should not run")),
                 ) as incremental_mock,
             ):
@@ -4561,7 +4561,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             identity_id = await self._create_identity_with_imap()
             await self._mark_mailbox_history_completed(identity_id)
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(side_effect=RuntimeError("Too many requests")),
             ):
                 detected = await sync_identity_incremental_once(self.session_factory, identity_id)
@@ -4600,7 +4600,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             await self._mark_mailbox_history_completed(identity_id, folder_role="sent", folder="Sent Items")
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_incremental_mailbox_messages_with_uidvalidity",
                 new=AsyncMock(side_effect=RuntimeError("IMAP 选择邮箱文件夹失败: no such mailbox")),
             ):
                 detected = await sync_identity_incremental_once(
@@ -4637,15 +4637,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             identity_id = await self._create_identity_with_imap()
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=1),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(side_effect=[2, 3]),
                 ) as incremental_mock,
             ):
@@ -4682,15 +4682,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ) as discover_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=0),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(side_effect=[1, 2]),
                 ) as incremental_mock,
             ):
@@ -4728,15 +4728,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value="Sent Items"),
                 ) as discover_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=0),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(side_effect=[1, 2]),
                 ) as incremental_mock,
             ):
@@ -4809,17 +4809,17 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 await session.commit()
 
             with (
-                patch("app.services.task_runtime.utc_now", return_value=datetime(2026, 6, 30, 0, 10, tzinfo=UTC)),
+                patch("app.modules.communications.imap.sync.utc_now", return_value=datetime(2026, 6, 30, 0, 10, tzinfo=UTC)),
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ) as discover_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=2),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(return_value=3),
                 ) as incremental_mock,
             ):
@@ -4834,15 +4834,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             identity_id = await self._create_identity_with_imap()
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(side_effect=RuntimeError("Too many requests")),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(return_value=5),
                 ) as incremental_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=7),
                 ) as history_mock,
             ):
@@ -4868,15 +4868,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value=None),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=4),
                 ) as history_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(return_value=5),
                 ) as incremental_mock,
             ):
@@ -4900,15 +4900,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(side_effect=history_side_effect),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(side_effect=incremental_side_effect),
                 ),
             ):
@@ -4937,15 +4937,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(side_effect=incremental_side_effect),
                 ) as incremental_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=3),
                 ) as history_mock,
             ):
@@ -4969,15 +4969,15 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.task_runtime.mail_runtime.discover_sent_folder",
+                    "app.modules.communications.imap.sync.mail_runtime.discover_sent_folder",
                     new=AsyncMock(return_value=None),
                 ) as discover_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_history_once",
+                    "app.modules.communications.imap.sync.sync_identity_history_once",
                     new=AsyncMock(return_value=4),
                 ) as history_mock,
                 patch(
-                    "app.services.task_runtime.sync_identity_incremental_once",
+                    "app.modules.communications.imap.sync.sync_identity_incremental_once",
                     new=AsyncMock(return_value=5),
                 ) as incremental_mock,
             ):
@@ -4990,7 +4990,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         async def scenario() -> int:
             identity_id = await self._create_identity_with_imap()
             with patch(
-                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
                 new=AsyncMock(return_value=7),
             ) as mocked:
                 detected = await sync_identity_imap_once(self.session_factory, identity_id)
@@ -5014,7 +5014,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 return []
 
             with patch(
-                "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_inbox_messages",
                 new=AsyncMock(side_effect=fake_fetch),
             ):
                 first = asyncio.create_task(

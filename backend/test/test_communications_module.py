@@ -57,14 +57,41 @@ class CommunicationsModuleCompatibilityTest(unittest.TestCase):
 
     def test_public_facade_reexports_cross_domain_contracts(self) -> None:
         from app.modules.communications import addresses, events, ingestion, public, transport
+        from app.modules.communications.imap import sync
         from app.modules.communications.test_compose import runtime, schemas
 
         self.assertIs(public.normalize_email_address, addresses.normalize_email_address)
         self.assertIs(public.CommunicationEvent, events.CommunicationEvent)
         self.assertIs(public.EmailLogIngestRecord, ingestion.EmailLogIngestRecord)
         self.assertIs(public.MailRuntimeError, transport.MailRuntimeError)
+        self.assertIs(public.poll_for_replies_once, sync.poll_for_replies_once)
+        self.assertIs(public.sync_identity_imap_once, sync.sync_identity_imap_once)
+        self.assertIs(
+            public.sync_workspace_professor_replies,
+            sync.sync_workspace_professor_replies,
+        )
         self.assertIs(public.TestComposeThreadRead, schemas.TestComposeThreadRead)
         self.assertIs(public.build_test_compose_thread, runtime.build_test_compose_thread)
+
+    def test_task_runtime_sync_exports_are_compatibility_aliases(self) -> None:
+        from app.modules.communications.imap import sync
+        from app.services import task_runtime
+
+        export_names = (
+            "poll_for_replies_once",
+            "poll_identity_replies",
+            "poll_imap_history_once",
+            "repair_identity_replies",
+            "sync_identity_history_once",
+            "sync_identity_history_poll_once",
+            "sync_identity_imap_once",
+            "sync_identity_incremental_once",
+            "sync_identity_incremental_poll_once",
+            "sync_workspace_professor_replies",
+        )
+        for name in export_names:
+            with self.subTest(name=name):
+                self.assertIs(getattr(task_runtime, name), getattr(sync, name))
 
     def test_legacy_modules_import_independently(self) -> None:
         for module_name in LEGACY_MODULE_OWNERS:

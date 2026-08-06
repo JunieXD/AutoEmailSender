@@ -11,7 +11,7 @@ from app.models import Professor
 from app.schemas.workspace import WorkspaceSyncWarningRead, WorkspaceThreadRead
 from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.operation_logs import sanitize_user_visible_error
-from app.services.task_runtime import sync_workspace_professor_replies
+from app.modules.communications.public import sync_workspace_professor_replies
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])

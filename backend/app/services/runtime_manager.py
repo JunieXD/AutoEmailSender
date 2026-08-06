@@ -20,11 +20,10 @@ from app.services.batch_draft_generation_runtime import (
 from app.modules.crawler.public import run_crawler_v2_once
 from app.modules.matching.public import run_queued_match_analysis_jobs_once
 from app.modules.system.public import get_runtime_settings
+from app.modules.communications.public import poll_for_replies_once, poll_imap_history_once
 from app.services.task_runtime import (
     DEFAULT_SEND_INTERVAL_MAX_SECONDS,
     dispatch_due_tasks_once,
-    poll_imap_history_once,
-    poll_for_replies_once,
 )
 
 

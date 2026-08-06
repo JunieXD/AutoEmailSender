@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 7A 批已完成，第 7B 批执行中
+状态：已确认，第 7A、7B 批已完成，第 7C 批待执行
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -163,7 +163,7 @@ cli/src/auto_email_sender_cli/
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
-| 7 | `campaigns`、`communications`、`workspace` | 执行中（7B） | 任务、草稿、发送、收信的依赖方向单向化 |
+| 7 | `campaigns`、`communications`、`workspace` | 执行中（7C 待执行） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
@@ -1149,7 +1149,7 @@ backend/app/modules/campaigns/
 delivery runtime；不迁移单导师 workspace 审核/重写状态机。第 7C 在 communications 公共入口稳定后，
 拆分 `task_runtime.py`，再收口 batch UI adapter 与 batch draft worker。
 
-### 第 7B 批：`communications` 传输、同步与邮件历史（执行中）
+### 第 7B 批：`communications` 传输、同步与邮件历史（已完成）
 
 开始日期：2026-08-06
 
@@ -1234,5 +1234,32 @@ CodeGraph，审计已迁移旧路径、跨域依赖和 `git diff --check`。
 | Frontend 合同 | TestCompose、Profile onboarding/template、编辑器与 settings | 8 files，66 tests passed |
 | Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
 
-7B2 下一步：只提取 legacy task runtime 中的 IMAP 同步/回复识别闭包并保留原入口对象兼容；不提前
-迁移 email-task 的 workspace 状态机或发送队列编排。
+#### 7B2：IMAP 同步与回复识别（已完成）
+
+完成日期：2026-08-06
+
+实际结果：
+
+- `services/task_runtime.py` 中的 IMAP 增量/历史同步、三类 single-flight 锁、throttle、sent-folder
+  发现、recent-v2/targeted history、收发消息关联、回复检测与 EmailLog 写入闭包已迁入
+  `communications/imap/sync.py`；算法、事务顺序和 worker 调度间隔未改变。
+- RuntimeManager、workspace UI API 与 Agent API 统一经 `communications.public` 调用同步用例；测试中的
+  私有 helper 和 transport patch 直接指向新 owner，生产代码不再从 legacy task runtime 调用同步能力。
+- legacy task runtime 只显式 re-export 原有同步公开入口；对象同一性由测试保护。email-task 审核、
+  草稿、发送队列和手动续写仍保留到 7C，未在本段提前迁移。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、communications façade、legacy 对象同一性与独立导入 | 8 tests passed |
+| Backend 同步核心 | incremental/history/recent-v2/reply、并发锁与兼容入口 | 122 tests passed |
+| Backend 关联流程 | workspace/Agent/runtime、API、发送调度、operation log 与共享身份通信 | 356 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1742 tests；OK（1 skipped）；packaged self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | workspace/TestCompose 与 API client | 8 files，98 tests passed |
+| Repository | CodeGraph 同步；生产旧同步路径与 legacy communications 路径审计；F401；`git diff --check` | 通过 |
+
+停止点：communications 的 transport、同步、历史投影和 test-compose 已归位。第 7C 只迁移
+email-task/workspace 状态机、发送队列编排、batch HTTP adapter 与 draft worker；communications 不得
+反向依赖 workspace，campaigns 只通过 workspace 公共合同触发任务动作。

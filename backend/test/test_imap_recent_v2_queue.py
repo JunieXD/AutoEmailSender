@@ -34,7 +34,7 @@ from app.modules.communications.transport import (
     ImapHistoryHeaderFetchResult,
     ImapMailboxUidSearchResult,
 )
-from app.services.task_runtime import (
+from app.modules.communications.imap.sync import (
     _recent_v2_targeted_professor_limit,
     _should_use_recent_v2_bulk_sent,
     sync_identity_history_once,
@@ -692,19 +692,19 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
 
             settings = replace(get_settings(), imap_history_queue_settle_seconds=0)
             with (
-                patch("app.services.task_runtime.get_settings", return_value=settings),
-                patch("app.services.task_runtime.utc_now", return_value=BASE_TIME),
+                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
+                patch("app.modules.communications.imap.sync.utc_now", return_value=BASE_TIME),
                 patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME),
                 patch(
-                    "app.services.task_runtime.get_cached_or_discover_sent_folder",
+                    "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.search_mailbox_uids_since_date",
+                    "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
                     new=AsyncMock(side_effect=AssertionError("resumed bulk batch must not be re-probed")),
                 ) as probe_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=fake_bulk_headers),
                 ) as bulk_mock,
             ):
@@ -753,13 +753,13 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 side_effect=AssertionError("empty professor library must not search IMAP"),
             )
             with (
-                patch("app.services.task_runtime.get_settings", return_value=settings),
+                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
                 patch(
-                    "app.services.task_runtime.get_cached_or_discover_sent_folder",
+                    "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=first_targeted_mock,
                 ),
             ):
@@ -828,25 +828,25 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 return [sent_body] if folder == "Sent" else [inbox_body]
 
             with (
-                patch("app.services.task_runtime.get_settings", return_value=settings),
+                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
                 patch(
-                    "app.services.task_runtime.get_cached_or_discover_sent_folder",
+                    "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.search_mailbox_uids_since_date",
+                    "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
                     new=AsyncMock(side_effect=AssertionError("small batch must not probe whole Sent")),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=AssertionError("small batch must not scan whole Sent")),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=fake_targeted_headers),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_messages_by_uid",
                     new=AsyncMock(side_effect=fake_bodies),
                 ),
             ):
@@ -923,13 +923,13 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
 
             settings = replace(get_settings(), imap_history_queue_settle_seconds=0)
             with (
-                patch("app.services.task_runtime.get_settings", return_value=settings),
+                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
                 patch(
-                    "app.services.task_runtime.get_cached_or_discover_sent_folder",
+                    "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
-                    "app.services.task_runtime.mail_runtime.search_mailbox_uids_since_date",
+                    "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
                     new=AsyncMock(
                         return_value=ImapMailboxUidSearchResult(
                             uid_count=5001,
@@ -938,11 +938,11 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                     ),
                 ) as probe_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_recent_mailbox_message_headers_since",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=AssertionError("oversized Sent must not use bulk")),
                 ) as bulk_mock,
                 patch(
-                    "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
+                    "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
                         return_value=ImapHistoryHeaderFetchResult(
                             messages=[],

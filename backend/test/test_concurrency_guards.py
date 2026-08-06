@@ -26,16 +26,18 @@ from app.models import (
     Professor,
 )
 from app.modules.llm import runtime as llm_runtime
+from app.modules.communications.imap.sync import (
+    poll_identity_replies,
+    repair_identity_replies,
+    sync_identity_history_poll_once,
+    sync_identity_imap_once,
+    sync_identity_incremental_poll_once,
+    sync_workspace_professor_replies,
+)
 from app.services.task_runtime import (
     _create_manual_child_task,
     continue_task_manually,
     generate_task_draft,
-    poll_identity_replies,
-    repair_identity_replies,
-    sync_workspace_professor_replies,
-    sync_identity_history_poll_once,
-    sync_identity_imap_once,
-    sync_identity_incremental_poll_once,
 )
 from app.api.workspace_support import ensure_workspace_task
 
@@ -167,7 +169,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
             return 1
 
         with patch(
-            "app.services.task_runtime._sync_identity_imap_once_unlocked",
+            "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
             new=AsyncMock(side_effect=delayed_sync),
         ) as mocked_sync:
             results = self._run_async(poll_twice())
@@ -189,7 +191,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
             )
 
         with patch(
-            "app.services.task_runtime._sync_identity_imap_once_unlocked",
+            "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
             new=AsyncMock(side_effect=delayed_sync),
         ) as mocked_sync:
             results = self._run_async(sync_twice())
@@ -220,11 +222,11 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime._sync_identity_incremental_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_incremental_once_unlocked",
                 new=AsyncMock(side_effect=delayed_incremental),
             ),
             patch(
-                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
                 new=AsyncMock(return_value=10),
             ) as full_sync_mock,
         ):
@@ -255,11 +257,11 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime.sync_identity_history_once",
+                "app.modules.communications.imap.sync.sync_identity_history_once",
                 new=AsyncMock(side_effect=delayed_history),
             ),
             patch(
-                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
                 new=AsyncMock(return_value=10),
             ) as full_sync_mock,
         ):
@@ -301,15 +303,15 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
                 new=AsyncMock(side_effect=delayed_full_sync),
             ),
             patch(
-                "app.services.task_runtime._sync_identity_incremental_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_incremental_once_unlocked",
                 new=AsyncMock(return_value=10),
             ) as incremental_mock,
             patch(
-                "app.services.task_runtime.sync_identity_history_once",
+                "app.modules.communications.imap.sync.sync_identity_history_once",
                 new=AsyncMock(return_value=20),
             ) as history_mock,
         ):
@@ -340,11 +342,11 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime._sync_identity_incremental_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_incremental_once_unlocked",
                 new=AsyncMock(side_effect=delayed_incremental),
             ),
             patch(
-                "app.services.task_runtime.sync_identity_history_once",
+                "app.modules.communications.imap.sync.sync_identity_history_once",
                 new=AsyncMock(return_value=2),
             ) as history_mock,
         ):
@@ -377,11 +379,11 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
                 new=AsyncMock(side_effect=delayed_full_sync),
             ),
             patch(
-                "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_inbox_messages",
                 new=AsyncMock(return_value=[]),
             ) as fetch_mock,
         ):
@@ -414,11 +416,11 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.task_runtime._sync_identity_imap_once_unlocked",
+                "app.modules.communications.imap.sync._sync_identity_imap_once_unlocked",
                 new=AsyncMock(side_effect=delayed_full_sync),
             ),
             patch(
-                "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+                "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_inbox_messages",
                 new=AsyncMock(return_value=[]),
             ) as fetch_mock,
         ):

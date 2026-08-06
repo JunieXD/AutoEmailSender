@@ -133,15 +133,17 @@ worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、sch
 workspace/communications，分别留到 7C 和 7B/7C 拆分。BatchTask、EmailTask、OutreachTemplate ORM
 继续属于 `app.models` registry，不在本轮文件所有权迁移中拆表或复制。
 
-## communications 基础子切片（第 7B1 批，已完成）
+## communications 传输与同步子切片（第 7B 批，已完成）
 
 `backend/app/modules/communications/` 已拥有地址规范化、EmailLog 幂等入库/事件投影、SMTP/IMAP
 transport、协议错误、message fetch/rate limit/sync state，以及 test-compose DTO/UI/application runtime。
 领域外统一经 `communications.public` 使用；test-compose 合同和用例按需加载，避免低层 transport
 调用触发 identities/campaigns/LLM 高层初始化。
 
-IMAP 增量/历史同步、sent/received 关联和回复检测暂仍位于 `task_runtime.py`，7B2 将该闭包提取到
-`communications/imap/sync.py`；邮件任务审核、重写和后续动作继续留给 7C workspace。
+`communications/imap/sync.py` 拥有 IMAP 增量/历史同步、single-flight 锁与 throttle、sent-folder
+发现、recent-v2/targeted history、sent/received 关联、回复检测和 EmailLog 写入。RuntimeManager、
+workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；`task_runtime.py` 仅保留原公开
+同步入口的对象级兼容转发。邮件任务审核、重写、发送编排和后续动作继续留给 7C workspace。
 
 ## 前端层与 slice
 

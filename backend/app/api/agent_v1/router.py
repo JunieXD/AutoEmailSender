@@ -316,8 +316,6 @@ from app.services.task_runtime import (
     cancel_scheduled_task,
     continue_task_manually,
     start_follow_up_task,
-    sync_identity_history_poll_once,
-    sync_workspace_professor_replies,
     update_task_outreach_config,
     update_task_primary_material,
 )
@@ -326,6 +324,8 @@ from app.modules.communications.public import (
     generate_test_compose_draft,
     get_test_compose_status,
     save_test_compose_draft,
+    sync_identity_history_poll_once,
+    sync_workspace_professor_replies,
 )
 from app.api.workspace_support import build_workspace_thread, ensure_workspace_task
 from app.modules.llm.public import ThinkingAdaptationFailed

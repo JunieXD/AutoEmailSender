@@ -70,6 +70,10 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   test-compose 能力；`test_compose.api` 只由组合根注册。
 - test-compose DTO/application 用例按需导出，SMTP/IMAP 基础调用不得隐式加载 identities、
   campaigns 或 LLM 高层模块。
+- IMAP 同步、历史扫描与回复检测由 `app.modules.communications.imap.sync` 拥有；领域外调用方只能经
+  `app.modules.communications.public` 调用，communications 不得反向导入 workspace/campaigns runtime。
+- `app.services.task_runtime` 在 7C 完成前仅为原同步公开符号提供对象级兼容别名；生产代码不得再从
+  该路径调用 IMAP 同步或回复识别能力。
 - 旧 `app.api.test_compose`、`app.schemas.test_compose` 及
   `app.services.mail_runtime|imap_*|email_*|communication_events|smtp_error_explanations|test_compose_runtime`
   仅作兼容 re-export；新生产代码不得引用。

@@ -8612,7 +8612,7 @@ class ApiEndpointTests(unittest.TestCase):
         reply_sent_at = datetime(2026, 5, 1, 8, 0, tzinfo=UTC)
         reply_received_at = datetime(2026, 5, 1, 8, 30, tzinfo=UTC)
         with patch(
-            "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+            "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_inbox_messages",
             AsyncMock(
                 return_value=[
                     self._build_imap_fetched_message(
@@ -8660,7 +8660,7 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
 
         with patch(
-            "app.services.task_runtime.mail_runtime.fetch_professor_history_inbox_messages",
+            "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_inbox_messages",
             AsyncMock(
                 return_value=[
                     self._build_imap_fetched_message(
@@ -10980,7 +10980,7 @@ class ApiEndpointTests(unittest.TestCase):
 
     async def _poll_replies(self) -> None:
         from app.core.database import get_session_factory
-        from app.services.task_runtime import poll_for_replies_once
+        from app.modules.communications.public import poll_for_replies_once
 
         await poll_for_replies_once(get_session_factory())
 
