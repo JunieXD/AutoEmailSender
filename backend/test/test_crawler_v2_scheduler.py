@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
+    AppSetting,
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
@@ -51,6 +52,131 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_chunk_concurrency_is_three(self) -> None:
         self.assertEqual(CrawlerV2WorkerConfig().chunk_concurrency, 3)
+
+    async def test_default_job_concurrency_keeps_later_job_queued(self) -> None:
+        first_job_id = await self._create_job(status=CrawlJobStatus.QUEUED.value)
+        second_job_id = await self._create_job(status=CrawlJobStatus.QUEUED.value)
+        async with self.session_factory() as session:
+            session.add_all(
+                [
+                    CrawlPageTask(
+                        job_id=first_job_id,
+                        normalized_url="https://first.example.edu",
+                        original_url="https://first.example.edu",
+                    ),
+                    CrawlPageTask(
+                        job_id=second_job_id,
+                        normalized_url="https://second.example.edu",
+                        original_url="https://second.example.edu",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        first = await claim_next_v2_work(self.session_factory, worker_id="w1")
+        second = await claim_next_v2_work(self.session_factory, worker_id="w2")
+
+        self.assertEqual(first.job_id, first_job_id)
+        self.assertEqual(second.kind, CrawlerV2WorkKind.IDLE)
+        async with self.session_factory() as session:
+            first_job = await session.get(CrawlJob, first_job_id)
+            second_job = await session.get(CrawlJob, second_job_id)
+        assert first_job is not None and second_job is not None
+        self.assertEqual(first_job.status, CrawlJobStatus.RUNNING.value)
+        self.assertEqual(second_job.status, CrawlJobStatus.QUEUED.value)
+
+    async def test_job_concurrency_two_admits_two_different_jobs(self) -> None:
+        first_job_id = await self._create_job(status=CrawlJobStatus.QUEUED.value)
+        second_job_id = await self._create_job(status=CrawlJobStatus.QUEUED.value)
+        async with self.session_factory() as session:
+            session.add(AppSetting(id=1, crawler_worker_count=2))
+            session.add_all(
+                [
+                    CrawlPageTask(
+                        job_id=first_job_id,
+                        normalized_url="https://first.example.edu",
+                        original_url="https://first.example.edu",
+                    ),
+                    CrawlPageTask(
+                        job_id=second_job_id,
+                        normalized_url="https://second.example.edu",
+                        original_url="https://second.example.edu",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        first = await claim_next_v2_work(self.session_factory, worker_id="w1")
+        second = await claim_next_v2_work(self.session_factory, worker_id="w2")
+
+        self.assertEqual(first.job_id, first_job_id)
+        self.assertEqual(second.job_id, second_job_id)
+
+    async def test_single_job_can_use_multiple_internal_page_workers(self) -> None:
+        job_id = await self._create_job(status=CrawlJobStatus.QUEUED.value)
+        async with self.session_factory() as session:
+            session.add_all(
+                [
+                    CrawlPageTask(
+                        job_id=job_id,
+                        normalized_url="https://example.edu/a",
+                        original_url="https://example.edu/a",
+                    ),
+                    CrawlPageTask(
+                        job_id=job_id,
+                        normalized_url="https://example.edu/b",
+                        original_url="https://example.edu/b",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        first = await claim_next_v2_work(self.session_factory, worker_id="w1")
+        second = await claim_next_v2_work(self.session_factory, worker_id="w2")
+
+        self.assertEqual(first.job_id, job_id)
+        self.assertEqual(second.job_id, job_id)
+        self.assertEqual(first.kind, CrawlerV2WorkKind.PAGE)
+        self.assertEqual(second.kind, CrawlerV2WorkKind.PAGE)
+
+    async def test_active_jobs_rotate_before_reusing_stage_priority(self) -> None:
+        first_job_id = await self._create_job()
+        second_job_id = await self._create_job()
+        async with self.session_factory() as session:
+            session.add(AppSetting(id=1, crawler_worker_count=2))
+            first_job = await session.get(CrawlJob, first_job_id)
+            second_job = await session.get(CrawlJob, second_job_id)
+            assert first_job is not None and second_job is not None
+            first_job.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+            second_job.updated_at = datetime(2026, 1, 2, tzinfo=UTC)
+            session.add(
+                CrawlPageChunk(
+                    job_id=first_job_id,
+                    page_id=None,
+                    source_url="https://first.example.edu",
+                    page_fingerprint="first",
+                    chunk_id="first-chunk",
+                    chunk_index=0,
+                    chunk_hash="first-hash",
+                    content="张三",
+                )
+            )
+            session.add(
+                CrawlPageTask(
+                    job_id=second_job_id,
+                    normalized_url="https://second.example.edu",
+                    original_url="https://second.example.edu",
+                )
+            )
+            await session.commit()
+
+        first = await claim_next_v2_work(self.session_factory, worker_id="w1")
+        second = await claim_next_v2_work(self.session_factory, worker_id="w2")
+
+        self.assertEqual(first.job_id, first_job_id)
+        self.assertEqual(first.kind, CrawlerV2WorkKind.CHUNK)
+        self.assertEqual(second.job_id, second_job_id)
+        self.assertEqual(second.kind, CrawlerV2WorkKind.PAGE)
 
     async def test_claims_chunk_before_page_and_enrichment(self) -> None:
         job_id = await self._create_job()

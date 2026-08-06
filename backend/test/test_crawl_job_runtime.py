@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -13,7 +13,18 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
+from app.models import (
+    CrawlCandidate,
+    CrawlJob,
+    CrawlJobRun,
+    CrawlJobStatus,
+    CrawlPage,
+    CrawlPageChunk,
+    CrawlPageChunkStatus,
+    CrawlPageTask,
+    CrawlPageTaskStatus,
+    LLMProfile,
+)
 from app.modules.crawler.jobs import runtime as crawl_job_runtime
 from test.schema_database import create_schema_sqlite_database
 from app.modules.crawler.jobs.runtime import (
@@ -723,6 +734,37 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, CrawlJobStatus.NEEDS_REVIEW.value)
         self.assertIsNotNone(run.finished_at)
         self.assertIsNone(run.active_started_at)
+
+    async def test_running_v2_page_work_is_requeued_immediately_after_restart(self) -> None:
+        job_id = await self._create_default_profile_and_job()
+        future_lease = datetime.now(UTC) + timedelta(minutes=5)
+        async with self.session_factory() as session:
+            task = CrawlPageTask(
+                job_id=job_id,
+                normalized_url="https://example.edu/faculty",
+                original_url="https://example.edu/faculty",
+                status=CrawlPageTaskStatus.PROCESSING.value,
+                worker_id="old-process-worker",
+                lease_expires_at=future_lease,
+            )
+            session.add(task)
+            await session.commit()
+            task_id = task.id
+        await self._mark_job_running_after_interrupted_worker(job_id)
+
+        recovered_at = datetime.now(UTC)
+        await recover_interrupted_crawl_jobs(self.session_factory)
+
+        job = await self._get_job(job_id)
+        run = await self._get_current_run(job_id)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(job.status, CrawlJobStatus.QUEUED.value)
+        self.assertEqual(run.status, CrawlJobStatus.QUEUED.value)
+        self.assertEqual(task.status, CrawlPageTaskStatus.PROCESSING.value)
+        self.assertLessEqual(task.lease_expires_at, datetime.now(UTC))
+        self.assertGreaterEqual(task.lease_expires_at, recovered_at)
 
     async def test_running_job_paused_by_tool_stays_paused(self) -> None:
         job_id = await self._create_default_profile_and_job()

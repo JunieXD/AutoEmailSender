@@ -104,6 +104,55 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(heads[0], get_head_revision(config))
 
+    def test_crawl_job_concurrency_default_migrates_to_serial(self) -> None:
+        database_path = Path(self.temp_dir.name) / "crawl_job_concurrency.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260805_merge_match_fallback"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT crawler_worker_count FROM app_settings WHERE id = 1"
+                ).fetchone()[0],
+                2,
+            )
+            connection.execute(
+                "INSERT INTO app_settings (id, crawler_worker_count) VALUES (2, 3)"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            values = upgraded.execute(
+                "SELECT id, crawler_worker_count FROM app_settings ORDER BY id"
+            ).fetchall()
+            column = next(
+                row
+                for row in upgraded.execute("PRAGMA table_info(app_settings)").fetchall()
+                if row[1] == "crawler_worker_count"
+            )
+        finally:
+            upgraded.close()
+
+        self.assertEqual(values, [(1, 1), (2, 3)])
+        self.assertEqual(column[4], "1")
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            values = downgraded.execute(
+                "SELECT id, crawler_worker_count FROM app_settings ORDER BY id"
+            ).fetchall()
+        finally:
+            downgraded.close()
+        self.assertEqual(values, [(1, 2), (2, 3)])
+
     def test_professor_history_queue_migration_upgrades_and_downgrades(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_history_queue.db"
         env = os.environ.copy()

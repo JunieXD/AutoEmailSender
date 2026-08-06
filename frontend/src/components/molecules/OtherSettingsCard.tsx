@@ -74,11 +74,10 @@ const numberFields: Array<{
   {
     key: "crawler_worker_count",
     label: "同时运行的抓取任务数",
-    hint: "后台最多同时跑几个智能抓取任务。通常保持默认；抓取任务经常排队时再调高。保存后需重启生效。",
+    hint: "最多同时运行几个不同的智能抓取任务。默认串行更稳妥；调高后会增加网站访问和 LLM 请求压力。保存后下一轮调度生效。",
     min: 1,
     max: 8,
-    defaultValue: 2,
-    restartRequired: true,
+    defaultValue: 1,
   },
   {
     key: "crawler_profile_enrichment_concurrency",

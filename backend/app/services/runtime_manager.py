@@ -5,6 +5,7 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from sqlalchemy import select
@@ -28,11 +29,11 @@ from app.modules.workspace.public import (
 
 
 logger = logging.getLogger(__name__)
+CRAWLER_WORK_ITEM_WORKER_COUNT = 8
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeWorkerStartupSettings:
-    crawler_worker_count: int
     match_analysis_job_worker_count: int
     match_analysis_job_interval_seconds: int
 
@@ -62,10 +63,6 @@ class RuntimeManager:
         settings: object,
     ) -> RuntimeWorkerStartupSettings:
         fallback = RuntimeWorkerStartupSettings(
-            crawler_worker_count=_positive_int(
-                getattr(settings, "crawler_worker_count", 8),
-                8,
-            ),
             match_analysis_job_worker_count=_positive_int(
                 getattr(settings, "match_analysis_job_worker_count", 1),
                 1,
@@ -88,10 +85,6 @@ class RuntimeManager:
 
         try:
             return RuntimeWorkerStartupSettings(
-                crawler_worker_count=_positive_int(
-                    runtime_settings.crawler_worker_count,
-                    fallback.crawler_worker_count,
-                ),
                 match_analysis_job_worker_count=_positive_int(
                     runtime_settings.match_analysis_job_worker_count,
                     fallback.match_analysis_job_worker_count,
@@ -115,12 +108,15 @@ class RuntimeManager:
             asyncio.create_task(
                 self._loop(
                     f"crawler-worker-{index}",
-                    10,
-                    run_crawler_v2_once,
-                    processed_jitter_seconds=(2, 10),
+                    5,
+                    partial(
+                        run_crawler_v2_once,
+                        worker_id=f"crawler-worker-{index}",
+                    ),
+                    processed_jitter_seconds=(2, 5),
                 ),
             )
-            for index in range(1, worker_settings.crawler_worker_count + 1)
+            for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1)
         ]
         match_analysis_tasks = [
             asyncio.create_task(

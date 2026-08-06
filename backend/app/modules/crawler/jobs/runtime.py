@@ -15,7 +15,21 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
-from app.models import CrawlCandidate, CrawlJob, CrawlJobKind, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
+from app.models import (
+    CrawlCandidate,
+    CrawlCandidateEnrichmentTask,
+    CrawlCandidateEnrichmentTaskStatus,
+    CrawlJob,
+    CrawlJobKind,
+    CrawlJobRun,
+    CrawlJobStatus,
+    CrawlPage,
+    CrawlPageChunk,
+    CrawlPageChunkStatus,
+    CrawlPageTask,
+    CrawlPageTaskStatus,
+    LLMProfile,
+)
 from ..pages.debug import append_crawler_debug_event
 from ..pages.chunking import ChunkingConfig, build_page_chunks
 from ..pages.chunk_runtime import create_chunks_for_page
@@ -88,12 +102,45 @@ async def _crawl_job_has_pending_work_in_session(session: AsyncSession, *, job_i
                     CrawlPageChunkStatus.PENDING.value,
                     CrawlPageChunkStatus.PROCESSING.value,
                     CrawlPageChunkStatus.SPLIT_REQUIRED.value,
+                    CrawlPageChunkStatus.FAILED_RETRYABLE.value,
                 ]
             ),
         )
         .limit(1)
     )
-    return pending_chunk is not None
+    if pending_chunk is not None:
+        return True
+    pending_page_task = await session.scalar(
+        select(CrawlPageTask.id)
+        .where(
+            CrawlPageTask.job_id == job_id,
+            CrawlPageTask.status.in_(
+                [
+                    CrawlPageTaskStatus.PENDING.value,
+                    CrawlPageTaskStatus.PROCESSING.value,
+                    CrawlPageTaskStatus.FAILED_RETRYABLE.value,
+                ]
+            ),
+        )
+        .limit(1)
+    )
+    if pending_page_task is not None:
+        return True
+    pending_enrichment_task = await session.scalar(
+        select(CrawlCandidateEnrichmentTask.id)
+        .where(
+            CrawlCandidateEnrichmentTask.job_id == job_id,
+            CrawlCandidateEnrichmentTask.status.in_(
+                [
+                    CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                    CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                    CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                ]
+            ),
+        )
+        .limit(1)
+    )
+    return pending_enrichment_task is not None
 
 
 async def create_chunks_for_successful_page_snapshot(
@@ -465,6 +512,7 @@ async def _recover_interrupted_crawl_job(
             and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value
         ):
             now = utc_now()
+            await _expire_interrupted_v2_work_leases(session, job_id=job.id, now=now)
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
             if job.current_run_id is not None:
@@ -477,6 +525,8 @@ async def _recover_interrupted_crawl_job(
 
         if await _crawl_job_has_pending_work_in_session(session, job_id=job_id):
             now = utc_now()
+            if job.runtime_version == "v2":
+                await _expire_interrupted_v2_work_leases(session, job_id=job.id, now=now)
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
             if job.current_run_id is not None:
@@ -518,6 +568,39 @@ async def _recover_interrupted_crawl_job(
             now=now,
         )
         await session.commit()
+
+
+async def _expire_interrupted_v2_work_leases(
+    session: AsyncSession,
+    *,
+    job_id: int,
+    now: datetime,
+) -> None:
+    await session.execute(
+        update(CrawlPageTask)
+        .where(
+            CrawlPageTask.job_id == job_id,
+            CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
+        )
+        .values(lease_expires_at=now)
+    )
+    await session.execute(
+        update(CrawlPageChunk)
+        .where(
+            CrawlPageChunk.job_id == job_id,
+            CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
+        )
+        .values(lease_expires_at=now)
+    )
+    await session.execute(
+        update(CrawlCandidateEnrichmentTask)
+        .where(
+            CrawlCandidateEnrichmentTask.job_id == job_id,
+            CrawlCandidateEnrichmentTask.status
+            == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+        )
+        .values(lease_expires_at=now)
+    )
 
 
 def _get_crawl_job_start_urls(job: CrawlJob) -> list[str]:

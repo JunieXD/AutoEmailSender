@@ -14,7 +14,11 @@ from app.models import AppSetting, Base
 from datetime import UTC, datetime, timedelta, timezone
 
 from app.modules.workspace.tasks.delivery import _has_future_scheduled_at
-from app.services.runtime_manager import RuntimeManager, _run_match_analysis_worker_once
+from app.services.runtime_manager import (
+    CRAWLER_WORK_ITEM_WORKER_COUNT,
+    RuntimeManager,
+    _run_match_analysis_worker_once,
+)
 
 
 
@@ -33,7 +37,7 @@ class TaskRuntimeTimeHandlingTests(unittest.TestCase):
             )
         )
 class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_start_creates_multiple_crawler_workers_from_settings(self) -> None:
+    async def test_start_creates_fixed_crawler_work_item_pool(self) -> None:
         session = object()
         session_context = MagicMock()
         session_context.__aenter__ = AsyncMock(return_value=session)
@@ -79,8 +83,8 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 await manager.start()
 
         worker_names = [call.args[0] for call in mocked_loop.call_args_list]
-        self.assertEqual(worker_names.count("crawler-worker-1"), 1)
-        self.assertEqual(worker_names.count("crawler-worker-2"), 1)
+        for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1):
+            self.assertEqual(worker_names.count(f"crawler-worker-{index}"), 1)
         self.assertIn("dispatcher", worker_names)
         self.assertIn("imap-incremental-poller", worker_names)
         self.assertIn("imap-history-poller", worker_names)
@@ -133,10 +137,8 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 await manager.start()
 
         worker_calls = {call.args[0]: call.args for call in mocked_loop.call_args_list}
-        self.assertIn("crawler-worker-1", worker_calls)
-        self.assertIn("crawler-worker-2", worker_calls)
-        self.assertIn("crawler-worker-3", worker_calls)
-        self.assertNotIn("crawler-worker-4", worker_calls)
+        for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1):
+            self.assertIn(f"crawler-worker-{index}", worker_calls)
         self.assertEqual(worker_calls["match-analysis-worker-1"][1], 5)
         self.assertEqual(worker_calls["match-analysis-worker-2"][1], 5)
         self.assertNotIn("match-analysis-worker-3", worker_calls)
@@ -187,9 +189,8 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 await manager.start()
 
         worker_calls = {call.args[0]: call.args for call in mocked_loop.call_args_list}
-        self.assertIn("crawler-worker-1", worker_calls)
-        self.assertIn("crawler-worker-2", worker_calls)
-        self.assertNotIn("crawler-worker-3", worker_calls)
+        for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1):
+            self.assertIn(f"crawler-worker-{index}", worker_calls)
         self.assertEqual(worker_calls["match-analysis-worker-1"][1], 11)
         mocked_log_exception.assert_called_once_with(
             "读取运行时 worker 设置失败，已回退到环境配置",
@@ -225,7 +226,6 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await engine.dispose()
 
-        self.assertEqual(resolved.crawler_worker_count, 9)
         self.assertEqual(resolved.match_analysis_job_worker_count, 8)
         self.assertEqual(resolved.match_analysis_job_interval_seconds, 7)
         self.assertEqual(app_settings_count, 0)
@@ -354,7 +354,8 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 await manager.start()
 
         worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
-        self.assertEqual(worker_calls["crawler-worker-1"].kwargs["processed_jitter_seconds"], (2, 10))
+        self.assertEqual(worker_calls["crawler-worker-1"].args[1], 5)
+        self.assertEqual(worker_calls["crawler-worker-1"].kwargs["processed_jitter_seconds"], (2, 5))
         self.assertEqual(worker_calls["dispatcher"].kwargs["processed_jitter_seconds"], (5, 5))
 
         await manager.stop()
@@ -413,7 +414,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         await manager.stop()
-    async def test_worker_startup_settings_default_crawler_worker_count_is_eight(self) -> None:
+    async def test_worker_startup_settings_only_contains_restart_bound_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "runtime-manager-defaults.db"
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -436,7 +437,8 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await engine.dispose()
 
-        self.assertEqual(resolved.crawler_worker_count, 8)
+        self.assertFalse(hasattr(resolved, "crawler_worker_count"))
+        self.assertEqual(resolved.match_analysis_job_worker_count, 1)
     async def test_match_analysis_worker_uses_runtime_item_concurrency(self) -> None:
         session = object()
         session_context = MagicMock()

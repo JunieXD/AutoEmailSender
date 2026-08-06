@@ -131,7 +131,7 @@ def get_settings() -> Settings:
         match_analysis_job_worker_count=_get_int_env("MATCH_ANALYSIS_JOB_WORKER_COUNT", 1),
         match_analysis_job_interval_seconds=_get_int_env("MATCH_ANALYSIS_JOB_INTERVAL_SECONDS", 10),
         match_analysis_job_item_concurrency=_get_int_env("MATCH_ANALYSIS_JOB_ITEM_CONCURRENCY", 5),
-        crawler_worker_count=_get_int_env("CRAWLER_WORKER_COUNT", 8),
+        crawler_worker_count=_get_int_env("CRAWLER_WORKER_COUNT", 1),
         crawler_profile_enrichment_concurrency=_get_int_env(
             "CRAWLER_PROFILE_ENRICHMENT_CONCURRENCY",
             3,
