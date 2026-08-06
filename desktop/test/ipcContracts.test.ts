@@ -41,7 +41,14 @@ describe("desktop IPC contracts", () => {
   });
 
   it("shares renderer-visible types between Desktop and Frontend", () => {
-    const desktopTypes = readFileSync(path.resolve("src", "types.ts"), "utf8");
+    const preloadBridge = readFileSync(
+      path.resolve("src", "preload", "bridge.ts"),
+      "utf8",
+    );
+    const ipcRegistration = readFileSync(
+      path.resolve("src", "main", "ipc", "register.ts"),
+      "utf8",
+    );
     const frontendTypes = readFileSync(
       path.resolve("..", "frontend", "src", "types", "desktop.d.ts"),
       "utf8",
@@ -51,7 +58,8 @@ describe("desktop IPC contracts", () => {
       "utf8",
     );
 
-    expect(desktopTypes).toContain("../../contracts/desktop-ipc.js");
+    expect(preloadBridge).toContain("../../../contracts/desktop-ipc.js");
+    expect(ipcRegistration).toContain("../../../../contracts/desktop-ipc.js");
     expect(frontendTypes).toContain("../../../contracts/desktop-ipc.js");
     expect(frontendTypes).not.toMatch(/^export type Desktop/m);
     expect(sharedContract).not.toMatch(/from ["'](?:electron|node:)/);

@@ -167,8 +167,8 @@ email-task UI adapters。`workspace.public` 是 Agent、campaign adapter/worker 
 | `shared` | 无业务所有权的技术与 UI 基础 | HTTP client、dialog、date、desktop bridge |
 
 第 4D 已建立 `entities/professor` 与 `entities/community-mentor`：实体 model 拥有 DTO，实体 API
-拥有 HTTP 请求合同，页面与上下文通过实体 `index.ts` 使用能力。旧 `types` 和 `lib/api` 仅作为可静态
-验证的纯 re-export 兼容入口，待第 9 批确认所有调用方后清理。
+拥有 HTTP 请求合同，页面与上下文通过实体 `index.ts` 使用能力。第 9 批已删除旧 `lib/api` 实体
+re-export；`src/types/index.ts` 作为仍被活动代码使用的类型聚合入口保留，并由门禁验证其与 owner 同源。
 
 迁移时禁止仅因“多个地方使用”就把领域代码放入 `shared`。只有在调用方来自多个领域且代码本身没有业务术语时，才可进入 `shared`。
 
@@ -179,8 +179,8 @@ backend 进程控制与内部类型同目录；Agent runtime descriptor、安装
 `agent-support`；更新与 Sparkle bridge 归 `updates`；导入/分享与材料打开归 `files`；外部 URL、
 自启动、托盘和窗口生命周期归 `shell`。
 
-根目录同名 service 仅作纯 re-export，生产入口与测试直接使用 owner。Electron 的 `main.ts`、
-`preload.ts` 构建入口和打包资源路径保持不变。`main/ipc/register.ts` 统一装配 handler，
+第 9 批已删除根目录同名 service re-export 和旧类型转发；`src/` 根只保留 Electron 的 `main.ts`、
+`preload.ts` 两个稳定构建入口，打包资源路径保持不变。`main/ipc/register.ts` 统一装配 handler，
 `main/bootstrap/application.ts` 拥有应用生命周期与运行状态组合；两个根入口只调用各自 bootstrap。
 
 ## 跨进程边界
@@ -194,5 +194,6 @@ Electron preload -> IPC contract -> Electron main modules
 Frontend 不直接导入 backend Python 代码；CLI 不直接导入 backend 包；跨进程共享的是版本化合同，不是运行时业务实现。
 
 Desktop renderer 可见 DTO 与 bridge 以 `contracts/desktop-ipc.d.ts` 为单一来源；
-`frontend/src/types/desktop.d.ts` 和 `desktop/src/types.ts` 只做类型转发。IPC/event channel 由
-`desktop/src/contracts/channels.ts` 统一定义，preload bridge 与 main handlers 不得内联重复 channel。
+`frontend/src/types/desktop.d.ts`、Desktop preload bridge 与 main handlers 直接使用该合同。
+IPC/event channel 由 `desktop/src/contracts/channels.ts` 统一定义，preload bridge 与 main handlers
+不得内联重复 channel。

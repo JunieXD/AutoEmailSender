@@ -1382,8 +1382,8 @@ CodeGraph 与只读定界结果：
   状态和 IPC handler 注册；入口与组合逻辑未分离。
 - `desktop/src/preload.ts` 当前 119 行，同时维护 backend connection 状态、renderer bridge 和全部 IPC
   channel 字符串；main 与 preload 之间缺少可编译的 channel 单一来源。
-- `desktop/src/types.ts` 混合 main-process 内部启动类型与跨进程 DTO；
-  `frontend/src/types/desktop.d.ts` 手工复制 renderer 可见类型，后续修改存在漂移风险。
+- 迁移前的 Desktop 根类型转发混合 main-process 内部启动类型与跨进程 DTO，前端声明又手工复制
+  renderer 可见类型，后续修改存在漂移风险。
 - 13 个 main-process service 平铺在 `src/`；既有测试直接导入这些路径。Electron 打包入口固定为
   `dist/src/main.js`，preload 固定为 `dist/src/preload.js`，这两个分发路径必须保持不变。
 - 当前 Desktop 门禁只保护 main/preload 方向和无循环；需要继续保护 contracts、preload、main 子树的
@@ -1556,7 +1556,9 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
   `entities/community-mentor`；生产调用与测试 mock 均直接使用 owner。3 个实体 API shim 和只验证旧
   API 的断言已删除，`legacy-lib-api -> entities` 的纯 re-export 架构特例及一条 context 历史例外已
   移除。活动 `src/types/index.ts` 聚合入口保留，并继续验证其实体类型值与 owner 同源。
-- 9D Desktop 待执行：删除 13 个根 service shim 与 `types.ts`，同步 IPC 合同和 import 边界测试。
+- 9D Desktop 已完成：删除 13 个根 service shim 与 `types.ts`，移除纯兼容测试；import boundary 将
+  `src/` 根源码限定为稳定的 `main.ts`、`preload.ts` 两个入口，IPC 合同测试改为验证 main/preload
+  的真实合同消费者。生产构建不再生成已删除模块，活动代码、测试与打包配置均直接使用 owner。
 
 9A 验证结果：
 
@@ -1604,3 +1606,13 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 | Frontend 定向 | 架构、后台任务通知、community catalog、实体 API 与类型聚合 | 4 files，35 tests passed |
 | Frontend 完整套件 | lint；Vitest；production build | lint/build 通过；115 files，899 tests passed |
 | Repository | CodeGraph；旧 import/文件路径；production bundle；`git diff --check` | 通过 |
+
+9D Desktop 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Desktop owner/边界 | import boundary、IPC contract、packaging | 3 files，25 tests passed |
+| Desktop 完整套件 | typecheck；Vitest；production build | typecheck/build 通过；17 files，131 tests passed |
+| 构建后打包合同 | packaging test | 1 file，18 tests passed |
+| 生产产物 | `dist/src` 文件清单与旧根模块审计 | 仅两个稳定入口及 owner 子树；旧根模块归零 |
+| Repository | CodeGraph；活动旧路径；`git diff --check` | 通过 |

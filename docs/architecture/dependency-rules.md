@@ -132,8 +132,8 @@ app -> pages -> widgets -> features -> entities -> shared
 - renderer 可见 DTO/bridge 只能来自 `contracts/desktop-ipc.d.ts`；Desktop 内部 backend 类型由
   `main/backend/types.ts` 拥有，不得重新混入跨进程合同。
 - IPC channel 只能来自 `src/contracts/channels.ts`，main/preload/service 不得内联业务 channel。
-- main-process service 必须位于 `main/{backend,agent-support,updates,files,shell}`；根同名模块仅作兼容
-  re-export，生产代码和普通测试不得引用。兼容入口由第 9 批统一审计清理。
+- main-process service 必须位于 `main/{backend,agent-support,updates,files,shell}`；第 9 批已删除根同名
+  兼容模块，`src/` 根只能保留稳定的 `main.ts`、`preload.ts` 两个进程入口，结构门禁禁止重新引入。
 
 ## 6. 门禁实现要求
 

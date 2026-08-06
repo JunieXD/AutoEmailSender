@@ -6,22 +6,6 @@ import { describe, expect, it } from "vitest";
 
 
 const srcRoot = path.resolve(process.cwd(), "src");
-const legacyCompatibilityFiles = new Set([
-  "agentRuntime.ts",
-  "agentSupportService.ts",
-  "backend.ts",
-  "externalUrlService.ts",
-  "fileSelection.ts",
-  "macSparkle.ts",
-  "materialOpenService.ts",
-  "prepareDevCli.ts",
-  "startup.ts",
-  "trayController.ts",
-  "types.ts",
-  "updates.ts",
-  "windowIcon.ts",
-  "windowLifecycle.ts",
-]);
 
 const listSourceFiles = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -114,9 +98,6 @@ const processBoundaryViolations = (graph: Map<string, Set<string>>): string[] =>
       if (source.startsWith("main/") && (target === "preload.ts" || target.startsWith("preload/"))) {
         violations.push(`${source} -> ${target}: main-process modules must not import preload code`);
       }
-      if (source.startsWith("main/") && legacyCompatibilityFiles.has(target)) {
-        violations.push(`${source} -> ${target}: main-process modules must use the capability owner`);
-      }
       if (
         source.startsWith("contracts/") &&
         (target === "main.ts" || target === "preload.ts" || target.startsWith("main/") || target.startsWith("preload/"))
@@ -126,8 +107,7 @@ const processBoundaryViolations = (graph: Map<string, Set<string>>): string[] =>
       if (
         target.startsWith("main/") &&
         source !== "main.ts" &&
-        !source.startsWith("main/") &&
-        !legacyCompatibilityFiles.has(source)
+        !source.startsWith("main/")
       ) {
         violations.push(`${source} -> ${target}: only main-process code may use main-process modules`);
       }
@@ -163,6 +143,15 @@ const importCycles = (graph: Map<string, Set<string>>): string[] => {
 };
 
 describe("desktop process and import boundaries", () => {
+  it("keeps only stable process entrypoints at the source root", () => {
+    const rootSourceFiles = sourceFiles
+      .filter((file) => path.dirname(file) === srcRoot)
+      .map(toRelative)
+      .sort();
+
+    expect(rootSourceFiles).toEqual(["main.ts", "preload.ts"]);
+  });
+
   it("keeps main and preload dependencies pointed in the correct direction", () => {
     expect(processBoundaryViolations(dependencyGraph())).toEqual([]);
   });
