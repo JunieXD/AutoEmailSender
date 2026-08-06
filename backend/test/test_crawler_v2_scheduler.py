@@ -25,7 +25,7 @@ from app.models import (
 )
 from app.modules.crawler.v2.models import CrawlerV2WorkKind, CrawlerV2WorkerConfig
 from test.schema_database import create_schema_sqlite_database
-from app.services.crawler_v2_scheduler import (
+from app.modules.crawler.v2.scheduler import (
     ZERO_CANDIDATE_BROWSER_RETRY_REASON,
     claim_next_v2_work,
     ensure_job_active,
@@ -795,7 +795,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         class LostRaceResult:
             rowcount = 0
 
-        with patch("app.services.crawler_v2_scheduler._conditional_claim_page_task", return_value=LostRaceResult()):
+        with patch("app.modules.crawler.v2.scheduler._conditional_claim_page_task", return_value=LostRaceResult()):
             claimed = await claim_next_v2_work(self.session_factory, worker_id="w1", config=CrawlerV2WorkerConfig())
 
         self.assertEqual(claimed.kind, CrawlerV2WorkKind.IDLE)

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agents.faculty_crawler_agent import (
+from app.modules.crawler.agent import (
     CONTROLLED_CRAWLER_TOOL_NAMES,
     CrawlerAgentRunBudget,
     FACULTY_CRAWLER_SYSTEM_PROMPT,
@@ -256,9 +256,9 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
-                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
-                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+                patch("app.modules.crawler.agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
+                patch("app.modules.crawler.agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.modules.crawler.agent._ensure_agent_job_can_continue", AsyncMock()),
             ):
                 await run_faculty_crawler_agent(ctx, profile)
 
@@ -300,9 +300,9 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
-                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
-                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+                patch("app.modules.crawler.agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
+                patch("app.modules.crawler.agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.modules.crawler.agent._ensure_agent_job_can_continue", AsyncMock()),
             ):
                 result = await run_faculty_crawler_agent(
                     ctx,
@@ -349,9 +349,9 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(side_effect=[True, False, False])),
-                patch("app.agents.faculty_crawler_agent.create_faculty_crawler_agent", return_value=FakeAgent()),
-                patch("app.agents.faculty_crawler_agent._ensure_agent_job_can_continue", AsyncMock()),
+                patch("app.modules.crawler.agent.crawl_job_has_pending_work", AsyncMock(side_effect=[True, False, False])),
+                patch("app.modules.crawler.agent.create_faculty_crawler_agent", return_value=FakeAgent()),
+                patch("app.modules.crawler.agent._ensure_agent_job_can_continue", AsyncMock()),
             ):
                 result = await run_faculty_crawler_agent(
                     ctx,
@@ -368,7 +368,7 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
         self.assertFalse(any(event.get("event_type") == "agent_context_budget_reached" for event in events))
 
     def test_no_candidates_counts_as_completed_chunk(self) -> None:
-        from app.agents.faculty_crawler_agent import _is_completed_chunk_submit_event
+        from app.modules.crawler.agent import _is_completed_chunk_submit_event
 
         self.assertTrue(
             _is_completed_chunk_submit_event(
@@ -397,10 +397,10 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
         profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
         with (
-            patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
-            patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+            patch("app.modules.crawler.agent.create_deep_agent", side_effect=fake_create_deep_agent),
+            patch("app.modules.crawler.agent.build_faculty_crawler_model", return_value=object()),
         ):
-            from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+            from app.modules.crawler.agent import create_faculty_crawler_agent
 
             create_faculty_crawler_agent(ctx, profile)
 
@@ -443,14 +443,14 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
-                patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
-                patch("app.agents.faculty_crawler_agent.browser_investigate", AsyncMock(return_value=snapshot)),
-                patch("app.agents.faculty_crawler_agent.create_chunks_for_successful_page_snapshot", AsyncMock(return_value=1)),
-                patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
-                patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+                patch("app.modules.crawler.agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
+                patch("app.modules.crawler.agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
+                patch("app.modules.crawler.agent.browser_investigate", AsyncMock(return_value=snapshot)),
+                patch("app.modules.crawler.agent.create_chunks_for_successful_page_snapshot", AsyncMock(return_value=1)),
+                patch("app.modules.crawler.agent.create_deep_agent", side_effect=fake_create_deep_agent),
+                patch("app.modules.crawler.agent.build_faculty_crawler_model", return_value=object()),
             ):
-                from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+                from app.modules.crawler.agent import create_faculty_crawler_agent
 
                 create_faculty_crawler_agent(ctx, profile)
                 browser_tool = next(tool for tool in captured_tools["tools"] if getattr(tool, "name", "") == "investigate_with_browser")
@@ -492,15 +492,15 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
-                patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
+                patch("app.modules.crawler.agent.crawl_job_has_pending_work", AsyncMock(return_value=False)),
+                patch("app.modules.crawler.agent.get_source_url_chunk_state", AsyncMock(return_value=None)),
                 patch("app.modules.crawler.pages.tools._crawl_page_with_browser", AsyncMock(return_value=snapshot)) as browser_mock,
                 patch("app.modules.crawler.pages.tools._ensure_crawl_job_can_continue_for_context", AsyncMock()),
                 patch("app.modules.crawler.pages.tools.record_page_snapshot", AsyncMock()),
-                patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
-                patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+                patch("app.modules.crawler.agent.create_deep_agent", side_effect=fake_create_deep_agent),
+                patch("app.modules.crawler.agent.build_faculty_crawler_model", return_value=object()),
             ):
-                from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+                from app.modules.crawler.agent import create_faculty_crawler_agent
 
                 create_faculty_crawler_agent(ctx, profile)
                 browser_tool = next(tool for tool in captured_tools["tools"] if getattr(tool, "name", "") == "investigate_with_browser")
@@ -533,12 +533,12 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
-                patch("app.agents.faculty_crawler_agent.browser_investigate", AsyncMock()) as browser_mock,
-                patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
-                patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+                patch("app.modules.crawler.agent.crawl_job_has_pending_work", AsyncMock(return_value=True)),
+                patch("app.modules.crawler.agent.browser_investigate", AsyncMock()) as browser_mock,
+                patch("app.modules.crawler.agent.create_deep_agent", side_effect=fake_create_deep_agent),
+                patch("app.modules.crawler.agent.build_faculty_crawler_model", return_value=object()),
             ):
-                from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+                from app.modules.crawler.agent import create_faculty_crawler_agent
 
                 create_faculty_crawler_agent(ctx, profile)
                 browser_tool = next(tool for tool in captured_tools["tools"] if getattr(tool, "name", "") == "investigate_with_browser")
@@ -570,10 +570,10 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
         profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
         with (
-            patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
-            patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+            patch("app.modules.crawler.agent.create_deep_agent", side_effect=fake_create_deep_agent),
+            patch("app.modules.crawler.agent.build_faculty_crawler_model", return_value=object()),
         ):
-            from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+            from app.modules.crawler.agent import create_faculty_crawler_agent
 
             create_faculty_crawler_agent(ctx, profile)
 
@@ -601,12 +601,12 @@ class FacultyCrawlerAgentMiddlewareTests(unittest.TestCase):
             profile = LLMProfile(name="test", provider="openai", api_key="sk-test", model_name="gpt-test")
 
             with (
-                patch("app.agents.faculty_crawler_agent.get_source_url_chunk_state", AsyncMock(return_value="completed")),
-                patch("app.agents.faculty_crawler_agent.crawl_page_with_browser_fallback", AsyncMock()) as crawl_page_mock,
-                patch("app.agents.faculty_crawler_agent.create_deep_agent", side_effect=fake_create_deep_agent),
-                patch("app.agents.faculty_crawler_agent.build_faculty_crawler_model", return_value=object()),
+                patch("app.modules.crawler.agent.get_source_url_chunk_state", AsyncMock(return_value="completed")),
+                patch("app.modules.crawler.agent.crawl_page_with_browser_fallback", AsyncMock()) as crawl_page_mock,
+                patch("app.modules.crawler.agent.create_deep_agent", side_effect=fake_create_deep_agent),
+                patch("app.modules.crawler.agent.build_faculty_crawler_model", return_value=object()),
             ):
-                from app.agents.faculty_crawler_agent import create_faculty_crawler_agent
+                from app.modules.crawler.agent import create_faculty_crawler_agent
 
                 create_faculty_crawler_agent(ctx, profile)
                 tools = captured_tools["tools"]
@@ -637,7 +637,7 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
             thinking_extra_body={"thinking": {"type": "disabled"}},
         )
 
-        with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
+        with patch("app.modules.crawler.agent.ChatOpenAI") as chat_openai:
             build_faculty_crawler_model(profile, adaptation=adaptation)
 
         kwargs = chat_openai.call_args.kwargs
@@ -653,7 +653,7 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
             model_name="acme-think-v1",
         )
 
-        with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
+        with patch("app.modules.crawler.agent.ChatOpenAI") as chat_openai:
             build_faculty_crawler_model(
                 profile,
                 adaptation=LLMRuntimeAdaptation(
@@ -674,7 +674,7 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
             model_name="gpt-4o-mini",
         )
 
-        with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
+        with patch("app.modules.crawler.agent.ChatOpenAI") as chat_openai:
             build_faculty_crawler_model(
                 profile,
                 adaptation=LLMRuntimeAdaptation("chat_completions", None),
@@ -692,7 +692,7 @@ class FacultyCrawlerAgentModelTests(unittest.TestCase):
             model_name="deepseek-chat",
         )
 
-        with patch("app.agents.faculty_crawler_agent.ChatOpenAI") as chat_openai:
+        with patch("app.modules.crawler.agent.ChatOpenAI") as chat_openai:
             build_faculty_crawler_model(
                 profile,
                 adaptation=LLMRuntimeAdaptation("chat_completions", None),

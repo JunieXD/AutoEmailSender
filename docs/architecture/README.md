@@ -16,7 +16,8 @@
 - 已完成：第 5A 批——`matching` 核心与 analysis jobs。
 - 已完成：第 5B 批——`llm` profile、runtime 与 adaptation。
 - 已完成：第 6A 批——`crawler` 合同与运行基础。
-- 下一阶段：第 6B 批——`crawler` adapters、job runtime 与 workers。
+- 已完成：第 6B 批——`crawler` adapters、job runtime 与 workers。
+- 下一阶段：第 7 批——`campaigns`、`communications`、`workspace`。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档

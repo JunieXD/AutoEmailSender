@@ -15,7 +15,7 @@ from test.schema_database import create_schema_sqlite_database
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
 from app.modules.crawler.pages.tools import BrowserPaginationExpansion, PageSnapshot
 from app.services.llm_runtime import LLMRuntimeAdaptation
-from app.services.crawler_v2_page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
+from app.modules.crawler.v2.page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
 from app.modules.crawler.v2.routing import (
     IFRAME_DISCOVERY_REASON,
     PAGINATION_DISCOVERY_REASON,
@@ -23,7 +23,7 @@ from app.modules.crawler.v2.routing import (
     PageRouteControl,
     V2PageRoutingResult,
 )
-from app.services.crawler_v2_scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON
+from app.modules.crawler.v2.scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON
 
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -64,9 +64,9 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             return LLMRuntimeAdaptation("responses", None)
 
         with (
-            patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)),
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(side_effect=fake_ensure)),
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)),
+            patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)),
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(side_effect=fake_ensure)),
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)),
         ):
             await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
@@ -87,12 +87,12 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
         self.adaptation_patcher = patch(
-            "app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation",
+            "app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self.adaptation_patcher.start()
         self.routing_patcher = patch(
-            "app.services.crawler_v2_page_worker.invoke_v2_page_routing_agent",
+            "app.modules.crawler.v2.page_worker.invoke_v2_page_routing_agent",
             new=AsyncMock(
                 return_value=V2PageRoutingResult(
                     discovered_urls=[],
@@ -127,7 +127,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -173,7 +173,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_v2_page_worker.fetch_page_direct",
+            "app.modules.crawler.v2.page_worker.fetch_page_direct",
             new=AsyncMock(return_value=snapshot),
         ):
             processed = await run_crawler_v2_page_worker_once(
@@ -256,11 +256,11 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawler_v2_page_worker.fetch_page_direct",
+                "app.modules.crawler.v2.page_worker.fetch_page_direct",
                 new=AsyncMock(return_value=snapshot),
             ),
             patch(
-                "app.services.crawler_v2_page_worker.expand_browser_pagination",
+                "app.modules.crawler.v2.page_worker.expand_browser_pagination",
                 new=pagination_mock,
             ),
         ):
@@ -311,8 +311,8 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         direct_mock = AsyncMock()
 
         with (
-            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=browser_mock),
-            patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=direct_mock),
+            patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=browser_mock),
+            patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=direct_mock),
         ):
             processed = await run_crawler_v2_page_worker_once(
                 self.session_factory,
@@ -351,7 +351,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.routing_mock.side_effect = RuntimeError("routing unavailable")
 
         with patch(
-            "app.services.crawler_v2_page_worker.fetch_page_direct",
+            "app.modules.crawler.v2.page_worker.fetch_page_direct",
             new=AsyncMock(return_value=snapshot),
         ):
             processed = await run_crawler_v2_page_worker_once(
@@ -405,9 +405,9 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=len(snapshot.text),
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"thinking": {"type": "disabled"}}))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"thinking": {"type": "disabled"}}))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -444,9 +444,9 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=len(snapshot.text),
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -474,10 +474,10 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=2,
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
-            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -518,10 +518,10 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=len(browser.text),
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
-            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock, \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -561,11 +561,11 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=len(direct.text),
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
-            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)), \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)), \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
             patch(
-                "app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent",
+                "app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent",
                 new=AsyncMock(return_value=extraction),
             ) as extraction_mock:
             processed = await run_crawler_v2_page_worker_once(
@@ -593,7 +593,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         ctx = object()
         browser_snapshot = PageSnapshot(url="https://example.edu/teacher/zhang.html", text="张三", html="", links=[], fetch_method="browser", status="succeeded")
 
-        with patch("app.services.crawler_v2_page_worker.browser_investigate", new=AsyncMock(return_value=browser_snapshot)) as browser_mock:
+        with patch("app.modules.crawler.v2.page_worker.browser_investigate", new=AsyncMock(return_value=browser_snapshot)) as browser_mock:
             result = await fetch_page_browser(ctx, "https://example.edu/teacher/zhang.html", intent="profile")
 
         self.assertEqual(result.fetch_method, "browser")
@@ -620,9 +620,9 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
                 page_text_length=2,
             )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(side_effect=pause_then_return)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(side_effect=pause_then_return)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -644,9 +644,9 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=2,
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)):
             await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         async with self.session_factory() as session:
@@ -676,10 +676,10 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             page_text_length=2,
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
-            patch("app.services.crawler_v2_page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
-            patch("app.services.crawler_v2_page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)), \
-            patch("app.services.crawler_v2_page_worker.append_crawler_v2_debug_event") as debug_mock:
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), \
+            patch("app.modules.crawler.v2.page_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None))), \
+            patch("app.modules.crawler.v2.page_worker.invoke_v2_profile_extraction_agent", new=AsyncMock(return_value=extraction)), \
+            patch("app.modules.crawler.v2.page_worker.append_crawler_v2_debug_event") as debug_mock:
             await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         events = [call.kwargs["event_name"] for call in debug_mock.call_args_list]
@@ -720,7 +720,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
                 await session.commit()
             return snapshot
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(side_effect=pause_job_during_fetch)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(side_effect=pause_job_during_fetch)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 0)
@@ -735,7 +735,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_page_worker_failure_sets_retry_backoff(self) -> None:
         _, task_id = await self._seed_page_task()
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -760,7 +760,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             fetch_method="http",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), patch("app.services.crawler_v2_page_worker.append_crawler_v2_debug_event") as debug_mock:
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)), patch("app.modules.crawler.v2.page_worker.append_crawler_v2_debug_event") as debug_mock:
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -778,7 +778,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         direct = PageSnapshot(url="https://example.edu/faculty", text="", html="", links=[], fetch_method="http", status="failed", error_message="403")
         browser = PageSnapshot(url="https://example.edu/faculty", text="张三", html="<p>张三</p>", links=[], fetch_method="browser", status="succeeded")
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -842,8 +842,8 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
-            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock:
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), \
+            patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)) as browser_mock:
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -885,8 +885,8 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock()) as direct_mock, \
-            patch("app.services.crawler_v2_page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock()) as direct_mock, \
+            patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -927,7 +927,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -976,7 +976,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -1003,7 +1003,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
             await session.commit()
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock()) as fetch_mock:
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock()) as fetch_mock:
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -1049,10 +1049,10 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_v2_page_worker.fetch_page_direct",
+            "app.modules.crawler.v2.page_worker.fetch_page_direct",
             new=AsyncMock(),
         ) as direct_mock, patch(
-            "app.services.crawler_v2_page_worker.fetch_page_browser",
+            "app.modules.crawler.v2.page_worker.fetch_page_browser",
             new=AsyncMock(return_value=browser),
         ) as browser_mock:
             processed = await run_crawler_v2_page_worker_once(
@@ -1099,7 +1099,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 0)
@@ -1126,7 +1126,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -1141,7 +1141,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         direct_snapshot = PageSnapshot(url="https://example.edu", text="direct", html="", links=[], fetch_method="http", status="succeeded")
         browser_snapshot = PageSnapshot(url="https://example.edu", text="browser", html="", links=[], fetch_method="browser", status="succeeded")
 
-        with patch("app.services.crawler_v2_page_worker.crawl_page_with_http", new=AsyncMock(return_value=direct_snapshot)) as http_mock, patch("app.services.crawler_v2_page_worker.browser_investigate", new=AsyncMock(return_value=browser_snapshot)) as browser_mock:
+        with patch("app.modules.crawler.v2.page_worker.crawl_page_with_http", new=AsyncMock(return_value=direct_snapshot)) as http_mock, patch("app.modules.crawler.v2.page_worker.browser_investigate", new=AsyncMock(return_value=browser_snapshot)) as browser_mock:
             direct_result = await fetch_page_direct(ctx, "https://example.edu")
             browser_result = await fetch_page_browser(ctx, "https://example.edu")
 
@@ -1162,7 +1162,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_v2_page_worker.browser_investigate",
+            "app.modules.crawler.v2.page_worker.browser_investigate",
             new=AsyncMock(return_value=browser_snapshot),
         ) as browser_mock:
             result = await fetch_page_browser(
@@ -1191,7 +1191,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        with patch("app.services.crawler_v2_page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=snapshot)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)

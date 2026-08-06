@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.crawl_jobs import create_crawl_job
+from app.modules.crawler.api import create_crawl_job
 from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, LLMProfile
 from app.modules.crawler.schemas import CrawlJobCreatePayload
 from app.services.runtime_manager import RuntimeManager
@@ -62,8 +62,8 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 session.add(CrawlPageChunk(job_id=job.id, page_id=None, source_url="https://example.edu", page_fingerprint="p", chunk_id="c1", chunk_index=0, chunk_hash="h", content="张三", status=CrawlPageChunkStatus.PENDING.value))
                 await session.commit()
 
-            with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=AsyncMock(return_value={"ok": True})):
-                from app.services.crawler_v2_scheduler import run_crawler_v2_once
+            with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=AsyncMock(return_value={"ok": True})):
+                from app.modules.crawler.v2.scheduler import run_crawler_v2_once
 
                 processed = await run_crawler_v2_once(session_factory, worker_id="w1")
 

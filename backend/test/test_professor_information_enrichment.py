@@ -21,9 +21,9 @@ from app.models import (
     Professor,
 )
 from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
-from app.services.crawler_v2_enrichment_worker import run_crawler_v2_enrichment_worker_once
-from app.services.crawler_v2_scheduler import finalize_idle_jobs
-from app.services.crawl_job_runtime import recover_interrupted_crawl_jobs
+from app.modules.crawler.v2.enrichment_worker import run_crawler_v2_enrichment_worker_once
+from app.modules.crawler.v2.scheduler import finalize_idle_jobs
+from app.modules.crawler.jobs.runtime import recover_interrupted_crawl_jobs
 from app.modules.professors.public import (
     create_professor_information_enrichment_job,
     finalize_professor_information_enrichment_job,
@@ -193,7 +193,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             "total_tokens": 150,
         }
         with patch(
-            "app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage",
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
             new=AsyncMock(return_value=(payload, usage)),
         ):
             processed = await run_crawler_v2_enrichment_worker_once(
@@ -242,7 +242,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         task_id = await self._claim_only_task(job_id, attempt_count=4)
 
         with patch(
-            "app.services.crawler_v2_enrichment_worker.enrich_candidate_once_with_usage",
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
             new=AsyncMock(
                 side_effect=ValueError(
                     "HTTP 401 Authorization: Bearer top-secret\n"

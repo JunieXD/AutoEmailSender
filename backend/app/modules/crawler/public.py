@@ -34,6 +34,7 @@ from .jobs.runs import (
     mark_crawl_job_run_queued,
     mark_crawl_job_run_running,
 )
+from .jobs.runtime import recover_interrupted_crawl_jobs, run_queued_crawl_jobs_once
 from .pages.debug import (
     append_crawler_debug_event,
     append_crawler_v2_debug_event,
@@ -65,6 +66,7 @@ from .schemas import (
     CrawlRuntimeVersionDTO,
 )
 from .v2.profile_text_cache import ProfileTextCache, profile_text_cache
+from .v2.scheduler import run_crawler_v2_once
 
 __all__ = [
     "CRAWL_JOB_DELETABLE_STATUSES",
@@ -118,10 +120,13 @@ __all__ = [
     "normalize_agent_trace_event",
     "pause_faculty_crawl_job_record",
     "profile_text_cache",
+    "recover_interrupted_crawl_jobs",
     "restore_faculty_crawl_job_record",
     "resume_faculty_crawl_job_record",
     "resume_faculty_crawl_job_review_record",
     "retry_faculty_crawl_job_record",
+    "run_crawler_v2_once",
+    "run_queued_crawl_jobs_once",
     "update_faculty_crawl_candidate_record",
     "validate_safe_public_crawl_url",
 ]

@@ -863,7 +863,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
         candidate_id = self._latest_candidate_id(job_id)
 
-        with patch("app.api.crawl_jobs.enrich_selected_crawl_candidates") as legacy_enrich:
+        with patch("app.modules.crawler.api.enrich_selected_crawl_candidates") as legacy_enrich:
             response = self.client.post(
                 f"/api/crawl-jobs/{job_id}/enrich",
                 json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
@@ -976,7 +976,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
         candidate_id = self._latest_candidate_id(job_id)
 
-        from app.services.crawl_job_runtime import SelectedCandidateEnrichmentSummary
+        from app.modules.crawler.jobs.runtime import SelectedCandidateEnrichmentSummary
 
         async def fake_enrich_selected_crawl_candidates(*args: object, **kwargs: object) -> SelectedCandidateEnrichmentSummary:
             llm_profile = kwargs["llm_profile"]
@@ -989,7 +989,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             )
 
         with patch(
-            "app.api.crawl_jobs.enrich_selected_crawl_candidates",
+            "app.modules.crawler.api.enrich_selected_crawl_candidates",
             new=fake_enrich_selected_crawl_candidates,
         ):
             response = self.client.post(
@@ -1439,7 +1439,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             self.assertEqual(kwargs["candidate_ids"], [selected_id])
             return Summary()
 
-        with patch("app.api.crawl_jobs.enrich_selected_crawl_candidates", new=fake_enrich_selected):
+        with patch("app.modules.crawler.api.enrich_selected_crawl_candidates", new=fake_enrich_selected):
             response = self.client.post(
                 f"/api/crawl-jobs/{job_id}/enrich",
                 json={"candidate_ids": [selected_id]},
@@ -1540,7 +1540,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             self.assertEqual(kwargs["candidate_ids"], [selected_id])
             return Summary()
 
-        with patch("app.api.crawl_jobs.enrich_selected_crawl_candidates", new=fake_enrich_selected):
+        with patch("app.modules.crawler.api.enrich_selected_crawl_candidates", new=fake_enrich_selected):
             response = self.client.post(
                 f"/api/crawl-jobs/{job_id}/enrich",
                 json={"candidate_ids": [selected_id]},

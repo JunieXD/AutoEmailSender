@@ -14,9 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import CrawlCandidate, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, LLMProfile
-from app.services import crawl_job_runtime
+from app.modules.crawler.jobs import runtime as crawl_job_runtime
 from test.schema_database import create_schema_sqlite_database
-from app.services.crawl_job_runtime import (
+from app.modules.crawler.jobs.runtime import (
     crawl_job_has_pending_work,
     create_chunks_for_successful_page_snapshot,
     _enrich_saved_candidates,
@@ -130,16 +130,16 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(side_effect=learned_adaptations),
                 create=True,
             ) as ensure_adaptation,
             patch(
-                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                "app.modules.crawler.jobs.runtime.invalidate_endpoint_adaptation",
                 AsyncMock(return_value=True),
                 create=True,
             ) as invalidate_endpoint,
-            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+            patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run_agent),
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -175,14 +175,14 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(side_effect=learned_adaptations),
             ) as ensure_adaptation,
             patch(
-                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                "app.modules.crawler.jobs.runtime.invalidate_endpoint_adaptation",
                 AsyncMock(return_value=True),
             ) as invalidate_endpoint,
-            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+            patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run_agent),
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -209,14 +209,14 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(side_effect=adaptations),
             ) as ensure_adaptation,
             patch(
-                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                "app.modules.crawler.jobs.runtime.invalidate_endpoint_adaptation",
                 AsyncMock(return_value=True),
             ) as invalidate_endpoint,
-            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+            patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run_agent),
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -237,16 +237,16 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=adaptation),
                 create=True,
             ) as ensure_adaptation,
             patch(
-                "app.services.crawl_job_runtime.invalidate_endpoint_adaptation",
+                "app.modules.crawler.jobs.runtime.invalidate_endpoint_adaptation",
                 AsyncMock(return_value=True),
                 create=True,
             ) as invalidate_endpoint,
-            patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent),
+            patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run_agent),
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
@@ -274,7 +274,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         completion = ChatCompletionResult(content='{"name":"张三"}')
 
         with patch(
-            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            "app.modules.crawler.jobs.runtime.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(completion, _candidate_wire(), "json_schema_strict")
             ),
@@ -398,7 +398,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await session.commit()
             return {}
 
-        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run):
+        with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
         self.assertEqual(processed, 1)
@@ -421,7 +421,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         # Stub runtime adaptation so legacy tests don't hit the network.
         # This models a Chat Completions endpoint without a thinking override.
         self._llm_adaptation_patch = patch(
-            "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
             AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._llm_adaptation_patch.start()
@@ -465,7 +465,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             captured.update(kwargs)
             return {"event_type": "agent_context_budget_reached", "reason": "max_completed_chunks"}
 
-        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run_agent):
+        with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run_agent):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
         self.assertEqual(processed, 1)
@@ -509,7 +509,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -556,7 +556,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -606,7 +606,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await session.commit()
             return {"event_type": "agent_context_budget_reached", "reason": "max_completed_chunks"}
 
-        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run):
+        with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
         self.assertEqual(processed, 1)
@@ -661,7 +661,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             return {}
 
-        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run):
+        with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
         self.assertEqual(processed, 1)
@@ -743,7 +743,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             raise CrawlJobPaused()
 
-        with patch("app.services.crawl_job_runtime.run_faculty_crawler_agent", new=fake_run):
+        with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=fake_run):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
 
         self.assertEqual(processed, 1)
@@ -803,10 +803,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -854,7 +854,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -913,10 +913,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.extract_profile_candidate_with_llm",
+            "app.modules.crawler.jobs.runtime.extract_profile_candidate_with_llm",
             new=fake_extract_profile_candidate_with_llm,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -969,10 +969,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            "app.modules.crawler.jobs.runtime.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(completion, _candidate_wire(email="zhang@example.edu"), "json_object")
             ),
@@ -1000,7 +1000,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            "app.modules.crawler.jobs.runtime.request_crawler_structured_completion",
             new=AsyncMock(side_effect=LLMRuntimeError("模型返回的 JSON 结构无效")),
         ) as request_mock:
             with self.assertRaisesRegex(ValueError, "JSON 结构无效"):
@@ -1027,7 +1027,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            "app.modules.crawler.jobs.runtime.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(
                     ChatCompletionResult(content="{}"),
@@ -1077,7 +1077,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawl_job_runtime.request_crawler_structured_completion",
+            "app.modules.crawler.jobs.runtime.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(
                     ChatCompletionResult(content="{}"),
@@ -1128,7 +1128,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ):
             await run_queued_crawl_jobs_once(self.session_factory)
@@ -1169,10 +1169,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("未能从详情页识别导师信息")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.extract_profile_candidate_with_llm",
+            "app.modules.crawler.jobs.runtime.extract_profile_candidate_with_llm",
             new=fake_extract_profile_candidate_with_llm,
         ):
             await run_queued_crawl_jobs_once(self.session_factory)
@@ -1207,7 +1207,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -1242,7 +1242,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -1297,7 +1297,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -1347,7 +1347,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ):
             await run_queued_crawl_jobs_once(self.session_factory)
@@ -1436,13 +1436,13 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             processed = await run_queued_crawl_jobs_once(self.session_factory)
@@ -1523,10 +1523,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(email="wang5@example.edu")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             await _enrich_saved_candidates(
@@ -1594,10 +1594,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(title="教授")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             enriched = await _enrich_saved_candidates(
@@ -1682,16 +1682,16 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )()
 
         with patch(
-            "app.services.crawl_job_runtime.get_settings",
+            "app.modules.crawler.jobs.runtime.get_settings",
             return_value=settings_stub,
         ), patch(
-            "app.services.crawl_job_runtime.get_runtime_settings",
+            "app.modules.crawler.jobs.runtime.get_runtime_settings",
             new=AsyncMock(return_value=settings_stub),
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             enriched_count = await _enrich_saved_candidates(
@@ -1758,16 +1758,16 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )()
 
         with patch(
-            "app.services.crawl_job_runtime.get_settings",
+            "app.modules.crawler.jobs.runtime.get_settings",
             return_value=settings_stub,
         ), patch(
-            "app.services.crawl_job_runtime.get_runtime_settings",
+            "app.modules.crawler.jobs.runtime.get_runtime_settings",
             new=AsyncMock(return_value=settings_stub),
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             enriched_count = await _enrich_saved_candidates(
@@ -1842,16 +1842,16 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )()
 
         with patch(
-            "app.services.crawl_job_runtime.get_settings",
+            "app.modules.crawler.jobs.runtime.get_settings",
             return_value=settings_stub,
         ), patch(
-            "app.services.crawl_job_runtime.get_runtime_settings",
+            "app.modules.crawler.jobs.runtime.get_runtime_settings",
             new=AsyncMock(return_value=settings_stub),
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             enriched_count = await _enrich_saved_candidates(
@@ -1932,13 +1932,13 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(email="replace@other.example.edu")
 
         with patch(
-            "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+            "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
             new=fake_run,
         ), patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             await run_queued_crawl_jobs_once(self.session_factory)
@@ -1998,7 +1998,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ):
             enriched_count = await _enrich_saved_candidates(
@@ -2069,10 +2069,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload()
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             enriched_count = await _enrich_saved_candidates(
@@ -2143,10 +2143,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             result = await enrich_selected_crawl_candidates(
@@ -2213,11 +2213,11 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 new=AsyncMock(side_effect=fake_ensure),
             ) as ensure_mock,
             patch(
-                "app.services.crawl_job_runtime._enrich_selected_candidates_concurrent",
+                "app.modules.crawler.jobs.runtime._enrich_selected_candidates_concurrent",
                 new=fake_enrich,
             ),
         ):
@@ -2291,10 +2291,10 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return CandidateEnrichmentPayload(research_direction="强化学习")
 
         with patch(
-            "app.services.crawl_job_runtime.crawl_page_with_browser_fallback",
+            "app.modules.crawler.jobs.runtime.crawl_page_with_browser_fallback",
             new=fake_crawl_page_with_browser_fallback,
         ), patch(
-            "app.services.crawl_job_runtime.enrich_candidate_profile_with_llm",
+            "app.modules.crawler.jobs.runtime.enrich_candidate_profile_with_llm",
             new=fake_enrich_with_llm,
         ):
             result = await enrich_selected_crawl_candidates(
@@ -2335,7 +2335,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             raise crawl_job_runtime.CrawlJobPaused()
 
         with patch(
-            "app.services.crawl_job_runtime._enrich_candidate_work_item",
+            "app.modules.crawler.jobs.runtime._enrich_candidate_work_item",
             new=fake_enrich_candidate_work_item,
         ):
             result = await asyncio.wait_for(
@@ -2373,7 +2373,7 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("boom")
 
         with patch(
-            "app.services.crawl_job_runtime._enrich_candidate_work_item",
+            "app.modules.crawler.jobs.runtime._enrich_candidate_work_item",
             new=fake_enrich_candidate_work_item,
         ):
             result = await asyncio.wait_for(
@@ -2579,11 +2579,11 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(return_value=adaptation),
             ) as ensure_mock,
             patch(
-                "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+                "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
                 AsyncMock(return_value={"event_type": "completed"}),
             ) as run_mock,
         ):
@@ -2602,7 +2602,7 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
 
         with (
             patch(
-                "app.services.crawl_job_runtime.ensure_llm_runtime_adaptation",
+                "app.modules.crawler.jobs.runtime.ensure_llm_runtime_adaptation",
                 AsyncMock(
                     side_effect=ThinkingAdaptationFailed(
                         "已尝试全部候选 extra_body，仍无法绕开思考模式协议错。",
@@ -2611,7 +2611,7 @@ class CrawlJobThinkingAdaptationIntegrationTests(unittest.IsolatedAsyncioTestCas
                 ),
             ),
             patch(
-                "app.services.crawl_job_runtime.run_faculty_crawler_agent",
+                "app.modules.crawler.jobs.runtime.run_faculty_crawler_agent",
                 AsyncMock(),
             ) as run_mock,
         ):
@@ -2678,7 +2678,7 @@ class CrawlJobErrorMessageAdaptationTests(unittest.IsolatedAsyncioTestCase):
             pass
 
     async def test_mark_job_failed_appends_thinking_hint(self) -> None:
-        from app.services.crawl_job_runtime import _mark_job_failed
+        from app.modules.crawler.jobs.runtime import _mark_job_failed
         from app.models import CrawlJob, CrawlJobStatus
 
         job_id = await _seed_running_crawl_job_with_default_profile(self.session_factory)
@@ -2697,7 +2697,7 @@ class CrawlJobErrorMessageAdaptationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("测试连接", job.error_message)
 
     async def test_complete_running_job_appends_thinking_hint_when_no_candidates(self) -> None:
-        from app.services.crawl_job_runtime import _complete_running_job
+        from app.modules.crawler.jobs.runtime import _complete_running_job
         from app.models import CrawlJob
 
         # _derive_job_failure_message 优先返回 trace 中的候选保存失败摘要；

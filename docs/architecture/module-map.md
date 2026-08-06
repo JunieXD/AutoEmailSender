@@ -117,6 +117,12 @@ worker 的 v2 策略与路由；6B 再迁移 UI/Agent adapter、job 编排、sch
 领域外只经 `crawler.public` 使用 record use cases、投影、安全 URL 合同、debug 路径、run/token 合同
 和 profile text cache；Professor enrichment 仍拥有补全 job 生命周期，仅把抓取执行委托给 crawler。
 
+## crawler 编排子切片（第 6B 批，已完成）
+
+`crawler.api` 与 `crawler.agent` 是 UI/Agent 适配器，`jobs.runtime` 负责 job 恢复及兼容编排，`v2.scheduler`
+负责 claim/finalize，page/chunk/enrichment workers 只处理各自 work item。RuntimeManager 仅通过
+`crawler.public` 启动 worker；worker 通过域内相对导入使用 6A 的持久化、页面、LLM 与策略能力。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

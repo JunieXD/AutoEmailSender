@@ -11,7 +11,6 @@ APP_ROOT = BACKEND_ROOT / "app"
 REVIEWED_LEGACY_VIOLATIONS = {
     "app/core/agent_mutation_headers.py -> app.services.agent_mutations",
     "app/services/agent_drafts.py -> app.api.workspace_support",
-    "app/services/crawl_job_runtime.py -> app.agents.faculty_crawler_agent",
 }
 
 FORBIDDEN_LAYER_IMPORTS = {

@@ -31,14 +31,12 @@ class StructuredOutputWireContractTests(unittest.TestCase):
     def test_all_known_non_agent_json_calls_use_the_shared_adaptation(self) -> None:
         from app.modules.llm import runtime as llm_runtime
         from app.modules.crawler.v2 import (
+            chunk_worker as crawler_v2_chunk_worker,
+            enrichment_worker as crawler_v2_enrichment_worker,
             profile_extraction as crawler_v2_profile_extraction,
             routing as crawler_v2_routing,
         )
-        from app.services import (
-            crawl_job_runtime,
-            crawler_v2_chunk_worker,
-            crawler_v2_enrichment_worker,
-        )
+        from app.modules.crawler.jobs import runtime as crawl_job_runtime
 
         self.assertIn(
             "request_structured_completion(",

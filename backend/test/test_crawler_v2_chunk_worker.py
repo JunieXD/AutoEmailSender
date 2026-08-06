@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.schema_database import create_schema_sqlite_database
 
 from app.models import CrawlCandidate, CrawlCandidateEnrichmentTask, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, CrawlWorkerTokenUsage, LLMProfile
-from app.services.crawler_v2_chunk_worker import (
+from app.modules.crawler.v2.chunk_worker import (
     _derive_chunk_status,
     _resolve_effective_candidate_count,
     _validate_chunk_agent_payload,
@@ -33,7 +33,7 @@ from app.services.llm_runtime import (
 
 class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
     def test_chunk_prompt_includes_v1_quality_constraints(self) -> None:
-        from app.services.crawler_v2_chunk_worker import build_v2_chunk_prompt
+        from app.modules.crawler.v2.chunk_worker import build_v2_chunk_prompt
 
         prompt = build_v2_chunk_prompt(
             university="示例大学",
@@ -68,7 +68,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"candidates": []', prompt)
         self.assertNotIn('"discovered_urls"', prompt)
     def test_chunk_prompt_treats_markdown_profile_links_as_candidates(self) -> None:
-        from app.services.crawler_v2_chunk_worker import build_v2_chunk_prompt
+        from app.modules.crawler.v2.chunk_worker import build_v2_chunk_prompt
 
         chunk_content = "\n".join(
             f"[教师{i}](https://faculty.example.edu/t{i}/main.psp)"
@@ -151,7 +151,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_derive_chunk_status(11), CrawlPageChunkStatus.SPLIT_REQUIRED.value)
 
     def test_worker_module_does_not_expose_unused_typed_agent_payload(self) -> None:
-        import app.services.crawler_v2_chunk_worker as module
+        import app.modules.crawler.v2.chunk_worker as module
 
         self.assertFalse(hasattr(module, "V2ChunkAgentPayload"))
 
@@ -187,7 +187,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             "discovered_urls": ["https://example.edu/faculty/list2.html"],
         }
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)), patch("app.modules.crawler.v2.chunk_worker.append_crawler_v2_debug_event") as debug_mock:
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -216,7 +216,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             candidates=[],
         )
         with patch(
-            "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+            "app.modules.crawler.v2.chunk_worker.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(
                     ChatCompletionResult(content='{"candidate_count":11}'),
@@ -224,7 +224,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                     "json_schema_strict",
                 )
             ),
-        ), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+        ), patch("app.modules.crawler.v2.chunk_worker.append_crawler_v2_debug_event") as debug_mock:
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -252,7 +252,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                     _, chunk_id = await self._seed_processing_chunk()
 
                 with patch(
-                    "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+                    "app.modules.crawler.v2.chunk_worker.request_crawler_structured_completion",
                     new=AsyncMock(
                         side_effect=LLMRuntimeError(
                             f"模型返回的 JSON 结构无效: candidate_count={raw_count}"
@@ -295,7 +295,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             "discovered_urls": [],
         }
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)):
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)):
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -322,10 +322,10 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch(
-            "app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent",
+            "app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent",
             new=AsyncMock(return_value=payload),
         ), patch(
-            "app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event"
+            "app.modules.crawler.v2.chunk_worker.append_crawler_v2_debug_event"
         ) as debug_mock:
             processed = await run_crawler_v2_chunk_worker_once(
                 self.session_factory,
@@ -364,7 +364,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{Path(self.db_path).as_posix()}")
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
         self._runtime_adaptation_patch = patch(
-            "app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation",
+            "app.modules.crawler.v2.chunk_worker.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._runtime_adaptation_patch.start()
@@ -498,7 +498,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             "chunk_status": "too_many_candidates",
         }
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)):
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)):
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -536,7 +536,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_chunk_worker_marks_retryable_when_payload_shape_is_invalid(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=({"candidates": []}, None))):
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=({"candidates": []}, None))):
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -550,7 +550,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_chunk_worker_marks_retryable_when_llm_output_is_invalid_json(self) -> None:
         job_id, chunk_id = await self._seed_processing_chunk(with_profile=True)
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("invalid json"))):
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("invalid json"))):
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -565,7 +565,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_chunk_worker_failure_sets_retry_backoff(self) -> None:
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=ValueError("429 Too Many Requests"))):
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -589,7 +589,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         usage = {"input_tokens": 20, "output_tokens": 30, "cached_tokens": 10, "total_tokens": 50}
 
         raw_model_text = "模型原始输出：{\"candidate_count\":1}"
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, raw_model_text))), patch("app.services.crawler_v2_chunk_worker.append_crawler_v2_debug_event") as debug_mock:
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, raw_model_text))), patch("app.modules.crawler.v2.chunk_worker.append_crawler_v2_debug_event") as debug_mock:
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -885,7 +885,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 "discovered_urls": ["https://example.edu/faculty/list2.html"],
             }, {"input_tokens": 10, "output_tokens": 5, "cached_tokens": 0})
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=pause_job_during_llm)):
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(side_effect=pause_job_during_llm)):
             processed = await run_crawler_v2_chunk_worker_once(self.session_factory, chunk_id=chunk_id, worker_id="w1")
 
         self.assertEqual(processed, 0)
@@ -931,7 +931,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             "discovered_urls": ["https://example.edu/faculty/list2.html"],
         }
 
-        with patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)) as invoke_mock:
+        with patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=payload)) as invoke_mock:
             processed = await run_crawler_v2_chunk_worker_once(
                 self.session_factory,
                 chunk_id=chunk_id,
@@ -939,7 +939,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(processed, 1)
-        import app.services.crawler_v2_chunk_worker as module
+        import app.modules.crawler.v2.chunk_worker as module
         self.assertFalse(hasattr(module, "run_faculty_crawler_agent"))
         invoke_mock.assert_awaited_once()
         async with self.session_factory() as session:
@@ -1100,7 +1100,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+            "app.modules.crawler.v2.chunk_worker.request_crawler_structured_completion",
             new=AsyncMock(
                 return_value=(completion, wire_payload, "json_schema_strict")
             ),
@@ -1130,7 +1130,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         usage = {"input_tokens": 10, "output_tokens": 2, "cached_tokens": 0}
         adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
 
-        with patch("app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=adaptation)) as adapt_mock, patch("app.services.crawler_v2_chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, '{"candidate_count":0,"candidates":[]}'))) as invoke_mock:
+        with patch("app.modules.crawler.v2.chunk_worker.ensure_llm_runtime_adaptation", new=AsyncMock(return_value=adaptation)) as adapt_mock, patch("app.modules.crawler.v2.chunk_worker.invoke_v2_chunk_agent", new=AsyncMock(return_value=(payload, usage, '{"candidate_count":0,"candidates":[]}'))) as invoke_mock:
             processed = await run_crawler_v2_chunk_worker_once(
                 self.session_factory,
                 chunk_id=chunk_id,
@@ -1146,7 +1146,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         _, chunk_id = await self._seed_processing_chunk(with_profile=True)
 
         with patch(
-            "app.services.crawler_v2_chunk_worker.ensure_llm_runtime_adaptation",
+            "app.modules.crawler.v2.chunk_worker.ensure_llm_runtime_adaptation",
             new=AsyncMock(side_effect=RuntimeError("模型服务连接失败，请检查系统代理或网络后重试")),
         ):
             processed = await run_crawler_v2_chunk_worker_once(
@@ -1182,7 +1182,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.crawler_v2_chunk_worker.request_crawler_structured_completion",
+            "app.modules.crawler.v2.chunk_worker.request_crawler_structured_completion",
             new=AsyncMock(return_value=(completion, wire_payload, "json_object")),
         ):
             processed = await run_crawler_v2_chunk_worker_once(

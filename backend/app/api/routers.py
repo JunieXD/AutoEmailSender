@@ -9,7 +9,7 @@ from app.modules.identities.communication_groups.api import (
 )
 from app.modules.community.mentors.api import router as community_mentors_router
 from app.api.dashboard import router as dashboard_router
-from app.api.crawl_jobs import router as crawl_jobs_router
+from app.modules.crawler.api import router as crawl_jobs_router
 from app.api.diagnostics import router as diagnostics_router
 from app.api.email_tasks import router as email_tasks_router
 from app.modules.identities.profiles.api import router as identities_router

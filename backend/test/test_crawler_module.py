@@ -9,11 +9,14 @@ import unittest
 
 
 LEGACY_MODULE_OWNERS = {
+    "app.api.crawl_jobs": "app.modules.crawler.api",
+    "app.agents.faculty_crawler_agent": "app.modules.crawler.agent",
     "app.schemas.crawl_job": "app.modules.crawler.schemas",
     "app.services.crawl_job_events": "app.modules.crawler.jobs.events",
     "app.services.crawl_job_metrics": "app.modules.crawler.jobs.metrics",
     "app.services.crawl_job_records": "app.modules.crawler.jobs.records",
     "app.services.crawl_job_runs": "app.modules.crawler.jobs.runs",
+    "app.services.crawl_job_runtime": "app.modules.crawler.jobs.runtime",
     "app.services.crawler_chunk_runtime": "app.modules.crawler.pages.chunk_runtime",
     "app.services.crawler_chunking": "app.modules.crawler.pages.chunking",
     "app.services.crawler_debug": "app.modules.crawler.pages.debug",
@@ -23,11 +26,15 @@ LEGACY_MODULE_OWNERS = {
     "app.services.crawler_structured_output": "app.modules.crawler.llm.structured_output",
     "app.services.crawler_tools": "app.modules.crawler.pages.tools",
     "app.services.crawler_v2_models": "app.modules.crawler.v2.models",
+    "app.services.crawler_v2_chunk_worker": "app.modules.crawler.v2.chunk_worker",
+    "app.services.crawler_v2_enrichment_worker": "app.modules.crawler.v2.enrichment_worker",
+    "app.services.crawler_v2_page_worker": "app.modules.crawler.v2.page_worker",
     "app.services.crawler_v2_profile_extraction": "app.modules.crawler.v2.profile_extraction",
     "app.services.crawler_v2_profile_text_cache": "app.modules.crawler.v2.profile_text_cache",
     "app.services.crawler_v2_profile_url_policy": "app.modules.crawler.v2.profile_url_policy",
     "app.services.crawler_v2_retry": "app.modules.crawler.v2.retry",
     "app.services.crawler_v2_routing": "app.modules.crawler.v2.routing",
+    "app.services.crawler_v2_scheduler": "app.modules.crawler.v2.scheduler",
     "app.services.crawler_v2_token_usage": "app.modules.crawler.v2.token_usage",
     "app.services.crawler_v2_url_utils": "app.modules.crawler.v2.url_utils",
 }
@@ -82,13 +89,25 @@ class CrawlerModuleCompatibilityTest(unittest.TestCase):
             tools.validate_safe_public_crawl_url,
         )
         self.assertIs(public.profile_text_cache, profile_text_cache.profile_text_cache)
+        from app.modules.crawler.jobs import runtime
+        from app.modules.crawler.v2 import scheduler
+
+        self.assertIs(
+            public.run_queued_crawl_jobs_once,
+            runtime.run_queued_crawl_jobs_once,
+        )
+        self.assertIs(public.run_crawler_v2_once, scheduler.run_crawler_v2_once)
 
     def test_critical_legacy_modules_import_from_clean_processes(self) -> None:
         modules = (
+            "app.api.crawl_jobs",
+            "app.agents.faculty_crawler_agent",
             "app.schemas.crawl_job",
+            "app.services.crawl_job_runtime",
             "app.services.crawler_tools",
             "app.services.crawl_job_records",
             "app.services.crawler_v2_routing",
+            "app.services.crawler_v2_scheduler",
         )
         for module in modules:
             with self.subTest(module=module):
