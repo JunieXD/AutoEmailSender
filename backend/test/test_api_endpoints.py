@@ -59,7 +59,7 @@ class ApiEndpointTests(unittest.TestCase):
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._test_compose_runtime_adaptation_patch = patch(
-            "app.services.test_compose_runtime.llm_runtime.ensure_llm_runtime_adaptation",
+            "app.modules.communications.test_compose.runtime.llm_runtime.ensure_llm_runtime_adaptation",
             new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
         )
         self._task_runtime_adaptation_patch.start()
@@ -10005,7 +10005,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         with (
             patch(
-                "app.services.test_compose_runtime.llm_runtime.generate_draft_content",
+                "app.modules.communications.test_compose.runtime.llm_runtime.generate_draft_content",
                 AsyncMock(
                     return_value=self._build_draft_generation_result(
                         subject="测试主题",
@@ -10015,7 +10015,7 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "app.services.test_compose_runtime.mail_runtime.send_email_to_recipient",
+                "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
                 AsyncMock(
                     return_value=self._build_send_result(
                         message_id="<self-test@example.com>",
@@ -10100,7 +10100,7 @@ class ApiEndpointTests(unittest.TestCase):
         from app.modules.llm import runtime as llm_runtime
 
         with patch(
-            "app.services.test_compose_runtime.llm_runtime.generate_draft_content",
+            "app.modules.communications.test_compose.runtime.llm_runtime.generate_draft_content",
             AsyncMock(
                 side_effect=llm_runtime.LLMRuntimeError(
                     "模型返回的正文无效",
@@ -10135,7 +10135,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
 
         with patch(
-            "app.services.test_compose_runtime.mail_runtime.send_email_to_recipient",
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<identity-status@example.com>",
@@ -10265,7 +10265,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.client.put(f"/api/identities/{identity_id}", json=update_payload)
 
         with patch(
-            "app.services.test_compose_runtime.mail_runtime.send_email_to_recipient",
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
             AsyncMock(return_value=self._build_send_result(message_id="<test-render@example.com>", provider_payload={})),
         ) as mocked_send:
             response = self.client.post(
@@ -11360,7 +11360,7 @@ class ApiEndpointTests(unittest.TestCase):
 
     @staticmethod
     def _build_send_result(*, message_id: str, provider_payload: dict[str, str]):
-        from app.services.mail_runtime import SendMailResult
+        from app.modules.communications.transport import SendMailResult
 
         return SendMailResult(message_id=message_id, provider_payload=provider_payload)
 
@@ -11375,7 +11375,7 @@ class ApiEndpointTests(unittest.TestCase):
         sent_at: datetime | None = None,
         received_at: datetime | None = None,
     ):
-        from app.services.mail_runtime import ReceivedEmail
+        from app.modules.communications.transport import ReceivedEmail
 
         return ReceivedEmail(
             from_email=from_email,
@@ -11408,7 +11408,7 @@ class ApiEndpointTests(unittest.TestCase):
         sent_at: datetime | None = None,
         received_at: datetime | None = None,
     ):
-        from app.services.imap_message_fetcher import ImapFetchedMessage
+        from app.modules.communications.imap.fetcher import ImapFetchedMessage
 
         return ImapFetchedMessage(
             uid=1,

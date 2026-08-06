@@ -186,7 +186,7 @@ from app.schemas.token_usage import (
     TokenUsageRecordListRead,
     TokenUsageVisualizationRead,
 )
-from app.schemas.test_compose import (
+from app.modules.communications.public import (
     TestComposeDraftUpdateRequest,
     TestComposeGenerateRequest,
     TestComposeMessageSendRequest,
@@ -265,7 +265,7 @@ from app.services.operation_logs import (
     sanitize_diagnostic_text,
     sanitize_user_visible_error,
 )
-from app.services.mail_runtime import test_imap_connection, test_smtp_connection
+from app.modules.communications.public import test_imap_connection, test_smtp_connection
 from app.modules.llm.public import (
     LLMModelCatalogResult,
     LLMProbeResult,
@@ -275,7 +275,7 @@ from app.modules.llm.public import (
     probe_llm_profile,
     resolve_base_url,
 )
-from app.services.smtp_error_explanations import explain_smtp_error
+from app.modules.communications.public import explain_smtp_error
 from app.modules.crawler.public import (
     CrawlJobRecordError,
     cancel_faculty_crawl_job_record,
@@ -321,7 +321,7 @@ from app.services.task_runtime import (
     update_task_outreach_config,
     update_task_primary_material,
 )
-from app.services.test_compose_runtime import (
+from app.modules.communications.public import (
     build_test_compose_thread,
     generate_test_compose_draft,
     get_test_compose_status,

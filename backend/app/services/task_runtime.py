@@ -36,13 +36,18 @@ from app.models import (
 )
 from app.core.config import get_settings
 from app.schemas.email_task import EmailTaskApprovalRequest, EmailTaskRewriteDraftRequest, EmailTaskScheduleRequest
-from app.services import llm_runtime, mail_runtime
-from app.services.email_addresses import normalize_email_address, normalize_email_list
-from app.services.email_log_ingestion import EmailLogIngestRecord, upsert_email_log
-from app.services.imap_errors import is_account_level_throttle_error as _is_account_level_throttle_error
-from app.services.imap_errors import is_provider_throttle_error
-from app.services.imap_message_fetcher import ImapFetchedMessage
-from app.services.imap_sync_state import (
+from app.services import llm_runtime
+from app.modules.communications.public import (
+    EmailLogIngestRecord,
+    ImapFetchedMessage,
+    is_account_level_throttle_error as _is_account_level_throttle_error,
+    is_provider_throttle_error,
+    normalize_email_address,
+    normalize_email_list,
+    transport as mail_runtime,
+    upsert_email_log,
+)
+from app.modules.communications.public import (
     RECENT_V2_STRATEGY_VERSION,
     claim_next_professor_scans,
     claim_recent_v2_professor_scans,
@@ -66,7 +71,7 @@ from app.modules.campaigns.public import (
     DRAFT_GENERATION_SOURCE_TEMPLATE,
 )
 from app.modules.campaigns.public import sync_batch_task_completion
-from app.services.mail_runtime import MailAttachment, ReceivedEmail
+from app.modules.communications.public import MailAttachment, ReceivedEmail
 from app.services.match_results import (
     apply_match_result_snapshot_to_task,
     resolve_identity_match_scope,

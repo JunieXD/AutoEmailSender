@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 from app.models import IdentityProfile
-from app.services.mail_runtime import (
+from app.modules.communications.transport import (
     MailRuntimeError,
     SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE,
     discover_sent_folder,
@@ -463,7 +463,7 @@ def _build_identity() -> IdentityProfile:
 class MailRuntimeTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._history_rate_limiter_patcher = patch(
-            "app.services.mail_runtime.acquire_history_imap_command_slot_sync",
+            "app.modules.communications.transport.acquire_history_imap_command_slot_sync",
         )
         self._history_rate_limiter_patcher.start()
         self.addCleanup(self._history_rate_limiter_patcher.stop)
@@ -489,8 +489,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=client),
-            patch("app.services.mail_runtime.logger.exception") as log_exception,
+            patch("app.modules.communications.transport._open_smtp_client", return_value=client),
+            patch("app.modules.communications.transport.logger.exception") as log_exception,
         ):
             ok, message = asyncio.run(test_smtp_connection(_build_identity()))
 
@@ -508,7 +508,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             else imaplib.Commands.pop("ID", None),
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             _test_imap_connection_sync(_build_identity())
 
         self.assertEqual(client.commands[:3], ["login", "ID", "select:INBOX"])
@@ -517,14 +517,14 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_imap_connection_fails_when_inbox_select_is_rejected(self) -> None:
         client = _FakeImapClient(select_status="NO")
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             with self.assertRaisesRegex(MailRuntimeError, "IMAP 选择收件箱失败"):
                 _test_imap_connection_sync(_build_identity())
 
     def test_fetch_messages_from_sender_uses_from_search_without_rfc822(self) -> None:
         client = _FakeImapClient(search_data=b"1")
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             messages = asyncio.run(
                 fetch_inbox_messages_from_sender(_build_identity(), "teacher@example.com"),
             )
@@ -536,8 +536,8 @@ class MailRuntimeTestCase(unittest.TestCase):
 
     def test_send_email_disables_post_send_sent_folder_sync_even_when_imap_is_configured(self) -> None:
         with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.services.mail_runtime._open_imap_client") as open_imap,
+            patch("app.modules.communications.transport._open_smtp_client", return_value=_FakeSmtpClient()),
+            patch("app.modules.communications.transport._open_imap_client") as open_imap,
         ):
             result = asyncio.run(
                 send_email_to_recipient(
@@ -566,8 +566,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=client),
-            patch("app.services.mail_runtime.logger.exception") as log_exception,
+            patch("app.modules.communications.transport._open_smtp_client", return_value=client),
+            patch("app.modules.communications.transport.logger.exception") as log_exception,
         ):
             with self.assertRaisesRegex(MailRuntimeError, "授权码格式不正确"):
                 asyncio.run(
@@ -593,8 +593,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         identity.imap_password = None
 
         with (
-            patch("app.services.mail_runtime._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.services.mail_runtime._open_imap_client") as open_imap,
+            patch("app.modules.communications.transport._open_smtp_client", return_value=_FakeSmtpClient()),
+            patch("app.modules.communications.transport._open_imap_client") as open_imap,
         ):
             result = asyncio.run(
                 send_email_to_recipient(
@@ -619,7 +619,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             ],
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent Items")
@@ -633,7 +633,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             ],
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent Items")
@@ -643,7 +643,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _FakeImapClient()
         client.list = None
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent")
@@ -658,7 +658,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent Items")
@@ -668,7 +668,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_discover_sent_folder_returns_none_when_login_raises_imap_error(self) -> None:
         client = _FakeImapClient(login_error=imaplib.IMAP4.error("login failed"))
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertIsNone(folder)
@@ -680,7 +680,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             logout_error=imaplib.IMAP4.error("logout failed"),
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertIsNone(folder)
@@ -689,7 +689,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_discover_sent_folder_reraises_provider_throttle(self) -> None:
         client = _FakeImapClient(login_error=RuntimeError("Too many requests"))
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             with self.assertRaisesRegex(RuntimeError, "Too many requests"):
                 asyncio.run(discover_sent_folder(_build_identity()))
 
@@ -709,7 +709,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             max_seen_uid, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
             )
@@ -729,7 +729,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             _, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
             )
@@ -743,7 +743,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             max_seen_uid, messages, uidvalidity = asyncio.run(
                 fetch_incremental_mailbox_messages_with_uidvalidity(
                     _build_identity(),
@@ -765,7 +765,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             max_seen_uid, messages, uidvalidity = asyncio.run(
                 fetch_incremental_mailbox_messages_with_uidvalidity(
                     _build_identity(),
@@ -787,7 +787,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             max_seen_uid, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(
                     _build_identity(),
@@ -839,7 +839,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -890,7 +890,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -920,7 +920,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -953,7 +953,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -978,7 +978,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_mailbox_history_rejects_unknown_folder_role(self) -> None:
         client = _FakeImapClient()
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             with self.assertRaisesRegex(MailRuntimeError, "folder_role|unsupported|Unsupported"):
                 asyncio.run(
                     fetch_professor_history_mailbox_messages(
@@ -994,7 +994,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_incremental_fetch_reads_body_and_internaldate(self) -> None:
         client = _FakeImapClient(search_data=b"1")
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             max_seen_uid, messages = asyncio.run(
                 fetch_incremental_inbox_messages(_build_identity(), None),
             )
@@ -1010,7 +1010,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_professor_history_inbox_wrapper_still_searches_from_sender(self) -> None:
         client = _FakeImapClient(search_data=b"1")
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             messages = asyncio.run(
                 fetch_professor_history_inbox_messages(_build_identity(), "teacher@example.com"),
             )
@@ -1023,8 +1023,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _BatchHeaderImapClient(search_data=b"1 2")
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             messages = asyncio.run(
@@ -1046,8 +1046,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             messages = asyncio.run(
@@ -1066,8 +1066,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             result = asyncio.run(
@@ -1094,9 +1094,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         seen: list[tuple[str, str]] = []
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
-            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
+            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             acquire_mock.side_effect = lambda current_identity, command: seen.append(
@@ -1144,8 +1144,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 1
             result = asyncio.run(
@@ -1187,8 +1187,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 1
             result = asyncio.run(
@@ -1223,8 +1223,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             result = asyncio.run(
@@ -1268,8 +1268,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             result = asyncio.run(
@@ -1311,8 +1311,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             result = asyncio.run(
@@ -1348,8 +1348,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"888"])
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 1
             result = asyncio.run(
@@ -1375,7 +1375,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client = _FakeImapClient(search_data_by_criterion={combined: b""})
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             result = asyncio.run(
                 fetch_professor_history_mailbox_message_headers_with_command_count(
                     _build_identity(),
@@ -1404,7 +1404,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             search_data_by_criterion={criterion: b"" for criterion in fallback_criteria},
         )
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             result = asyncio.run(
                 fetch_professor_history_mailbox_message_headers_with_command_count(
                     _build_identity(),
@@ -1425,7 +1425,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             result = asyncio.run(
                 search_mailbox_uids_since_date(
                     _build_identity(),
@@ -1446,8 +1446,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         seen: list[str] = []
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
         ):
             acquire_mock.side_effect = lambda _identity, command: seen.append(command)
             result = asyncio.run(
@@ -1473,7 +1473,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_mailbox_history_header_fetch_raises_when_uid_range_fetch_fails(self) -> None:
         client = _FailingRangeHeaderImapClient()
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             with self.assertRaisesRegex(RuntimeError, "Fetch volume limit exceed"):
                 asyncio.run(
                     fetch_history_mailbox_message_headers_before_uid(
@@ -1487,7 +1487,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_mailbox_history_header_fetch_raises_when_high_water_search_fails(self) -> None:
         client = _FailingHighWaterSearchImapClient()
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             with self.assertRaisesRegex(RuntimeError, "Fetch volume limit exceed"):
                 asyncio.run(
                     fetch_history_mailbox_message_headers_before_uid(
@@ -1504,7 +1504,7 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDNEXT", [b"51"]) if code == "UIDNEXT" else ("UIDVALIDITY", [b"222"])
         identity = _build_identity()
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             result = asyncio.run(
                 fetch_history_mailbox_message_headers_before_uid(
                     identity,
@@ -1529,9 +1529,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         seen: list[str] = []
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
-            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
+            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             acquire_mock.side_effect = lambda _identity, command: seen.append(command)
@@ -1553,8 +1553,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _MultipartFallbackImapClient(search_data=b"1")
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
         ):
             _, messages = asyncio.run(fetch_incremental_inbox_messages(_build_identity(), None))
 
@@ -1564,7 +1564,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_incremental_fetch_decodes_base64_text_part_without_fetching_attachment(self) -> None:
         client = _MultipartBase64ImapClient(search_data=b"1")
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             _, messages = asyncio.run(
                 fetch_incremental_inbox_messages(_build_identity(), None),
             )
@@ -1581,7 +1581,7 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_incremental_fetch_falls_back_to_decoded_body_when_bodystructure_finds_no_text(self) -> None:
         client = _MultipartFallbackImapClient(search_data=b"1")
 
-        with patch("app.services.mail_runtime._open_imap_client", return_value=client):
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
             _, messages = asyncio.run(
                 fetch_incremental_inbox_messages(_build_identity(), None),
             )
@@ -1598,8 +1598,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _MultipartFallbackImapClient(search_data=b"1")
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             messages = asyncio.run(
@@ -1623,9 +1623,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         seen: list[str] = []
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
-            patch("app.services.mail_runtime.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
+            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             acquire_mock.side_effect = lambda _identity, command: seen.append(command)
@@ -1650,8 +1650,8 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _DuplicateTextPartImapClient(search_data=b"1")
 
         with (
-            patch("app.services.mail_runtime._open_imap_client", return_value=client),
-            patch("app.services.mail_runtime.get_settings") as settings_mock,
+            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             messages = asyncio.run(

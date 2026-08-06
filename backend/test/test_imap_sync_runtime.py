@@ -23,13 +23,13 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services import imap_sync_state
-from app.services.imap_message_fetcher import ImapFetchedMessage
-from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache
-from app.services.imap_sync_state import ensure_professor_scan_states
-from app.services.imap_sync_state import ensure_professor_scan_states_if_needed
-from app.services.imap_sync_state import ensure_recent_history_professor_scan_states
-from app.services.mail_runtime import (
+import app.modules.communications.imap.state as imap_sync_state
+from app.modules.communications.imap.fetcher import ImapFetchedMessage
+from app.modules.communications.imap.state import clear_identity_sent_folder_discovery_cache
+from app.modules.communications.imap.state import ensure_professor_scan_states
+from app.modules.communications.imap.state import ensure_professor_scan_states_if_needed
+from app.modules.communications.imap.state import ensure_recent_history_professor_scan_states
+from app.modules.communications.transport import (
     ImapHistoryHeaderFetchResult,
     ImapMailboxHistoryHeaderFetchResult,
     ImapMailboxUidSearchResult,
@@ -1196,7 +1196,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             await self._mark_mailbox_history_completed(1, folder_role="sent", folder="Sent")
 
             with patch(
-                "app.services.imap_sync_state.ensure_professor_scan_states",
+                "app.modules.communications.imap.state.ensure_professor_scan_states",
                 new=AsyncMock(side_effect=RuntimeError("boom")),
             ):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
@@ -1391,7 +1391,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             await self._create_professor_task(identity_id, "other@example.edu")
             await ensure_professor_scan_states(self.session_factory)
 
-            from app.services.imap_sync_state import claim_next_professor_scan
+            from app.modules.communications.imap.state import claim_next_professor_scan
 
             claimed = await claim_next_professor_scan(self.session_factory, identity_id)
             self.assertIsNotNone(claimed)
@@ -1434,7 +1434,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 from_email="stale@example.edu",
             )
             with (
-                patch("app.services.imap_sync_state.utc_now", return_value=datetime(2026, 6, 30, tzinfo=UTC)),
+                patch("app.modules.communications.imap.state.utc_now", return_value=datetime(2026, 6, 30, tzinfo=UTC)),
                 patch(
                     "app.services.task_runtime.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(return_value=ImapHistoryHeaderFetchResult([full_message], 1)),

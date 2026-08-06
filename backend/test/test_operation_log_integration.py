@@ -392,7 +392,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
             },
         )
         with patch(
-            "app.services.test_compose_runtime.mail_runtime.send_email_to_recipient",
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
             AsyncMock(return_value=self._build_send_result()),
         ):
             send_response = self.client.post(
@@ -499,7 +499,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def _build_send_result():
-        from app.services.mail_runtime import SendMailResult
+        from app.modules.communications.transport import SendMailResult
 
         return SendMailResult(message_id="<operation-log-test@example.com>", provider_payload={})
 

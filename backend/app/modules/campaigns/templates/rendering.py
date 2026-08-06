@@ -17,7 +17,7 @@ from app.services.html_text import html_to_text as convert_html_to_text
 from app.services.html_text import normalize_plain_text
 from app.models import IdentityProfile, Professor
 from app.services.file_storage import extract_text_from_document
-from app.services.mail_runtime import text_to_html
+from app.modules.communications.public import text_to_html
 from app.services.rich_text import normalize_email_html, text_to_email_html
 
 

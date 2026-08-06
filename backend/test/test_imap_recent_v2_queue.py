@@ -20,8 +20,8 @@ from app.models import (
     ImapProfessorSyncState,
     Professor,
 )
-from app.services.imap_message_fetcher import ImapFetchedMessage
-from app.services.imap_sync_state import (
+from app.modules.communications.imap.fetcher import ImapFetchedMessage
+from app.modules.communications.imap.state import (
     RECENT_V2_OBSOLETE_STRATEGY_VERSION,
     RECENT_V2_STRATEGY_VERSION,
     claim_recent_v2_professor_scans,
@@ -30,7 +30,7 @@ from app.services.imap_sync_state import (
     mark_recent_v2_batch_completed,
     prepare_recent_v2_bulk_sent_batch,
 )
-from app.services.mail_runtime import (
+from app.modules.communications.transport import (
     ImapHistoryHeaderFetchResult,
     ImapMailboxUidSearchResult,
 )
@@ -116,7 +116,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 identity_id = identity.id
                 professor_id = professor.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -143,7 +143,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 version_after_profile_update = professor.communication_sync_version
 
             with patch(
-                "app.services.imap_sync_state.utc_now",
+                "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(minutes=1),
             ):
                 profile_touched = await ensure_recent_v2_professor_scan_states(
@@ -167,7 +167,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.imap_sync_state.utc_now",
+                "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(minutes=2),
             ):
                 archived_touched = await ensure_recent_v2_professor_scan_states(
@@ -189,7 +189,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 restored_version = professor.communication_sync_version
 
             with patch(
-                "app.services.imap_sync_state.utc_now",
+                "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(minutes=3),
             ):
                 restored_touched = await ensure_recent_v2_professor_scan_states(
@@ -248,7 +248,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 first_identity_id = first_identity.id
                 second_identity_id = second_identity.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 first_touched = await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=first_identity_id,
@@ -309,7 +309,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -326,7 +326,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 )
 
             with patch(
-                "app.services.imap_sync_state.utc_now",
+                "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(seconds=5),
             ):
                 touched_again = await ensure_recent_v2_professor_scan_states(
@@ -350,7 +350,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 )
 
             with patch(
-                "app.services.imap_sync_state.utc_now",
+                "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(seconds=10),
             ):
                 due_claims = await claim_recent_v2_professor_scans(
@@ -402,7 +402,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 summary = await get_recent_v2_due_summary(self.session_factory, identity_id)
                 claims = await claim_recent_v2_professor_scans(
                     self.session_factory,
@@ -444,7 +444,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 identity_id = identity.id
                 legacy_state_id = legacy_state.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 touched = await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -511,7 +511,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 identity_id = identity.id
                 old_sent_state_id = old_sent_state.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -552,7 +552,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            with patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME):
+            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -576,7 +576,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
 
             with patch(
-                "app.services.imap_sync_state.utc_now",
+                "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(seconds=1),
             ):
                 await ensure_recent_v2_professor_scan_states(
@@ -694,7 +694,7 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
             with (
                 patch("app.services.task_runtime.get_settings", return_value=settings),
                 patch("app.services.task_runtime.utc_now", return_value=BASE_TIME),
-                patch("app.services.imap_sync_state.utc_now", return_value=BASE_TIME),
+                patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME),
                 patch(
                     "app.services.task_runtime.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),

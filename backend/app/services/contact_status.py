@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus
-from app.services.communication_events import load_communication_events
+from app.modules.communications.public import load_communication_events
 
 
 @dataclass(frozen=True)

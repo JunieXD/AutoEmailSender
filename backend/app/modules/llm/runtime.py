@@ -23,7 +23,7 @@ from app.core.config import get_settings
 from app.models import IdentityMaterial, IdentityProfile, LLMProfile, Professor
 from app.modules.campaigns.public import build_template_context
 from app.services.html_text import html_to_text
-from app.services.mail_runtime import text_to_html
+from app.modules.communications.public import text_to_html
 from app.services.rich_text import (
     normalize_email_html,
     render_rich_text_document,

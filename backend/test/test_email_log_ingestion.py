@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Base, EmailDirection, EmailLog
-from app.services.email_log_ingestion import EmailLogIngestRecord, upsert_email_log
+from app.modules.communications.ingestion import EmailLogIngestRecord, upsert_email_log
 
 
 class EmailLogIngestionTestCase(unittest.TestCase):

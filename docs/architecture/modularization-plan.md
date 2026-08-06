@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，第 7A 批已完成，第 7B 批待开始
+状态：已确认，第 7A 批已完成，第 7B 批执行中
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -163,7 +163,7 @@ cli/src/auto_email_sender_cli/
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 已完成（4A～4D） | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 已完成 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 已完成 | worker 调度、Agent 适配器和持久化边界明确 |
-| 7 | `campaigns`、`communications`、`workspace` | 执行中（7A 已完成） | 任务、草稿、发送、收信的依赖方向单向化 |
+| 7 | `campaigns`、`communications`、`workspace` | 执行中（7B） | 任务、草稿、发送、收信的依赖方向单向化 |
 | 8 | Desktop 进程模块化与 IPC 合同收敛 | 待开始 | main/preload 薄入口、类型单一来源 |
 | 9 | 测试拓扑、脚本分类、文档归档和确认后的遗留清理 | 待开始 | 构建与发布路径全部验证 |
 
@@ -1148,3 +1148,91 @@ backend/app/modules/campaigns/
 停止点：campaign 活动、模板与纯 batch 规则已归位。第 7B 只迁移 SMTP/IMAP、邮件历史、回复检测与
 delivery runtime；不迁移单导师 workspace 审核/重写状态机。第 7C 在 communications 公共入口稳定后，
 拆分 `task_runtime.py`，再收口 batch UI adapter 与 batch draft worker。
+
+### 第 7B 批：`communications` 传输、同步与邮件历史（执行中）
+
+开始日期：2026-08-06
+
+计划目标拓扑：
+
+```text
+backend/app/modules/communications/
+├── addresses.py
+├── events.py
+├── ingestion.py
+├── transport.py
+├── smtp_errors.py
+├── public.py
+├── imap/
+│   ├── errors.py
+│   ├── fetcher.py
+│   ├── rate_limiter.py
+│   ├── state.py
+│   └── sync.py
+└── test_compose/
+    ├── api.py
+    ├── schemas.py
+    └── runtime.py
+```
+
+计划分段：
+
+- 7B1 迁移 email address 规范化、EmailLog 幂等入库/事件折叠、SMTP/IMAP transport、错误分类、
+  message fetcher、rate limiter、sync-state 持久化，以及 test-compose DTO/UI/application runtime。
+- 7B2 从 `services/task_runtime.py` 提取 IMAP 增量/历史同步、限流/锁、sent-folder 发现、收发消息
+  关联、回复检测与 EmailLog 写入闭包到 `communications.imap.sync`；旧 task runtime 转发这些公开入口，
+  workspace/Agent/RuntimeManager 改经 `communications.public` 调用。
+
+计划范围：
+
+- 组合根直接注册 test-compose router；identities 连接测试、Agent API、campaign template rendering、
+  LLM、reporting、workspace 投影和 runtime workers 只经 `communications.public` 使用通信能力。
+- 已迁移的旧 API/schema/service 路径保留纯 re-export，并增加完整公共符号对象一致性、公共门面与
+  独立进程导入测试；生产代码对这些旧路径的引用在本批结束时归零。
+- `api/email_tasks.py`、`schemas/email_task.py` 与 task runtime 中的匹配、草稿、审核、重写、
+  手动继续和跟进状态机属于 workspace，留到 7C；BatchTask/EmailTask/EmailLog/IMAP ORM 仍留在
+  `app.models` registry。
+- 发送队列对 campaign/workspace task 状态的编排在 7C 与 workspace 动作一起收口；7B 的 transport
+  只拥有 SMTP 构造/发送和 IMAP 读取，不能反向调用 workspace。
+
+本批不变量：
+
+- SMTP/IMAP 连接测试、TLS/login、邮件头/附件/MIME、发件人名称、错误分类与用户可见说明不变。
+- IMAP folder 发现、UID/UIDVALIDITY、命令预算/限流、recent-v2/targeted history、锁、throttle、
+  去重指纹、sent/received 关联、回复检测和事务时序不变。
+- test-compose UI/Agent 路径、DTO、草稿/发送快照、模板渲染、材料选择、操作日志与确认幂等语义不变。
+- 不修改 ORM、Alembic、外部 HTTP/Agent/CLI/Frontend 合同、worker 间隔/并发、依赖或锁文件；
+  不新增门禁例外，不在迁移中重写约 4000 行邮件协议和同步算法。
+
+计划验证：mail runtime/MIME/SMTP/IMAP、fetcher/rate limiter/sync state、EmailLog ingestion/events、
+recent/history/incremental/reply sync、test-compose UI/Agent/change plans、identities/workspace/reporting
+协作、架构/API import/兼容门禁、相关 CLI/Frontend 合同，以及 Backend 完整 unittest；结束前同步
+CodeGraph，审计已迁移旧路径、跨域依赖和 `git diff --check`。
+
+#### 7B1：communications 基础与 test-compose（已完成）
+
+完成日期：2026-08-06
+
+实际结果：
+
+- email address、EmailLog ingestion/event projection、SMTP/IMAP transport、错误说明、IMAP fetch/rate/state
+  与 test-compose DTO/UI/runtime 已按 `imap`、`test_compose` 子包归位；组合根直接注册新 router。
+- Agent、identities、campaigns、LLM、workspace 投影、reporting 和 legacy task runtime 已改经
+  `communications.public` 协作；test-compose DTO/用例采用按需导出，基础 transport 调用不会连带
+  加载 identities/campaigns/LLM 高层模块。
+- 12 个旧 API/schema/service 路径只保留纯 re-export；测试中的私有 helper/module patch 全部指向
+  新 owner，生产旧路径审计为零，未新增架构门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 门禁与兼容 | 架构/API import boundary、12 类完整公共符号、门面与独立导入 | 7 tests passed |
+| Backend 定向 | mail/MIME、IMAP fetch/rate/state/recent/history、ingestion、test-compose/Agent/log | 295 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1741 tests；OK（1 skipped）；packaged self-check 通过 |
+| CLI 合同 | Agent CLI 与 client | 81 tests passed |
+| Frontend 合同 | TestCompose、Profile onboarding/template、编辑器与 settings | 8 files，66 tests passed |
+| Repository | CodeGraph 同步；生产旧路径审计；`git diff --check` | 通过 |
+
+7B2 下一步：只提取 legacy task runtime 中的 IMAP 同步/回复识别闭包并保留原入口对象兼容；不提前
+迁移 email-task 的 workspace 状态机或发送队列编排。

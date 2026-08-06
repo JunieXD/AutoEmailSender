@@ -16,7 +16,7 @@ from app.models import (
     ImapProfessorSyncState,
 )
 from app.core.config import get_settings
-from app.services.imap_sync_state import claim_next_mailbox_history_scans, reset_mailbox_history_scans_to_pending
+from app.modules.communications.imap.state import claim_next_mailbox_history_scans, reset_mailbox_history_scans_to_pending
 
 
 class ImapSyncModelsTestCase(unittest.TestCase):

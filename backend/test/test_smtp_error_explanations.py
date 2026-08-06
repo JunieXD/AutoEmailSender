@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.smtp_error_explanations import explain_smtp_error
+from app.modules.communications.smtp_errors import explain_smtp_error
 
 
 class SmtpErrorExplanationTests(unittest.TestCase):

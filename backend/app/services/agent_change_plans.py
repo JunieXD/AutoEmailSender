@@ -55,7 +55,7 @@ from app.modules.professors.public import (
     prepare_professor_import_snapshot,
     prepare_professor_tag_delete_snapshot,
 )
-from app.schemas.test_compose import TestComposeMessageSendRequest
+from app.modules.communications.public import TestComposeMessageSendRequest
 from app.services.agent_mutations import (
     fingerprint,
     normalize_idempotency_key,
@@ -94,7 +94,7 @@ from app.modules.campaigns.public import (
     prepare_campaign_resume_snapshot,
     prepare_campaign_send_snapshot,
 )
-from app.services.test_compose_runtime import (
+from app.modules.communications.public import (
     prepare_test_compose_send_snapshot,
     send_test_compose_message,
 )

@@ -35,7 +35,7 @@ from app.schemas.dashboard import (
     DashboardSchoolFilterSchoolRead,
 )
 from app.services.contact_status import build_contact_status_by_professor
-from app.services.communication_events import CommunicationEvent, load_communication_events
+from app.modules.communications.public import CommunicationEvent, load_communication_events
 from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.match_results import (
     MatchResultView,

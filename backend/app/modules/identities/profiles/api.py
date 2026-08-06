@@ -37,8 +37,11 @@ from app.services.file_storage import delete_file
 from ..communication_groups.public import (
     cleanup_communication_group_after_identity_delete,
 )
-from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache_in_session
-from app.services.mail_runtime import test_imap_connection, test_smtp_connection
+from app.modules.communications.public import (
+    clear_identity_sent_folder_discovery_cache_in_session,
+    test_imap_connection,
+    test_smtp_connection,
+)
 from app.services.operation_logs import record_operation_log
 from app.modules.campaigns.public import (
     apply_template_to_identity_legacy_fields,
@@ -54,7 +57,7 @@ from app.modules.campaigns.public import (
     OUTREACH_GENERATION_MODE_TEMPLATE,
     import_outreach_template_file,
 )
-from app.services.smtp_error_explanations import explain_smtp_error
+from app.modules.communications.public import explain_smtp_error
 
 from .serializer import serialize_identity
 

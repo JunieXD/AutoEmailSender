@@ -64,6 +64,16 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   `app.schemas.outreach_template` 及对应 `app.services.agent_campaigns|batch_*|outreach_*`
   路径仅作兼容 re-export；新生产代码不得引用。
 
+### 已落地的 communications 领域入口
+
+- 领域外代码只能经 `app.modules.communications.public` 使用邮件传输、IMAP 状态、历史投影与
+  test-compose 能力；`test_compose.api` 只由组合根注册。
+- test-compose DTO/application 用例按需导出，SMTP/IMAP 基础调用不得隐式加载 identities、
+  campaigns 或 LLM 高层模块。
+- 旧 `app.api.test_compose`、`app.schemas.test_compose` 及
+  `app.services.mail_runtime|imap_*|email_*|communication_events|smtp_error_explanations|test_compose_runtime`
+  仅作兼容 re-export；新生产代码不得引用。
+
 ## 3. Frontend 渐进门禁
 
 目标依赖方向：

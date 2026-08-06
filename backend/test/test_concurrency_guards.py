@@ -753,7 +753,7 @@ class ConcurrencyGuardTests(unittest.TestCase):
         message_id: str,
         in_reply_to: str,
     ):
-        from app.services.mail_runtime import ReceivedEmail
+        from app.modules.communications.transport import ReceivedEmail
 
         return ReceivedEmail(
             from_email=from_email,

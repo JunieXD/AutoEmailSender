@@ -3615,7 +3615,7 @@ class AgentApiTests(unittest.TestCase):
                 provider_payload={"accepted": True},
             ),
         )
-        with patch("app.services.mail_runtime.send_email", send_mock):
+        with patch("app.modules.communications.transport.send_email", send_mock):
             first = self.client.post(
                 f"/api/agent/v1/plans/{plan_id}/execute",
                 headers=self._agent_headers(),
@@ -4291,7 +4291,7 @@ class AgentApiTests(unittest.TestCase):
             provider_payload={"recipient": "self-test@example.com"},
         )
         with patch(
-            "app.services.test_compose_runtime.mail_runtime.send_email_to_recipient",
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
             AsyncMock(return_value=send_result),
         ) as mocked_send:
             executed = self.client.post(

@@ -23,7 +23,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services.mail_runtime import SendMailResult
+from app.modules.communications.transport import SendMailResult
 from test.schema_database import create_schema_sqlite_database
 from app.schemas.email_task import EmailTaskApprovalRequest
 from app.services.task_runtime import (

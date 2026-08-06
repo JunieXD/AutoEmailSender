@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import unittest
 
-from app.services.imap_rate_limiter import HistoryImapRateLimiter
+from app.modules.communications.imap.rate_limiter import HistoryImapRateLimiter
 
 
 class HistoryImapRateLimiterTest(unittest.TestCase):

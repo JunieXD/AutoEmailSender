@@ -5,7 +5,7 @@ from datetime import date
 from email.message import EmailMessage
 from typing import cast
 
-from app.services.imap_message_fetcher import (
+from app.modules.communications.imap.fetcher import (
     fetch_message_headers_by_uid,
     fetch_text_part_sections_by_uid,
     parse_text_parts_from_message,

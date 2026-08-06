@@ -70,7 +70,7 @@ from app.modules.campaigns.public import (
     get_outreach_template_defaults_validation_error,
     resolve_outreach_template_config,
 )
-from app.services.smtp_error_explanations import explain_smtp_error
+from app.modules.communications.public import explain_smtp_error
 from app.services import llm_runtime
 from app.services.task_runtime import (
     BatchDraftApprovalConflictError,
