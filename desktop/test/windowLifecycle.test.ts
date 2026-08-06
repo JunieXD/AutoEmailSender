@@ -3,7 +3,7 @@ import {
   restoreExistingWindow,
   shouldHideWindowOnClose,
   startWindowCreationOnce,
-} from "../src/windowLifecycle.js";
+} from "../src/main/shell/window-lifecycle.js";
 
 describe("desktop window lifecycle", () => {
   it("hides the window instead of quitting on normal close", () => {

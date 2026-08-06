@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createExternalUrlService } from "../src/externalUrlService.js";
+import { createExternalUrlService } from "../src/main/shell/external-url.js";
 
 describe("desktop external url service", () => {
   it("opens http urls with the system default browser", async () => {

@@ -8,7 +8,7 @@ import {
   resolveDevelopmentCliExecutable,
   runDevelopmentCliBuild,
   type DevelopmentCliBuildInput,
-} from "../src/prepareDevCli.js";
+} from "../src/main/agent-support/prepare-dev-cli.js";
 
 const temporaryDirectories: string[] = [];
 

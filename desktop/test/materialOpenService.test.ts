@@ -5,7 +5,7 @@ import {
   MATERIAL_OPEN_COPY_TTL_MS,
   parseMaterialId,
   sanitizeCopyFilename,
-} from "../src/materialOpenService.js";
+} from "../src/main/files/material-open.js";
 
 const okResponse = (body: string, headers: Record<string, string> = {}) =>
   new Response(Readable.toWeb(Readable.from([body])) as ReadableStream, {

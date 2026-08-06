@@ -15,7 +15,7 @@ import {
   stopBackend,
   waitForHealth,
   waitForStartupStatus,
-} from "../src/backend.js";
+} from "../src/main/backend/service.js";
 
 type StartupErrorDetailFixture = {
   code: "DATABASE_REQUIRES_NEWER_APP";
@@ -269,7 +269,7 @@ describe("desktop backend helpers", () => {
 
   it("uses a 60 second default health check timeout", async () => {
     const source = await import("node:fs/promises").then((fs) =>
-      fs.readFile(path.resolve("src", "backend.ts"), "utf8"),
+      fs.readFile(path.resolve("src", "main", "backend", "service.ts"), "utf8"),
     );
 
     expect(source).toContain("const timeoutMs = options.timeoutMs ?? 60_000;");

@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { NativeImage } from "electron";
 import { describe, expect, it, vi } from "vitest";
-import { createTrayIcon, getWindowIconPath } from "../src/windowIcon.js";
+import { createTrayIcon, getWindowIconPath } from "../src/main/shell/window-icon.js";
 
 describe("desktop window icon", () => {
   it("uses the packaged app icon", () => {

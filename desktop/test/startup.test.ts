@@ -7,7 +7,7 @@ import {
   isLaunchedAtStartup,
   setStartupAtLoginEnabled,
   type StartupAtLoginInput,
-} from "../src/startup.js";
+} from "../src/main/shell/startup-at-login.js";
 
 const executablePath = "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe";
 const startupCommand = `"${executablePath}" --startup`;

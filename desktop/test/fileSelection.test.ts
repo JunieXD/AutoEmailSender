@@ -4,7 +4,7 @@ import {
   buildProfessorImportDialogOptions,
   COMMUNITY_SHARE_MAX_BYTES,
   createCommunityShareSaveService,
-} from "../src/fileSelection.js";
+} from "../src/main/files/import-export.js";
 
 describe("desktop file selection", () => {
   it("opens professor imports with an open-file dialog", () => {

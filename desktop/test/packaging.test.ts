@@ -25,7 +25,7 @@ describe("desktop development", () => {
     };
 
     expect(packageJson.scripts.dev).toBe(
-      "npm run build && node dist/src/prepareDevCli.js && electron . --dev",
+      "npm run build && node dist/src/main/agent-support/prepare-dev-cli.js && electron . --dev",
     );
   });
 });

@@ -129,10 +129,14 @@ app -> pages -> widgets -> features -> entities -> shared
 ## 5. Desktop 门禁
 
 - 除薄入口外，源码不能导入 `main.ts` 或 `preload.ts`。
-- `preload.ts` 只能依赖 IPC 合同，不得导入 main-process 服务。
+- `preload.ts` 只能依赖 `preload/` 实现和 IPC 合同；preload 实现不得导入 main-process 服务。
 - main-process 服务不能导入 preload。
 - `src` 内部静态 import 图不得出现循环。
-- IPC channel、请求和响应类型最终必须来自单一合同源。
+- renderer 可见 DTO/bridge 只能来自 `contracts/desktop-ipc.d.ts`；Desktop 内部 backend 类型由
+  `main/backend/types.ts` 拥有，不得重新混入跨进程合同。
+- IPC channel 只能来自 `src/contracts/channels.ts`，main/preload/service 不得内联业务 channel。
+- main-process service 必须位于 `main/{backend,agent-support,updates,files,shell}`；根同名模块仅作兼容
+  re-export，生产代码和普通测试不得引用。兼容入口由第 9 批统一审计清理。
 
 ## 6. 门禁实现要求
 

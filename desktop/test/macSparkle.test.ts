@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { isSparkleBridge, resolveSparkleBridgePath } from "../src/macSparkle.js";
+import { isSparkleBridge, resolveSparkleBridgePath } from "../src/main/updates/sparkle.js";
 
 describe("macOS Sparkle bridge", () => {
   it("resolves the native addon from Resources in packaged apps", () => {
@@ -31,7 +31,10 @@ describe("macOS Sparkle bridge", () => {
   });
 
   it("loads the addon lazily through CommonJS interop", () => {
-    const source = readFileSync(path.resolve("src", "macSparkle.ts"), "utf8");
+    const source = readFileSync(
+      path.resolve("src", "main", "updates", "sparkle.ts"),
+      "utf8",
+    );
 
     expect(source).toContain("createRequire(import.meta.url)");
     expect(source.indexOf("function getSparkleBridge")).toBeGreaterThan(source.indexOf("let loadedBridge"));

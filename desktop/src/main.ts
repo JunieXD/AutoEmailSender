@@ -1,38 +1,40 @@
 import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { getFrontendIndexPath, startBackend } from "./backend.js";
+import type {
+  DesktopAgentIntegrationId as AgentIntegrationId,
+  DesktopAgentSupportStatus as AgentSupportStatus,
+  DesktopBackendConnection as BackendConnection,
+  DesktopBackendStatus as BackendStatus,
+  DesktopStartupAtLoginStatus as StartupAtLoginStatus,
+} from "../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "./contracts/channels.js";
+import { getFrontendIndexPath, startBackend } from "./main/backend/service.js";
+import type {
+  BackendController,
+  BackendExit,
+} from "./main/backend/types.js";
 import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
   cleanupAgentRuntimeDescriptor,
   writeAgentRuntimeDescriptor,
-} from "./agentRuntime.js";
-import { createAgentSupportService } from "./agentSupportService.js";
-import { registerExternalUrlIpc } from "./externalUrlService.js";
+} from "./main/agent-support/runtime.js";
+import { createAgentSupportService } from "./main/agent-support/service.js";
+import { registerExternalUrlIpc } from "./main/shell/external-url.js";
 import {
   registerCommunityShareSaveIpc,
   registerFileSelectionIpc,
-} from "./fileSelection.js";
-import { registerMaterialOpenIpc } from "./materialOpenService.js";
-import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "./startup.js";
-import { bindTrayInteractions } from "./trayController.js";
-import { checkForUpdatesOnStartup, registerUpdateIpc } from "./updates.js";
+} from "./main/files/import-export.js";
+import { registerMaterialOpenIpc } from "./main/files/material-open.js";
+import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "./main/shell/startup-at-login.js";
+import { bindTrayInteractions } from "./main/shell/tray.js";
+import { checkForUpdatesOnStartup, registerUpdateIpc } from "./main/updates/service.js";
 import {
   restoreExistingWindow,
   shouldHideWindowOnClose,
   startWindowCreationOnce,
-} from "./windowLifecycle.js";
-import { createTrayIcon, getWindowIconPath } from "./windowIcon.js";
-import type {
-  BackendConnection,
-  BackendController,
-  BackendExit,
-  BackendStatus,
-  AgentIntegrationId,
-  AgentSupportStatus,
-  StartupAtLoginStatus,
-} from "./types.js";
+} from "./main/shell/window-lifecycle.js";
+import { createTrayIcon, getWindowIconPath } from "./main/shell/window-icon.js";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;

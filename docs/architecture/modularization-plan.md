@@ -1445,7 +1445,9 @@ desktop/src/
   只保留类型转发。23 个 IPC/event channel 已集中到 `desktop/src/contracts/channels.ts`，main、preload
   与现有 handler 不再内联业务 channel 字符串。preload 实现已迁入 `preload/bridge.ts`，根入口只安装
   bridge；两个进程的 TypeScript 编译仍分别输出原有格式和路径。
-- 8B 待执行：迁移 main-process services 及其测试 owner，保留根路径兼容入口并同步开发 CLI 路径。
+- 8B 已完成：13 个 main-process service 已按 backend、agent-support、updates、files、shell 归位；
+  生产入口与测试直接使用 owner，旧根路径仅保留纯 re-export。内部 backend 类型已与跨进程 DTO
+  分离，开发 CLI 构建/运行入口已同步到 agent-support owner。
 - 8C 待执行：提取 IPC 注册与 application bootstrap，增强 Desktop 分层门禁并完成跨端验收。
 
 8A 验证结果：
@@ -1456,3 +1458,13 @@ desktop/src/
 | Desktop 完整套件 | source Vitest；typecheck；production build | 16 files，127 tests passed；typecheck/build 通过 |
 | Frontend 完整套件 | lint；Vitest；production build | lint/build 通过；115 files，899 tests passed |
 | Repository | channel 旁路审计；共享合同平台依赖审计；CodeGraph；`git diff --check` | 通过 |
+
+8B 验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Desktop service 定向 | 13 个 service、import boundary、packaging | 15 files，124 tests passed |
+| Desktop 兼容门禁 | 13 个根 shim AST 纯度与 owner 对象身份 | 2 tests passed |
+| Desktop 完整套件 | source Vitest；typecheck；production build | 17 files，129 tests passed；typecheck/build 通过 |
+| 构建产物 | main、preload、agent-support 开发 CLI owner | 目标文件均存在；main/preload 路径未变 |
+| Repository | 生产旧根路径审计；`git diff --check` | 通过 |

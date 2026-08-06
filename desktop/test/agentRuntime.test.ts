@@ -8,7 +8,7 @@ import {
   getAgentRuntimeFilePath,
   writeAgentRuntimeDescriptor,
   type AgentRuntimeDescriptor,
-} from "../src/agentRuntime.js";
+} from "../src/main/agent-support/runtime.js";
 
 const temporaryDirectories: string[] = [];
 

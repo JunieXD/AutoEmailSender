@@ -172,6 +172,16 @@ email-task UI adapters。`workspace.public` 是 Agent、campaign adapter/worker 
 
 迁移时禁止仅因“多个地方使用”就把领域代码放入 `shared`。只有在调用方来自多个领域且代码本身没有业务术语时，才可进入 `shared`。
 
+## Desktop main-process 模块（第 8B 批，已完成）
+
+`desktop/src/main/` 已按运行职责分为 `backend`、`agent-support`、`updates`、`files` 与 `shell`。
+backend 进程控制与内部类型同目录；Agent runtime descriptor、安装服务和开发 CLI 准备器归
+`agent-support`；更新与 Sparkle bridge 归 `updates`；导入/分享与材料打开归 `files`；外部 URL、
+自启动、托盘和窗口生命周期归 `shell`。
+
+根目录同名 service 仅作纯 re-export，生产入口与测试直接使用 owner。Electron 的 `main.ts`、
+`preload.ts` 构建入口和打包资源路径保持不变；第 8C 继续提取 bootstrap 与 IPC 注册。
+
 ## 跨进程边界
 
 ```text

@@ -11,7 +11,7 @@ import {
   removePathEntry,
   resolveAgentSupportPaths,
   type AgentSupportServiceOptions,
-} from "../src/agentSupportService.js";
+} from "../src/main/agent-support/service.js";
 
 const temporaryDirectories: string[] = [];
 

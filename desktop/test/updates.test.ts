@@ -12,7 +12,10 @@ import {
   retryUpdateCheckOnce,
   shouldOfferFullDownload,
   supportsElectronUpdaterActions,
-} from "../src/updates.js";
+} from "../src/main/updates/service.js";
+
+const readUpdateServiceSource = () =>
+  readFileSync(path.resolve("src", "main", "updates", "service.ts"), "utf8");
 
 describe("update helpers", () => {
   it("rounds download progress to one decimal place", () => {
@@ -133,7 +136,7 @@ describe("update helpers", () => {
   });
 
   it("loads electron-updater through CommonJS interop for packaged ESM runtime", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("createRequire");
     expect(source).not.toContain('import { autoUpdater } from "electron-updater"');
@@ -153,7 +156,7 @@ describe("update helpers", () => {
   });
 
   it("uses cancellation tokens for switchable update downloads", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("CancellationToken");
     expect(source).toContain("currentDownloadToken");
@@ -161,7 +164,7 @@ describe("update helpers", () => {
   });
 
   it("supports full download mode through electron-updater", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("disableDifferentialDownload");
     expect(source).toContain("startUpdateDownload");
@@ -169,14 +172,14 @@ describe("update helpers", () => {
   });
 
   it("guards electron-updater IPC actions on Sparkle platforms", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("function isAutomaticUpdateActionSupported()");
     expect(source.match(/if \(!isAutomaticUpdateActionSupported\(\)\)/g)).toHaveLength(3);
   });
 
   it("uses Sparkle instead of the GitHub manual-download branch on macOS", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("checkForMacSparkleUpdates()");
     expect(source).toContain("startMacSparkle()");
@@ -186,7 +189,7 @@ describe("update helpers", () => {
   });
 
   it("tracks pending install versions without auto-installing", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("pendingInstallVersion");
     expect(source).toContain("downloaded_pending_install");
@@ -194,7 +197,7 @@ describe("update helpers", () => {
   });
 
   it("cleans stale update cache when a different version is available", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
 
     expect(source).toContain("clearStaleUpdateCache");
     expect(source).toContain('app.getPath("userData")');
@@ -213,7 +216,7 @@ describe("update helpers", () => {
   });
 
   it("adds release notes to the available update status", () => {
-    const source = readFileSync(path.resolve("src", "updates.ts"), "utf8");
+    const source = readUpdateServiceSource();
     const types = readFileSync(
       path.resolve("..", "contracts", "desktop-ipc.d.ts"),
       "utf8",

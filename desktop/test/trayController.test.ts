@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bindTrayInteractions } from "../src/trayController.js";
+import { bindTrayInteractions } from "../src/main/shell/tray.js";
 
 describe("desktop tray controller", () => {
   it("opens the main window on left click and double click", () => {
