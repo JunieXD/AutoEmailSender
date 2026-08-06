@@ -9,7 +9,7 @@ from app.api.workspace_support import build_workspace_thread, ensure_workspace_t
 from app.core.database import get_async_session, get_session_factory
 from app.models import Professor
 from app.schemas.workspace import WorkspaceSyncWarningRead, WorkspaceThreadRead
-from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.operation_logs import sanitize_user_visible_error
 from app.services.task_runtime import sync_workspace_professor_replies
 

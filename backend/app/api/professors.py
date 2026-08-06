@@ -39,7 +39,7 @@ from app.schemas.professor import (
     ProfessorUpsertPayload,
 )
 from app.services.contact_status import build_contact_status_by_professor
-from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.match_results import (
     ResolvedMatchResults,
     load_resolved_match_results,

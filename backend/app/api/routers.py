@@ -4,7 +4,9 @@ from fastapi import APIRouter
 
 from app.api.agent_v1 import router as agent_v1_router
 from app.api.batch_tasks import router as batch_tasks_router
-from app.api.communication_groups import router as communication_groups_router
+from app.modules.identities.communication_groups.api import (
+    router as communication_groups_router,
+)
 from app.api.community_mentors import router as community_mentors_router
 from app.api.dashboard import router as dashboard_router
 from app.api.crawl_jobs import router as crawl_jobs_router

@@ -36,7 +36,7 @@ from app.schemas.workspace import (
 )
 from app.services import llm_runtime
 from app.services.communication_events import CommunicationEvent, load_communication_events
-from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.match_results import (
     apply_match_result_view_to_task,
     load_resolved_match_result,

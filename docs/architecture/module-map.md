@@ -44,6 +44,27 @@ backend/app/modules/system/runtime_settings/
 
 旧路径暂时保留纯 re-export 兼容入口。`/api/runtime-settings`、Agent `/settings` 和 CLI 命令合同保持不变。
 
+## identities 首个子切片（第 3A 批，已完成）
+
+第 3A 批已迁移通信组能力：
+
+```text
+backend/app/modules/identities/
+├── public.py
+└── communication_groups/
+    ├── api.py
+    ├── schemas.py
+    ├── service.py
+    ├── scope.py
+    └── public.py
+```
+
+所有权包括通信组 CRUD、成员合并确认、匹配依据身份、通信范围解析、身份删除后的
+组清理和 DTO 序列化。ORM 模型仍留在 `app.models`，操作日志仍使用现有平台服务。
+
+领域外调用方统一经 `backend/app/modules/identities/public.py` 进入。材料、身份主体、
+SMTP/IMAP 测试和模板设置不属于本子切片。
+
 ## 前端层与 slice
 
 | 层 | 职责 | 示例 |

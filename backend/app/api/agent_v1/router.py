@@ -119,6 +119,17 @@ from app.schemas.professor_information_enrichment import (
     ProfessorInformationEnrichmentJobActionRead,
     ProfessorInformationEnrichmentJobRead,
 )
+from app.modules.identities.public import (
+    CommunicationGroupMutationError,
+    IdentityCommunicationGroupRead,
+    IdentityCommunicationGroupWrite,
+    create_communication_group_record,
+    delete_communication_group_record,
+    get_communication_group_record,
+    list_communication_group_records,
+    resolve_identity_communication_scope,
+    update_communication_group_record,
+)
 from app.modules.system.public import (
     RuntimeSettingsRead,
     RuntimeSettingsUpdate,
@@ -131,10 +142,6 @@ from app.schemas.outreach_template import (
     IdentityDefaultOutreachTemplateUpdate,
     OutreachTemplateCreate,
     OutreachTemplateUpdate,
-)
-from app.schemas.communication_group import (
-    IdentityCommunicationGroupRead,
-    IdentityCommunicationGroupWrite,
 )
 from app.schemas.community_mentor import (
     CommunityCatalogRead,
@@ -229,7 +236,6 @@ from app.services.material_mutations import (
     upload_identity_material_record,
 )
 from app.services.materials import build_material_download_name
-from app.services.identity_communication_groups import resolve_identity_communication_scope
 from app.services.match_analysis_job_runtime import (
     create_match_analysis_job_record,
     delete_match_analysis_job_record,
@@ -256,14 +262,6 @@ from app.services.llm_runtime import (
     resolve_base_url,
 )
 from app.services.smtp_error_explanations import explain_smtp_error
-from app.services.communication_group_mutations import (
-    CommunicationGroupMutationError,
-    create_communication_group_record,
-    delete_communication_group_record,
-    get_communication_group_record,
-    list_communication_group_records,
-    update_communication_group_record,
-)
 from app.services.crawl_job_records import (
     CrawlJobRecordError,
     cancel_faculty_crawl_job_record,

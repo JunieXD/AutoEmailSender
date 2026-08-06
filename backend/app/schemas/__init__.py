@@ -4,11 +4,6 @@ from app.schemas.batch_task import (
     BatchTaskItemRead,
     CreateBatchTaskRequest,
 )
-from app.schemas.communication_group import (
-    IdentityCommunicationGroupMemberRead,
-    IdentityCommunicationGroupRead,
-    IdentityCommunicationGroupWrite,
-)
 from app.schemas.email_task import (
     EmailTaskApprovalRequest,
     EmailTaskPrimaryMaterialRequest,
@@ -48,6 +43,25 @@ from app.schemas.workspace import (
     WorkspaceMessageRead,
     WorkspaceThreadRead,
 )
+
+
+_COMMUNICATION_GROUP_SCHEMA_EXPORTS = frozenset(
+    {
+        "IdentityCommunicationGroupMemberRead",
+        "IdentityCommunicationGroupRead",
+        "IdentityCommunicationGroupWrite",
+    },
+)
+
+
+def __getattr__(name: str) -> object:
+    if name not in _COMMUNICATION_GROUP_SCHEMA_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from app.modules.identities.communication_groups import schemas
+
+    return getattr(schemas, name)
+
 
 __all__ = [
     "BatchTaskActionResponse",

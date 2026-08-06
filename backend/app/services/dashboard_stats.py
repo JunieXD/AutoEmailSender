@@ -36,7 +36,7 @@ from app.schemas.dashboard import (
 )
 from app.services.contact_status import build_contact_status_by_professor
 from app.services.communication_events import CommunicationEvent, load_communication_events
-from app.services.identity_communication_groups import resolve_identity_communication_scope
+from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.match_results import (
     MatchResultView,
     ResolvedMatchResults,

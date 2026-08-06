@@ -1,6 +1,6 @@
 # 按领域模块化重构总计划
 
-状态：已确认，已完成第 2 批
+状态：已确认，已完成第 3A 批
 建立日期：2026-08-06
 适用范围：`backend/`、`frontend/`、`desktop/`、`cli/`、`website/` 及其构建、测试和分发资源
 
@@ -159,7 +159,7 @@ cli/src/auto_email_sender_cli/
 |---|---|---|---|
 | 1 | 架构文档、现状依赖基线、backend/frontend/CLI/desktop 导入边界门禁 | 已完成 | 四个工作区门禁及完整验证通过 |
 | 2 | `backend/app/modules/system/runtime_settings` 首个纵向切片 | 已完成 | 旧导入兼容、API 合同不变、后端与相关 CLI/前端测试通过 |
-| 3 | `identities`：身份、材料、通信组 | 待开始 | 每个子切片独立迁移并全绿 |
+| 3 | `identities`：身份、材料、通信组 | 执行中（3A 已完成） | 每个子切片独立迁移并全绿 |
 | 4 | `professors` 与 `community`：导师、标签、补全、社区库 | 待开始 | UI/Agent 路由和前端实体边界完成 |
 | 5 | `matching` 与 `llm` | 待开始 | 解除现有 LLM adaptation 循环或记录剩余边界 |
 | 6 | `crawler` | 待开始 | worker 调度、Agent 适配器和持久化边界明确 |
@@ -314,5 +314,85 @@ npm run build
 | Frontend 合同 | `OtherSettingsCard` 读取、更新及兼容 payload | 8 tests passed |
 | Repository | CodeGraph 同步；`git diff --check` | 通过 |
 
-停止点：第 3 批 `identities` 尚未开始。开始前必须重新用 CodeGraph 确定第一个
-identities 子切片的所有权和调用边界，不得把身份、材料与通信组一次性混合迁移。
+第 2 批结束时设置的停止条件已经满足：CodeGraph 已将第一个 identities 子切片限定为
+通信组；身份主体与材料没有混入第 3A 批。
+
+### 第 3A 批：`identities/communication-groups`（已完成）
+
+开始日期：2026-08-06
+完成日期：2026-08-06
+
+选择依据：
+
+- 通信组已有独立 UI HTTP 路由、DTO、Agent API 合同和专项生命周期测试。
+- 核心实现集中在两个服务文件中，可在不移动 ORM 模型、不改变数据库 schema 的前提下迁移。
+- `materials` 候选的删除与默认材料逻辑直接耦合任务、批量任务、匹配记录和文件系统，
+  不适合作为 identities 的首个低风险切片。
+
+计划目标拓扑：
+
+```text
+backend/app/modules/identities/
+├── __init__.py
+├── public.py
+└── communication_groups/
+    ├── __init__.py
+    ├── api.py
+    ├── schemas.py
+    ├── service.py
+    ├── scope.py
+    └── public.py
+```
+
+计划文件范围：
+
+- 将 `backend/app/api/communication_groups.py` 的 UI HTTP adapter 迁入 `api.py`。
+- 将 `backend/app/schemas/communication_group.py` 的 DTO 原样迁入 `schemas.py`。
+- 将 `backend/app/services/communication_group_mutations.py` 的查询、变更和序列化逻辑迁入 `service.py`。
+- 将 `backend/app/services/identity_communication_groups.py` 的通信范围解析和身份删除清理逻辑迁入 `scope.py`。
+- 新增 identities 领域与切片公共入口；Agent API、身份删除及其他通信范围调用方改走
+  `app.modules.identities.public`。
+- 上述四个旧路径保留纯兼容 re-export，并增加对象一致性测试。
+
+本批不变量：
+
+- `/api/communication-groups` 的路径、方法、DTO、状态码和错误 detail 保持不变。
+- Agent `/api/agent/v1/communication-groups` 的分页、revision、幂等和错误码保持不变。
+- CLI 与 Frontend 合同及行为保持不变，不移动前端或 CLI 文件。
+- 不移动 `IdentityCommunicationGroup` / `IdentityProfile` ORM 模型，不修改 Alembic 或数据库 schema。
+- 不改变合并确认、匹配依据身份、操作日志或身份删除后自动解散语义。
+- 新模块不依赖旧 `app.api`，不增加任何架构门禁例外。
+
+计划验证：
+
+1. Backend 架构门禁、兼容导出测试和 `test_identity_communication_groups.py`。
+2. Agent communication-groups 管理、revision 和幂等专项用例。
+3. 依赖通信范围的 workspace、dashboard、professor 与共享通信相关测试。
+4. CLI communication-groups 命令/合同测试及 Frontend CommunicationSharingPanel 相关测试。
+5. Backend 完整 unittest；最后运行 CodeGraph sync 和 `git diff --check`。
+
+实际结果：
+
+- UI adapter、DTO、CRUD/合并服务、通信范围解析和身份删除清理已经迁入
+  `backend/app/modules/identities/communication_groups/`。
+- `backend/app/modules/identities/public.py` 成为领域外入口；Agent API、身份删除、
+  workspace、professor 和 dashboard 调用方已改用该入口。
+- 原 API、schema 和两个 service 路径保留纯兼容 re-export，并由对象一致性测试保护。
+- `app.schemas` 的历史聚合导出改为模块级懒加载，保留原导入合同并避免
+  `ApiSchema` 初始化期间形成循环依赖。
+- 组合根直接注册新模块 router；未移动 ORM、未修改 Alembic、Frontend、CLI 或锁文件，
+  未新增架构门禁例外。
+
+验证结果：
+
+| 范围 | 验证 | 结果 |
+|---|---|---|
+| Backend 定向 | 架构门禁、四类兼容导出、通信组生命周期 | 11 tests passed |
+| Backend 关联流程 | Agent revision/幂等、共享通信、workspace、dashboard、matching | 59 tests passed |
+| Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1702 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
+| CLI 合同 | communication-groups 命令与 match-source 控制 | 3 tests passed |
+| Frontend 合同 | CommunicationSharingPanel、SelectionContext 通知 | 2 files，13 tests passed |
+| Repository | CodeGraph 同步；`git diff --check` | 通过 |
+
+停止点：第 3B 子切片尚未选择。继续前必须分别评估身份主体与材料的依赖半径；
+不得因同属 identities 就把两者合并迁移。

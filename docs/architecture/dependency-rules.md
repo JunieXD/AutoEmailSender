@@ -43,6 +43,17 @@ ORM 模型为完成 SQLAlchemy registry 而产生的模型内部关系暂不作�
   `app.services.runtime_settings`、`app.services.system_settings` 仅作兼容 re-export；
   新代码不得继续引用这些路径。
 
+### 已落地的 identities 领域入口
+
+- 领域外代码只能经 `app.modules.identities.public` 使用通信组能力。
+- `app.modules.identities.communication_groups.public` 是 identities 领域内的切片门面。
+- `app.modules.identities.communication_groups.api` 只由组合根注册，不作为业务调用入口。
+- 旧 `app.api.communication_groups`、`app.schemas.communication_group`、
+  `app.services.communication_group_mutations`、
+  `app.services.identity_communication_groups` 仅作兼容 re-export；新代码不得引用。
+- `app.schemas` 使用懒加载保留三个通信组 DTO 的历史聚合导出，禁止在该聚合入口
+  重新加入对 identities 公共门面的急加载，否则会与 `ApiSchema` 形成初始化环。
+
 ## 3. Frontend 渐进门禁
 
 目标依赖方向：

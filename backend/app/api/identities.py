@@ -35,7 +35,7 @@ from app.schemas.identity import (
 )
 from app.schemas.outreach_template import IdentityDefaultOutreachTemplateUpdate
 from app.services.file_storage import delete_file
-from app.services.identity_communication_groups import (
+from app.modules.identities.public import (
     cleanup_communication_group_after_identity_delete,
 )
 from app.services.imap_sync_state import clear_identity_sent_folder_discovery_cache_in_session
