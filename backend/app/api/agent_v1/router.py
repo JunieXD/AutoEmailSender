@@ -278,6 +278,7 @@ from app.modules.llm.public import (
 from app.modules.communications.public import explain_smtp_error
 from app.modules.crawler.public import (
     CrawlJobRecordError,
+    canonical_candidate_clause,
     cancel_faculty_crawl_job_record,
     create_faculty_crawl_job_record,
     delete_faculty_crawl_job_record,
@@ -2644,7 +2645,10 @@ async def list_agent_faculty_crawl_job_events(
     candidates = list(
         await session.scalars(
             select(CrawlCandidate)
-            .where(CrawlCandidate.job_id == job_id)
+            .where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            )
             .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc()),
         ),
     )

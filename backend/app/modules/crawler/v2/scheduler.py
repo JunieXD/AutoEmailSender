@@ -30,6 +30,10 @@ from app.models import (
 from .models import CrawlerV2ClaimedWork, CrawlerV2WorkerConfig, CrawlerV2WorkKind
 from .profile_text_cache import profile_text_cache
 from app.modules.system.public import get_runtime_settings
+from app.modules.crawler.candidate_identity import (
+    canonical_candidate_clause,
+    consolidate_job_candidates,
+)
 from ..jobs.runs import (
     mark_crawl_job_run_finished,
     mark_crawl_job_run_queued,
@@ -233,6 +237,7 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
 
             await finalize_professor_information_enrichment_job(session, job, now=now)
             continue
+        await consolidate_job_candidates(session, job.id)
         has_candidates = await _job_has_candidates(session, job_id=job.id)
         error_message = None
         if not has_candidates:
@@ -591,7 +596,14 @@ async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: in
 
 
 async def _job_has_candidates(session: AsyncSession, *, job_id: int) -> bool:
-    candidate = await session.scalar(select(CrawlCandidate.id).where(CrawlCandidate.job_id == job_id).limit(1))
+    candidate = await session.scalar(
+        select(CrawlCandidate.id)
+        .where(
+            CrawlCandidate.job_id == job_id,
+            canonical_candidate_clause(),
+        )
+        .limit(1)
+    )
     return candidate is not None
 
 
@@ -662,12 +674,32 @@ async def _append_enrichment_completion_event_if_needed(
     if active_started_at is not None:
         filters.append(CrawlCandidateEnrichmentTask.updated_at >= active_started_at)
 
-    rows = await session.execute(
-        select(CrawlCandidateEnrichmentTask.status, func.count())
-        .where(*filters)
-        .group_by(CrawlCandidateEnrichmentTask.status)
+    canonical_candidate_id = func.coalesce(
+        CrawlCandidate.merged_into_candidate_id,
+        CrawlCandidate.id,
     )
-    counts = {status: int(count) for status, count in rows}
+    rows = await session.execute(
+        select(canonical_candidate_id, CrawlCandidateEnrichmentTask.status)
+        .join(
+            CrawlCandidate,
+            CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id,
+        )
+        .where(*filters)
+    )
+    status_priority = {
+        CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value: 1,
+        CrawlCandidateEnrichmentTaskStatus.SKIPPED.value: 2,
+        CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value: 3,
+    }
+    status_by_candidate_id: dict[int, str] = {}
+    for candidate_id, status in rows:
+        current_status = status_by_candidate_id.get(int(candidate_id))
+        if current_status is None or status_priority[status] > status_priority[current_status]:
+            status_by_candidate_id[int(candidate_id)] = status
+    counts = {
+        status: sum(1 for value in status_by_candidate_id.values() if value == status)
+        for status in status_priority
+    }
     enriched = counts.get(CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value, 0)
     unchanged = counts.get(CrawlCandidateEnrichmentTaskStatus.SKIPPED.value, 0)
     failed = counts.get(CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value, 0)

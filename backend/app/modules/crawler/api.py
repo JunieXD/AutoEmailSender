@@ -48,6 +48,12 @@ from .schemas import (
     CrawlJobResumePayload,
 )
 from .jobs.events import build_crawl_job_events, normalize_agent_trace_event
+from .candidate_identity import (
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
+    consolidate_candidate_identity,
+    mark_candidate_fields_manual,
+)
 from .jobs.metrics import build_crawl_job_metrics
 from .jobs.runs import (
     create_initial_crawl_job_run,
@@ -199,6 +205,11 @@ async def update_crawl_candidate(
     )
     if candidate is None:
         raise HTTPException(status_code=404, detail="未找到候选导师")
+    candidate = (await canonicalize_candidate_ids(
+        session,
+        job_id=candidate.job_id,
+        candidate_ids=[candidate.id],
+    ))[0][0]
 
     candidate.name = payload.name
     candidate.email = payload.email.lower() if payload.email else None
@@ -211,7 +222,23 @@ async def update_crawl_candidate(
     candidate.profile_url = payload.profile_url
     candidate.source_url = payload.source_url
     candidate.review_status = payload.review_status
+    mark_candidate_fields_manual(
+        candidate,
+        (
+            "name",
+            "email",
+            "title",
+            "university",
+            "school",
+            "department",
+            "research_direction",
+            "recent_papers",
+            "profile_url",
+            "source_url",
+        ),
+    )
     candidate.updated_at = utc_now()
+    candidate = await consolidate_candidate_identity(session, candidate)
 
     await record_operation_log(
         session,
@@ -316,7 +343,10 @@ async def _list_crawl_candidates_for_job(session: AsyncSession, job_id: int) -> 
         (
             await session.execute(
                 select(CrawlCandidate)
-                .where(CrawlCandidate.job_id == job_id)
+                .where(
+                    CrawlCandidate.job_id == job_id,
+                    canonical_candidate_clause(),
+                )
                 .order_by(
                     CrawlCandidate.confidence.desc(),
                     CrawlCandidate.created_at.asc(),
@@ -343,18 +373,13 @@ async def approve_crawl_candidates(
     if not payload.candidate_ids:
         raise HTTPException(status_code=400, detail="请至少选择一位候选导师")
 
-    candidates = list(
-        (
-            await session.execute(
-                select(CrawlCandidate)
-                .where(
-                    CrawlCandidate.job_id == job_id,
-                    CrawlCandidate.id.in_(payload.candidate_ids),
-                )
-                .order_by(CrawlCandidate.id.asc()),
-            )
-        ).scalars(),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job_id,
+        candidate_ids=payload.candidate_ids,
     )
+    if missing_candidate_ids:
+        raise HTTPException(status_code=400, detail="未找到可审核的候选导师")
     if not candidates:
         raise HTTPException(status_code=400, detail="未找到可审核的候选导师")
 
@@ -405,6 +430,7 @@ async def approve_crawl_candidates(
             .select_from(CrawlCandidate)
             .where(
                 CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
                 CrawlCandidate.review_status == CrawlCandidateReviewStatus.PENDING.value,
             ),
         )
@@ -590,15 +616,10 @@ async def _enqueue_v2_crawl_candidate_enrichment_tasks(
     llm_profile_id: int | None,
 ) -> CrawlJobEnrichResult:
     unique_ids = list(dict.fromkeys(candidate_ids))
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job.id,
-                CrawlCandidate.id.in_(unique_ids),
-            )
-            .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc())
-        )
+    candidates, _missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job.id,
+        candidate_ids=unique_ids,
     )
     enrichable_candidates = [candidate for candidate in candidates if (candidate.profile_url or "").strip()]
     skipped_count = len(candidates) - len(enrichable_candidates)
@@ -724,7 +745,10 @@ async def resume_crawl_job_review(
     candidate_count = await session.scalar(
         select(func.count())
         .select_from(CrawlCandidate)
-        .where(CrawlCandidate.job_id == job_id),
+        .where(
+            CrawlCandidate.job_id == job_id,
+            canonical_candidate_clause(),
+        ),
     )
     if int(candidate_count or 0) <= 0:
         raise HTTPException(status_code=400, detail="当前任务没有可审核的候选导师")
@@ -1108,7 +1132,15 @@ async def _build_crawl_job_summaries(
 
     job_ids = [job.id for job in jobs]
     page_counts = await _count_unique_crawl_pages_by_job_id(session, job_ids)
-    candidate_counts = await _count_by_job_id(session, CrawlCandidate.job_id, job_ids)
+    candidate_count_rows = await session.execute(
+        select(CrawlCandidate.job_id, func.count())
+        .where(
+            CrawlCandidate.job_id.in_(job_ids),
+            canonical_candidate_clause(),
+        )
+        .group_by(CrawlCandidate.job_id)
+    )
+    candidate_counts = dict(candidate_count_rows.all())
 
     return [
         CrawlJobSummaryRead.model_validate(job).model_copy(

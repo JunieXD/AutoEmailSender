@@ -75,6 +75,8 @@ from app.modules.campaigns.public import (
 )
 from app.modules.crawler.public import (
     CrawlJobRecordError,
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
     retry_faculty_crawl_job_record,
 )
 from app.modules.community.public import (
@@ -1650,17 +1652,12 @@ async def _execute_crawl_candidate_approval(
             CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
         ),
     )
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job_id,
-                CrawlCandidate.id.in_(candidate_ids),
-            )
-            .order_by(CrawlCandidate.id.asc()),
-        ),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job_id,
+        candidate_ids=candidate_ids,
     )
-    if job is None or len(candidates) != len(candidate_ids):
+    if job is None or missing_candidate_ids:
         raise _crawl_candidate_approval_plan_stale_error()
 
     inserted_count = 0
@@ -1700,6 +1697,7 @@ async def _execute_crawl_candidate_approval(
             .select_from(CrawlCandidate)
             .where(
                 CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
                 CrawlCandidate.review_status == CrawlCandidateReviewStatus.PENDING.value,
             ),
         )
@@ -1975,18 +1973,11 @@ async def _prepare_crawl_candidate_approval_snapshot(
             message="抓取任务尚未进入可审核状态，不能导入候选导师。",
         )
 
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job_id,
-                CrawlCandidate.id.in_(candidate_ids),
-            )
-            .order_by(CrawlCandidate.id.asc()),
-        ),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job_id,
+        candidate_ids=candidate_ids,
     )
-    found_candidate_ids = {candidate.id for candidate in candidates}
-    missing_candidate_ids = sorted(set(candidate_ids) - found_candidate_ids)
     if missing_candidate_ids:
         raise AgentApiError(
             status_code=404,
@@ -1994,6 +1985,7 @@ async def _prepare_crawl_candidate_approval_snapshot(
             message="部分候选导师不存在或不属于该抓取任务。",
             details={"candidate_ids": missing_candidate_ids},
         )
+    candidate_ids = [candidate.id for candidate in candidates]
 
     valid_emails = sorted(
         {

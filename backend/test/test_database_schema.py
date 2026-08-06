@@ -153,7 +153,7 @@ class MigrationScriptTests(unittest.TestCase):
             downgraded.close()
         self.assertEqual(values, [(1, 2), (2, 3)])
 
-    def test_crawler_recovery_migration_merges_duplicate_candidates(self) -> None:
+    def test_crawler_identity_migration_preserves_historical_candidates_and_tasks(self) -> None:
         database_path = Path(self.temp_dir.name) / "crawler_recovery.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -179,21 +179,38 @@ class MigrationScriptTests(unittest.TestCase):
                     "v2",
                 ),
             ).lastrowid
-            connection.execute(
+            first_candidate_id = connection.execute(
                 """
                 INSERT INTO crawl_candidates (
                     job_id, name, email, title, identity_key
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (job_id, "张三", "ZHANG@example.edu", "教授", "legacy-a"),
-            )
-            connection.execute(
+            ).lastrowid
+            second_candidate_id = connection.execute(
                 """
                 INSERT INTO crawl_candidates (
                     job_id, name, email, department, identity_key
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (job_id, "张三", "zhang@example.edu", "计算机系", "legacy-b"),
+            ).lastrowid
+            connection.execute(
+                """
+                INSERT INTO crawl_candidate_enrichment_tasks (
+                    job_id, candidate_id, status, attempt_count
+                ) VALUES (?, ?, ?, ?), (?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    first_candidate_id,
+                    "succeeded",
+                    1,
+                    job_id,
+                    second_candidate_id,
+                    "skipped",
+                    1,
+                ),
             )
             connection.commit()
         finally:
@@ -205,9 +222,10 @@ class MigrationScriptTests(unittest.TestCase):
         try:
             candidates = upgraded.execute(
                 """
-                SELECT email, title, department
+                SELECT id, email, title, department, merged_into_candidate_id
                 FROM crawl_candidates
                 WHERE job_id = ?
+                ORDER BY id
                 """,
                 (job_id,),
             ).fetchall()
@@ -229,22 +247,86 @@ class MigrationScriptTests(unittest.TestCase):
                     "PRAGMA table_info('crawl_worker_token_usages')"
                 ).fetchall()
             }
+            enrichment_task_count = upgraded.execute(
+                "SELECT count(*) FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            identity_keys = upgraded.execute(
+                """
+                SELECT candidate_id, key_type, normalized_value
+                FROM crawl_candidate_identity_keys
+                WHERE job_id = ?
+                ORDER BY key_type, normalized_value
+                """,
+                (job_id,),
+            ).fetchall()
         finally:
             upgraded.close()
 
         self.assertEqual(
             candidates,
-            [("zhang@example.edu", "教授", "计算机系")],
+            [
+                (
+                    first_candidate_id,
+                    "ZHANG@example.edu",
+                    "教授",
+                    None,
+                    second_candidate_id,
+                ),
+                (
+                    second_candidate_id,
+                    "zhang@example.edu",
+                    "教授",
+                    "计算机系",
+                    None,
+                ),
+            ],
         )
         self.assertTrue(
             {
                 "uq_crawl_candidates_job_identity_key",
                 "uq_crawl_candidates_job_email_ci",
                 "uq_crawl_candidates_job_profile_url",
-            }.issubset(candidate_indexes)
+            }.isdisjoint(candidate_indexes)
+        )
+        self.assertEqual(enrichment_task_count, 2)
+        self.assertEqual(
+            identity_keys,
+            [(second_candidate_id, "email", "zhang@example.edu")],
         )
         self.assertIn("failure_count", page_task_columns)
         self.assertTrue({"run_id", "claim_id"}.issubset(token_usage_columns))
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            candidate_count = downgraded.execute(
+                "SELECT count(*) FROM crawl_candidates WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            enrichment_task_count = downgraded.execute(
+                "SELECT count(*) FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            candidate_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info('crawl_candidates')"
+                ).fetchall()
+            }
+            identity_table = downgraded.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name = 'crawl_candidate_identity_keys'
+                """
+            ).fetchone()
+        finally:
+            downgraded.close()
+
+        self.assertEqual(candidate_count, 2)
+        self.assertEqual(enrichment_task_count, 2)
+        self.assertNotIn("merged_into_candidate_id", candidate_columns)
+        self.assertIsNone(identity_table)
 
     def test_professor_history_queue_migration_upgrades_and_downgrades(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_history_queue.db"

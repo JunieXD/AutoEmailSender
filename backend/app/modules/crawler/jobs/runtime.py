@@ -30,6 +30,13 @@ from app.models import (
     CrawlPageTaskStatus,
     LLMProfile,
 )
+from app.modules.crawler.candidate_identity import (
+    apply_candidate_enrichment_values,
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
+    consolidate_candidate_identity,
+    consolidate_job_candidates,
+)
 from ..pages.debug import append_crawler_debug_event
 from ..pages.chunking import ChunkingConfig, build_page_chunks
 from ..pages.chunk_runtime import create_chunks_for_page
@@ -530,8 +537,12 @@ async def _recover_interrupted_crawl_job(
             await session.commit()
             return
 
+        await consolidate_job_candidates(session, job_id)
         candidate_count = await session.scalar(
-            select(func.count()).select_from(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+            select(func.count()).select_from(CrawlCandidate).where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            )
         )
         now = utc_now()
         if int(candidate_count or 0) > 0:
@@ -694,8 +705,12 @@ async def _complete_running_job(
             await session.commit()
             return
 
+        await consolidate_job_candidates(session, job_id)
         candidate_count = await session.scalar(
-            select(func.count()).select_from(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+            select(func.count()).select_from(CrawlCandidate).where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            )
         )
         if int(candidate_count or 0) > 0:
             job.status = CrawlJobStatus.NEEDS_REVIEW.value
@@ -861,7 +876,10 @@ async def _enrich_saved_candidates_concurrent(
             (
                 await session.execute(
                     select(CrawlCandidate)
-                    .where(CrawlCandidate.job_id == ctx.job_id)
+                    .where(
+                        CrawlCandidate.job_id == ctx.job_id,
+                        canonical_candidate_clause(),
+                    )
                     .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc())
                 )
             ).scalars()
@@ -894,17 +912,10 @@ async def _enrich_selected_candidates_concurrent(
         return SelectedCandidateEnrichmentSummary(0, 0, 0, 0)
 
     async with session_factory() as session:
-        candidates = list(
-            (
-                await session.execute(
-                    select(CrawlCandidate)
-                    .where(
-                        CrawlCandidate.job_id == ctx.job_id,
-                        CrawlCandidate.id.in_(unique_ids),
-                    )
-                    .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc())
-                )
-            ).scalars()
+        candidates, _missing_candidate_ids = await canonicalize_candidate_ids(
+            session,
+            job_id=ctx.job_id,
+            candidate_ids=unique_ids,
         )
 
     if not candidates:
@@ -1409,38 +1420,13 @@ async def _apply_candidate_enrichment(
         if candidate is None:
             return False
 
-        update_payload = updates.model_dump()
-
-        changed = False
-        email = update_payload.get("email")
-        if email and not candidate.email:
-            candidate.email = email
-            changed = True
-
-        title = update_payload.get("title")
-        if title and not candidate.title:
-            candidate.title = title
-            changed = True
-
-        department = update_payload.get("department")
-        if department and not candidate.department:
-            candidate.department = department
-            changed = True
-
-        research_direction = update_payload.get("research_direction")
-        if research_direction and not candidate.research_direction:
-            candidate.research_direction = research_direction
-            changed = True
-
-        recent_papers = update_payload.get("recent_papers") or []
-        if recent_papers and not (candidate.recent_papers or []):
-            candidate.recent_papers = normalize_recent_papers(recent_papers)
-            changed = True
+        changed = apply_candidate_enrichment_values(candidate, updates.model_dump())
 
         if not changed:
             return False
 
         await ensure_crawl_job_can_continue(session, candidate.job_id)
+        await consolidate_candidate_identity(session, candidate)
         candidate.updated_at = utc_now()
         await session.commit()
         return True

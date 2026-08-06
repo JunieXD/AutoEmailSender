@@ -23,8 +23,6 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     _add_failure_counters()
     _add_token_claim_identity()
-    _merge_duplicate_candidates()
-    _create_candidate_identity_indexes()
 
 
 def downgrade() -> None:

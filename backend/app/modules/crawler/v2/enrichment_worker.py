@@ -47,6 +47,10 @@ from ..llm.structured_output import (
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.modules.professors.public import apply_enrichment_to_professor
+from app.modules.crawler.candidate_identity import (
+    apply_candidate_enrichment_values,
+    consolidate_candidate_identity,
+)
 from app.modules.professors.public import normalize_recent_papers
 
 
@@ -212,6 +216,7 @@ async def run_crawler_v2_enrichment_worker_once(
                 return 0
             candidate = current_candidate
             _apply_enrichment(candidate, payload)
+            await consolidate_candidate_identity(session, candidate)
             enriched_fields: list[str] = []
             skip_reason = None
             if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
@@ -636,13 +641,4 @@ async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfi
 
 
 def _apply_enrichment(candidate: CrawlCandidate, payload: CandidateEnrichmentPayload) -> None:
-    if payload.email and not candidate.email:
-        candidate.email = payload.email.strip()
-    if payload.title and not candidate.title:
-        candidate.title = payload.title.strip()
-    if payload.department and not candidate.department:
-        candidate.department = payload.department.strip()
-    if payload.research_direction and not candidate.research_direction:
-        candidate.research_direction = payload.research_direction.strip()
-    if payload.recent_papers and not candidate.recent_papers:
-        candidate.recent_papers = normalize_recent_papers(payload.recent_papers)
+    apply_candidate_enrichment_values(candidate, payload.model_dump())

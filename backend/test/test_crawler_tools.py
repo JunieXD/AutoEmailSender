@@ -3146,14 +3146,23 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
-            self.assertEqual(await harness.count_rows(CrawlCandidate), 1)
+            self.assertEqual(await harness.count_rows(CrawlCandidate), 2)
             self.assertEqual(sum(result["saved_count"] for result in results), 1)
             async with harness.session_factory() as session:
-                candidate = await session.scalar(
-                    select(CrawlCandidate).where(CrawlCandidate.job_id == job_id)
+                candidates = list(
+                    await session.scalars(
+                        select(CrawlCandidate)
+                        .where(CrawlCandidate.job_id == job_id)
+                        .order_by(CrawlCandidate.id),
+                    )
                 )
-            assert candidate is not None
-            self.assertEqual(candidate.email, "zhang@example.edu")
+            canonical = [
+                candidate
+                for candidate in candidates
+                if candidate.merged_into_candidate_id is None
+            ]
+            self.assertEqual(len(canonical), 1)
+            self.assertEqual(canonical[0].email.lower(), "zhang@example.edu")
 
     async def test_save_candidate_payloads_rejects_listing_entry_start_url_without_email(self) -> None:
         listing_url = "https://example.edu/faculty"

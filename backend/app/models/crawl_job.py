@@ -318,32 +318,6 @@ class CrawlPageFetchState(Base):
 
 class CrawlCandidate(Base):
     __tablename__ = "crawl_candidates"
-    __table_args__ = (
-        Index(
-            "uq_crawl_candidates_job_identity_key",
-            "job_id",
-            "identity_key",
-            unique=True,
-            sqlite_where=text("identity_key IS NOT NULL AND trim(identity_key) <> ''"),
-            postgresql_where=text("identity_key IS NOT NULL AND trim(identity_key) <> ''"),
-        ),
-        Index(
-            "uq_crawl_candidates_job_email_ci",
-            "job_id",
-            "email",
-            unique=True,
-            sqlite_where=text("email IS NOT NULL AND trim(email) <> ''"),
-            postgresql_where=text("email IS NOT NULL AND trim(email) <> ''"),
-        ),
-        Index(
-            "uq_crawl_candidates_job_profile_url",
-            "job_id",
-            "profile_url",
-            unique=True,
-            sqlite_where=text("profile_url IS NOT NULL AND trim(profile_url) <> ''"),
-            postgresql_where=text("profile_url IS NOT NULL AND trim(profile_url) <> ''"),
-        ),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
@@ -368,6 +342,11 @@ class CrawlCandidate(Base):
     source_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
     boundary_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
     identity_key: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)
+    merged_into_candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("crawl_candidates.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     merge_history: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
     field_sources: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     conflicts: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
@@ -390,6 +369,43 @@ class CrawlCandidate(Base):
 
     job: Mapped["CrawlJob"] = relationship(back_populates="candidates")
     professor: Mapped["Professor | None"] = relationship()
+    merged_into: Mapped["CrawlCandidate | None"] = relationship(
+        remote_side="CrawlCandidate.id",
+        foreign_keys=[merged_into_candidate_id],
+    )
+
+
+class CrawlCandidateIdentityKey(Base):
+    __tablename__ = "crawl_candidate_identity_keys"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "key_type",
+            "normalized_value",
+            name="uq_crawl_candidate_identity_keys_job_type_value",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("crawl_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("crawl_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    key_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    normalized_value: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    candidate: Mapped["CrawlCandidate"] = relationship()
 
 class CrawlPageTask(Base):
     __tablename__ = "crawl_page_tasks"

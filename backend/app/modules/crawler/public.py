@@ -1,6 +1,14 @@
 """Public entry point for crawler capabilities."""
 
 from .jobs.events import build_crawl_job_events, normalize_agent_trace_event
+from .candidate_identity import (
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
+    consolidate_candidate_identity,
+    consolidate_job_candidates,
+    mark_candidate_fields_manual,
+    resolve_canonical_candidate,
+)
 from .jobs.metrics import CrawlJobMetrics, build_crawl_job_metrics
 from .jobs.records import (
     CRAWL_JOB_DELETABLE_STATUSES,
@@ -97,10 +105,14 @@ __all__ = [
     "append_crawler_v2_debug_event",
     "build_crawl_job_events",
     "build_crawl_job_metrics",
+    "canonical_candidate_clause",
+    "canonicalize_candidate_ids",
     "cancel_faculty_crawl_job_record",
     "create_faculty_crawl_job_record",
     "create_initial_crawl_job_run",
     "create_retry_crawl_job_run",
+    "consolidate_candidate_identity",
+    "consolidate_job_candidates",
     "delete_faculty_crawl_job_record",
     "enqueue_faculty_crawl_candidate_enrichment_records",
     "extract_token_usage",
@@ -117,6 +129,7 @@ __all__ = [
     "mark_crawl_job_run_paused",
     "mark_crawl_job_run_queued",
     "mark_crawl_job_run_running",
+    "mark_candidate_fields_manual",
     "normalize_agent_trace_event",
     "pause_faculty_crawl_job_record",
     "profile_text_cache",
@@ -124,6 +137,7 @@ __all__ = [
     "restore_faculty_crawl_job_record",
     "resume_faculty_crawl_job_record",
     "resume_faculty_crawl_job_review_record",
+    "resolve_canonical_candidate",
     "retry_faculty_crawl_job_record",
     "run_crawler_v2_once",
     "run_queued_crawl_jobs_once",

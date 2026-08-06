@@ -84,6 +84,42 @@ class CrawlJobApprovalTests(unittest.TestCase):
         self.assertEqual(snapshot["candidates"][missing_email_candidate_id]["review_status"], "pending")
         self.assertIsNone(snapshot["candidates"][missing_email_candidate_id]["professor_id"])
 
+    def test_approval_treats_same_email_aliases_as_one_new_professor(self) -> None:
+        job_id, first_candidate_id, second_candidate_id = asyncio.run(
+            self._create_crawl_candidates(
+                [
+                    {"name": "张三", "email": "same@example.edu"},
+                    {"name": "Zhang San", "email": "SAME@example.edu"},
+                ]
+            )
+        )
+        asyncio.run(
+            self._consolidate_candidates(
+                first_candidate_id,
+                second_candidate_id,
+            )
+        )
+
+        candidates_response = self.client.get(f"/api/crawl-jobs/{job_id}/candidates")
+        self.assertEqual(candidates_response.status_code, 200, msg=candidates_response.text)
+        self.assertEqual(len(candidates_response.json()), 1)
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/approve",
+            json={"candidate_ids": [first_candidate_id, second_candidate_id]},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                "inserted_count": 1,
+                "updated_count": 0,
+                "skipped_count": 0,
+                "message": "审核完成：新增 1 位导师，更新 0 位导师，跳过 0 位候选。",
+            },
+        )
+
     async def _create_crawl_candidates(self, candidates: list[dict[str, str | None]]) -> tuple[int, ...]:
         from app.core.database import get_session_factory
         from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus
@@ -157,6 +193,18 @@ class CrawlJobApprovalTests(unittest.TestCase):
                     for candidate in candidates
                 },
             }
+
+    async def _consolidate_candidates(self, *candidate_ids: int) -> None:
+        from app.core.database import get_session_factory
+        from app.models import CrawlCandidate
+        from app.modules.crawler.candidate_identity import consolidate_candidate_identity
+
+        async with get_session_factory()() as session:
+            for candidate_id in candidate_ids:
+                candidate = await session.get(CrawlCandidate, candidate_id)
+                assert candidate is not None
+                await consolidate_candidate_identity(session, candidate)
+            await session.commit()
 
     async def _clear_database(self) -> None:
         from sqlalchemy import delete

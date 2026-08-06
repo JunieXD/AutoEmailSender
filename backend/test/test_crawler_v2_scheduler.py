@@ -758,6 +758,58 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             trace_messages,
         )
 
+    async def test_scheduler_counts_merged_alias_tasks_as_one_candidate(self) -> None:
+        job_id = await self._create_job()
+        async with self.session_factory() as session:
+            canonical = CrawlCandidate(
+                job_id=job_id,
+                name="张三",
+                email="same@example.edu",
+                profile_url="https://example.edu/a",
+            )
+            alias = CrawlCandidate(
+                job_id=job_id,
+                name="Zhang San",
+                email="same@example.edu",
+                profile_url="https://example.edu/b",
+            )
+            session.add_all([canonical, alias])
+            await session.flush()
+            session.add_all(
+                [
+                    CrawlCandidateEnrichmentTask(
+                        job_id=job_id,
+                        candidate_id=canonical.id,
+                        status=CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value,
+                    ),
+                    CrawlCandidateEnrichmentTask(
+                        job_id=job_id,
+                        candidate_id=alias.id,
+                        status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+                        last_error="旧别名补全失败",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        await run_crawler_v2_scheduler_once(
+            self.session_factory,
+            worker_id="scheduler",
+        )
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        trace_messages = [
+            item.get("message")
+            for item in job.agent_trace or []
+            if isinstance(item, dict)
+        ]
+        self.assertIn(
+            "候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位",
+            trace_messages,
+        )
+
     async def test_scheduler_does_not_finalize_job_with_active_processing_page(self) -> None:
         job_id = await self._create_job()
         active_until = datetime.now(UTC) + timedelta(minutes=5)

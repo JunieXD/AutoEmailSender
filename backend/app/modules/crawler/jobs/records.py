@@ -51,6 +51,13 @@ from ..v2.routing import (
 )
 from ..v2.url_utils import normalize_url
 from app.services.operation_logs import record_operation_log
+from ..candidate_identity import (
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
+    consolidate_candidate_identity,
+    mark_candidate_fields_manual,
+    resolve_canonical_candidate,
+)
 
 
 CRAWL_JOB_DELETABLE_STATUSES = {
@@ -200,7 +207,10 @@ async def list_faculty_crawl_candidates(
     candidates = list(
         await session.scalars(
             select(CrawlCandidate)
-            .where(CrawlCandidate.job_id == job_id)
+            .where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            )
             .order_by(
                 CrawlCandidate.confidence.desc(),
                 CrawlCandidate.created_at.asc(),
@@ -222,6 +232,7 @@ async def update_faculty_crawl_candidate_record(
     actor: str | None = None,
 ) -> CrawlCandidateRead:
     candidate = await get_faculty_crawl_candidate_or_raise(session, candidate_id)
+    candidate = await resolve_canonical_candidate(session, candidate)
     candidate.name = payload.name
     candidate.email = payload.email.lower() if payload.email else None
     candidate.title = payload.title
@@ -233,7 +244,23 @@ async def update_faculty_crawl_candidate_record(
     candidate.profile_url = payload.profile_url
     candidate.source_url = payload.source_url
     candidate.review_status = payload.review_status
+    mark_candidate_fields_manual(
+        candidate,
+        (
+            "name",
+            "email",
+            "title",
+            "university",
+            "school",
+            "department",
+            "research_direction",
+            "recent_papers",
+            "profile_url",
+            "source_url",
+        ),
+    )
     candidate.updated_at = utc_now()
+    candidate = await consolidate_candidate_identity(session, candidate)
     metadata: dict[str, object] = {
         "job_id": candidate.job_id,
         "review_status": candidate.review_status,
@@ -289,17 +316,11 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             code="CRAWL_CANDIDATE_ENRICHMENT_REQUIRED",
             message="请至少选择一位候选导师。",
         )
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job.id,
-                CrawlCandidate.id.in_(candidate_ids),
-            )
-            .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc()),
-        ),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job.id,
+        candidate_ids=candidate_ids,
     )
-    missing_candidate_ids = sorted(set(candidate_ids) - {candidate.id for candidate in candidates})
     if missing_candidate_ids:
         raise CrawlJobRecordError(
             status_code=404,
@@ -439,7 +460,7 @@ async def get_faculty_crawl_candidate_or_raise(
             code="CRAWL_CANDIDATE_NOT_FOUND",
             message="未找到候选导师",
         )
-    return candidate
+    return await resolve_canonical_candidate(session, candidate)
 
 
 def _candidate_has_missing_enrichment_fields(candidate: CrawlCandidate) -> bool:
@@ -660,7 +681,10 @@ async def resume_faculty_crawl_job_review_record(
         await session.scalar(
             select(func.count())
             .select_from(CrawlCandidate)
-            .where(CrawlCandidate.job_id == job_id),
+            .where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            ),
         )
         or 0
     )
@@ -799,7 +823,15 @@ async def _build_crawl_job_summaries(
         return []
     job_ids = [job.id for job in jobs]
     page_counts = await _count_by_job_id(session, CrawlPage.job_id, job_ids)
-    candidate_counts = await _count_by_job_id(session, CrawlCandidate.job_id, job_ids)
+    candidate_count_rows = await session.execute(
+        select(CrawlCandidate.job_id, func.count())
+        .where(
+            CrawlCandidate.job_id.in_(job_ids),
+            canonical_candidate_clause(),
+        )
+        .group_by(CrawlCandidate.job_id)
+    )
+    candidate_counts = dict(candidate_count_rows.all())
     return [
         CrawlJobSummaryRead.model_validate(job).model_copy(
             update={
