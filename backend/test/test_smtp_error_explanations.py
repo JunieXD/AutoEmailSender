@@ -29,6 +29,25 @@ class SmtpErrorExplanationTests(unittest.TestCase):
         self.assertIn("客户端授权码", reason)
         self.assertIn("邮箱登录密码", reason)
 
+    def test_identifies_non_ascii_smtp_username(self) -> None:
+        reason = explain_smtp_error(
+            "SMTP 登录凭据编码失败：UnicodeEncodeError("
+            "error_code=SMTP_USERNAME_NON_ASCII, field=smtp_username, encoding=ascii)"
+        )
+
+        self.assertIn("发件邮箱", reason)
+        self.assertIn("重新输入", reason)
+        self.assertNotIn("授权码包含", reason)
+
+    def test_identifies_non_ascii_smtp_password(self) -> None:
+        reason = explain_smtp_error(
+            "SMTP 登录凭据编码失败：UnicodeEncodeError("
+            "error_code=SMTP_PASSWORD_NON_ASCII, field=smtp_password, encoding=ascii)"
+        )
+
+        self.assertIn("邮箱授权码", reason)
+        self.assertIn("重新复制", reason)
+
     def test_explains_common_delivery_failures(self) -> None:
         cases = [
             ("554 DT:SPM", "反垃圾"),

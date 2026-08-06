@@ -10,7 +10,8 @@ from unittest.mock import patch
 from app.models import IdentityProfile
 from app.modules.communications.transport import (
     MailRuntimeError,
-    SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE,
+    SMTP_PASSWORD_ENCODING_ERROR_CODE,
+    SMTP_USERNAME_ENCODING_ERROR_CODE,
     discover_sent_folder,
     fetch_inbox_messages_from_sender,
     fetch_incremental_inbox_messages,
@@ -477,7 +478,46 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("授权码", message)
         self.assertIn("IMAP/SMTP", message)
 
-    def test_smtp_test_reports_and_logs_invalid_authorization_code_characters(self) -> None:
+    def test_smtp_test_reports_sanitized_invalid_authorization_code_error(self) -> None:
+        identity = _build_identity()
+        identity.smtp_password = "secret\u200bvalue"
+
+        with (
+            patch("app.modules.communications.transport._open_smtp_client") as open_smtp,
+            patch("app.modules.communications.transport.logger.warning") as log_warning,
+        ):
+            ok, message = asyncio.run(test_smtp_connection(identity))
+
+        self.assertFalse(ok)
+        self.assertIn(SMTP_PASSWORD_ENCODING_ERROR_CODE, message)
+        self.assertIn("field=smtp_password", message)
+        self.assertIn("UnicodeEncodeError", message)
+        self.assertNotIn(identity.smtp_password, message)
+        self.assertNotIn("\u200b", message)
+        log_warning.assert_called_once()
+        logged_message = " ".join(str(value) for value in log_warning.call_args.args)
+        self.assertNotIn(identity.smtp_password, logged_message)
+        self.assertNotIn("\u200b", logged_message)
+        open_smtp.assert_not_called()
+
+    def test_smtp_test_identifies_invalid_username_characters(self) -> None:
+        identity = _build_identity()
+        identity.smtp_username = "sender＠example.com"
+
+        with (
+            patch("app.modules.communications.transport._open_smtp_client") as open_smtp,
+            patch("app.modules.communications.transport.logger.warning"),
+        ):
+            ok, message = asyncio.run(test_smtp_connection(identity))
+
+        self.assertFalse(ok)
+        self.assertIn(SMTP_USERNAME_ENCODING_ERROR_CODE, message)
+        self.assertIn("field=smtp_username", message)
+        self.assertNotIn(identity.smtp_username, message)
+        self.assertNotIn("＠", message)
+        open_smtp.assert_not_called()
+
+    def test_smtp_test_sanitizes_unexpected_login_encoding_error(self) -> None:
         client = _FakeSmtpClient(
             UnicodeEncodeError(
                 "ascii",
@@ -490,13 +530,15 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         with (
             patch("app.modules.communications.transport._open_smtp_client", return_value=client),
-            patch("app.modules.communications.transport.logger.exception") as log_exception,
+            patch("app.modules.communications.transport.logger.warning") as log_warning,
         ):
             ok, message = asyncio.run(test_smtp_connection(_build_identity()))
 
         self.assertFalse(ok)
-        self.assertEqual(message, SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE)
-        log_exception.assert_called_once()
+        self.assertIn("SMTP_LOGIN_ENCODING_ERROR", message)
+        self.assertIn("field=smtp_login", message)
+        self.assertNotIn("错误", message)
+        log_warning.assert_called_once()
         self.assertEqual(client.commands, ["login", "quit"])
 
     def test_imap_connection_sends_client_id_before_selecting_inbox(self) -> None:
@@ -554,25 +596,18 @@ class MailRuntimeTestCase(unittest.TestCase):
         open_imap.assert_not_called()
         self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
 
-    def test_send_email_reports_invalid_authorization_code_characters(self) -> None:
-        client = _FakeSmtpClient(
-            UnicodeEncodeError(
-                "ascii",
-                "错误",
-                0,
-                2,
-                "ordinal not in range(128)",
-            ),
-        )
+    def test_send_email_reports_sanitized_invalid_authorization_code_error(self) -> None:
+        identity = _build_identity()
+        identity.smtp_password = "secret全角"
 
         with (
-            patch("app.modules.communications.transport._open_smtp_client", return_value=client),
-            patch("app.modules.communications.transport.logger.exception") as log_exception,
+            patch("app.modules.communications.transport._open_smtp_client") as open_smtp,
+            patch("app.modules.communications.transport.logger.warning") as log_warning,
         ):
-            with self.assertRaisesRegex(MailRuntimeError, "授权码格式不正确"):
+            with self.assertRaisesRegex(MailRuntimeError, SMTP_PASSWORD_ENCODING_ERROR_CODE) as raised:
                 asyncio.run(
                     send_email_to_recipient(
-                        identity=_build_identity(),
+                        identity=identity,
                         recipient_name="Teacher",
                         recipient_email="teacher@example.com",
                         subject="hello",
@@ -582,8 +617,10 @@ class MailRuntimeTestCase(unittest.TestCase):
                     ),
                 )
 
-        log_exception.assert_called_once()
-        self.assertEqual(client.commands, ["login", "quit"])
+        log_warning.assert_called_once()
+        self.assertNotIn(identity.smtp_password, str(raised.exception))
+        self.assertNotIn("全角", str(raised.exception))
+        open_smtp.assert_not_called()
 
     def test_send_email_skips_sent_folder_sync_when_imap_is_not_configured(self) -> None:
         identity = _build_identity()

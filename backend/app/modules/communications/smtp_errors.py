@@ -198,6 +198,24 @@ def explain_smtp_error(raw_error: object) -> str:
     if "任务缺少可发送的主题或正文" in text:
         return "邮件主题或正文为空，系统无法提交发送。请补全邮件内容后重新发送。"
 
+    if "smtp_username_non_ascii" in normalized:
+        return (
+            "发件邮箱（SMTP 用户名）包含 SMTP 登录不支持的中文、全角符号或不可见字符。"
+            "请完全删除发件邮箱后重新输入。"
+        )
+
+    if "smtp_password_non_ascii" in normalized:
+        return (
+            "邮箱授权码包含 SMTP 登录不支持的中文、全角符号或不可见字符。"
+            "请从邮箱设置页面重新复制客户端授权码。"
+        )
+
+    if "smtp_login_encoding_error" in normalized:
+        return (
+            "本地 SMTP 登录过程发生凭据编码错误，服务商尚未返回鉴权结果。"
+            "请检查发件邮箱和授权码；若持续失败，请将下方脱敏后的原始报错反馈给开发者。"
+        )
+
     if _contains_any(normalized, _THROTTLE_MARKERS):
         return (
             "邮箱服务商可能对发件账号进行了发送限流：短时间发送过快、连接过于频繁，"

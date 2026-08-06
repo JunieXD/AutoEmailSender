@@ -630,10 +630,11 @@ describe("ProfilePage onboarding", () => {
   it("shows smtp test failures as failures when the backend returns ok false", async () => {
     vi.mocked(testIdentitySmtp).mockResolvedValueOnce({
       ok: false,
-      message: "SMTP 连接失败: (535, b'Error: authentication failed')",
+      message:
+        "SMTP 登录凭据编码失败：UnicodeEncodeError(error_code=SMTP_PASSWORD_NON_ASCII, field=smtp_password, encoding=ascii, start=6, end=7, reason=ordinal not in range(128))",
       host: "smtp.example.com",
       possible_cause:
-        "SMTP 身份验证可能失败。请检查账号、密码或客户端授权码。",
+        "邮箱授权码包含 SMTP 登录不支持的中文、全角符号或不可见字符。请从邮箱设置页面重新复制客户端授权码。",
     });
 
     renderPage();
@@ -642,16 +643,17 @@ describe("ProfilePage onboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "测试 SMTP" }));
 
     expect(await screen.findByText(/上次测试：SMTP 失败/)).toBeInTheDocument();
-    expect(
-      screen.getByText("SMTP 连接失败: (535, b'Error: authentication failed')"),
-    ).toBeInTheDocument();
+    const rawError = screen.getByText(/error_code=SMTP_PASSWORD_NON_ASCII/);
+    expect(rawError).toBeInTheDocument();
+    expect(rawError).toHaveClass("whitespace-nowrap", "overflow-x-auto");
+    expect(rawError).not.toHaveClass("whitespace-pre-wrap", "break-all");
     expect(screen.getByText("可能原因")).toBeInTheDocument();
     expect(screen.getByText(/客户端授权码/)).toBeInTheDocument();
     expect(screen.getByText("原始报错")).toBeInTheDocument();
     expect(mockedNotifyError).toHaveBeenCalledTimes(1);
     expect(mockedNotifyError.mock.calls[0]?.[0]).toContain("SMTP");
     expect(mockedNotifyError.mock.calls[0]?.[1]).toBe(
-      "SMTP 连接失败: (535, b'Error: authentication failed')",
+      "SMTP 登录凭据编码失败：UnicodeEncodeError(error_code=SMTP_PASSWORD_NON_ASCII, field=smtp_password, encoding=ascii, start=6, end=7, reason=ordinal not in range(128))",
     );
     expect(mockedNotifySuccess).not.toHaveBeenCalled();
   });

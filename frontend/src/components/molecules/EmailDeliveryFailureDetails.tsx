@@ -22,7 +22,7 @@ export const EmailDeliveryFailureDetails = ({
     </div>
     <div className="grid min-w-0 gap-x-2 gap-y-0.5 sm:grid-cols-[64px_minmax(0,1fr)]">
       <dt className="font-medium text-stone-600">原始报错</dt>
-      <dd className="min-w-0 whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-stone-500">
+      <dd className="min-w-0 overflow-x-auto whitespace-nowrap font-mono text-[11px] leading-5 text-stone-500">
         {getRawErrorText(rawError)}
       </dd>
     </div>

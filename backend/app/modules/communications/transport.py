@@ -81,10 +81,9 @@ REPLY_QUOTE_HTML_PATTERNS = (
     re.compile(r"-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
     re.compile(r"<blockquote\b", re.IGNORECASE),
 )
-SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE = (
-    "SMTP 登录失败：授权码格式不正确。请从邮箱设置页面重新复制客户端授权码，"
-    "并确认没有中文、全角符号或不可见字符。"
-)
+SMTP_USERNAME_ENCODING_ERROR_CODE = "SMTP_USERNAME_NON_ASCII"
+SMTP_PASSWORD_ENCODING_ERROR_CODE = "SMTP_PASSWORD_NON_ASCII"
+SMTP_LOGIN_ENCODING_ERROR_CODE = "SMTP_LOGIN_ENCODING_ERROR"
 CHINESE_REPLY_HEADER_PATTERN = re.compile(
     r"(?:^|\n)\s*发件人：[^\n]*"
     r"(?=\n\s*(?:发件时间|收件人|主题)：)"
@@ -632,6 +631,7 @@ def email_datetime_now() -> str:
 def _test_smtp_connection_sync(identity: IdentityProfile) -> None:
     server = None
     try:
+        _validate_smtp_login_credentials(identity)
         server = _open_smtp_client(identity)
         _login_smtp_client(server, identity)
     except (OSError, smtplib.SMTPException, SocketTimeout) as exc:
@@ -664,6 +664,7 @@ def _test_imap_connection_sync(identity: IdentityProfile) -> None:
 def _send_email_sync(identity: IdentityProfile, message: EmailMessage) -> SentFolderSyncResult:
     server = None
     try:
+        _validate_smtp_login_credentials(identity)
         server = _open_smtp_client(identity)
         _login_smtp_client(server, identity)
         server.send_message(message)
@@ -682,12 +683,71 @@ def _login_smtp_client(server: smtplib.SMTP, identity: IdentityProfile) -> None:
     try:
         server.login(identity.smtp_username, identity.smtp_password)
     except UnicodeEncodeError as exc:
-        logger.exception(
-            "SMTP 登录凭据编码失败: host=%s port=%s",
+        sanitized_error = _format_sanitized_unicode_encode_error(
+            error_code=SMTP_LOGIN_ENCODING_ERROR_CODE,
+            field="smtp_login",
+            exc=exc,
+        )
+        logger.warning(
+            "%s: host=%s port=%s",
+            sanitized_error,
             identity.smtp_host,
             identity.smtp_port,
         )
-        raise MailRuntimeError(SMTP_CREDENTIAL_ENCODING_ERROR_MESSAGE) from exc
+        raise MailRuntimeError(sanitized_error) from exc
+
+
+def _validate_smtp_login_credentials(identity: IdentityProfile) -> None:
+    _validate_smtp_credential_ascii(
+        identity.smtp_username,
+        error_code=SMTP_USERNAME_ENCODING_ERROR_CODE,
+        field="smtp_username",
+        identity=identity,
+    )
+    _validate_smtp_credential_ascii(
+        identity.smtp_password,
+        error_code=SMTP_PASSWORD_ENCODING_ERROR_CODE,
+        field="smtp_password",
+        identity=identity,
+    )
+
+
+def _validate_smtp_credential_ascii(
+    value: str,
+    *,
+    error_code: str,
+    field: str,
+    identity: IdentityProfile,
+) -> None:
+    try:
+        value.encode("ascii")
+    except UnicodeEncodeError as exc:
+        sanitized_error = _format_sanitized_unicode_encode_error(
+            error_code=error_code,
+            field=field,
+            exc=exc,
+        )
+        logger.warning(
+            "%s: host=%s port=%s",
+            sanitized_error,
+            identity.smtp_host,
+            identity.smtp_port,
+        )
+        raise MailRuntimeError(sanitized_error) from exc
+
+
+def _format_sanitized_unicode_encode_error(
+    *,
+    error_code: str,
+    field: str,
+    exc: UnicodeEncodeError,
+) -> str:
+    # Do not include str(exc) or exc.object: either may reveal a character from a credential.
+    return (
+        "SMTP 登录凭据编码失败：UnicodeEncodeError("
+        f"error_code={error_code}, field={field}, encoding={exc.encoding}, "
+        f"start={exc.start}, end={exc.end}, reason={exc.reason})"
+    )
 
 
 def format_imap_login_error(identity: IdentityProfile, detail: object) -> str:

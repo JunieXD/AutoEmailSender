@@ -136,7 +136,11 @@ class ApiEndpointTests(unittest.TestCase):
 
     def test_smtp_connectivity_failure_includes_possible_cause_and_raw_error(self) -> None:
         identity_id = self._create_identity(with_imap=False)
-        raw_error = "SMTP 连接失败: (550, b'Requested action aborted: flow over limit')"
+        raw_error = (
+            "SMTP 登录凭据编码失败：UnicodeEncodeError("
+            "error_code=SMTP_PASSWORD_NON_ASCII, field=smtp_password, "
+            "encoding=ascii, start=6, end=7, reason=ordinal not in range(128))"
+        )
 
         with patch(
             "app.modules.identities.profiles.api.test_smtp_connection",
@@ -148,7 +152,8 @@ class ApiEndpointTests(unittest.TestCase):
         payload = response.json()
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["message"], raw_error)
-        self.assertIn("发送限流", payload["possible_cause"])
+        self.assertIn("邮箱授权码", payload["possible_cause"])
+        self.assertIn("不可见字符", payload["possible_cause"])
 
     def test_identity_accepts_profile_name_and_sender_name_with_name_compatibility(self) -> None:
         payload = self._build_identity_payload(
