@@ -451,7 +451,9 @@ describe("TasksPage layout", () => {
 
   it("loads the batch draft review thread from the selected batch item", async () => {
     vi.mocked(listBatchTasks).mockResolvedValue([runningTask]);
-    vi.mocked(listBatchTaskItems).mockResolvedValue([pendingTaskItem]);
+    vi.mocked(listBatchTaskItems).mockResolvedValue([
+      { ...pendingTaskItem, can_cancel_send: true },
+    ]);
     vi.mocked(getBatchTaskItemThread).mockResolvedValueOnce(
       buildWorkspaceThread({
         id: pendingTaskItem.id,
@@ -462,7 +464,14 @@ describe("TasksPage layout", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
-    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    const dialog = await screen.findByRole("dialog", { name: "批量任务详情" });
+    const itemCard = within(dialog).getByTestId(`batch-task-item-${pendingTaskItem.id}`);
+    const reviewButton = within(itemCard).getByRole("button", { name: "审核草稿" });
+    const cancelButton = within(itemCard).getByRole("button", { name: "取消发送" });
+
+    expect(reviewButton.parentElement).toBe(cancelButton.parentElement);
+    expect(reviewButton).toHaveClass("ui-btn-primary");
+    fireEvent.click(reviewButton);
 
     await waitFor(() => {
       expect(getBatchTaskItemThread).toHaveBeenCalledWith(runningTask.id, pendingTaskItem.id);

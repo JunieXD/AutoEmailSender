@@ -1107,11 +1107,6 @@ export const EmailDeliveryPlan = ({
                       </div>
                       <div className="min-w-0 text-center">
                         <DeliveryStatusBadge item={item} />
-                        {item.last_error ? (
-                          <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700" title={item.last_error}>
-                            {item.last_error}
-                          </div>
-                        ) : null}
                       </div>
                       <div className="flex min-w-0 justify-center gap-2">
                         {item.can_reschedule ? (
@@ -1159,9 +1154,6 @@ export const EmailDeliveryPlan = ({
                         </div>
                         <DeliveryStatusBadge item={item} />
                       </div>
-                      {item.last_error ? (
-                        <div className="mt-2 break-words text-xs leading-5 text-red-700">{item.last_error}</div>
-                      ) : null}
                       <div className="mt-3 line-clamp-2 text-sm leading-5 text-stone-800">{item.subject?.trim() || '（无主题）'}</div>
                       <div className="mt-3 text-xs text-stone-500">{item.identity_name} · {item.sender_email}</div>
                       <div className="mt-1 text-xs text-stone-400">{item.source === 'manual' ? '工作区邮件' : item.batch_task_name ?? '批量邮件'}</div>

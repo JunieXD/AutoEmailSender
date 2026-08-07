@@ -431,7 +431,8 @@ describe('EmailDeliveryPlan', () => {
     unmount();
   });
 
-  it('shows the actual draft failure reason in the batch-style detail panel', async () => {
+  it('keeps the actual draft failure reason in details without exposing it in the plan list', async () => {
+    const rawError = '模型返回的 JSON 结构无效: 3 validation errors for DraftResponse';
     apiMocks.listEmailDeliveries.mockResolvedValue(
       buildList({
         items: [
@@ -442,7 +443,7 @@ describe('EmailDeliveryPlan', () => {
             status: 'draft_failed',
             status_label: '草稿生成失败',
             status_description: '生成邮件草稿时失败，因此未进入发送流程',
-            last_error: '模型返回的 JSON 结构无效',
+            last_error: rawError,
             can_reschedule: false,
             can_cancel: false,
             can_send_now: false,
@@ -455,7 +456,8 @@ describe('EmailDeliveryPlan', () => {
     );
 
     renderPlan('/tasks?section=delivery&view=attention');
-    await screen.findAllByText('模型返回的 JSON 结构无效');
+    await screen.findAllByText('草稿生成失败');
+    expect(screen.queryByText(rawError)).not.toBeInTheDocument();
     screen.getAllByText('博士申请咨询').forEach((subject) => {
       fireEvent.click(subject);
     });
@@ -467,7 +469,7 @@ describe('EmailDeliveryPlan', () => {
     const detail = screen.getByRole('dialog', { name: '发送项详情' });
     expect(detail).toHaveClass('sm:max-w-4xl', 'sm:rounded-3xl');
     expect(screen.getByText('失败原因')).toBeInTheDocument();
-    expect(screen.getAllByText('模型返回的 JSON 结构无效').length).toBeGreaterThan(1);
+    expect(screen.getByText(rawError)).toBeInTheDocument();
     expect(screen.queryByText('可前往所属批次查看后续处理方式')).not.toBeInTheDocument();
     expect(screen.queryByText('该导师的批量发送已取消')).not.toBeInTheDocument();
   });

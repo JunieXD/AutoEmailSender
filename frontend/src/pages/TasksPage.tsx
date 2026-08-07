@@ -4158,7 +4158,7 @@ export const TasksPage = () => {
           type="button"
           onClick={() => void handleRestoreBatchItemSend(item)}
           disabled={actionBusy}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          className="ui-btn-secondary min-h-8 gap-1.5 px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           {activeAction === "restore" ? "恢复中..." : "恢复发送"}
@@ -4173,10 +4173,31 @@ export const TasksPage = () => {
         type="button"
         onClick={() => void handleCancelBatchItemSend(item)}
         disabled={actionBusy}
-        className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+        className="ui-btn-danger min-h-8 gap-1.5 px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
       >
         <Ban className="h-3.5 w-3.5" />
         {activeAction === "cancel" ? "取消中..." : "取消发送"}
+      </button>
+    );
+  };
+
+  const renderBatchTaskItemReviewButton = (item: BatchTaskItemDTO) => {
+    if (!selectedBatchTask) {
+      return null;
+    }
+    const action = buildBatchPendingItemAction(item, selectedBatchTask);
+    if (action?.kind !== "review") {
+      return null;
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={() => void openBatchDraftReview(item)}
+        className="ui-btn-primary min-h-8 gap-1.5 px-3 py-1.5 text-xs shadow-primary/15"
+      >
+        <FileSearch className="h-3.5 w-3.5" />
+        {action.text}
       </button>
     );
   };
@@ -4194,16 +4215,6 @@ export const TasksPage = () => {
         <span className="font-medium text-stone-600">
           {action.text}
         </span>
-      );
-    } else if (action?.kind === "review") {
-      actionContent = (
-        <button
-          type="button"
-          onClick={() => void openBatchDraftReview(item)}
-          className="font-medium text-primary"
-        >
-          {action.text}
-        </button>
       );
     } else if (action?.kind === "professor" && !missingResearchDirection) {
       actionContent = (
@@ -6020,6 +6031,7 @@ export const TasksPage = () => {
                                   {PROFESSOR_STATUS_LABELS[item.status]}
                                 </span>
                               )}
+                              {renderBatchTaskItemReviewButton(item)}
                               {renderBatchItemSendButton(item)}
                             </div>
                           </div>
