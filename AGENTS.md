@@ -54,6 +54,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 ## Testing Guidelines
 
+- For a full repository test run, use `rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py` so progress remains live through RTK. It suppresses successful test logs and prints detailed output only for failures. Use `--slowest N` only when diagnosing test duration.
 - Frontend tests use Vitest with node and jsdom projects. Run `npm run lint` plus the relevant `npm run test`, `npm run test:node`, or `npm run test:dom` command for touched UI and client logic.
 - Backend tests use `unittest` with `test_*.py` naming under `backend/test`. Keep new tests deterministic and avoid live-network dependencies unless they are clearly experimental.
 - Database model or schema changes must include an Alembic revision under `backend/alembic/versions` and tests covering migration or schema behavior.

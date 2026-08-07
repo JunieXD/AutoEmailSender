@@ -17,3 +17,11 @@ The root directory only exposes stable commands already used by developer docume
 - `release.{sh,ps1}`
 
 These files are thin argument-forwarding wrappers. Repository automation and implementation tests should call the owner path directly so ownership changes remain visible.
+
+Run all core test suites with concise live progress from the repository root:
+
+```powershell
+uv run --project backend --no-sync python scripts/quality/run_all_tests.py
+```
+
+Successful test output is suppressed. The runner emits periodic progress, expands details for failed suites, and accepts `--slowest N` to diagnose slow Python tests.
