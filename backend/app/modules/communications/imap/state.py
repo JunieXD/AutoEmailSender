@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from collections.abc import Iterable, Iterator
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -51,6 +52,37 @@ class ImapIdentitySyncClaim:
     identity_id: int
     claim_id: str
     claim_kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundImapIdentitySyncClaim:
+    claim: ImapIdentitySyncClaim
+    lease_seconds: int
+
+
+class ImapIdentitySyncLeaseLostError(RuntimeError):
+    pass
+
+
+_CURRENT_IMAP_IDENTITY_SYNC_CLAIM: ContextVar[
+    _BoundImapIdentitySyncClaim | None
+] = ContextVar("current_imap_identity_sync_claim", default=None)
+
+
+def bind_imap_identity_sync_claim(
+    claim: ImapIdentitySyncClaim,
+    *,
+    lease_seconds: int,
+) -> Token[_BoundImapIdentitySyncClaim | None]:
+    return _CURRENT_IMAP_IDENTITY_SYNC_CLAIM.set(
+        _BoundImapIdentitySyncClaim(claim, lease_seconds)
+    )
+
+
+def reset_imap_identity_sync_claim(
+    token: Token[_BoundImapIdentitySyncClaim | None],
+) -> None:
+    _CURRENT_IMAP_IDENTITY_SYNC_CLAIM.reset(token)
 
 
 async def claim_imap_identity_sync(
@@ -165,6 +197,38 @@ async def release_imap_identity_sync_claim(
         return True
 
 
+async def commit_imap_identity_sync_session(session: AsyncSession) -> None:
+    bound_claim = _CURRENT_IMAP_IDENTITY_SYNC_CLAIM.get()
+    if bound_claim is None:
+        await session.commit()
+        return
+
+    claim = bound_claim.claim
+    now = utc_now()
+    transition = await session.execute(
+        update(ImapIdentitySyncLease)
+        .where(
+            ImapIdentitySyncLease.identity_id == claim.identity_id,
+            ImapIdentitySyncLease.claim_id == claim.claim_id,
+            ImapIdentitySyncLease.claim_kind == claim.claim_kind,
+            ImapIdentitySyncLease.lease_expires_at > now,
+        )
+        .values(
+            lease_expires_at=now
+            + timedelta(seconds=max(5, bound_claim.lease_seconds)),
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if transition.rowcount != 1:
+        await session.rollback()
+        raise ImapIdentitySyncLeaseLostError(
+            f"IMAP identity lease lost for identity_id={claim.identity_id} "
+            f"kind={claim.claim_kind}"
+        )
+    await session.commit()
+
+
 async def ensure_professor_scan_states(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -210,7 +274,7 @@ async def ensure_professor_scan_states(
                 ),
             )
             created += 1
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return created
 
 
@@ -284,7 +348,7 @@ async def ensure_recent_history_professor_scan_states(
                 ),
             )
             created += 1
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return created
 
 
@@ -410,7 +474,7 @@ async def ensure_recent_v2_professor_scan_states(
             sent_folder,
         )
         inbox_state.last_professor_state_ensure_at = now
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return touched
 
 
@@ -520,7 +584,7 @@ async def claim_recent_v2_professor_scans(
             )
             if transition.rowcount == 1:
                 claimed.append(state)
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
         for state in claimed:
             await session.refresh(state)
         return claimed
@@ -570,7 +634,7 @@ async def prepare_recent_v2_bulk_sent_batch(
                 if state.historical_scan_status == ImapProfessorHistoricalScanStatus.FAILED.value:
                     state.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
                     state.last_error = None
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
         return batch_id, [state.id for state in selected]
 
 
@@ -605,7 +669,7 @@ async def mark_recent_v2_batch_completed(
             state.history_lease_expires_at = None
             state.last_error = None
             completed += 1
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return completed
 
 
@@ -733,7 +797,7 @@ async def ensure_professor_scan_states_if_needed(
         state.professor_state_fingerprint = fingerprint
         state.last_professor_state_ensure_at = utc_now()
         state.history_strategy_version = TARGETED_BASELINE_STRATEGY_VERSION
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return created
 
 
@@ -806,7 +870,7 @@ async def claim_next_professor_scans(
             )
             if transition.rowcount == 1:
                 claimed.append(state)
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
         for state in claimed:
             await session.refresh(state)
         return claimed
@@ -835,7 +899,7 @@ async def mark_professor_scan_states_completed_for_identity(
             state.history_claim_id = None
             state.history_lease_expires_at = None
             state.last_error = None
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def reset_professor_scans_to_pending(
@@ -880,7 +944,7 @@ async def reset_professor_scans_to_pending(
                 .values(**values)
                 .execution_options(synchronize_session=False)
             )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def claim_next_mailbox_history_scans(
@@ -943,7 +1007,7 @@ async def claim_next_mailbox_history_scans(
             )
             if transition.rowcount == 1:
                 claimed.append(state)
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
         for state in claimed:
             await session.refresh(state)
         return claimed
@@ -986,7 +1050,7 @@ async def reset_mailbox_history_scans_to_pending(
                 )
                 .execution_options(synchronize_session=False)
             )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def mark_mailbox_history_scan_progress(
@@ -1067,7 +1131,7 @@ async def mark_mailbox_history_scan_progress(
             .values(**values)
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def mark_mailbox_history_scan_failed(
@@ -1099,7 +1163,7 @@ async def mark_mailbox_history_scan_failed(
             )
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def mark_professor_scan_completed(
@@ -1133,7 +1197,7 @@ async def mark_professor_scan_completed(
             )
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def mark_professor_scan_failed(
@@ -1165,7 +1229,7 @@ async def mark_professor_scan_failed(
             )
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def clear_identity_sent_folder_discovery_cache(
@@ -1174,7 +1238,7 @@ async def clear_identity_sent_folder_discovery_cache(
 ) -> bool:
     async with session_factory() as session:
         cleared = await clear_identity_sent_folder_discovery_cache_in_session(session, identity_id)
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
         return cleared
 
 

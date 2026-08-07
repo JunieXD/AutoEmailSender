@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -33,6 +33,7 @@ from app.models import (
 )
 from app.modules.llm import runtime as llm_runtime
 from app.modules.communications.imap.sync import (
+    _mark_recent_sent_history_failed,
     _run_imap_identities_bounded,
     _run_identity_sync_with_lease,
     poll_identity_replies,
@@ -200,6 +201,213 @@ class ConcurrencyGuardTests(unittest.TestCase):
             return result, lease_is_held, cancellation_was_ignored
 
         self.assertEqual(self._run_async(scenario()), (0, True, True))
+
+    def test_imap_identity_rejects_result_when_work_and_lost_heartbeat_finish_together(
+        self,
+    ) -> None:
+        async def scenario() -> tuple[int, bool]:
+            identity_id = await self._create_imap_identity()
+
+            async def operation() -> int:
+                return 7
+
+            async def lost_heartbeat(*args, **kwargs) -> bool:
+                return False
+
+            async def wait_for_both(tasks, **kwargs):
+                task_set = set(tasks)
+                await asyncio.gather(*task_set, return_exceptions=True)
+                return task_set, set()
+
+            settings = SimpleNamespace(
+                imap_identity_lease_seconds=60,
+                imap_identity_sync_timeout_seconds=1,
+            )
+            with (
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync._run_imap_identity_heartbeat",
+                    new=lost_heartbeat,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync.asyncio.wait",
+                    new=wait_for_both,
+                ),
+            ):
+                result = await _run_identity_sync_with_lease(
+                    self.session_factory,
+                    identity_id,
+                    claim_kind="history",
+                    operation=operation,
+                )
+
+            async with self.session_factory() as session:
+                lease = await session.get(ImapIdentitySyncLease, identity_id)
+                lease_remains_held = bool(lease is not None and lease.claim_id)
+            return result, lease_remains_held
+
+        self.assertEqual(self._run_async(scenario()), (0, True))
+
+    def test_imap_identity_stale_worker_cannot_commit_after_replacement_claim(
+        self,
+    ) -> None:
+        async def scenario() -> tuple[int, int, str | None]:
+            identity_id = await self._create_imap_identity()
+            heartbeat_release = asyncio.Event()
+
+            async def operation() -> int:
+                async with self.session_factory() as session:
+                    await session.execute(
+                        update(ImapIdentitySyncLease)
+                        .where(ImapIdentitySyncLease.identity_id == identity_id)
+                        .values(
+                            claim_id="replacement-claim",
+                            claim_kind="history",
+                            lease_expires_at=datetime.now(UTC) + timedelta(minutes=1),
+                        )
+                    )
+                    await session.commit()
+                await _mark_recent_sent_history_failed(
+                    self.session_factory,
+                    identity_id=identity_id,
+                    sent_folder="Sent",
+                    error=RuntimeError("stale write"),
+                )
+                return 7
+
+            async def blocked_heartbeat(*args, **kwargs) -> bool:
+                await heartbeat_release.wait()
+                return True
+
+            settings = SimpleNamespace(
+                imap_identity_lease_seconds=60,
+                imap_identity_sync_timeout_seconds=1,
+            )
+            with (
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync._run_imap_identity_heartbeat",
+                    new=blocked_heartbeat,
+                ),
+            ):
+                result = await _run_identity_sync_with_lease(
+                    self.session_factory,
+                    identity_id,
+                    claim_kind="history",
+                    operation=operation,
+                )
+
+            async with self.session_factory() as session:
+                mailbox_state_count = int(
+                    await session.scalar(
+                        select(func.count(ImapMailboxSyncState.id)).where(
+                            ImapMailboxSyncState.identity_id == identity_id,
+                        )
+                    )
+                    or 0
+                )
+                lease = await session.get(ImapIdentitySyncLease, identity_id)
+                replacement_claim_id = lease.claim_id if lease is not None else None
+            return result, mailbox_state_count, replacement_claim_id
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (0, 0, "replacement-claim"),
+        )
+
+    def test_imap_identity_heartbeat_loss_does_not_wait_for_stubborn_operation(
+        self,
+    ) -> None:
+        async def scenario() -> tuple[int, bool, bool]:
+            identity_id = await self._create_imap_identity()
+            started = asyncio.Event()
+            release = asyncio.Event()
+            ignored_cancellation = asyncio.Event()
+            finished = asyncio.Event()
+
+            async def stubborn_operation() -> int:
+                started.set()
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        ignored_cancellation.set()
+                finished.set()
+                return 7
+
+            async def lost_heartbeat(*args, **kwargs) -> bool:
+                await started.wait()
+                return False
+
+            settings = SimpleNamespace(
+                imap_identity_lease_seconds=60,
+                imap_identity_sync_timeout_seconds=1,
+            )
+            with (
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync._run_imap_identity_heartbeat",
+                    new=lost_heartbeat,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync._IMAP_TASK_CANCEL_GRACE_SECONDS",
+                    0.01,
+                ),
+            ):
+                result = await asyncio.wait_for(
+                    _run_identity_sync_with_lease(
+                        self.session_factory,
+                        identity_id,
+                        claim_kind="history",
+                        operation=stubborn_operation,
+                    ),
+                    timeout=0.5,
+                )
+
+            returned_before_operation = not finished.is_set()
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=0.5)
+            return result, ignored_cancellation.is_set(), returned_before_operation
+
+        self.assertEqual(self._run_async(scenario()), (0, True, True))
+
+    def test_imap_identity_operation_error_releases_current_claim(self) -> None:
+        async def scenario() -> str | None:
+            identity_id = await self._create_imap_identity()
+
+            async def operation() -> int:
+                raise RuntimeError("sync failed")
+
+            settings = SimpleNamespace(
+                imap_identity_lease_seconds=60,
+                imap_identity_sync_timeout_seconds=1,
+            )
+            with patch(
+                "app.modules.communications.imap.sync.get_settings",
+                return_value=settings,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "sync failed"):
+                    await _run_identity_sync_with_lease(
+                        self.session_factory,
+                        identity_id,
+                        claim_kind="history",
+                        operation=operation,
+                    )
+
+            async with self.session_factory() as session:
+                lease = await session.get(ImapIdentitySyncLease, identity_id)
+                return lease.claim_id if lease is not None else None
+
+        self.assertIsNone(self._run_async(scenario()))
 
     def test_imap_mailbox_work_item_claim_is_atomic(self) -> None:
         async def scenario() -> tuple[int, int]:

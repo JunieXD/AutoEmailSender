@@ -39,7 +39,9 @@ from .errors import (
 from .fetcher import ImapFetchedMessage
 from .state import (
     ImapIdentitySyncClaim,
+    ImapIdentitySyncLeaseLostError,
     RECENT_V2_STRATEGY_VERSION,
+    bind_imap_identity_sync_claim,
     claim_next_professor_scans,
     claim_imap_identity_sync,
     claim_recent_v2_professor_scans,
@@ -50,7 +52,9 @@ from .state import (
     mark_professor_scan_failed,
     mark_recent_v2_batch_completed,
     prepare_recent_v2_bulk_sent_batch,
+    commit_imap_identity_sync_session,
     release_imap_identity_sync_claim,
+    reset_imap_identity_sync_claim,
     renew_imap_identity_sync_claim,
     reset_professor_scans_to_pending,
 )
@@ -321,7 +325,17 @@ async def _run_identity_sync_with_lease(
     if claim is None:
         return 0
 
-    work_task = asyncio.create_task(operation())
+    async def run_bound_operation() -> int:
+        token = bind_imap_identity_sync_claim(
+            claim,
+            lease_seconds=settings.imap_identity_lease_seconds,
+        )
+        try:
+            return await operation()
+        finally:
+            reset_imap_identity_sync_claim(token)
+
+    work_task = asyncio.create_task(run_bound_operation())
     heartbeat_task = asyncio.create_task(
         _run_imap_identity_heartbeat(
             session_factory,
@@ -338,14 +352,33 @@ async def _run_identity_sync_with_lease(
             )
             if work_task in done:
                 release_claim = True
-                return await work_task
+                result = await work_task
+                claim_is_current = (
+                    await heartbeat_task
+                    if heartbeat_task in done
+                    else await _renew_imap_identity_claim_for_completion(
+                        session_factory,
+                        claim,
+                        lease_seconds=settings.imap_identity_lease_seconds,
+                    )
+                )
+                if not claim_is_current:
+                    release_claim = False
+                    return 0
+                return result
             claim_is_current = await heartbeat_task
             if not claim_is_current:
-                work_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await work_task
+                await _cancel_imap_task_with_grace(work_task)
                 return 0
             return await work_task
+    except ImapIdentitySyncLeaseLostError:
+        release_claim = False
+        logger.warning(
+            "IMAP identity sync stopped after lease loss: identity_id=%s kind=%s",
+            identity_id,
+            claim_kind,
+        )
+        return 0
     except TimeoutError:
         await _cancel_imap_task_with_grace(work_task)
         logger.warning(
@@ -371,6 +404,29 @@ async def _run_identity_sync_with_lease(
                     claim.identity_id,
                     claim.claim_kind,
                 )
+
+
+async def _renew_imap_identity_claim_for_completion(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ImapIdentitySyncClaim,
+    *,
+    lease_seconds: int,
+) -> bool:
+    try:
+        return await renew_imap_identity_sync_claim(
+            session_factory,
+            claim,
+            lease_seconds=lease_seconds,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception(
+            "IMAP identity lease completion check failed: identity_id=%s kind=%s",
+            claim.identity_id,
+            claim.claim_kind,
+        )
+        return False
 
 
 async def _cancel_imap_task_with_grace(task: asyncio.Task[object]) -> None:
@@ -477,7 +533,7 @@ async def get_cached_or_discover_sent_folder(
         else:
             state.sent_folder_discovery_failed_at = utc_now()
             state.sent_folder_discovery_error = "Sent folder not found"
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return sent_folder
 
 
@@ -495,7 +551,7 @@ async def _record_sent_folder_discovery_failure(
         )
         state.sent_folder_discovery_failed_at = utc_now()
         state.sent_folder_discovery_error = error
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def mark_imap_throttled(
@@ -520,7 +576,7 @@ async def mark_imap_throttled(
             seconds=settings.imap_throttle_backoff_seconds
         )
         state.throttle_reason = f"{prefix}{reason}"
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def is_imap_history_paused(
@@ -556,7 +612,7 @@ async def _get_active_imap_throttle_reason(
         if state.throttle_paused_until <= utc_now():
             state.throttle_paused_until = None
             state.throttle_reason = None
-            await session.commit()
+            await commit_imap_identity_sync_session(session)
             return None
         return state.throttle_reason or ""
 
@@ -901,7 +957,7 @@ async def _sync_recent_sent_history_once(
             state.history_last_error = None
         min_uid = state.history_high_water_uid
         expected_uidvalidity = state.uidvalidity
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
     if known_uids is None:
         header_result = await mail_runtime.fetch_recent_mailbox_message_headers_since(
@@ -980,7 +1036,7 @@ async def _sync_recent_sent_history_once(
             state.history_matched_count or 0
         ) + safe_matched_count
         state.history_last_error = None
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
     return _RecentSentDiscoveryResult(
         detected=detected,
@@ -1005,7 +1061,7 @@ async def _mark_recent_sent_history_failed(
         )
         state.history_scan_status = "sent_recent_discovery_failed"
         state.history_last_error = str(error)
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def _match_recent_sent_headers(
@@ -1195,7 +1251,7 @@ async def _record_targeted_mailbox_uidvalidity(
             folder=folder,
         )
         mailbox_state.uidvalidity = uidvalidity
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def _reset_other_targeted_professor_cursors_for_uidvalidity_change(
@@ -1225,7 +1281,7 @@ async def _reset_other_targeted_professor_cursors_for_uidvalidity_change(
             sibling.history_claim_id = None
             sibling.history_lease_expires_at = None
             sibling.last_error = None
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
 
 
 async def _sync_identity_targeted_history_once(
@@ -1794,7 +1850,7 @@ async def sync_identity_incremental_once(
         )
         if not _identity_has_imap_config(identity):
             state.last_error = None
-            await session.commit()
+            await commit_imap_identity_sync_session(session)
             return 0
         last_seen_uid = state.last_seen_uid
         expected_uidvalidity = state.uidvalidity
@@ -1804,7 +1860,7 @@ async def sync_identity_incremental_once(
             and state.history_scan_status
             != ImapMailboxHistoricalScanStatus.COMPLETED.value
         )
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     try:
         if should_bootstrap_history_cursor:
             bootstrap_result = (
@@ -1834,7 +1890,7 @@ async def sync_identity_incremental_once(
                     )
                     state.last_sync_at = utc_now()
                     state.last_error = None
-                    await session.commit()
+                    await commit_imap_identity_sync_session(session)
                 return 0
             async with session_factory() as session:
                 state = await _get_or_create_mailbox_state(
@@ -1847,7 +1903,7 @@ async def sync_identity_incremental_once(
                     state.uidvalidity = bootstrap_result.uidvalidity
                 state.last_sync_at = utc_now()
                 state.last_error = "IMAP high-water bootstrap failed; incremental sync skipped to avoid full mailbox fetch"
-                await session.commit()
+                await commit_imap_identity_sync_session(session)
             return 0
         fetch_with_uidvalidity = getattr(
             mail_runtime,
@@ -1881,7 +1937,7 @@ async def sync_identity_incremental_once(
                 folder=folder,
             )
             state.last_error = str(exc)
-            await session.commit()
+            await commit_imap_identity_sync_session(session)
         if is_provider_throttle_error(exc):
             await mark_imap_throttled(
                 session_factory,
@@ -1922,7 +1978,7 @@ async def sync_identity_incremental_once(
             state.last_seen_uid = max(state.last_seen_uid or 0, max_seen_uid)
         state.last_sync_at = utc_now()
         state.last_error = None
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return detected
 
 
@@ -2115,7 +2171,7 @@ async def _process_incoming_reply_messages(
                         folder_role=folder_role,
                         folder=folder,
                     )
-                    await session.commit()
+                    await commit_imap_identity_sync_session(session)
                     detected += 1
                 continue
 
@@ -2141,7 +2197,7 @@ async def _process_incoming_reply_messages(
                             "email_task.reply_detected",
                             metadata={"message_id": message.message_id},
                         )
-                    await session.commit()
+                    await commit_imap_identity_sync_session(session)
                 if not was_already_replied:
                     detected += 1
                 continue
@@ -2184,7 +2240,7 @@ async def _process_incoming_reply_messages(
                     "email_task.reply_detected",
                     metadata={"message_id": message.message_id},
                 )
-                await session.commit()
+                await commit_imap_identity_sync_session(session)
             except IntegrityError:
                 await session.rollback()
                 continue
@@ -2417,7 +2473,7 @@ async def _process_sent_imap_fetched_messages(
                     ),
                 )
                 detected += 1
-        await session.commit()
+        await commit_imap_identity_sync_session(session)
     return detected
 
 
