@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/email-deliveries", tags=["email-deliveries"])
 async def list_deliveries(
     view: EmailDeliveryView = Query(default="upcoming"),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=10, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
     identity_id: int | None = Query(default=None),
     source: EmailDeliverySource = Query(default="all"),
     status: str | None = Query(default=None),

@@ -14,6 +14,7 @@ from app.models import (
     BatchTask,
     BatchTaskStatus,
     EmailTask,
+    EmailTaskCancellationReason,
     EmailTaskSource,
     EmailTaskStatus,
     IdentityProfile,
@@ -340,6 +341,113 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "ix_email_tasks_delivery_attention_updated",
             " ".join(str(row) for row in attention_plan),
+        )
+
+    async def test_attention_statuses_explain_the_actual_unsent_reason(self) -> None:
+        async with self.session_factory() as session:
+            identity = self._identity("原因测试身份", "reason@example.com")
+            llm_profile = self._profile()
+            batch_task = BatchTask(
+                identity=identity,
+                llm_profile=llm_profile,
+                name="原因测试批次",
+                status=BatchTaskStatus.STOPPED.value,
+            )
+            professors = [
+                Professor(name="草稿失败导师", email="draft-failed@example.edu"),
+                Professor(name="任务终止导师", email="stopped@example.edu"),
+                Professor(name="窗口过期导师", email="expired@example.edu"),
+            ]
+            session.add_all([identity, llm_profile, batch_task, *professors])
+            await session.flush()
+            session.add_all(
+                [
+                    EmailTask(
+                        professor_id=professors[0].id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        source=EmailTaskSource.BATCH.value,
+                        batch_task_id=batch_task.id,
+                        status=EmailTaskStatus.CANCELED.value,
+                        cancellation_reason=EmailTaskCancellationReason.BATCH_STOPPED.value,
+                        last_error="模型返回的 JSON 结构无效",
+                    ),
+                    EmailTask(
+                        professor_id=professors[1].id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        source=EmailTaskSource.BATCH.value,
+                        batch_task_id=batch_task.id,
+                        status=EmailTaskStatus.CANCELED.value,
+                        cancellation_reason=EmailTaskCancellationReason.BATCH_STOPPED.value,
+                    ),
+                    EmailTask(
+                        professor_id=professors[2].id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        source=EmailTaskSource.BATCH.value,
+                        batch_task_id=batch_task.id,
+                        status=EmailTaskStatus.CANCELED.value,
+                        cancellation_reason=EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
+                    ),
+                ],
+            )
+            await session.commit()
+
+            result = await list_email_deliveries(
+                session,
+                view="attention",
+                page=1,
+                page_size=1,
+                identity_id=None,
+                source="all",
+                status=None,
+                query=None,
+                task_id=None,
+            )
+            all_items = []
+            for page in range(1, result.total_pages + 1):
+                page_result = await list_email_deliveries(
+                    session,
+                    view="attention",
+                    page=page,
+                    page_size=1,
+                    identity_id=None,
+                    source="all",
+                    status=None,
+                    query=None,
+                    task_id=None,
+                )
+                all_items.extend(page_result.items)
+            filtered_counts = {}
+            for status in ("draft_failed", "batch_stopped", "schedule_expired"):
+                filtered_result = await list_email_deliveries(
+                    session,
+                    view="attention",
+                    page=1,
+                    page_size=1,
+                    identity_id=None,
+                    source="all",
+                    status=status,
+                    query=None,
+                    task_id=None,
+                )
+                filtered_counts[status] = filtered_result.total_count
+
+        items_by_name = {item.professor_name: item for item in all_items}
+        self.assertEqual(items_by_name["草稿失败导师"].status, "draft_failed")
+        self.assertEqual(items_by_name["草稿失败导师"].status_label, "草稿生成失败")
+        self.assertEqual(
+            items_by_name["草稿失败导师"].last_error,
+            "模型返回的 JSON 结构无效",
+        )
+        self.assertEqual(items_by_name["任务终止导师"].status, "batch_stopped")
+        self.assertEqual(items_by_name["任务终止导师"].status_label, "批量任务已终止")
+        self.assertEqual(items_by_name["窗口过期导师"].status, "schedule_expired")
+        self.assertEqual(items_by_name["窗口过期导师"].status_label, "发送窗口已过期")
+        self.assertEqual(
+            filtered_counts,
+            {"draft_failed": 1, "batch_stopped": 1, "schedule_expired": 1},
         )
 
     async def test_reschedule_conflict_and_cancel_preserve_history(self) -> None:

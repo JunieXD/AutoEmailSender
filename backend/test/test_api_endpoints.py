@@ -86,6 +86,12 @@ class ApiEndpointTests(unittest.TestCase):
         os.environ.pop("ENABLE_BACKGROUND_WORKERS", None)
         self.temp_dir.cleanup()
 
+    def test_email_delivery_pagination_accepts_one_item_per_page(self) -> None:
+        response = self.client.get("/api/email-deliveries?page_size=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["page_size"], 1)
+
     def test_identity_and_llm_connectivity_endpoints(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
