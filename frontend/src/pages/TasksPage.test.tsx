@@ -1062,7 +1062,7 @@ describe("TasksPage match analysis token usage", () => {
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
     const detailHeaders = within(dialog).getAllByRole("columnheader");
-    expect(within(dialog).getByRole("table")).toHaveClass("w-max", "table-auto");
+    expect(within(dialog).getByRole("table")).toHaveClass("w-max", "min-w-max", "table-auto");
     detailHeaders.forEach((header) => {
       expect(header).toHaveClass("align-middle");
       expect(header.parentElement?.parentElement).toHaveClass("text-center");
@@ -1174,7 +1174,7 @@ describe("TasksPage information enrichment", () => {
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
     const detailHeaders = within(dialog).getAllByRole("columnheader");
-    expect(within(dialog).getByRole("table")).toHaveClass("w-max", "table-auto");
+    expect(within(dialog).getByRole("table")).toHaveClass("w-max", "min-w-max", "table-auto");
     detailHeaders.forEach((header) => {
       expect(header).toHaveClass("align-middle");
       expect(header.parentElement?.parentElement).toHaveClass("text-center");
