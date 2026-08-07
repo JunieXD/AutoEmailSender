@@ -7239,8 +7239,16 @@ class ApiEndpointTests(unittest.TestCase):
             ]
             self.assertEqual(len(task_ids), 3)
             connection.execute(
-                "UPDATE email_tasks SET status = ? WHERE id = ?",
-                ("matched", task_ids[0]),
+                """
+                UPDATE email_tasks
+                SET status = 'generating_draft',
+                    draft_generation_previous_status = 'matched',
+                    draft_claim_id = 'stop-claim',
+                    draft_claimed_at = CURRENT_TIMESTAMP,
+                    draft_lease_expires_at = datetime(CURRENT_TIMESTAMP, '+90 seconds')
+                WHERE id = ?
+                """,
+                (task_ids[0],),
             )
             connection.execute(
                 "UPDATE email_tasks SET status = ? WHERE id = ?",
@@ -7279,7 +7287,8 @@ class ApiEndpointTests(unittest.TestCase):
         try:
             rows = connection.execute(
                 """
-                SELECT id, status, cancellation_reason
+                SELECT id, status, cancellation_reason,
+                       draft_claim_id, draft_claimed_at, draft_lease_expires_at
                 FROM email_tasks
                 WHERE batch_task_id = ?
                 ORDER BY id
@@ -7292,9 +7301,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                (task_ids[0], "canceled", "batch_stopped"),
-                (task_ids[1], "canceled", "batch_stopped"),
-                (task_ids[2], "sent", None),
+                (task_ids[0], "canceled", "batch_stopped", None, None, None),
+                (task_ids[1], "canceled", "batch_stopped", None, None, None),
+                (task_ids[2], "sent", None, None, None, None),
             ],
         )
 
@@ -9311,6 +9320,12 @@ class ApiEndpointTests(unittest.TestCase):
     def test_batch_task_card_counts_draft_generation_statuses(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="queue-ready-resume.txt",
+            content=b"Research experience in reliable agent systems.",
+            material_type="resume",
+        )
         self.client.post("/api/professors/import-sample")
         professors = self.client.get("/api/professors").json()[:4]
 
@@ -9325,7 +9340,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "window_start_time": None,
                 "window_end_time": None,
                 "emails_per_window": None,
-                "primary_material_id": None,
+                "primary_material_id": material_id,
                 "email_subject": "申请与{{name}}老师交流",
                 "email_body": "老师您好，我是{{sender_name}}。",
                 "selected_material_ids": None,
@@ -9352,6 +9367,10 @@ class ApiEndpointTests(unittest.TestCase):
             connection.execute("UPDATE email_tasks SET status = 'generating_draft' WHERE id = ?", (task_ids[0],))
             connection.execute("UPDATE email_tasks SET status = 'draft_failed' WHERE id = ?", (task_ids[1],))
             connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (task_ids[2],))
+            connection.execute(
+                "UPDATE email_tasks SET primary_material_id = NULL WHERE id = ?",
+                (task_ids[3],),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -9362,6 +9381,27 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(task_payload["generating_draft_count"], 1)
         self.assertEqual(task_payload["draft_failed_count"], 1)
         self.assertEqual(task_payload["pending_generation_count"], 1)
+        self.assertEqual(task_payload["queued_generation_count"], 0)
+        self.assertEqual(task_payload["blocked_generation_count"], 1)
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE email_tasks SET primary_material_id = ? WHERE id = ?",
+                (material_id, task_ids[3]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        refreshed = self.client.get("/api/batch-tasks")
+        self.assertEqual(refreshed.status_code, 200, msg=refreshed.text)
+        refreshed_payload = next(
+            item for item in refreshed.json() if item["id"] == batch_task_id
+        )
+        self.assertEqual(refreshed_payload["pending_generation_count"], 1)
+        self.assertEqual(refreshed_payload["queued_generation_count"], 1)
+        self.assertEqual(refreshed_payload["blocked_generation_count"], 0)
 
     def test_list_batch_tasks_syncs_all_stale_completed_tasks(self) -> None:
         identity_id = self._create_identity(with_imap=False)

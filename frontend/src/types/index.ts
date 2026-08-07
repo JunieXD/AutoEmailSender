@@ -548,6 +548,8 @@ export interface BatchTaskCardDTO {
   identity_id: number;
   llm_profile_id: number;
   pending_generation_count: number;
+  queued_generation_count: number;
+  blocked_generation_count: number;
   generating_draft_count: number;
   draft_failed_count: number;
   review_required_count: number;

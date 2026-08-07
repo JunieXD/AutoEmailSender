@@ -27,10 +27,16 @@ from app.modules.llm import runtime as llm_runtime
 from test.schema_database import create_schema_sqlite_database
 from app.modules.campaigns.drafts.runtime import (
     BatchDraftGenerationCoordinator,
+    BatchDraftScheduler,
+    _recover_stale_batch_draft_task,
     recover_interrupted_workspace_draft_rewrites,
     recover_stale_generating_drafts,
     recover_stale_workspace_draft_rewrites,
     run_queued_batch_drafts_once,
+)
+from app.modules.workspace.tasks.runtime import (
+    _lock_current_batch_draft_claim,
+    generate_task_draft,
 )
 
 
@@ -514,6 +520,395 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         self.assertTrue(self._run_async(scenario()))
 
+    def test_scheduler_round_robins_across_batch_tasks(self) -> None:
+        self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value] * 4,
+                batch_name="A",
+            )
+        )
+        self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value],
+                batch_name="B",
+            )
+        )
+        started: list[str] = []
+
+        async def fake_generate(**kwargs):
+            started.append(kwargs["professor"].name.split("-")[0])
+            await asyncio.sleep(0.01)
+            return self._build_draft_generation_result()
+
+        with patch(
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+            new=AsyncMock(side_effect=fake_generate),
+        ):
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=2,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                )
+            )
+
+        self.assertEqual(processed, 5)
+        self.assertEqual(set(started[:2]), {"A", "B"})
+
+    def test_scheduler_refills_after_fast_item_while_another_item_is_slow(self) -> None:
+        for batch_name in ("A", "B", "C"):
+            self._run_async(
+                self._create_batch_with_tasks(
+                    [EmailTaskStatus.DISCOVERED.value],
+                    batch_name=batch_name,
+                )
+            )
+
+        async def scenario() -> bool:
+            release_a = asyncio.Event()
+            c_started = asyncio.Event()
+
+            async def fake_generate(**kwargs):
+                batch_name = kwargs["professor"].name.split("-")[0]
+                if batch_name == "A":
+                    await release_a.wait()
+                if batch_name == "C":
+                    c_started.set()
+                return self._build_draft_generation_result()
+
+            coordinator = BatchDraftGenerationCoordinator()
+            scheduler = BatchDraftScheduler(
+                self.session_factory,
+                coordinator=coordinator,
+            )
+            with patch(
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                new=AsyncMock(side_effect=fake_generate),
+            ):
+                runner = asyncio.create_task(scheduler.run_until_idle(concurrency=2))
+                await asyncio.wait_for(c_started.wait(), timeout=1)
+                release_a.set()
+                processed = await asyncio.wait_for(runner, timeout=3)
+                return processed == 3
+
+        self.assertTrue(self._run_async(scenario()))
+
+    def test_scheduler_mixed_load_has_no_starvation_or_claim_leaks(self) -> None:
+        task_ids: list[int] = []
+        batch_names = {"A", "B", "C", "D", "E"}
+        for batch_name in sorted(batch_names):
+            task_ids.extend(
+                self._run_async(
+                    self._create_batch_with_tasks(
+                        [EmailTaskStatus.DISCOVERED.value] * 5,
+                        batch_name=batch_name,
+                    )
+                )
+            )
+        started: list[str] = []
+
+        async def fake_generate(**kwargs):
+            professor_name = kwargs["professor"].name
+            started.append(professor_name)
+            if professor_name == "A-0":
+                await asyncio.sleep(0.1)
+            if professor_name == "D-2":
+                raise llm_runtime.LLMRuntimeError("mixed-load failure")
+            return self._build_draft_generation_result()
+
+        with patch(
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+            new=AsyncMock(side_effect=fake_generate),
+        ):
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=3,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                )
+            )
+
+        tasks = [self._run_async(self._get_task(task_id)) for task_id in task_ids]
+        self.assertEqual(processed, 25)
+        self.assertEqual(len(started), 25)
+        self.assertEqual(len(set(started)), 25)
+        self.assertEqual(
+            {professor_name.split("-")[0] for professor_name in started[:5]},
+            batch_names,
+        )
+        self.assertEqual(
+            sum(task.status == EmailTaskStatus.REVIEW_REQUIRED.value for task in tasks),
+            24,
+        )
+        self.assertEqual(
+            sum(task.status == EmailTaskStatus.DRAFT_FAILED.value for task in tasks),
+            1,
+        )
+        self.assertTrue(all(task.draft_claim_id is None for task in tasks))
+        self.assertTrue(all(task.draft_lease_expires_at is None for task in tasks))
+
+    def test_batch_draft_total_timeout_marks_only_claimed_item_failed(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value],
+                batch_name="timeout",
+            )
+        )
+
+        async def never_finishes(**_kwargs):
+            await asyncio.Event().wait()
+
+        with (
+            patch(
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                new=AsyncMock(side_effect=never_finishes),
+            ),
+            patch(
+                "app.modules.campaigns.drafts.runtime.WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS",
+                0.01,
+            ),
+        ):
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=1,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                )
+            )
+
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 1)
+        self.assertEqual(task.status, EmailTaskStatus.DRAFT_FAILED.value)
+        self.assertEqual(task.last_error, "AI 改写超时，请稍后重试")
+        self.assertIsNone(task.draft_claim_id)
+
+    def test_timeout_releases_slot_when_llm_ignores_cancellation(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value],
+                batch_name="uncancellable-timeout",
+            )
+        )
+
+        async def scenario() -> int:
+            release_late_response = asyncio.Event()
+            generation_started = asyncio.Event()
+            cancellation_seen = asyncio.Event()
+
+            async def ignores_first_cancellation(**_kwargs):
+                generation_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancellation_seen.set()
+                    await release_late_response.wait()
+                    return self._build_draft_generation_result()
+
+            with (
+                patch(
+                    "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                    new=AsyncMock(side_effect=ignores_first_cancellation),
+                ),
+                patch(
+                    "app.modules.campaigns.drafts.runtime.WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS",
+                    0.1,
+                ),
+                patch(
+                    "app.modules.campaigns.drafts.runtime.BATCH_DRAFT_CANCEL_GRACE_SECONDS",
+                    0.01,
+                ),
+            ):
+                scheduler = BatchDraftScheduler(
+                    self.session_factory,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                )
+                runner = asyncio.create_task(
+                    scheduler.run_until_idle(concurrency=1)
+                )
+                await asyncio.wait_for(generation_started.wait(), timeout=1)
+                processed = await asyncio.wait_for(
+                    runner,
+                    timeout=1,
+                )
+                await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
+                release_late_response.set()
+                await asyncio.sleep(0.02)
+                return processed
+
+        processed = self._run_async(scenario())
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 1)
+        self.assertEqual(task.status, EmailTaskStatus.DRAFT_FAILED.value)
+        self.assertEqual(task.last_error, "AI 改写超时，请稍后重试")
+        self.assertIsNone(task.draft_claim_id)
+
+    def test_recover_expired_batch_draft_lease_requeues_item(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.GENERATING_DRAFT.value],
+                previous_status=EmailTaskStatus.MATCHED.value,
+                batch_name="expired-lease",
+            )
+        )
+        now = datetime.now(UTC)
+
+        async def expire_claim() -> None:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_ids[0])
+                assert task is not None
+                task.draft_claim_id = "expired-claim"
+                task.draft_claimed_at = now - timedelta(minutes=2)
+                task.draft_generation_started_at = now - timedelta(minutes=2)
+                task.draft_lease_expires_at = now - timedelta(seconds=1)
+                await session.commit()
+
+        self._run_async(expire_claim())
+        recovered = self._run_async(
+            recover_stale_generating_drafts(self.session_factory, now=now)
+        )
+        task = self._run_async(self._get_task(task_ids[0]))
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(task.status, EmailTaskStatus.MATCHED.value)
+        self.assertIsNone(task.draft_claim_id)
+        self.assertIsNone(task.draft_lease_expires_at)
+
+    def test_recovery_does_not_requeue_claim_renewed_after_stale_read(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.GENERATING_DRAFT.value],
+                previous_status=EmailTaskStatus.DISCOVERED.value,
+                batch_name="lease-race",
+            )
+        )
+        now = datetime.now(UTC)
+
+        async def scenario() -> int:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_ids[0])
+                assert task is not None
+                task.draft_claim_id = "active-claim"
+                task.draft_claimed_at = now - timedelta(minutes=2)
+                task.draft_lease_expires_at = now - timedelta(seconds=1)
+                await session.commit()
+
+            async with self.session_factory() as stale_session:
+                stale_task = await stale_session.get(EmailTask, task_ids[0])
+                assert stale_task is not None
+                await stale_session.refresh(stale_task, attribute_names=["batch_task"])
+                async with self.session_factory() as heartbeat_session:
+                    current_task = await heartbeat_session.get(EmailTask, task_ids[0])
+                    assert current_task is not None
+                    current_task.draft_lease_expires_at = now + timedelta(minutes=1)
+                    await heartbeat_session.commit()
+                recovered = await _recover_stale_batch_draft_task(
+                    stale_session,
+                    stale_task,
+                    now=now,
+                    cutoff=now - timedelta(minutes=30),
+                )
+                await stale_session.commit()
+                return recovered
+
+        recovered = self._run_async(scenario())
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(recovered, 0)
+        self.assertEqual(task.status, EmailTaskStatus.GENERATING_DRAFT.value)
+        self.assertEqual(task.draft_claim_id, "active-claim")
+        self.assertEqual(task.draft_lease_expires_at, now + timedelta(minutes=1))
+
+    def test_cancelled_old_claim_does_not_overwrite_replacement_claim(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.GENERATING_DRAFT.value],
+                previous_status=EmailTaskStatus.DISCOVERED.value,
+                batch_name="claim-fence",
+            )
+        )
+
+        async def scenario() -> None:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_ids[0])
+                assert task is not None
+                task.draft_claim_id = "old-claim"
+                task.draft_claimed_at = datetime.now(UTC)
+                task.draft_lease_expires_at = datetime.now(UTC) + timedelta(minutes=1)
+                await session.commit()
+
+            generation_started = asyncio.Event()
+
+            async def blocked_generate(**_kwargs):
+                generation_started.set()
+                await asyncio.Event().wait()
+
+            with patch(
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                new=AsyncMock(side_effect=blocked_generate),
+            ):
+                worker = asyncio.create_task(
+                    generate_task_draft(
+                        self.session_factory,
+                        task_ids[0],
+                        force=True,
+                        automatic_batch=True,
+                        require_running_batch=True,
+                        draft_claim_id="old-claim",
+                    )
+                )
+                await asyncio.wait_for(generation_started.wait(), timeout=1)
+                async with self.session_factory() as session:
+                    task = await session.get(EmailTask, task_ids[0])
+                    assert task is not None
+                    task.draft_claim_id = "replacement-claim"
+                    task.draft_claimed_at = datetime.now(UTC)
+                    task.draft_lease_expires_at = datetime.now(UTC) + timedelta(minutes=1)
+                    await session.commit()
+                worker.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await worker
+
+        self._run_async(scenario())
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(task.status, EmailTaskStatus.GENERATING_DRAFT.value)
+        self.assertEqual(task.draft_claim_id, "replacement-claim")
+
+    def test_finalize_lock_rejects_replacement_claim_after_stale_read(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.GENERATING_DRAFT.value],
+                previous_status=EmailTaskStatus.DISCOVERED.value,
+                batch_name="finalize-fence",
+            )
+        )
+
+        async def scenario() -> bool:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_ids[0])
+                assert task is not None
+                task.draft_claim_id = "old-claim"
+                await session.commit()
+
+            async with self.session_factory() as stale_session:
+                stale_task = await stale_session.get(EmailTask, task_ids[0])
+                assert stale_task is not None
+                async with self.session_factory() as replacement_session:
+                    replacement = await replacement_session.get(EmailTask, task_ids[0])
+                    assert replacement is not None
+                    replacement.draft_claim_id = "replacement-claim"
+                    await replacement_session.commit()
+                locked = await _lock_current_batch_draft_claim(
+                    stale_session,
+                    stale_task,
+                    "old-claim",
+                )
+                await stale_session.rollback()
+                return locked
+
+        self.assertFalse(self._run_async(scenario()))
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(task.status, EmailTaskStatus.GENERATING_DRAFT.value)
+        self.assertEqual(task.draft_claim_id, "replacement-claim")
+
     async def _create_schema(self) -> None:
         return None
 
@@ -529,9 +924,11 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         professor_research_direction: str = "Large language models",
         identity_template_body_html: str | None = None,
         batch_status: str = BatchTaskStatus.RUNNING.value,
+        batch_name: str = "批量草稿任务",
     ) -> list[int]:
         async with self.session_factory() as session:
-            session.add(AppSetting(id=1))
+            if await session.get(AppSetting, 1) is None:
+                session.add(AppSetting(id=1))
             identity = IdentityProfile(
                 name="测试身份",
                 profile_name="测试身份",
@@ -572,7 +969,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             batch_task = BatchTask(
                 identity=identity,
                 llm_profile=llm_profile,
-                name="批量草稿任务",
+                name=batch_name,
                 schedule_type="immediate",
                 status=batch_status,
                 primary_material=material if with_primary_material else None,
@@ -588,7 +985,11 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                     identity=identity,
                     llm_profile=llm_profile,
                     professor=Professor(
-                        name=f"张教授{index}",
+                        name=(
+                            f"张教授{index}"
+                            if batch_name == "批量草稿任务"
+                            else f"{batch_name}-{index}"
+                        ),
                         email=f"professor-{index}-{datetime.now(UTC).timestamp()}@example.edu",
                         title="Professor",
                         university="Example University",

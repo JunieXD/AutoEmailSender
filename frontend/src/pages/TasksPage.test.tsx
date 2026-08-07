@@ -561,6 +561,8 @@ const buildBatchTask = (
   identity_id: 1,
   llm_profile_id: 2,
   pending_generation_count: 0,
+  queued_generation_count: 0,
+  blocked_generation_count: 0,
   generating_draft_count: 0,
   draft_failed_count: 0,
   review_required_count: 0,
@@ -3074,6 +3076,7 @@ describe("batch task expiration display", () => {
   it("opens professor profile completion inline instead of workspace fallback", async () => {
     const task = buildBatchTask({
       pending_generation_count: 1,
+      blocked_generation_count: 1,
       approved_count: 0,
       scheduled_count: 0,
     });

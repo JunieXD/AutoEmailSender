@@ -844,6 +844,11 @@ def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple
         reset_draft = True
 
     if detached_primary or removed_attachment or reset_draft:
+        task.draft_generation_previous_status = None
+        task.draft_generation_started_at = None
+        task.draft_claim_id = None
+        task.draft_claimed_at = None
+        task.draft_lease_expires_at = None
         task.updated_at = utc_now()
 
     return detached_primary, removed_attachment, reset_draft

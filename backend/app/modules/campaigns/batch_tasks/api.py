@@ -44,7 +44,9 @@ from app.modules.campaigns.public import (
     build_initial_batch_draft,
 )
 from app.modules.campaigns.public import (
+    batch_item_is_ready_for_llm_generation,
     batch_item_uses_llm_generation,
+    batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
     resolve_batch_task_item_next_action,
 )
@@ -95,6 +97,8 @@ router = APIRouter(prefix="/api/batch-tasks", tags=["batch-tasks"])
 class BatchTaskCardMetrics:
     completed_count: int = 0
     pending_generation_count: int = 0
+    queued_generation_count: int = 0
+    blocked_generation_count: int = 0
     generating_draft_count: int = 0
     draft_failed_count: int = 0
     review_required_count: int = 0
@@ -757,6 +761,10 @@ async def pause_batch_task(
         if email_task.status == EmailTaskStatus.GENERATING_DRAFT.value:
             email_task.status = email_task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
             email_task.draft_generation_previous_status = None
+            email_task.draft_generation_started_at = None
+            email_task.draft_claim_id = None
+            email_task.draft_claimed_at = None
+            email_task.draft_lease_expires_at = None
             email_task.updated_at = utc_now()
     await _record_batch_task_action(session, task, "batch_task.paused")
     await session.commit()
@@ -802,6 +810,10 @@ async def stop_batch_task(
             email_task.status = EmailTaskStatus.CANCELED.value
             email_task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
             email_task.draft_generation_previous_status = None
+            email_task.draft_generation_started_at = None
+            email_task.draft_claim_id = None
+            email_task.draft_claimed_at = None
+            email_task.draft_lease_expires_at = None
             email_task.updated_at = utc_now()
     await _record_batch_task_action(session, task, "batch_task.stopped")
     await session.commit()
@@ -1142,6 +1154,10 @@ async def retry_batch_task_item_draft(
     item.status = EmailTaskStatus.DISCOVERED.value
     item.last_error = None
     item.draft_generation_previous_status = None
+    item.draft_generation_started_at = None
+    item.draft_claim_id = None
+    item.draft_claimed_at = None
+    item.draft_lease_expires_at = None
     item.updated_at = utc_now()
     await _record_batch_task_action(
         session,
@@ -1292,7 +1308,12 @@ async def _run_batch_task_item_workspace_action(
 async def _load_batch_task_for_serialization(session: AsyncSession, task_id: int) -> BatchTask | None:
     return await session.scalar(
         select(BatchTask)
-        .options(selectinload(BatchTask.email_tasks))
+        .options(
+            selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
+            selectinload(BatchTask.email_tasks).selectinload(
+                EmailTask.primary_material
+            ),
+        )
         .where(BatchTask.id == task_id)
         .execution_options(populate_existing=True),
     )
@@ -1429,6 +1450,19 @@ async def _load_batch_task_card_metrics(
             EmailTaskStatus.REPLY_DETECTED.value,
         }
     )
+    is_pending_generation = is_active & EmailTask.status.in_(
+        {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+        }
+    )
+    is_queued_generation = (
+        is_pending_generation
+        & batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode)
+        & EmailTask.primary_material_id.is_not(None)
+        & Professor.research_direction.is_not(None)
+        & (func.trim(Professor.research_direction) != "")
+    )
 
     def count_when(condition: object, name: str):
         return func.coalesce(func.sum(case((condition, 1), else_=0)), 0).label(name)
@@ -1438,14 +1472,13 @@ async def _load_batch_task_card_metrics(
             EmailTask.batch_task_id,
             count_when(is_completed, "completed_count"),
             count_when(
-                is_active
-                & EmailTask.status.in_(
-                    {
-                        EmailTaskStatus.DISCOVERED.value,
-                        EmailTaskStatus.MATCHED.value,
-                    }
-                ),
+                is_pending_generation,
                 "pending_generation_count",
+            ),
+            count_when(is_queued_generation, "queued_generation_count"),
+            count_when(
+                is_pending_generation & ~is_queued_generation,
+                "blocked_generation_count",
             ),
             count_when(
                 is_active & (EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value),
@@ -1484,6 +1517,7 @@ async def _load_batch_task_card_metrics(
                 "canceled_send_count",
             ),
         )
+        .join(Professor, EmailTask.professor_id == Professor.id)
         .where(EmailTask.batch_task_id.in_(task_ids))
         .group_by(EmailTask.batch_task_id)
     )
@@ -1505,6 +1539,8 @@ async def _load_batch_task_card_metrics(
                 + completed_canceled_counts[int(row.batch_task_id)]
             ),
             pending_generation_count=int(row.pending_generation_count),
+            queued_generation_count=int(row.queued_generation_count),
+            blocked_generation_count=int(row.blocked_generation_count),
             generating_draft_count=int(row.generating_draft_count),
             draft_failed_count=int(row.draft_failed_count),
             review_required_count=int(row.review_required_count),
@@ -1543,6 +1579,20 @@ def _batch_task_card_metrics_from_email_tasks(task: BatchTask) -> BatchTaskCardM
         if email_task.batch_send_canceled_at is None
     ]
     status_counter = Counter(email_task.status for email_task in active_email_tasks)
+    pending_generation_tasks = [
+        email_task
+        for email_task in active_email_tasks
+        if email_task.status
+        in {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+        }
+    ]
+    queued_generation_count = sum(
+        1
+        for email_task in pending_generation_tasks
+        if batch_item_is_ready_for_llm_generation(email_task)
+    )
     canceled_send_count = sum(
         1
         for email_task in visible_email_tasks
@@ -1554,6 +1604,10 @@ def _batch_task_card_metrics_from_email_tasks(task: BatchTask) -> BatchTaskCardM
         pending_generation_count=(
             status_counter.get(EmailTaskStatus.DISCOVERED.value, 0)
             + status_counter.get(EmailTaskStatus.MATCHED.value, 0)
+        ),
+        queued_generation_count=queued_generation_count,
+        blocked_generation_count=(
+            len(pending_generation_tasks) - queued_generation_count
         ),
         generating_draft_count=status_counter.get(EmailTaskStatus.GENERATING_DRAFT.value, 0),
         draft_failed_count=status_counter.get(EmailTaskStatus.DRAFT_FAILED.value, 0),
@@ -1592,6 +1646,8 @@ def _serialize_batch_task(
         identity_id=task.identity_id,
         llm_profile_id=task.llm_profile_id,
         pending_generation_count=resolved_metrics.pending_generation_count,
+        queued_generation_count=resolved_metrics.queued_generation_count,
+        blocked_generation_count=resolved_metrics.blocked_generation_count,
         generating_draft_count=resolved_metrics.generating_draft_count,
         draft_failed_count=resolved_metrics.draft_failed_count,
         review_required_count=resolved_metrics.review_required_count,

@@ -279,6 +279,10 @@ async def pause_agent_campaign(
                 or EmailTaskStatus.DISCOVERED.value
             )
             task.draft_generation_previous_status = None
+            task.draft_generation_started_at = None
+            task.draft_claim_id = None
+            task.draft_claimed_at = None
+            task.draft_lease_expires_at = None
             task.updated_at = now
     if campaign.status == BatchTaskStatus.PAUSED.value:
         await record_operation_log(
@@ -316,6 +320,10 @@ async def stop_agent_campaign(
         task.status = EmailTaskStatus.CANCELED.value
         task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
         task.draft_generation_previous_status = None
+        task.draft_generation_started_at = None
+        task.draft_claim_id = None
+        task.draft_claimed_at = None
+        task.draft_lease_expires_at = None
         task.updated_at = now
     await _record_campaign_action(
         session,
@@ -534,6 +542,10 @@ async def retry_agent_campaign_item_draft(
     item.status = EmailTaskStatus.DISCOVERED.value
     item.last_error = None
     item.draft_generation_previous_status = None
+    item.draft_generation_started_at = None
+    item.draft_claim_id = None
+    item.draft_claimed_at = None
+    item.draft_lease_expires_at = None
     item.updated_at = utc_now()
     await _record_campaign_action(
         session,

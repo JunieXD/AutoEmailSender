@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.models import AppSetting
 from app.modules.campaigns.public import (
     BatchDraftGenerationCoordinator,
-    run_queued_batch_drafts_once,
+    BatchDraftScheduler,
 )
 from app.modules.crawler.public import run_crawler_v2_once
 from app.modules.matching.public import run_queued_match_analysis_jobs_once
@@ -57,6 +57,10 @@ class RuntimeManager:
         self._tasks: list[asyncio.Task[None]] = []
         self._stopped = asyncio.Event()
         self._batch_draft_coordinator = BatchDraftGenerationCoordinator()
+        self._batch_draft_scheduler = BatchDraftScheduler(
+            session_factory,
+            coordinator=self._batch_draft_coordinator,
+        )
 
     async def _resolve_worker_startup_settings(
         self,
@@ -129,15 +133,6 @@ class RuntimeManager:
             for index in range(1, worker_settings.match_analysis_job_worker_count + 1)
         ]
 
-        async def run_batch_draft_worker(session_factory: async_sessionmaker[AsyncSession]) -> int:
-            async with session_factory() as session:
-                runtime_settings = await get_runtime_settings(session)
-            return await run_queued_batch_drafts_once(
-                session_factory,
-                concurrency=runtime_settings.batch_draft_generation_concurrency,
-                coordinator=self._batch_draft_coordinator,
-            )
-
         async def run_dispatcher_once(session_factory: async_sessionmaker[AsyncSession]) -> int:
             return await dispatch_due_tasks_once(
                 session_factory,
@@ -173,11 +168,7 @@ class RuntimeManager:
                 ),
             ),
             asyncio.create_task(
-                self._loop(
-                    "batch-draft-worker",
-                    settings.dispatcher_interval_seconds,
-                    run_batch_draft_worker,
-                ),
+                self._batch_draft_scheduler.run_forever(self._stopped),
             ),
             *match_analysis_tasks,
             *crawler_tasks,

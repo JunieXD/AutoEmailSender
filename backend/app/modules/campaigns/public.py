@@ -134,6 +134,7 @@ _RESEND_EXPORTS = {
 }
 _DRAFT_RUNTIME_EXPORTS = {
     "BatchDraftGenerationCoordinator",
+    "BatchDraftScheduler",
     "materialize_missing_research_template_fallbacks",
     "recover_interrupted_workspace_draft_rewrites",
     "recover_stale_generating_drafts",

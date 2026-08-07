@@ -4709,9 +4709,16 @@ export const TasksPage = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
-                        待生成 {task.pending_generation_count}
-                      </span>
+                      {task.queued_generation_count > 0 ? (
+                        <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
+                          排队中 {task.queued_generation_count}
+                        </span>
+                      ) : null}
+                      {task.blocked_generation_count > 0 ? (
+                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                          需处理 {task.blocked_generation_count}
+                        </span>
+                      ) : null}
                       {task.generating_draft_count > 0 ? (
                         <span className="rounded-full bg-sky-50 px-2.5 py-1 text-xs text-sky-700">
                           生成中 {task.generating_draft_count}

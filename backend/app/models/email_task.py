@@ -100,6 +100,18 @@ class EmailTask(Base):
             ),
         ),
         Index(
+            "ix_email_tasks_batch_draft_lease_recovery",
+            "draft_lease_expires_at",
+            sqlite_where=text(
+                "status = 'generating_draft' "
+                "AND draft_claim_id IS NOT NULL"
+            ),
+            postgresql_where=text(
+                "status = 'generating_draft' "
+                "AND draft_claim_id IS NOT NULL"
+            ),
+        ),
+        Index(
             "ix_email_tasks_batch_sent_at",
             "batch_task_id",
             "sent_at",
@@ -161,6 +173,15 @@ class EmailTask(Base):
     )
     draft_generation_previous_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     draft_generation_started_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    draft_claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    draft_claimed_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    draft_lease_expires_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
     )

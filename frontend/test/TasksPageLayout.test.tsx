@@ -89,6 +89,8 @@ const runningTask = {
   identity_id: 1,
   llm_profile_id: 2,
   pending_generation_count: 2,
+  queued_generation_count: 1,
+  blocked_generation_count: 1,
   generating_draft_count: 1,
   draft_failed_count: 1,
   review_required_count: 1,

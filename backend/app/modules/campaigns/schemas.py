@@ -47,6 +47,8 @@ class BatchTaskCardRead(ApiSchema):
     identity_id: int
     llm_profile_id: int
     pending_generation_count: int
+    queued_generation_count: int
+    blocked_generation_count: int
     generating_draft_count: int
     draft_failed_count: int
     review_required_count: int
