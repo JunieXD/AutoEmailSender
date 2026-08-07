@@ -125,7 +125,7 @@ const overview: DashboardOverviewDTO = {
       source_material_id: 3,
       source_material_name: "个人简历.pdf",
       uses_group_match_source: false,
-      stale_result_count: 0,
+      stale_result_count: 2,
     },
     match_score_distribution: [
       { bucket: "unmatched", label: "未分析", count: 1 },
@@ -398,6 +398,7 @@ describe("DashboardPage", () => {
     expect(screen.queryByText("模型：OpenAI")).not.toBeInTheDocument();
     expect(screen.queryByText(/匹配依据/)).not.toBeInTheDocument();
     expect(screen.queryByText(/默认材料/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-match-context")).not.toBeInTheDocument();
     expect(await screen.findByText("导师概览")).toBeInTheDocument();
     expect(await screen.findByText("联系进展")).toBeInTheDocument();
     expect(await screen.findByText("匹配分数分布")).toBeInTheDocument();

@@ -1370,16 +1370,6 @@ export const DashboardPage = () => {
                 description="导师池规模、资料质量和高价值待推进导师"
                 icon={<GraduationCap className="h-5 w-5" />}
               />
-              {overview.mentor.match_context && overview.mentor.match_context.stale_result_count > 0 ? (
-                <div
-                  data-testid="dashboard-match-context"
-                  className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-xs text-stone-600"
-                >
-                  <span className="font-medium text-amber-700">
-                    {overview.mentor.match_context.stale_result_count} 个结果因材料变更待重算
-                  </span>
-                </div>
-              ) : null}
               <div
                 data-testid="mentor-overview-grid"
                 className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(22rem,1.45fr)] lg:items-stretch"
