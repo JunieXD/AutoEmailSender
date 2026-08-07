@@ -30,12 +30,12 @@ class MigratedDatabaseTests(unittest.TestCase):
                 text: bool,
                 check: bool,
             ) -> subprocess.CompletedProcess[str]:
-                self.assertEqual(args[-3:], ["alembic", "upgrade", "head"])
+                self.assertEqual(args[-3:-1], ["alembic", "upgrade"])
                 self.assertEqual(cwd, backend_dir)
                 template_url = env["DATABASE_URL"]
                 self.assertTrue(template_url.startswith("sqlite+aiosqlite:///"))
                 template_path = Path(template_url.removeprefix("sqlite+aiosqlite:///"))
-                template_path.write_text("migrated", encoding="utf-8")
+                template_path.write_text(f"migrated:{args[-1]}", encoding="utf-8")
                 created_templates.append(template_path)
                 return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
@@ -56,10 +56,24 @@ class MigratedDatabaseTests(unittest.TestCase):
                     template_root=root / "templates",
                 )
 
-            self.assertEqual(run.call_count, 1)
-            self.assertEqual(len(created_templates), 1)
-            self.assertEqual(second_db.read_text(encoding="utf-8"), "migrated")
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(len(created_templates), 1)
+                historical_db = root / "historical.db"
+                create_migrated_sqlite_database(
+                    historical_db,
+                    revision="previous-revision",
+                    backend_dir=backend_dir,
+                    template_root=root / "templates",
+                )
+
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(len(created_templates), 2)
+            self.assertEqual(second_db.read_text(encoding="utf-8"), "migrated:head")
             self.assertEqual(first_db.read_text(encoding="utf-8"), "test-local-change")
+            self.assertEqual(
+                historical_db.read_text(encoding="utf-8"),
+                "migrated:previous-revision",
+            )
 
 
 

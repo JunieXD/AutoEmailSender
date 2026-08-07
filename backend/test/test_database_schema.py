@@ -44,6 +44,14 @@ def run_alembic_in_process(env: dict[str, str], *args: str) -> None:
         raise ValueError(f"Unsupported Alembic command: {' '.join(args)}")
 
     operation = command.upgrade if args[0] == "upgrade" else command.downgrade
+    database_url = env.get("DATABASE_URL", "")
+    sqlite_prefix = "sqlite+aiosqlite:///"
+    if args[0] == "upgrade" and database_url.startswith(sqlite_prefix):
+        database_path = Path(database_url.removeprefix(sqlite_prefix))
+        if database_path.as_posix() != ":memory:" and not database_path.exists():
+            create_migrated_sqlite_database(database_path, revision=args[1])
+            return
+
     with patch.dict(os.environ, env, clear=True):
         get_settings.cache_clear()
         previous_logging_threshold = logging.root.manager.disable

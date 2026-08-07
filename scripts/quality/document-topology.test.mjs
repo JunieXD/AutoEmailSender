@@ -35,10 +35,9 @@ test("docs root is a map instead of a document dumping ground", async () => {
   assert.deepEqual(rootFiles, ["README.md"]);
 });
 
-test("active and archived documentation have explicit owners", async () => {
+test("active documentation has explicit owners", async () => {
   const expectedDirectories = [
     "architecture",
-    "archive",
     "development",
     "operations",
     "product",
@@ -52,8 +51,6 @@ test("active and archived documentation have explicit owners", async () => {
     .sort();
 
   assert.deepEqual(directories, expectedDirectories);
-  await readdir(path.join(docsRoot, "archive", "superpowers", "plans"));
-  await readdir(path.join(docsRoot, "archive", "superpowers", "specs"));
 });
 
 test("CLI contract data is development-owned", async () => {

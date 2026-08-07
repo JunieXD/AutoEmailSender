@@ -9,7 +9,7 @@
     "high_risk_commands": 30,
     "paged_collection_commands": 21,
     "stateful_commands": 63,
-    "gui_business_api_modules": 21,
+    "gui_business_api_modules": 22,
     "critical_concurrency_objects": 8
   },
   "available_leaf_commands": [
@@ -385,6 +385,7 @@
     "lib/api/createTask.ts",
     "lib/api/dashboardApi.ts",
     "lib/api/diagnosticsApi.ts",
+    "lib/api/emailDeliveriesApi.ts",
     "lib/api/emailTasksApi.ts",
     "lib/api/identities.ts",
     "lib/api/llmConfig.ts",

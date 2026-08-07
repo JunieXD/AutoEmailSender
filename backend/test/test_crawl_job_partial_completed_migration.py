@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test.migrated_database import create_migrated_sqlite_database
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 PRE_FIX_REVISION = "b9d1e3f4a6c7"
@@ -21,7 +23,7 @@ class CrawlJobPartialCompletedMigrationTests(unittest.TestCase):
             env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path.as_posix()}"
             env["ENABLE_BACKGROUND_WORKERS"] = "0"
 
-            self._run_alembic("upgrade", PRE_FIX_REVISION, env=env)
+            create_migrated_sqlite_database(db_path, revision=PRE_FIX_REVISION)
             self._seed_legacy_crawl_jobs(db_path)
 
             self._run_alembic("upgrade", "head", env=env)

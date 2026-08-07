@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_engine, get_session_factory
 from app.core.migrations import get_alembic_config, get_head_revision
+from test.migrated_database import create_migrated_sqlite_database
 
 
 PREVIOUS_REVISION = "20260803_crawl_run_app_version"
@@ -35,7 +36,10 @@ class RecentPapersMigrationTests(unittest.TestCase):
                 config = get_alembic_config()
                 config.get_main_option("script_location")
                 config.config_file_name = None
-                command.upgrade(config, PREVIOUS_REVISION)
+                create_migrated_sqlite_database(
+                    database_path,
+                    revision=PREVIOUS_REVISION,
+                )
 
                 papers = [f"Paper {index}" for index in range(1, 13)]
                 with sqlite3.connect(database_path) as connection:

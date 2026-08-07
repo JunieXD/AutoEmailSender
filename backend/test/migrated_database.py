@@ -16,20 +16,26 @@ DEFAULT_TEMPLATE_ROOT = Path(tempfile.gettempdir()) / "auto-email-sender-test-db
 def create_migrated_sqlite_database(
     destination: Path,
     *,
+    revision: str = "head",
     backend_dir: Path = BACKEND_DIR,
     template_root: Path = DEFAULT_TEMPLATE_ROOT,
 ) -> None:
-    template_path = _template_database_path(backend_dir, template_root)
+    template_path = _template_database_path(backend_dir, template_root, revision)
     if not template_path.exists():
-        _create_template_database(template_path, backend_dir)
+        _create_template_database(template_path, backend_dir, revision)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(template_path, destination)
 
 
-def _template_database_path(backend_dir: Path, template_root: Path) -> Path:
+def _template_database_path(
+    backend_dir: Path,
+    template_root: Path,
+    revision: str,
+) -> Path:
     signature = _migration_signature(backend_dir)
-    return template_root / f"{signature}.db"
+    revision_signature = hashlib.sha256(revision.encode("utf-8")).hexdigest()[:12]
+    return template_root / f"{signature}-{revision_signature}.db"
 
 
 def _migration_signature(backend_dir: Path) -> str:
@@ -47,7 +53,11 @@ def _migration_signature(backend_dir: Path) -> str:
     return hasher.hexdigest()[:16]
 
 
-def _create_template_database(template_path: Path, backend_dir: Path) -> None:
+def _create_template_database(
+    template_path: Path,
+    backend_dir: Path,
+    revision: str,
+) -> None:
     template_path.parent.mkdir(parents=True, exist_ok=True)
     if template_path.exists():
         return
@@ -59,7 +69,7 @@ def _create_template_database(template_path: Path, backend_dir: Path) -> None:
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{in_progress_path.as_posix()}"
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", revision],
         cwd=backend_dir,
         env=env,
         capture_output=True,

@@ -80,6 +80,28 @@ def describe_command(app: typer.Typer, requested_command: str) -> CommandDescrip
     return _describe_command_from_root(get_command(app), normalized)
 
 
+def describe_commands(
+    app: typer.Typer,
+    commands: Iterable[str],
+) -> dict[str, CommandDescription]:
+    """Describe multiple commands while building the Click command tree once."""
+
+    root: Command | None = None
+    descriptions: dict[str, CommandDescription] = {}
+    for requested_command in commands:
+        normalized = normalize_capability_command(requested_command)
+        capability = get_capability(normalized)
+        if capability is not None and capability.availability != "available":
+            descriptions[requested_command] = _describe_unavailable_capability(capability)
+            continue
+        if root is None:
+            root = get_command(app)
+        description = _describe_command_from_root(root, normalized)
+        if description is not None:
+            descriptions[requested_command] = description
+    return descriptions
+
+
 def describe_command_revisions(
     app: typer.Typer,
     commands: Iterable[str],
@@ -92,12 +114,8 @@ def describe_command_revisions(
     contract across process launches.
     """
 
-    root = get_command(app)
     revisions: dict[str, str] = {}
-    for command in commands:
-        description = _describe_command_from_root(root, command)
-        if description is None:
-            continue
+    for command, description in describe_commands(app, commands).items():
         revision = description.get("contract_revision")
         if isinstance(revision, str):
             revisions[command] = revision

@@ -24,6 +24,7 @@ from auto_email_sender_cli.contracts import command_contract_revision, validate_
 from auto_email_sender_cli.describe import (
     compact_command_description,
     describe_command,
+    describe_commands,
     describe_command_revisions,
 )
 from auto_email_sender_cli.errors import CliError
@@ -181,10 +182,14 @@ class ContractTests(unittest.TestCase):
 
     def test_every_available_leaf_has_a_complete_schema_validated_contract(self) -> None:
         failures: list[str] = []
+        descriptions = describe_commands(
+            app,
+            (item.command for item in CAPABILITIES if item.availability == "available"),
+        )
         for capability in CAPABILITIES:
             if capability.availability != "available":
                 continue
-            description = describe_command(app, capability.command)
+            description = descriptions.get(capability.command)
             self.assertIsNotNone(description, capability.command)
             assert description is not None
             errors = validate_command_contract(description)
@@ -216,10 +221,14 @@ class ContractTests(unittest.TestCase):
 
     def test_capabilities_and_describe_have_zero_metadata_drift(self) -> None:
         failures: list[str] = []
+        descriptions = describe_commands(
+            app,
+            (item.command for item in CAPABILITIES if item.availability == "available"),
+        )
         for capability in CAPABILITIES:
             if capability.availability != "available":
                 continue
-            description = describe_command(app, capability.command)
+            description = descriptions.get(capability.command)
             assert description is not None
             advertised = capability.to_dict()
             checks = {
@@ -277,10 +286,14 @@ class ContractTests(unittest.TestCase):
             self.assertIn("comparison_token", description["output"]["known_fields"])
 
     def test_contract_schemas_publish_standard_types_and_result_fields(self) -> None:
+        descriptions = describe_commands(
+            app,
+            (item.command for item in CAPABILITIES if item.availability == "available"),
+        )
         for capability in CAPABILITIES:
             if capability.availability != "available":
                 continue
-            description = describe_command(app, capability.command)
+            description = descriptions.get(capability.command)
             assert description is not None
             input_schema = description["input"]["schema"]
             input_properties = input_schema["properties"]
@@ -440,10 +453,14 @@ class ContractTests(unittest.TestCase):
 
     def test_next_actions_only_reference_real_commands_or_generic_wait(self) -> None:
         registered = {item.command for item in CAPABILITIES}
+        descriptions = describe_commands(
+            app,
+            (item.command for item in CAPABILITIES if item.availability == "available"),
+        )
         for capability in CAPABILITIES:
             if capability.availability != "available":
                 continue
-            description = describe_command(app, capability.command)
+            description = descriptions.get(capability.command)
             assert description is not None
             for action in description["next_actions"]:
                 self.assertTrue(
@@ -748,10 +765,14 @@ class ContractTests(unittest.TestCase):
 
     def test_available_describe_contracts_have_no_secret_input_names(self) -> None:
         secret_parts = ("password", "api_key", "secret", "credential", "access_token")
+        descriptions = describe_commands(
+            app,
+            (item.command for item in CAPABILITIES if item.availability == "available"),
+        )
         for capability in CAPABILITIES:
             if capability.availability != "available":
                 continue
-            description = describe_command(app, capability.command)
+            description = descriptions.get(capability.command)
             assert description is not None
             for parameter in description["parameters"]:
                 name = str(parameter["name"]).lower()

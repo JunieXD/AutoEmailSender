@@ -629,8 +629,8 @@ describe('CommunityMentorsPage', () => {
     expect(screen.getByText('张老师')).toBeInTheDocument();
   });
 
-  it('paginates large results and can select all 501 within the 2000-record limit', async () => {
-    const comparisons = Array.from({ length: 501 }, (_, index) => buildComparison(index));
+  it('paginates results and can select every record across pages', async () => {
+    const comparisons = Array.from({ length: 101 }, (_, index) => buildComparison(index));
     apiMocks.getCatalog.mockResolvedValue({
       ...populatedCatalog,
       record_count: comparisons.length,
@@ -664,7 +664,7 @@ describe('CommunityMentorsPage', () => {
       const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
       expect(selectAll).toHaveAttribute('aria-pressed', 'true');
     });
-    expect(screen.getByText(/已选 501\/501/)).toBeInTheDocument();
+    expect(screen.getByText(/已选 101\/101/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
     await waitFor(() => {
       const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });

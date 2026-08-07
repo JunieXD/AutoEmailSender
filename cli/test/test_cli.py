@@ -19,7 +19,7 @@ from auto_email_sender_cli.capabilities import (
     list_capability_cards,
     list_resource_catalog,
 )
-from auto_email_sender_cli.describe import describe_command
+from auto_email_sender_cli.describe import describe_command, describe_commands
 from auto_email_sender_cli.errors import RuntimeUnavailableError, redact_error_details
 from auto_email_sender_cli.result_protocol import prepare_result_data
 
@@ -472,10 +472,14 @@ class CliTests(unittest.TestCase):
         self.assertLess(len(cached.stdout.encode("utf-8")), 800)
 
     def test_every_available_capability_has_a_describe_contract(self) -> None:
+        descriptions = describe_commands(
+            app,
+            (item.command for item in CAPABILITIES if item.availability == "available"),
+        )
         missing = [
             capability.command
             for capability in CAPABILITIES
-            if capability.availability == "available" and describe_command(app, capability.command) is None
+            if capability.availability == "available" and capability.command not in descriptions
         ]
 
         self.assertEqual(missing, [])
