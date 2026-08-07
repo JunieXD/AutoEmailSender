@@ -13,6 +13,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core.sqlite_diagnostics import (
+    SQLITE_LOCK_USER_MESSAGE,
+    is_sqlite_database_lock_error,
+)
 from app.core.time import utc_now
 from app.models import LLMEndpointAdaptationCache
 from ..runtime import resolve_base_url
@@ -20,6 +24,26 @@ from ..runtime import resolve_base_url
 
 EndpointKind = Literal["chat_completions", "responses"]
 ResponseEnvelopeClassification = Literal["valid", "other_endpoint", "invalid"]
+_CACHE_WRITE_LOCK_RETRY_DELAYS = (0.1, 0.25)
+
+
+class EndpointAdaptationCacheBusyError(RuntimeError):
+    pass
+
+
+async def _execute_cache_write_with_lock_retry(
+    session: AsyncSession,
+    statement: object,
+):
+    for attempt in range(len(_CACHE_WRITE_LOCK_RETRY_DELAYS) + 1):
+        try:
+            return await session.execute(statement)
+        except Exception as exc:
+            if not is_sqlite_database_lock_error(exc):
+                raise
+            if attempt >= len(_CACHE_WRITE_LOCK_RETRY_DELAYS):
+                raise EndpointAdaptationCacheBusyError(SQLITE_LOCK_USER_MESSAGE) from exc
+            await asyncio.sleep(_CACHE_WRITE_LOCK_RETRY_DELAYS[attempt])
 
 
 def _is_chat_completions_envelope(data: object) -> bool:
@@ -129,7 +153,8 @@ async def record_endpoint_adaptation(
         probed_at=now,
         updated_at=now,
     )
-    await session.execute(
+    await _execute_cache_write_with_lock_retry(
+        session,
         statement.on_conflict_do_update(
             index_elements=[
                 LLMEndpointAdaptationCache.api_base_url,
@@ -165,7 +190,8 @@ async def invalidate_endpoint_adaptation(
     """Delete a cache entry only when it still refers to the failed endpoint."""
 
     normalized_base_url, normalized_model_name = _cache_key(api_base_url, model_name)
-    result = await session.execute(
+    result = await _execute_cache_write_with_lock_retry(
+        session,
         delete(LLMEndpointAdaptationCache)
         .where(
             LLMEndpointAdaptationCache.api_base_url == normalized_base_url,
@@ -211,6 +237,7 @@ async def endpoint_adaptation_lock(
 
 
 __all__ = [
+    "EndpointAdaptationCacheBusyError",
     "EndpointKind",
     "ResponseEnvelopeClassification",
     "classify_response_envelope",

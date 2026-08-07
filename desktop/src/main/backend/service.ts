@@ -57,6 +57,7 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
     ...input.baseEnv,
     AUTO_EMAIL_SENDER_DATA_DIR: input.userDataPath,
     AUTO_EMAIL_SENDER_APP_VERSION: input.appVersion,
+    AUTO_EMAIL_SENDER_DESKTOP_PID: String(process.pid),
     ...(input.uiAccessToken
       ? { AUTO_EMAIL_SENDER_UI_TOKEN: input.uiAccessToken }
       : {}),

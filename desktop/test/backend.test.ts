@@ -146,6 +146,7 @@ describe("desktop backend helpers", () => {
     );
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
     expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
+    expect(env.AUTO_EMAIL_SENDER_DESKTOP_PID).toBe(String(process.pid));
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\App\\resources", "ms-playwright"));
     expect(env.PLAYWRIGHT_NODEJS_PATH).toBe(
       "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",

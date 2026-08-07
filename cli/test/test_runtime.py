@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,11 +15,21 @@ from auto_email_sender_cli.runtime import (
     ensure_runtime_descriptor,
     get_runtime_file_path,
     load_runtime_descriptor,
+    process_is_running,
 )
 from auto_email_sender_cli.version import get_build_identity
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_current_process_is_reported_running(self) -> None:
+        self.assertTrue(process_is_running(os.getpid()))
+
+    def test_exited_process_is_reported_stopped(self) -> None:
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait(timeout=10)
+
+        self.assertFalse(process_is_running(child.pid))
+
     def test_build_identity_ignores_blank_explicit_revision_and_uses_embedded(self) -> None:
         with patch.dict(
             os.environ,

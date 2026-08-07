@@ -69,6 +69,20 @@ class SQLiteDiagnosticsTests(unittest.TestCase):
                 holder.close()
                 contender.close()
 
+    def test_user_message_hides_raw_sql_and_parameters(self) -> None:
+        from app.core.sqlite_diagnostics import sqlite_lock_user_message
+
+        lock_error = sqlite3.OperationalError(
+            "database is locked [SQL: INSERT INTO secret_table VALUES ('secret')]"
+        )
+
+        message = sqlite_lock_user_message(lock_error)
+
+        self.assertIsNotNone(message)
+        self.assertIn("本地数据库正忙", message)
+        self.assertNotIn("secret_table", message)
+        self.assertNotIn("secret", message)
+
     def test_backend_error_log_marks_sqlite_lock_diagnostics(self) -> None:
         from app.core.backend_error_logging import write_backend_error_log
         from app.core.config import get_settings

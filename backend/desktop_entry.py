@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib
+import os
 from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import uvicorn
 
+from app.core.config import get_settings
+from app.core.instance_lock import (
+    BackendInstanceAlreadyRunningError,
+    BackendInstanceLock,
+)
+from app.core.process_liveness import process_is_running
 from app.core.startup_logging import write_startup_phase_log
 
 
@@ -30,6 +39,8 @@ PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
     "docx",
     "openpyxl",
 )
+DESKTOP_PARENT_PID_ENV = "AUTO_EMAIL_SENDER_DESKTOP_PID"
+DESKTOP_PARENT_POLL_SECONDS = 1.0
 
 
 def parse_desktop_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -49,6 +60,56 @@ def build_uvicorn_options(argv: Sequence[str] | None = None) -> dict[str, Any]:
         "port": args.port,
         "reload": False,
     }
+
+
+def get_desktop_parent_pid() -> int | None:
+    raw_pid = os.getenv(DESKTOP_PARENT_PID_ENV, "").strip()
+    if not raw_pid:
+        return None
+    try:
+        pid = int(raw_pid)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+async def watch_desktop_parent(
+    server: uvicorn.Server,
+    desktop_pid: int,
+    *,
+    poll_seconds: float = DESKTOP_PARENT_POLL_SECONDS,
+) -> None:
+    while not server.should_exit:
+        await asyncio.sleep(poll_seconds)
+        if process_is_running(desktop_pid):
+            continue
+        write_startup_phase_log(
+            "desktop_entry.parent_stopped",
+            detail=f"desktop_pid={desktop_pid}",
+        )
+        server.should_exit = True
+        return
+
+
+async def serve_desktop_backend(
+    options: dict[str, Any],
+    *,
+    desktop_pid: int | None,
+) -> None:
+    app_path = options.pop("app")
+    server = uvicorn.Server(uvicorn.Config(app_path, **options))
+    parent_task = (
+        asyncio.create_task(watch_desktop_parent(server, desktop_pid))
+        if desktop_pid is not None
+        else None
+    )
+    try:
+        await server.serve()
+    finally:
+        if parent_task is not None:
+            parent_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await parent_task
 
 
 def run_packaged_runtime_self_check() -> int:
@@ -86,12 +147,25 @@ def main() -> None:
         raise SystemExit(run_packaged_document_self_check(args.document_self_check))
 
     options = build_uvicorn_options()
-    app_path = options.pop("app")
     write_startup_phase_log(
         "desktop_entry.start",
         detail=f"host={options['host']} port={options['port']}",
     )
-    uvicorn.run(app_path, **options)
+    instance_lock = BackendInstanceLock(get_settings().data_dir)
+    try:
+        instance_lock.acquire()
+    except BackendInstanceAlreadyRunningError as exc:
+        write_startup_phase_log("desktop_entry.instance_conflict", detail=str(exc))
+        raise SystemExit(str(exc)) from None
+    try:
+        asyncio.run(
+            serve_desktop_backend(
+                options,
+                desktop_pid=get_desktop_parent_pid(),
+            )
+        )
+    finally:
+        instance_lock.release()
 
 
 if __name__ == "__main__":

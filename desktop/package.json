@@ -16,7 +16,7 @@
     "build:preload": "tsc -p tsconfig.preload.json && esbuild src/preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/src/preload.js",
     "build": "npm run clean && tsc -p tsconfig.json && npm run build:preload",
     "test": "vitest run",
-    "dev": "npm run build && node dist/src/main/agent-support/prepare-dev-cli.js && electron . --dev",
+    "dev": "npm run build && node dist/src/main/agent-support/prepare-dev-cli.js && node dist/src/main/dev/launcher.js",
     "setup:sparkle": "../scripts/build/setup-sparkle.sh",
     "build:sparkle": "../scripts/build/build-sparkle-bridge.sh",
     "prepare:sparkle": "npm run setup:sparkle && npm run build:sparkle",

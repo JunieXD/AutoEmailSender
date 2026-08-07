@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import NO_VALUE
 
+from app.core.sqlite_diagnostics import sqlite_lock_user_message
 from app.core.time import local_now, utc_now
 from app.core.config import get_settings
 from app.models import (
@@ -935,7 +936,7 @@ async def _run_match_analysis_job_item(
         await _mark_item_failed(
             session_factory,
             claim,
-            error_message=str(exc),
+            error_message=sqlite_lock_user_message(exc) or str(exc),
         )
         return
 

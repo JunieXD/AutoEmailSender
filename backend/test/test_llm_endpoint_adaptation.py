@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -292,6 +295,62 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
                 select(func.count()).select_from(LLMEndpointAdaptationCache)
             )
         self.assertEqual(row_count, 1)
+
+    async def test_locked_cache_write_retries_and_succeeds_after_release(self) -> None:
+        from app.models import Base
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "endpoint-retry.db"
+            engine = create_async_engine(
+                f"sqlite+aiosqlite:///{database_path.as_posix()}",
+                connect_args={"timeout": 0},
+            )
+            session_factory = async_sessionmaker(
+                engine,
+                autoflush=False,
+                expire_on_commit=False,
+            )
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            holder = await engine.connect()
+            await holder.exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                async with session_factory() as session:
+                    write_task = asyncio.create_task(
+                        record_endpoint_adaptation(
+                            session,
+                            api_base_url="https://api.retry.test/v1",
+                            model_name="retry-model",
+                            endpoint_kind="chat_completions",
+                        )
+                    )
+                    await asyncio.sleep(0.05)
+                    await holder.commit()
+                    await write_task
+                    await session.commit()
+            finally:
+                await holder.close()
+                await engine.dispose()
+
+    async def test_locked_cache_write_returns_friendly_error_after_retries(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from app.modules.llm.adaptation.endpoint import (
+            EndpointAdaptationCacheBusyError,
+            _execute_cache_write_with_lock_retry,
+        )
+
+        session = AsyncMock()
+        session.execute.side_effect = sqlite3.OperationalError("database is locked")
+        with (
+            patch("app.modules.llm.adaptation.endpoint.asyncio.sleep", new=AsyncMock()),
+            self.assertRaises(EndpointAdaptationCacheBusyError) as raised,
+        ):
+            await _execute_cache_write_with_lock_retry(session, object())
+
+        self.assertIn("本地数据库正忙", str(raised.exception))
+        self.assertEqual(session.execute.await_count, 3)
 
 
 class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
