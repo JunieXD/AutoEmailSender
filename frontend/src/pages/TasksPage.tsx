@@ -1534,9 +1534,13 @@ export const TasksPage = () => {
     batchReviewItemPage,
     getTotalPages(batchReviewQueueItems.length, batchReviewItemPageSize),
   );
+  const crawlExecutionLogEvents = useMemo(
+    () => crawlJobEvents.filter((event) => event.event_type !== "page"),
+    [crawlJobEvents],
+  );
   const safeCrawlEventPage = Math.min(
     crawlEventPage,
-    getTotalPages(crawlJobEvents.length, crawlEventPageSize),
+    getTotalPages(crawlExecutionLogEvents.length, crawlEventPageSize),
   );
   const safeCrawlDetailPagePage = Math.min(
     crawlDetailPagePage,
@@ -1649,8 +1653,12 @@ export const TasksPage = () => {
   );
   const visibleCrawlJobEvents = useMemo(
     () =>
-      getPageItems(crawlJobEvents, safeCrawlEventPage, crawlEventPageSize),
-    [crawlEventPageSize, crawlJobEvents, safeCrawlEventPage],
+      getPageItems(
+        crawlExecutionLogEvents,
+        safeCrawlEventPage,
+        crawlEventPageSize,
+      ),
+    [crawlEventPageSize, crawlExecutionLogEvents, safeCrawlEventPage],
   );
   const visibleCrawlJobPages = useMemo(
     () =>
@@ -2512,10 +2520,10 @@ export const TasksPage = () => {
     setCrawlEventPage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(crawlJobEvents.length, crawlEventPageSize),
+        getTotalPages(crawlExecutionLogEvents.length, crawlEventPageSize),
       ),
     );
-  }, [crawlEventPageSize, crawlJobEvents.length, setCrawlEventPage]);
+  }, [crawlEventPageSize, crawlExecutionLogEvents.length, setCrawlEventPage]);
 
   useEffect(() => {
     setCrawlDetailPagePage((currentPage) =>
@@ -6794,29 +6802,37 @@ export const TasksPage = () => {
                     执行日志
                   </h3>
                   <div
-                    className="mt-3 flex-1 space-y-3"
+                    className="mt-3 flex-1 space-y-2"
                     data-monitor-section-list
                   >
-                    {crawlJobEvents.length > 0 ? (
+                    {crawlExecutionLogEvents.length > 0 ? (
                       visibleCrawlJobEvents.map((event) => {
                         const failureReason = getCrawlEventFailureReason(event);
                         return (
-                          <div key={event.id} className="flex gap-3">
+                          <div key={event.id} className="flex h-[76px] gap-3">
                             <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                            <div className="min-w-0 flex-1 rounded-2xl border border-stone-100 px-4 py-3">
-                              <p className="text-sm text-stone-800">
+                            <div className="flex h-full min-w-0 flex-1 flex-col justify-between rounded-2xl border border-stone-100 px-4 py-3">
+                              <p
+                                className="truncate text-sm text-stone-800"
+                                title={event.message}
+                              >
                                 {event.message}
                               </p>
-                              {failureReason ? (
-                                <p className="mt-2 text-xs leading-5 text-red-700">
-                                  失败原因：{failureReason}
+                              <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
+                                {failureReason ? (
+                                  <p
+                                    className="min-w-0 flex-1 truncate text-xs text-red-700"
+                                    title={`失败原因：${failureReason}`}
+                                  >
+                                    失败原因：{failureReason}
+                                  </p>
+                                ) : null}
+                                <p className="shrink-0 text-xs text-stone-500">
+                                  {formatDisplayTime(event.created_at, {
+                                    withSeconds: true,
+                                  })}
                                 </p>
-                              ) : null}
-                              <p className="mt-1 text-xs text-stone-500">
-                                {formatDisplayTime(event.created_at, {
-                                  withSeconds: true,
-                                })}
-                              </p>
+                              </div>
                             </div>
                           </div>
                         );
@@ -6830,7 +6846,7 @@ export const TasksPage = () => {
                   <Pagination
                     page={safeCrawlEventPage}
                     pageSize={crawlEventPageSize}
-                    totalCount={crawlJobEvents.length}
+                    totalCount={crawlExecutionLogEvents.length}
                     onChange={handleCrawlEventPaginationChange}
                     ariaLabel="抓取执行日志分页"
                     pageSizeAriaLabel="抓取执行日志每页数量"
@@ -6862,14 +6878,23 @@ export const TasksPage = () => {
                       visibleCrawlJobPages.map((page) => (
                         <div
                           key={page.id}
-                          className="rounded-2xl border border-stone-100 px-4 py-3"
+                          className="flex h-[76px] min-w-0 flex-col justify-between rounded-2xl border border-stone-100 px-4 py-3"
                         >
-                          <p className="text-sm font-medium text-stone-800">
+                          <p
+                            className="truncate text-sm font-medium text-stone-800"
+                            title={page.title ?? page.url}
+                          >
                             {page.title ?? page.url}
                           </p>
-                          <p className="mt-1 break-all text-xs text-stone-500">
+                          <a
+                            href={page.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 block truncate text-xs text-primary underline decoration-primary/30 underline-offset-2 transition-colors hover:text-primary-dark hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-1"
+                            title={page.url}
+                          >
                             {page.url}
-                          </p>
+                          </a>
                         </div>
                       ))
                     ) : (

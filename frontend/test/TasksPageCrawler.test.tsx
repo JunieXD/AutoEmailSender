@@ -959,6 +959,58 @@ describe("TasksPage crawler jobs tab", () => {
     expect(crawlDialog).toHaveTextContent("WinError 2");
   });
 
+  it("shows crawled pages only in the page list, not in the execution log", async () => {
+    vi.mocked(getCrawlJobEvents).mockResolvedValue([
+      {
+        id: "evt-status",
+        job_id: 7,
+        event_type: "job_status",
+        message: "任务正在运行",
+        created_at: "2026-04-26T08:33:00",
+        raw: null,
+      },
+      {
+        id: "evt-page",
+        job_id: 7,
+        event_type: "page",
+        message: "已抓取页面：Faculty",
+        created_at: "2026-04-26T08:34:00",
+        raw: null,
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    const logSection = within(dialog)
+      .getByRole("heading", { name: "执行日志" })
+      .closest("section");
+    const pageSection = within(dialog)
+      .getByRole("heading", { name: "已抓页面" })
+      .closest("section");
+
+    expect(logSection).toHaveTextContent("任务正在运行");
+    expect(logSection).not.toHaveTextContent("已抓取页面：Faculty");
+    expect(pageSection).toHaveTextContent("Faculty");
+
+    const logMessage = within(logSection as HTMLElement).getByText("任务正在运行");
+    const pageTitle = within(pageSection as HTMLElement).getByText("Faculty");
+    const pageLink = within(pageSection as HTMLElement).getByRole("link", {
+      name: "https://example.edu/faculty",
+    });
+
+    expect(logMessage).toHaveClass("truncate");
+    expect(logMessage.parentElement).toHaveClass("h-full");
+    expect(pageTitle).toHaveClass("truncate");
+    expect(pageTitle.parentElement).toHaveClass("h-[76px]");
+    expect(pageLink).toHaveAttribute("href", "https://example.edu/faculty");
+    expect(pageLink).toHaveAttribute("target", "_blank");
+    expect(pageLink).toHaveClass("text-primary", "decoration-primary/30");
+  });
+
   it("keeps crawl log and crawled page pagination aligned in the detail dialog", async () => {
     vi.mocked(getCrawlJobEvents).mockResolvedValue(
       Array.from({ length: 6 }, (_, index) => ({
