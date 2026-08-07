@@ -31,6 +31,16 @@ class BackendBuildScriptTest(unittest.TestCase):
 
         self.assertIn("--hidden-import aiosqlite", content)
 
+    def test_includes_dynamically_loaded_runtime_modules(self) -> None:
+        for script_name in ["build-backend.ps1", "build-backend.sh"]:
+            with self.subTest(script_name=script_name):
+                content = (BUILD_SCRIPTS_ROOT / script_name).read_text(encoding="utf-8")
+                for module_name in [
+                    "openai",
+                    "app.modules.professors.enrichment.public",
+                ]:
+                    self.assertIn(f"--hidden-import {module_name}", content)
+
     def test_installs_only_playwright_browsers_to_packaged_resource_dir(self) -> None:
         content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 

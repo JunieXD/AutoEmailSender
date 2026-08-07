@@ -42,6 +42,8 @@ uv run pyinstaller \
   --additional-hooks-dir "$PlaywrightHooksDir" \
   --hidden-import main \
   --hidden-import aiosqlite \
+  --hidden-import openai \
+  --hidden-import app.modules.professors.enrichment.public \
   --hidden-import app.services.document_extraction \
   --hidden-import lxml.etree \
   --collect-all mammoth \
