@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +66,9 @@ def normalize_candidate_profile_url(value: object) -> str | None:
     try:
         normalized = normalize_url(raw)
     except (TypeError, ValueError):
+        return None
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
     return normalized or None
 
@@ -186,6 +190,11 @@ def _field_confidence(value: object, field_name: str) -> float | None:
 
 
 def _field_source_entry(payload: dict[str, Any], field_name: str) -> dict[str, object]:
+    field_sources = payload.get("field_sources")
+    if isinstance(field_sources, dict):
+        stored = field_sources.get(field_name)
+        if isinstance(stored, dict):
+            return dict(stored)
     return {
         "source_kind": payload.get("source_kind"),
         "source_chunk_id": payload.get("source_chunk_id"),
@@ -287,10 +296,23 @@ def merge_candidate_payload(
 
     existing_papers = normalize_recent_papers(existing.recent_papers)
     incoming_papers = normalize_recent_papers(payload.get("recent_papers"))
-    merged_papers = normalize_recent_papers([*existing_papers, *incoming_papers])
-    if merged_papers != (existing.recent_papers or []):
+    old_papers_source = _stored_field_source(existing, "recent_papers")
+    new_papers_source = _field_source_entry(payload, "recent_papers")
+    if (
+        old_papers_source.get("source_kind") == "manual"
+        and new_papers_source.get("source_kind") != "manual"
+    ):
+        merged_papers = existing_papers
+    elif (
+        new_papers_source.get("source_kind") == "manual"
+        and old_papers_source.get("source_kind") != "manual"
+    ):
+        merged_papers = incoming_papers
+    else:
+        merged_papers = normalize_recent_papers([*existing_papers, *incoming_papers])
+    if merged_papers != existing_papers:
         existing.recent_papers = merged_papers
-        field_sources["recent_papers"] = _field_source_entry(payload, "recent_papers")
+        field_sources["recent_papers"] = new_papers_source
         merge_event["updated_fields"].append("recent_papers")  # type: ignore[index]
         changed = True
 
@@ -351,6 +373,7 @@ def candidate_as_merge_payload(candidate: CrawlCandidate) -> dict[str, Any]:
         "recent_papers": candidate.recent_papers,
         "field_confidence": candidate.field_confidence,
         "evidence": candidate.evidence,
+        "field_sources": candidate.field_sources,
         "source_chunk_id": candidate.source_chunk_id,
         "source_kind": candidate.source_kind,
         "boundary_risk": candidate.boundary_risk,
@@ -582,6 +605,50 @@ async def consolidate_job_candidates(
             )
             .order_by(CrawlCandidate.id.asc())
         )
+    )
+
+
+async def rebuild_candidate_identity_keys(
+    session: AsyncSession,
+    candidate: CrawlCandidate,
+    *,
+    exclude_identities: Iterable[tuple[str, str]] = (),
+) -> CrawlCandidate:
+    root = await resolve_canonical_candidate(session, candidate)
+    job_candidates = list(
+        await session.scalars(
+            select(CrawlCandidate)
+            .where(CrawlCandidate.job_id == root.job_id)
+            .order_by(CrawlCandidate.id.asc())
+        )
+    )
+    component: list[CrawlCandidate] = []
+    for row in job_candidates:
+        if (await resolve_canonical_candidate(session, row)).id == root.id:
+            component.append(row)
+
+    component_ids = [row.id for row in component]
+    await session.execute(
+        delete(CrawlCandidateIdentityKey).where(
+            CrawlCandidateIdentityKey.job_id == root.job_id,
+            CrawlCandidateIdentityKey.candidate_id.in_(component_ids),
+        )
+    )
+    identities = {
+        identity
+        for row in component
+        for identity in candidate_identity_values(
+            email=row.email,
+            profile_url=row.profile_url,
+        )
+    }
+    identities.difference_update(exclude_identities)
+    root.identity_key = None
+    await session.flush()
+    return await consolidate_candidate_identity(
+        session,
+        root,
+        additional_identities=identities,
     )
 
 

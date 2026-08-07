@@ -48,6 +48,7 @@ from app.modules.professors.public import (
     delete_professor_tag_record,
     import_professor_records,
     is_valid_professor_email,
+    get_or_create_professor_by_email,
     normalize_professor_email,
     parse_professor_import_file,
     prepare_bulk_professor_archive_snapshot,
@@ -1671,10 +1672,12 @@ async def _execute_crawl_candidate_approval(
             skipped_count += 1
             continue
 
-        professor = await session.scalar(select(Professor).where(Professor.email == email))
-        if professor is None:
-            professor = Professor(email=email)
-            session.add(professor)
+        professor, inserted = await get_or_create_professor_by_email(
+            session,
+            email,
+            name=candidate.name,
+        )
+        if inserted:
             inserted_count += 1
         else:
             updated_count += 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import os
 import tempfile
 import unittest
@@ -120,6 +121,85 @@ class CrawlJobApprovalTests(unittest.TestCase):
             },
         )
 
+    def test_manual_email_clear_removes_identity_from_hidden_aliases(self) -> None:
+        _, first_candidate_id, second_candidate_id = asyncio.run(
+            self._create_crawl_candidates(
+                [
+                    {"name": "张三", "email": "wrong@example.edu"},
+                    {"name": "Zhang San", "email": "WRONG@example.edu"},
+                ]
+            )
+        )
+        asyncio.run(
+            self._consolidate_candidates(
+                first_candidate_id,
+                second_candidate_id,
+            )
+        )
+
+        response = self.client.patch(
+            f"/api/crawl-jobs/candidates/{second_candidate_id}",
+            json={
+                "name": "张三",
+                "email": None,
+                "title": "Professor",
+                "university": "示例大学",
+                "school": "计算机学院",
+                "department": "计算机科学系",
+                "research_direction": "智能系统",
+                "recent_papers": [],
+                "profile_url": None,
+                "source_url": None,
+                "review_status": "pending",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["id"], first_candidate_id)
+        self.assertIsNone(response.json()["email"])
+        self.assertFalse(
+            asyncio.run(
+                self._identity_key_exists(
+                    job_id=response.json()["job_id"],
+                    key_type="email",
+                    normalized_value="wrong@example.edu",
+                )
+            )
+        )
+
+    def test_concurrent_jobs_approve_same_email_without_duplicate_professors(self) -> None:
+        jobs_and_candidates = [
+            asyncio.run(
+                self._create_crawl_candidates(
+                    [{"name": f"同邮箱候选 {index}", "email": "race@example.edu"}]
+                )
+            )
+            for index in range(8)
+        ]
+
+        def approve(item: tuple[int, ...]):
+            job_id, candidate_id = item
+            return self.client.post(
+                f"/api/crawl-jobs/{job_id}/approve",
+                json={"candidate_ids": [candidate_id]},
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            responses = list(executor.map(approve, jobs_and_candidates))
+
+        self.assertTrue(
+            all(response.status_code == 200 for response in responses),
+            msg=[(response.status_code, response.text) for response in responses],
+        )
+        self.assertEqual(
+            sum(response.json()["inserted_count"] for response in responses),
+            1,
+        )
+        self.assertEqual(
+            sum(response.json()["updated_count"] for response in responses),
+            7,
+        )
+
     async def _create_crawl_candidates(self, candidates: list[dict[str, str | None]]) -> tuple[int, ...]:
         from app.core.database import get_session_factory
         from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus
@@ -205,6 +285,28 @@ class CrawlJobApprovalTests(unittest.TestCase):
                 assert candidate is not None
                 await consolidate_candidate_identity(session, candidate)
             await session.commit()
+
+    async def _identity_key_exists(
+        self,
+        *,
+        job_id: int,
+        key_type: str,
+        normalized_value: str,
+    ) -> bool:
+        from sqlalchemy import select
+
+        from app.core.database import get_session_factory
+        from app.models import CrawlCandidateIdentityKey
+
+        async with get_session_factory()() as session:
+            key = await session.scalar(
+                select(CrawlCandidateIdentityKey.id).where(
+                    CrawlCandidateIdentityKey.job_id == job_id,
+                    CrawlCandidateIdentityKey.key_type == key_type,
+                    CrawlCandidateIdentityKey.normalized_value == normalized_value,
+                )
+            )
+            return key is not None
 
     async def _clear_database(self) -> None:
         from sqlalchemy import delete

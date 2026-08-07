@@ -195,6 +195,22 @@ class MigrationScriptTests(unittest.TestCase):
                 """,
                 (job_id, "张三", "zhang@example.edu", "计算机系", "legacy-b"),
             ).lastrowid
+            first_invalid_profile_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, profile_url, identity_key
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (job_id, "无效主页一", "not-a-url", "legacy-invalid-a"),
+            ).lastrowid
+            second_invalid_profile_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, profile_url, identity_key
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (job_id, "无效主页二", "not-a-url", "legacy-invalid-b"),
+            ).lastrowid
             connection.execute(
                 """
                 INSERT INTO crawl_candidate_enrichment_tasks (
@@ -280,6 +296,8 @@ class MigrationScriptTests(unittest.TestCase):
                     "计算机系",
                     None,
                 ),
+                (first_invalid_profile_id, None, None, None, None),
+                (second_invalid_profile_id, None, None, None, None),
             ],
         )
         self.assertTrue(
@@ -323,7 +341,7 @@ class MigrationScriptTests(unittest.TestCase):
         finally:
             downgraded.close()
 
-        self.assertEqual(candidate_count, 2)
+        self.assertEqual(candidate_count, 4)
         self.assertEqual(enrichment_task_count, 2)
         self.assertNotIn("merged_into_candidate_id", candidate_columns)
         self.assertIsNone(identity_table)

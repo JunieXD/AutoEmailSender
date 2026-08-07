@@ -30,7 +30,6 @@ from app.models import (
     CrawlCandidateEnrichmentTaskStatus,
     CrawlWorkerTokenUsage,
     LLMProfile,
-    Professor,
 )
 from .schemas import (
     CrawlCandidateRead,
@@ -49,10 +48,12 @@ from .schemas import (
 )
 from .jobs.events import build_crawl_job_events, normalize_agent_trace_event
 from .candidate_identity import (
+    candidate_identity_values,
     canonical_candidate_clause,
     canonicalize_candidate_ids,
     consolidate_candidate_identity,
     mark_candidate_fields_manual,
+    rebuild_candidate_identity_keys,
 )
 from .jobs.metrics import build_crawl_job_metrics
 from .jobs.runs import (
@@ -65,6 +66,7 @@ from .jobs.runs import (
 )
 from app.services.operation_logs import record_operation_log
 from app.modules.professors.public import (
+    get_or_create_professor_by_email,
     is_valid_professor_email,
     normalize_professor_email,
     normalize_recent_papers,
@@ -210,6 +212,12 @@ async def update_crawl_candidate(
         job_id=candidate.job_id,
         candidate_ids=[candidate.id],
     ))[0][0]
+    previous_identities = set(
+        candidate_identity_values(
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
+    )
 
     candidate.name = payload.name
     candidate.email = payload.email.lower() if payload.email else None
@@ -238,7 +246,17 @@ async def update_crawl_candidate(
         ),
     )
     candidate.updated_at = utc_now()
-    candidate = await consolidate_candidate_identity(session, candidate)
+    current_identities = set(
+        candidate_identity_values(
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
+    )
+    candidate = await rebuild_candidate_identity_keys(
+        session,
+        candidate,
+        exclude_identities=previous_identities - current_identities,
+    )
 
     await record_operation_log(
         session,
@@ -394,10 +412,12 @@ async def approve_crawl_candidates(
             skipped_count += 1
             continue
 
-        professor = await session.scalar(select(Professor).where(Professor.email == email))
-        if professor is None:
-            professor = Professor(email=email)
-            session.add(professor)
+        professor, inserted = await get_or_create_professor_by_email(
+            session,
+            email,
+            name=candidate.name,
+        )
+        if inserted:
             inserted_count += 1
         else:
             updated_count += 1

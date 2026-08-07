@@ -7,6 +7,7 @@ from .candidate_identity import (
     consolidate_candidate_identity,
     consolidate_job_candidates,
     mark_candidate_fields_manual,
+    rebuild_candidate_identity_keys,
     resolve_canonical_candidate,
 )
 from .jobs.metrics import CrawlJobMetrics, build_crawl_job_metrics
@@ -130,6 +131,7 @@ __all__ = [
     "mark_crawl_job_run_queued",
     "mark_crawl_job_run_running",
     "mark_candidate_fields_manual",
+    "rebuild_candidate_identity_keys",
     "normalize_agent_trace_event",
     "pause_faculty_crawl_job_record",
     "profile_text_cache",

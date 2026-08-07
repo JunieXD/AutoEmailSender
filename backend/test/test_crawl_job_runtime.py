@@ -447,6 +447,41 @@ class CrawlJobRuntimeTests(unittest.IsolatedAsyncioTestCase):
         get_settings.cache_clear()
         self.temp_dir.cleanup()
 
+    async def test_enrichment_outcomes_are_counted_once_per_canonical_candidate(self) -> None:
+        job_id = await self._create_default_profile_and_job()
+        async with self.session_factory() as session:
+            canonical = CrawlCandidate(job_id=job_id, name="张三")
+            enriched_alias = CrawlCandidate(job_id=job_id, name="张三别名")
+            unchanged_alias = CrawlCandidate(job_id=job_id, name="张三旧记录")
+            independent = CrawlCandidate(job_id=job_id, name="李四")
+            session.add_all([canonical, enriched_alias, unchanged_alias, independent])
+            await session.flush()
+            enriched_alias.merged_into_candidate_id = canonical.id
+            unchanged_alias.merged_into_candidate_id = canonical.id
+            await session.commit()
+
+        enriched, unchanged, failed = await crawl_job_runtime._canonicalize_enrichment_outcomes(
+            self.session_factory,
+            {
+                canonical.id: "failed",
+                unchanged_alias.id: "unchanged",
+                enriched_alias.id: "enriched",
+                independent.id: "failed",
+            },
+        )
+
+        self.assertEqual((enriched, unchanged, failed), (1, 0, 1))
+
+        enriched, unchanged, failed = await crawl_job_runtime._canonicalize_enrichment_outcomes(
+            self.session_factory,
+            {
+                canonical.id: "failed",
+                unchanged_alias.id: "unchanged",
+            },
+        )
+
+        self.assertEqual((enriched, unchanged, failed), (0, 1, 0))
+
     async def test_resolve_crawl_runtime_concurrency_prefers_database_settings(self) -> None:
         settings = type(
             "SettingsStub",

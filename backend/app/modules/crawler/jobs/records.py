@@ -52,10 +52,12 @@ from ..v2.routing import (
 from ..v2.url_utils import normalize_url
 from app.services.operation_logs import record_operation_log
 from ..candidate_identity import (
+    candidate_identity_values,
     canonical_candidate_clause,
     canonicalize_candidate_ids,
     consolidate_candidate_identity,
     mark_candidate_fields_manual,
+    rebuild_candidate_identity_keys,
     resolve_canonical_candidate,
 )
 
@@ -233,6 +235,12 @@ async def update_faculty_crawl_candidate_record(
 ) -> CrawlCandidateRead:
     candidate = await get_faculty_crawl_candidate_or_raise(session, candidate_id)
     candidate = await resolve_canonical_candidate(session, candidate)
+    previous_identities = set(
+        candidate_identity_values(
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
+    )
     candidate.name = payload.name
     candidate.email = payload.email.lower() if payload.email else None
     candidate.title = payload.title
@@ -260,7 +268,17 @@ async def update_faculty_crawl_candidate_record(
         ),
     )
     candidate.updated_at = utc_now()
-    candidate = await consolidate_candidate_identity(session, candidate)
+    current_identities = set(
+        candidate_identity_values(
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
+    )
+    candidate = await rebuild_candidate_identity_keys(
+        session,
+        candidate,
+        exclude_identities=previous_identities - current_identities,
+    )
     metadata: dict[str, object] = {
         "job_id": candidate.job_id,
         "review_status": candidate.review_status,

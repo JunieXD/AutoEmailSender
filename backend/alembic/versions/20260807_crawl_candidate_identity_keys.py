@@ -93,7 +93,7 @@ def _normalize_profile_url(value: object) -> str | None:
         parsed = urlsplit(str(value).strip())
         scheme = (parsed.scheme or "https").lower()
         hostname = (parsed.hostname or "").lower()
-        if not hostname:
+        if scheme not in {"http", "https"} or not hostname:
             return None
         port = parsed.port
     except ValueError:

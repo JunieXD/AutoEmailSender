@@ -36,6 +36,7 @@ from app.modules.crawler.candidate_identity import (
     canonicalize_candidate_ids,
     consolidate_candidate_identity,
     consolidate_job_candidates,
+    resolve_canonical_candidate,
 )
 from ..pages.debug import append_crawler_debug_event
 from ..pages.chunking import ChunkingConfig, build_page_chunks
@@ -1009,9 +1010,8 @@ async def _enrich_candidate_collection_concurrent(
         for _ in range(worker_count)
     ]
     try:
-        enriched, unchanged, failed = await _consume_candidate_enrichment_results(
+        outcomes, retry_count, host_limited_count = await _consume_candidate_enrichment_results(
             session_factory,
-            ctx.job_id,
             result_queue,
             expected_count=len(pending_candidates),
             trace_callback=trace_callback,
@@ -1021,6 +1021,19 @@ async def _enrich_candidate_collection_concurrent(
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
 
+    enriched, unchanged, failed = await _canonicalize_enrichment_outcomes(
+        session_factory,
+        outcomes,
+    )
+    await _update_crawl_job_run_enrichment_metrics(
+        session_factory,
+        ctx.job_id,
+        retry_count=retry_count,
+        host_limited_count=host_limited_count,
+        failed_candidate_count=failed,
+        unchanged_candidate_count=unchanged,
+    )
+
     await _emit_trace_event(
         trace_callback,
         {
@@ -1028,7 +1041,7 @@ async def _enrich_candidate_collection_concurrent(
             "message": f"候选导师详情补全完成：成功 {enriched} 位，未变化 {unchanged} 位，失败 {failed} 位",
             "created_at": utc_now().isoformat(),
             "raw": {
-                "candidate_count": len(pending_candidates),
+                "candidate_count": enriched + unchanged + failed,
                 "enriched_count": enriched,
                 "unchanged_count": unchanged,
                 "failed_count": failed,
@@ -1228,15 +1241,12 @@ async def _crawl_candidate_profile_with_retries(
 
 async def _consume_candidate_enrichment_results(
     session_factory: async_sessionmaker[AsyncSession],
-    job_id: int,
     result_queue: asyncio.Queue[CandidateEnrichmentResult],
     *,
     expected_count: int,
     trace_callback: Any | None,
-) -> tuple[int, int, int]:
-    enriched = 0
-    unchanged = 0
-    failed = 0
+) -> tuple[dict[int, str], int, int]:
+    outcomes: dict[int, str] = {}
     retry_count = 0
     host_limited_count = 0
     stop_writes = False
@@ -1251,7 +1261,7 @@ async def _consume_candidate_enrichment_results(
             continue
 
         if result.status == "failed":
-            failed += 1
+            outcomes[result.candidate_id] = "failed"
             await _emit_trace_event(
                 trace_callback,
                 {
@@ -1282,7 +1292,7 @@ async def _consume_candidate_enrichment_results(
             continue
 
         if changed:
-            enriched += 1
+            outcomes[result.candidate_id] = "enriched"
             await _emit_trace_event(
                 trace_callback,
                 {
@@ -1297,7 +1307,7 @@ async def _consume_candidate_enrichment_results(
                 },
             )
         else:
-            unchanged += 1
+            outcomes[result.candidate_id] = "unchanged"
             await _emit_trace_event(
                 trace_callback,
                 {
@@ -1312,14 +1322,29 @@ async def _consume_candidate_enrichment_results(
                 },
             )
 
-    await _update_crawl_job_run_enrichment_metrics(
-        session_factory,
-        job_id,
-        retry_count=retry_count,
-        host_limited_count=host_limited_count,
-        failed_candidate_count=failed,
-        unchanged_candidate_count=unchanged,
-    )
+    return outcomes, retry_count, host_limited_count
+
+
+async def _canonicalize_enrichment_outcomes(
+    session_factory: async_sessionmaker[AsyncSession],
+    outcomes: dict[int, str],
+) -> tuple[int, int, int]:
+    status_priority = {"failed": 1, "unchanged": 2, "enriched": 3}
+    outcomes_by_canonical_id: dict[int, str] = {}
+    async with session_factory() as session:
+        for candidate_id, status in outcomes.items():
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            canonical_id = candidate_id
+            if candidate is not None:
+                canonical = await resolve_canonical_candidate(session, candidate)
+                canonical_id = canonical.id
+            current = outcomes_by_canonical_id.get(canonical_id)
+            if current is None or status_priority[status] > status_priority[current]:
+                outcomes_by_canonical_id[canonical_id] = status
+
+    enriched = sum(status == "enriched" for status in outcomes_by_canonical_id.values())
+    unchanged = sum(status == "unchanged" for status in outcomes_by_canonical_id.values())
+    failed = sum(status == "failed" for status in outcomes_by_canonical_id.values())
     return enriched, unchanged, failed
 
 
