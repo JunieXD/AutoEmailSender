@@ -5753,15 +5753,15 @@ export const TasksPage = () => {
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="w-full min-w-[1168px] table-fixed divide-y divide-stone-200 text-sm">
+                  <table className="w-max min-w-[960px] table-auto divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
                       <tr>
-                        <th className="w-56 px-4 py-3 align-middle">导师</th>
-                        <th className="w-28 px-4 py-3 align-middle">状态</th>
-                        <th className="w-24 px-4 py-3 align-middle">匹配分</th>
-                        <th className="w-[22rem] px-4 py-3 align-middle">说明</th>
-                        <th className="w-52 px-3 py-3 align-middle">Token 明细</th>
-                        <th className="w-44 px-4 py-3 align-middle">更新时间</th>
+                        <th className="px-4 py-3 align-middle">导师</th>
+                        <th className="px-4 py-3 align-middle">状态</th>
+                        <th className="px-4 py-3 align-middle">匹配分</th>
+                        <th className="px-4 py-3 align-middle">说明</th>
+                        <th className="px-3 py-3 align-middle">Token 明细</th>
+                        <th className="px-4 py-3 align-middle">更新时间</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
@@ -5778,11 +5778,11 @@ export const TasksPage = () => {
                           return (
                             <tr key={item.id}>
                               <td className="px-4 py-3 align-middle">
-                                <div className="font-medium text-stone-900">
+                                <div className="max-w-56 break-words font-medium text-stone-900">
                                   {item.professor_name}
                                 </div>
                                 {professorDetails ? (
-                                  <div className="mt-1 text-xs text-stone-500">
+                                  <div className="mt-1 max-w-56 break-words text-xs text-stone-500">
                                     {professorDetails}
                                   </div>
                                 ) : null}
@@ -5797,10 +5797,12 @@ export const TasksPage = () => {
                               <td className="px-4 py-3 text-center align-middle tabular-nums">
                                 {item.match_score ?? "未生成"}
                               </td>
-                              <td className="w-[22rem] px-4 py-3 text-center align-middle break-words">
-                                {item.error_message || item.skip_reason || "已完成"}
+                              <td className="px-4 py-3 text-center align-middle">
+                                <div className="max-w-[22rem] break-words">
+                                  {item.error_message || item.skip_reason || "已完成"}
+                                </div>
                               </td>
-                              <td className="w-52 px-3 py-3 text-center align-middle">
+                              <td className="px-3 py-3 text-center align-middle">
                                 <TokenUsageBreakdown
                                   inputTokens={item.prompt_tokens}
                                   outputTokens={item.completion_tokens}
@@ -6002,17 +6004,17 @@ export const TasksPage = () => {
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="w-full min-w-[1344px] table-fixed divide-y divide-stone-200 text-sm">
+                  <table className="w-max min-w-[960px] table-auto divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
                       <tr>
-                        <th className="w-64 px-4 py-3 align-middle">导师</th>
-                        <th className="w-28 px-4 py-3 align-middle">状态</th>
-                        <th className="w-52 px-4 py-3 align-middle">补全字段</th>
-                        <th className="w-[22rem] px-4 py-3 align-middle">说明</th>
-                        <th className="w-52 px-3 py-3 align-middle">
+                        <th className="px-4 py-3 align-middle">导师</th>
+                        <th className="px-4 py-3 align-middle">状态</th>
+                        <th className="px-4 py-3 align-middle">补全字段</th>
+                        <th className="px-4 py-3 align-middle">说明</th>
+                        <th className="px-3 py-3 align-middle">
                           Token 明细 / 尝试
                         </th>
-                        <th className="w-52 px-4 py-3 align-middle">主页 / 完成时间</th>
+                        <th className="px-4 py-3 align-middle">主页 / 完成时间</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
@@ -6030,13 +6032,13 @@ export const TasksPage = () => {
                           return (
                             <tr key={item.id}>
                               <td className="px-4 py-3 align-middle">
-                                <div className="font-medium text-stone-900">
+                                <div className="max-w-64 break-words font-medium text-stone-900">
                                   {item.professor_name}
                                 </div>
-                                <div className="mt-1 text-xs leading-5 text-stone-500">
+                                <div className="mt-1 max-w-64 break-words text-xs leading-5 text-stone-500">
                                   {item.professor_email || "暂无邮箱"}
                                 </div>
-                                <div className="text-xs leading-5 text-stone-500">
+                                <div className="max-w-64 break-words text-xs leading-5 text-stone-500">
                                   {[
                                     item.professor_title,
                                     item.professor_school,
@@ -6069,16 +6071,16 @@ export const TasksPage = () => {
                                   <span className="text-stone-400">--</span>
                                 )}
                               </td>
-                              <td className="w-[22rem] px-4 py-3 text-center align-middle">
+                              <td className="px-4 py-3 text-center align-middle">
                                 <div
-                                  className={`whitespace-pre-wrap break-words leading-6 ${
+                                  className={`mx-auto max-w-[22rem] whitespace-pre-wrap break-words leading-6 ${
                                     item.error_message ? "text-red-700" : "text-stone-700"
                                   }`}
                                 >
                                   {itemMessage}
                                 </div>
                               </td>
-                              <td className="w-52 px-3 py-3 text-center align-middle">
+                              <td className="px-3 py-3 text-center align-middle">
                                 <TokenUsageBreakdown
                                   inputTokens={item.input_tokens}
                                   outputTokens={item.output_tokens}
@@ -6092,7 +6094,7 @@ export const TasksPage = () => {
                                   尝试 {item.attempt_count} 次
                                 </div>
                               </td>
-                              <td className="max-w-64 px-4 py-3 text-center align-middle">
+                              <td className="px-4 py-3 text-center align-middle">
                                 <div className="mx-auto max-w-56 truncate">
                                   {renderCandidateExternalUrl(item.profile_url)}
                                 </div>

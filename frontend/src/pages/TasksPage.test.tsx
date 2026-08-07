@@ -1062,14 +1062,14 @@ describe("TasksPage match analysis token usage", () => {
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
     const detailHeaders = within(dialog).getAllByRole("columnheader");
-    expect(within(dialog).getByRole("table")).toHaveClass("w-full", "table-fixed");
+    expect(within(dialog).getByRole("table")).toHaveClass("w-max", "table-auto");
     detailHeaders.forEach((header) => {
       expect(header).toHaveClass("align-middle");
       expect(header.parentElement?.parentElement).toHaveClass("text-center");
     });
     expect(
       within(dialog).getByRole("columnheader", { name: "Token 明细" }),
-    ).toHaveClass("w-52");
+    ).not.toHaveClass("w-52");
 
     const itemSummary = await within(dialog).findByLabelText(
       "张老师 Token 使用明细",
@@ -1174,7 +1174,7 @@ describe("TasksPage information enrichment", () => {
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
     const detailHeaders = within(dialog).getAllByRole("columnheader");
-    expect(within(dialog).getByRole("table")).toHaveClass("w-full", "table-fixed");
+    expect(within(dialog).getByRole("table")).toHaveClass("w-max", "table-auto");
     detailHeaders.forEach((header) => {
       expect(header).toHaveClass("align-middle");
       expect(header.parentElement?.parentElement).toHaveClass("text-center");
@@ -1183,7 +1183,7 @@ describe("TasksPage information enrichment", () => {
       within(dialog).getByRole("columnheader", {
         name: "Token 明细 / 尝试",
       }),
-    ).toHaveClass("w-52");
+    ).not.toHaveClass("w-52");
 
     const itemSummary = within(dialog).getByLabelText("张老师 Token 使用明细");
     expect(itemSummary).toHaveClass("inline-grid", "gap-x-3", "text-left");
