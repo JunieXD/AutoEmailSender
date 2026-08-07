@@ -5753,7 +5753,7 @@ export const TasksPage = () => {
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="w-max min-w-max table-auto divide-y divide-stone-200 text-sm">
+                  <table className="w-full min-w-max table-auto divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
                       <tr>
                         <th className="px-4 py-3 align-middle">导师</th>
@@ -6004,7 +6004,7 @@ export const TasksPage = () => {
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="w-max min-w-max table-auto divide-y divide-stone-200 text-sm">
+                  <table className="w-full min-w-max table-auto divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
                       <tr>
                         <th className="px-4 py-3 align-middle">导师</th>
