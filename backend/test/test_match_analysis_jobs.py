@@ -23,6 +23,7 @@ from app.models import (
     MatchAnalysisJobItem,
     MatchAnalysisJobItemStatus,
     MatchAnalysisJobStatus,
+    MatchAnalysisRun,
     OperationLog,
     Professor,
 )
@@ -32,7 +33,12 @@ from app.modules.matching.public import (
     request_match_analysis_job_cancel,
     run_queued_match_analysis_jobs_once,
 )
-from app.modules.matching.job_runtime import _mark_item_succeeded
+from app.modules.matching.job_runtime import (
+    _MatchAnalysisItemClaim,
+    _claim_next_match_analysis_item,
+    _mark_item_succeeded,
+    _recover_expired_match_analysis_items,
+)
 
 
 class MatchAnalysisJobRuntimeTests(unittest.TestCase):
@@ -170,6 +176,287 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         items = self._run_async(self._get_job_items(job.id))
         self.assertEqual(items[0].cached_tokens, 25)
 
+    def test_llm_runtime_failure_marks_item_and_job_failed(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+            ),
+        )
+
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(side_effect=llm_runtime.LLMRuntimeError("模型请求超时")),
+        ):
+            self._run_async(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+            )
+
+        stored = self._run_async(self._get_job(job.id))
+        [item] = self._run_async(self._get_job_items(job.id))
+        self.assertEqual(stored.status, MatchAnalysisJobStatus.FAILED.value)
+        self.assertEqual(stored.failed_count, 1)
+        self.assertEqual(stored.succeeded_count, 0)
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.FAILED.value)
+        self.assertIn("模型请求超时", item.error_message)
+
+    def test_item_timeout_finishes_when_calculation_ignores_cancellation(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+            ),
+        )
+
+        async def scenario() -> tuple[int, str, bool]:
+            release = asyncio.Event()
+            ignored_cancellation = asyncio.Event()
+            finished = asyncio.Event()
+
+            async def stubborn_generation(**_kwargs):
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        ignored_cancellation.set()
+                finished.set()
+                return self._build_match_evaluation_result(match_score=88)
+
+            real_timeout = asyncio.timeout
+            with (
+                patch(
+                    "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+                    side_effect=stubborn_generation,
+                ),
+                patch(
+                    "app.modules.matching.job_runtime.asyncio.timeout",
+                    new=lambda _seconds: real_timeout(0.02),
+                ),
+                patch(
+                    "app.modules.matching.job_runtime._MATCH_ANALYSIS_CANCEL_GRACE_SECONDS",
+                    0.01,
+                ),
+            ):
+                processed = await asyncio.wait_for(
+                    run_queued_match_analysis_jobs_once(
+                        self.session_factory,
+                        item_concurrency=1,
+                    ),
+                    timeout=0.5,
+                )
+
+            [item] = await self._get_job_items(job.id)
+            async with self.session_factory() as session:
+                running_runs = list(
+                    await session.scalars(
+                        select(MatchAnalysisRun).where(
+                            MatchAnalysisRun.email_task_id == item.email_task_id,
+                            MatchAnalysisRun.status == "running",
+                        )
+                    )
+                )
+            cancellation_was_ignored = ignored_cancellation.is_set()
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=0.5)
+            return (
+                processed,
+                item.status,
+                cancellation_was_ignored and not running_runs,
+            )
+
+        processed, item_status, ignored_cancellation = self._run_async(scenario())
+        self.assertEqual(processed, 1)
+        self.assertEqual(item_status, MatchAnalysisJobItemStatus.FAILED.value)
+        self.assertTrue(ignored_cancellation)
+
+    def test_item_scheduler_round_robins_across_jobs(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(extra_analyzable_professor=True),
+        )
+        first_job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0], professor_ids[2]],
+                name="large",
+            ),
+        )
+        second_job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+                name="small",
+            ),
+        )
+
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
+        ):
+            processed = self._run_async(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=2,
+                ),
+            )
+
+        self.assertEqual(processed, 2)
+        stored_first = self._run_async(self._get_job(first_job.id))
+        stored_second = self._run_async(self._get_job(second_job.id))
+        self.assertEqual(stored_first.status, MatchAnalysisJobStatus.QUEUED.value)
+        self.assertEqual(stored_first.succeeded_count, 1)
+        self.assertEqual(stored_second.status, MatchAnalysisJobStatus.COMPLETED.value)
+
+    def test_concurrent_schedulers_do_not_duplicate_item_claims(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(extra_analyzable_professor=True),
+        )
+        jobs = [
+            self._run_async(
+                create_match_analysis_job(
+                    self.session_factory,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    professor_ids=[professor_id],
+                ),
+            )
+            for professor_id in (professor_ids[0], professor_ids[2])
+        ]
+
+        async def delayed_generation(**_kwargs):
+            await asyncio.sleep(0.05)
+            return self._build_match_evaluation_result(match_score=88)
+
+        async def run_both() -> list[int]:
+            return await asyncio.gather(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+            )
+
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(side_effect=delayed_generation),
+        ) as mocked_generation:
+            processed = self._run_async(run_both())
+
+        stored_items = [
+            item
+            for job in jobs
+            for item in self._run_async(self._get_job_items(job.id))
+        ]
+        self.assertEqual(processed, [1, 1])
+        self.assertEqual(
+            mocked_generation.await_count,
+            2,
+            [
+                (item.status, item.skip_reason, item.error_message, item.attempt_count)
+                for item in stored_items
+            ],
+        )
+        self.assertTrue(
+            all(
+                self._run_async(self._get_job(job.id)).status
+                == MatchAnalysisJobStatus.COMPLETED.value
+                for job in jobs
+            )
+        )
+
+    def test_expired_claim_is_recovered_but_late_result_is_fenced(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+            ),
+        )
+        old_claim = self._run_async(
+            _claim_next_match_analysis_item(self.session_factory),
+        )
+        assert old_claim is not None
+
+        async def expire_claim() -> None:
+            async with self.session_factory() as session:
+                item = await session.get(MatchAnalysisJobItem, old_claim.item_id)
+                assert item is not None
+                item.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await session.commit()
+
+        self._run_async(expire_claim())
+        self.assertEqual(
+            self._run_async(_recover_expired_match_analysis_items(self.session_factory)),
+            1,
+        )
+        new_claim = self._run_async(
+            _claim_next_match_analysis_item(self.session_factory),
+        )
+        assert new_claim is not None
+        self._run_async(
+            _mark_item_succeeded(
+                self.session_factory,
+                old_claim,
+                run_id=None,
+                prompt_tokens=10,
+                completion_tokens=5,
+                cached_tokens=0,
+                total_tokens=15,
+            ),
+        )
+
+        [item] = self._run_async(self._get_job_items(job.id))
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.RUNNING.value)
+        self.assertEqual(item.claim_id, new_claim.claim_id)
+        self.assertEqual(item.total_tokens, 0)
+
+    def test_nonexpired_claim_is_not_recovered(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+            ),
+        )
+        claim = self._run_async(_claim_next_match_analysis_item(self.session_factory))
+        assert claim is not None
+
+        recovered = self._run_async(
+            _recover_expired_match_analysis_items(self.session_factory),
+        )
+
+        [item] = self._run_async(self._get_job_items(job.id))
+        self.assertEqual(recovered, 0)
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.RUNNING.value)
+        self.assertEqual(item.claim_id, claim.claim_id)
+
     def test_terminal_item_update_keeps_job_summary_current_and_idempotent(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
@@ -191,13 +478,20 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 )
                 assert item is not None
                 item.status = MatchAnalysisJobItemStatus.RUNNING.value
+                item.claim_id = "test-claim"
+                item.claimed_at = datetime.now(UTC)
+                item.lease_expires_at = datetime.now(UTC) + timedelta(minutes=1)
                 await session.commit()
 
         self._run_async(mark_running())
         self._run_async(
             _mark_item_succeeded(
                 self.session_factory,
-                self._run_async(self._get_job_items(job.id))[0].id,
+                _MatchAnalysisItemClaim(
+                    job_id=job.id,
+                    item_id=self._run_async(self._get_job_items(job.id))[0].id,
+                    claim_id="test-claim",
+                ),
                 run_id=None,
                 prompt_tokens=11,
                 completion_tokens=7,
@@ -208,7 +502,11 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self._run_async(
             _mark_item_succeeded(
                 self.session_factory,
-                self._run_async(self._get_job_items(job.id))[0].id,
+                _MatchAnalysisItemClaim(
+                    job_id=job.id,
+                    item_id=self._run_async(self._get_job_items(job.id))[0].id,
+                    claim_id="test-claim",
+                ),
                 run_id=None,
                 prompt_tokens=11,
                 completion_tokens=7,
@@ -377,14 +675,20 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
             "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             AsyncMock(side_effect=[failure, success]),
         ):
-            processed = self._run_async(
+            first_processed = self._run_async(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+            )
+            second_processed = self._run_async(
                 run_queued_match_analysis_jobs_once(
                     self.session_factory,
                     item_concurrency=1,
                 ),
             )
 
-        self.assertEqual(processed, 1)
+        self.assertEqual(first_processed + second_processed, 2)
         stored = self._run_async(self._get_job(job.id))
         self.assertEqual(stored.status, "partial_failed")
         self.assertEqual(stored.failed_count, 1)

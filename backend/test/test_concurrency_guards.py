@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import func, select
@@ -22,17 +23,32 @@ from app.models import (
     IdentityMaterial,
     IdentityMaterialType,
     IdentityProfile,
+    ImapIdentitySyncLease,
+    ImapMailboxHistoricalScanStatus,
+    ImapMailboxSyncState,
+    ImapProfessorHistoricalScanStatus,
+    ImapProfessorSyncState,
     LLMProfile,
     Professor,
 )
 from app.modules.llm import runtime as llm_runtime
 from app.modules.communications.imap.sync import (
+    _run_imap_identities_bounded,
+    _run_identity_sync_with_lease,
     poll_identity_replies,
     repair_identity_replies,
     sync_identity_history_poll_once,
     sync_identity_imap_once,
     sync_identity_incremental_poll_once,
     sync_workspace_professor_replies,
+)
+from app.modules.communications.imap.state import (
+    claim_imap_identity_sync,
+    claim_next_mailbox_history_scans,
+    claim_next_professor_scans,
+    mark_mailbox_history_scan_progress,
+    mark_professor_scan_completed,
+    release_imap_identity_sync_claim,
 )
 from app.modules.workspace.tasks.runtime import (
     _create_manual_child_task,
@@ -103,6 +119,262 @@ class ConcurrencyGuardTests(unittest.TestCase):
             sum(1 for result in results if isinstance(result, Exception)),
             1,
         )
+
+    def test_imap_identity_lease_is_atomic_across_schedulers(self) -> None:
+        async def scenario() -> tuple[int, bool]:
+            identity_id = await self._create_imap_identity()
+            claims = await asyncio.gather(
+                claim_imap_identity_sync(
+                    self.session_factory,
+                    identity_id,
+                    claim_kind="history",
+                    lease_seconds=60,
+                ),
+                claim_imap_identity_sync(
+                    self.session_factory,
+                    identity_id,
+                    claim_kind="history",
+                    lease_seconds=60,
+                ),
+            )
+            winners = [claim for claim in claims if claim is not None]
+            released = await release_imap_identity_sync_claim(
+                self.session_factory,
+                winners[0],
+            )
+            return len(winners), released
+
+        self.assertEqual(self._run_async(scenario()), (1, True))
+
+    def test_imap_identity_timeout_returns_but_keeps_lease_until_expiry(self) -> None:
+        async def scenario() -> tuple[int, bool, bool]:
+            identity_id = await self._create_imap_identity()
+            release = asyncio.Event()
+            ignored_cancellation = asyncio.Event()
+            finished = asyncio.Event()
+
+            async def stubborn_operation() -> int:
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        ignored_cancellation.set()
+                finished.set()
+                return 7
+
+            settings = SimpleNamespace(
+                imap_identity_lease_seconds=60,
+                imap_identity_sync_timeout_seconds=0.01,
+            )
+            with (
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync._IMAP_TASK_CANCEL_GRACE_SECONDS",
+                    0.01,
+                ),
+            ):
+                result = await asyncio.wait_for(
+                    _run_identity_sync_with_lease(
+                        self.session_factory,
+                        identity_id,
+                        claim_kind="history",
+                        operation=stubborn_operation,
+                    ),
+                    timeout=0.5,
+                )
+
+            async with self.session_factory() as session:
+                lease = await session.get(ImapIdentitySyncLease, identity_id)
+                lease_is_held = bool(
+                    lease is not None
+                    and lease.claim_id
+                    and lease.lease_expires_at
+                    and lease.lease_expires_at > datetime.now(UTC)
+                )
+            cancellation_was_ignored = ignored_cancellation.is_set()
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=0.5)
+            return result, lease_is_held, cancellation_was_ignored
+
+        self.assertEqual(self._run_async(scenario()), (0, True, True))
+
+    def test_imap_mailbox_work_item_claim_is_atomic(self) -> None:
+        async def scenario() -> tuple[int, int]:
+            identity_id = await self._create_imap_identity()
+            async with self.session_factory() as session:
+                state = ImapMailboxSyncState(
+                    identity_id=identity_id,
+                    folder_role="inbox",
+                    folder="INBOX",
+                    history_scan_status=ImapMailboxHistoricalScanStatus.PENDING.value,
+                )
+                session.add(state)
+                await session.commit()
+                state_id = state.id
+            claims = await asyncio.gather(
+                claim_next_mailbox_history_scans(
+                    self.session_factory,
+                    identity_id,
+                    folders=[("inbox", "INBOX")],
+                    limit=1,
+                ),
+                claim_next_mailbox_history_scans(
+                    self.session_factory,
+                    identity_id,
+                    folders=[("inbox", "INBOX")],
+                    limit=1,
+                ),
+            )
+            claimed_ids = [item.id for group in claims for item in group]
+            return len(claimed_ids), state_id
+
+        claimed_count, _ = self._run_async(scenario())
+        self.assertEqual(claimed_count, 1)
+
+    def test_old_mailbox_claim_cannot_write_after_replacement_claim(self) -> None:
+        async def scenario() -> tuple[str, bool, int, int]:
+            identity_id = await self._create_imap_identity()
+            async with self.session_factory() as session:
+                state = ImapMailboxSyncState(
+                    identity_id=identity_id,
+                    folder_role="inbox",
+                    folder="INBOX",
+                    history_scan_status=ImapMailboxHistoricalScanStatus.PENDING.value,
+                )
+                session.add(state)
+                await session.commit()
+                state_id = state.id
+            [old_claim] = await claim_next_mailbox_history_scans(
+                self.session_factory,
+                identity_id,
+                folders=[("inbox", "INBOX")],
+                limit=1,
+            )
+            async with self.session_factory() as session:
+                state = await session.get(ImapMailboxSyncState, state_id)
+                assert state is not None
+                state.history_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await session.commit()
+            [new_claim] = await claim_next_mailbox_history_scans(
+                self.session_factory,
+                identity_id,
+                folders=[("inbox", "INBOX")],
+                limit=1,
+            )
+            await mark_mailbox_history_scan_progress(
+                self.session_factory,
+                state_id,
+                next_before_uid=50,
+                scanned_count_delta=3,
+                matched_count_delta=2,
+                uidvalidity=10,
+                high_water_uid=100,
+                last_seen_uid_floor=25,
+                completed=True,
+                claim_id=old_claim.history_claim_id,
+            )
+            async with self.session_factory() as session:
+                stored = await session.get(ImapMailboxSyncState, state_id)
+                assert stored is not None
+                return (
+                    stored.history_scan_status,
+                    stored.history_claim_id == new_claim.history_claim_id,
+                    stored.history_scanned_count,
+                    stored.history_matched_count,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (ImapMailboxHistoricalScanStatus.RUNNING.value, True, 0, 0),
+        )
+
+    def test_old_professor_claim_cannot_write_after_replacement_claim(self) -> None:
+        async def scenario() -> tuple[str, bool, int | None]:
+            identity_id = await self._create_imap_identity()
+            async with self.session_factory() as session:
+                professor = Professor(
+                    name="IMAP claim 测试导师",
+                    email="imap-claim@example.edu",
+                    research_direction="AI",
+                    recent_papers=[],
+                )
+                session.add(professor)
+                await session.flush()
+                state = ImapProfessorSyncState(
+                    identity_id=identity_id,
+                    professor_id=professor.id,
+                    professor_email=professor.email,
+                    historical_scan_status=ImapProfessorHistoricalScanStatus.PENDING.value,
+                )
+                session.add(state)
+                await session.commit()
+                state_id = state.id
+            [old_claim] = await claim_next_professor_scans(
+                self.session_factory,
+                identity_id,
+                limit=1,
+            )
+            async with self.session_factory() as session:
+                state = await session.get(ImapProfessorSyncState, state_id)
+                assert state is not None
+                state.history_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await session.commit()
+            [new_claim] = await claim_next_professor_scans(
+                self.session_factory,
+                identity_id,
+                limit=1,
+            )
+            await mark_professor_scan_completed(
+                self.session_factory,
+                state_id,
+                123,
+                claim_id=old_claim.history_claim_id,
+            )
+            async with self.session_factory() as session:
+                stored = await session.get(ImapProfessorSyncState, state_id)
+                assert stored is not None
+                return (
+                    stored.historical_scan_status,
+                    stored.history_claim_id == new_claim.history_claim_id,
+                    stored.last_scanned_uid,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (ImapProfessorHistoricalScanStatus.RUNNING.value, True, None),
+        )
+
+    def test_imap_identity_polling_uses_bounded_concurrency(self) -> None:
+        async def scenario() -> tuple[int, int]:
+            active = 0
+            max_active = 0
+
+            async def worker(_session_factory, identity_id: int) -> int:
+                nonlocal active, max_active
+                active += 1
+                max_active = max(max_active, active)
+                try:
+                    await asyncio.sleep(0.03)
+                    return identity_id
+                finally:
+                    active -= 1
+
+            with patch(
+                "app.modules.communications.imap.sync.get_settings",
+                return_value=SimpleNamespace(imap_identity_concurrency=2),
+            ):
+                total = await _run_imap_identities_bounded(
+                    self.session_factory,
+                    [1, 2, 3, 4],
+                    worker,
+                    poll_name="test",
+                )
+            return total, max_active
+
+        self.assertEqual(self._run_async(scenario()), (10, 2))
 
     def test_ensure_workspace_task_is_idempotent_under_concurrent_calls(self) -> None:
         identity_id, llm_profile_id, professor_id = self._run_async(self._create_workspace_context())
@@ -431,6 +703,31 @@ class ConcurrencyGuardTests(unittest.TestCase):
     async def _create_schema(self) -> None:
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+
+    async def _create_imap_identity(self) -> int:
+        async with self.session_factory() as session:
+            identity = IdentityProfile(
+                name="IMAP 测试身份",
+                profile_name="IMAP 测试身份",
+                sender_name="王同学",
+                email_address="imap-scheduler@example.com",
+                smtp_host="smtp.example.com",
+                smtp_port=465,
+                smtp_username="imap-scheduler@example.com",
+                smtp_password="secret",
+                imap_host="imap.example.com",
+                imap_port=993,
+                imap_username="imap-scheduler@example.com",
+                imap_password="secret",
+                default_language="zh-CN",
+                outreach_generation_mode="template",
+                outreach_template_subject="测试主题",
+                outreach_template_body_text="测试正文",
+                is_default=True,
+            )
+            session.add(identity)
+            await session.commit()
+            return identity.id
 
     async def _create_manual_draft_task(self) -> int:
         async with self.session_factory() as session:

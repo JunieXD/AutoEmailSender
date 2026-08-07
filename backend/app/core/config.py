@@ -20,6 +20,9 @@ class Settings:
     draft_worker_interval_seconds: int
     dispatcher_interval_seconds: int
     imap_poll_interval_seconds: int
+    imap_identity_concurrency: int
+    imap_identity_sync_timeout_seconds: int
+    imap_identity_lease_seconds: int
     imap_history_batch_size: int
     imap_history_command_budget_per_minute: int
     imap_history_command_rate_per_minute: int
@@ -103,6 +106,18 @@ def get_settings() -> Settings:
         draft_worker_interval_seconds=_get_int_env("DRAFT_WORKER_INTERVAL_SECONDS", 10),
         dispatcher_interval_seconds=_get_int_env("DISPATCHER_INTERVAL_SECONDS", 30),
         imap_poll_interval_seconds=_get_int_env("IMAP_POLL_INTERVAL_SECONDS", 60),
+        imap_identity_concurrency=max(
+            1,
+            _get_int_env("IMAP_IDENTITY_CONCURRENCY", 3),
+        ),
+        imap_identity_sync_timeout_seconds=max(
+            1,
+            _get_int_env("IMAP_IDENTITY_SYNC_TIMEOUT_SECONDS", 180),
+        ),
+        imap_identity_lease_seconds=max(
+            5,
+            _get_int_env("IMAP_IDENTITY_LEASE_SECONDS", 60),
+        ),
         imap_history_batch_size=_get_int_env("IMAP_HISTORY_BATCH_SIZE", 200),
         imap_history_command_budget_per_minute=_get_int_env(
             "IMAP_HISTORY_COMMAND_BUDGET_PER_MINUTE",

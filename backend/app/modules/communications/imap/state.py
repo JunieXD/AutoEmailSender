@@ -9,11 +9,13 @@ from datetime import date, timedelta
 from app.core.config import get_settings
 from app.core.time import utc_now
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
     IdentityProfile,
+    ImapIdentitySyncLease,
     ImapMailboxHistoricalScanStatus,
     ImapMailboxSyncState,
     ImapProfessorHistoricalScanStatus,
@@ -27,6 +29,7 @@ ProfessorEmailKey = tuple[int, int, str]
 RecentHistoryCandidate = tuple[int, str]
 STALE_RUNNING_SCAN_AFTER = timedelta(hours=1)
 STALE_RUNNING_MAILBOX_HISTORY_AFTER = timedelta(hours=1)
+IMAP_HISTORY_WORK_LEASE = timedelta(minutes=5)
 SCAN_STATE_KEY_LOOKUP_CHUNK_SIZE = 400
 TARGETED_BASELINE_STRATEGY_VERSION = "folder-v1-targeted-baseline"
 RECENT_V2_STRATEGY_VERSION = "recent-v2"
@@ -41,6 +44,125 @@ class RecentV2QueueSummary:
     sent_state_count: int
     inbox_state_count: int
     bulk_sent_state_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ImapIdentitySyncClaim:
+    identity_id: int
+    claim_id: str
+    claim_kind: str
+
+
+async def claim_imap_identity_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    *,
+    claim_kind: str,
+    lease_seconds: int,
+) -> ImapIdentitySyncClaim | None:
+    now = utc_now()
+    claim_id = str(uuid.uuid4())
+    lease_expires_at = now + timedelta(seconds=max(5, lease_seconds))
+    async with session_factory() as session:
+        transition = await session.execute(
+            update(ImapIdentitySyncLease)
+            .where(
+                ImapIdentitySyncLease.identity_id == identity_id,
+                or_(
+                    ImapIdentitySyncLease.claim_id.is_(None),
+                    ImapIdentitySyncLease.lease_expires_at.is_(None),
+                    ImapIdentitySyncLease.lease_expires_at <= now,
+                ),
+            )
+            .values(
+                claim_id=claim_id,
+                claim_kind=claim_kind,
+                claimed_at=now,
+                lease_expires_at=lease_expires_at,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if transition.rowcount == 1:
+            await session.commit()
+            return ImapIdentitySyncClaim(identity_id, claim_id, claim_kind)
+        existing = await session.get(ImapIdentitySyncLease, identity_id)
+        if existing is not None:
+            await session.rollback()
+            return None
+        session.add(
+            ImapIdentitySyncLease(
+                identity_id=identity_id,
+                claim_id=claim_id,
+                claim_kind=claim_kind,
+                claimed_at=now,
+                lease_expires_at=lease_expires_at,
+                updated_at=now,
+            )
+        )
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return None
+        return ImapIdentitySyncClaim(identity_id, claim_id, claim_kind)
+
+
+async def renew_imap_identity_sync_claim(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ImapIdentitySyncClaim,
+    *,
+    lease_seconds: int,
+) -> bool:
+    now = utc_now()
+    async with session_factory() as session:
+        transition = await session.execute(
+            update(ImapIdentitySyncLease)
+            .where(
+                ImapIdentitySyncLease.identity_id == claim.identity_id,
+                ImapIdentitySyncLease.claim_id == claim.claim_id,
+                ImapIdentitySyncLease.claim_kind == claim.claim_kind,
+                ImapIdentitySyncLease.lease_expires_at > now,
+            )
+            .values(
+                lease_expires_at=now + timedelta(seconds=max(5, lease_seconds)),
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if transition.rowcount != 1:
+            await session.rollback()
+            return False
+        await session.commit()
+        return True
+
+
+async def release_imap_identity_sync_claim(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ImapIdentitySyncClaim,
+) -> bool:
+    async with session_factory() as session:
+        transition = await session.execute(
+            update(ImapIdentitySyncLease)
+            .where(
+                ImapIdentitySyncLease.identity_id == claim.identity_id,
+                ImapIdentitySyncLease.claim_id == claim.claim_id,
+                ImapIdentitySyncLease.claim_kind == claim.claim_kind,
+            )
+            .values(
+                claim_id=None,
+                claim_kind=None,
+                claimed_at=None,
+                lease_expires_at=None,
+                updated_at=utc_now(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if transition.rowcount != 1:
+            await session.rollback()
+            return False
+        await session.commit()
+        return True
 
 
 async def ensure_professor_scan_states(
@@ -367,19 +489,41 @@ async def claim_recent_v2_professor_scans(
                         ImapProfessorSyncState.available_at.asc(),
                         ImapProfessorSyncState.id.asc(),
                     )
-                    .limit(limit),
+                    .limit(max(limit * 4, limit)),
                 )
             ).scalars(),
         )
         now = utc_now()
+        claimed: list[ImapProfessorSyncState] = []
         for state in states:
-            state.historical_scan_status = ImapProfessorHistoricalScanStatus.RUNNING.value
-            state.historical_scan_started_at = now
-            state.last_error = None
+            if len(claimed) >= limit:
+                break
+            claim_id = str(uuid.uuid4())
+            transition = await session.execute(
+                update(ImapProfessorSyncState)
+                .where(
+                    ImapProfessorSyncState.id == state.id,
+                    _professor_history_claimable(now),
+                    or_(
+                        ImapProfessorSyncState.available_at.is_(None),
+                        ImapProfessorSyncState.available_at <= now,
+                    ),
+                )
+                .values(
+                    historical_scan_status=ImapProfessorHistoricalScanStatus.RUNNING.value,
+                    historical_scan_started_at=now,
+                    history_claim_id=claim_id,
+                    history_lease_expires_at=now + IMAP_HISTORY_WORK_LEASE,
+                    last_error=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if transition.rowcount == 1:
+                claimed.append(state)
         await session.commit()
-        for state in states:
+        for state in claimed:
             await session.refresh(state)
-        return states
+        return claimed
 
 
 async def prepare_recent_v2_bulk_sent_batch(
@@ -457,6 +601,8 @@ async def mark_recent_v2_batch_completed(
             state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
             state.historical_scan_completed_at = now
             state.historical_scan_started_at = None
+            state.history_claim_id = None
+            state.history_lease_expires_at = None
             state.last_error = None
             completed += 1
         await session.commit()
@@ -464,7 +610,6 @@ async def mark_recent_v2_batch_completed(
 
 
 def _recent_v2_due_conditions(identity_id: int, now) -> list[object]:
-    stale_running_cutoff = now - STALE_RUNNING_SCAN_AFTER
     return [
         ImapProfessorSyncState.identity_id == identity_id,
         ImapProfessorSyncState.history_strategy_version == RECENT_V2_STRATEGY_VERSION,
@@ -476,23 +621,62 @@ def _recent_v2_due_conditions(identity_id: int, now) -> list[object]:
             ImapProfessorSyncState.available_at.is_(None),
             ImapProfessorSyncState.available_at <= now,
         ),
-        or_(
-            ImapProfessorSyncState.historical_scan_status.in_(
-                [
-                    ImapProfessorHistoricalScanStatus.PENDING.value,
-                    ImapProfessorHistoricalScanStatus.FAILED.value,
-                ],
-            ),
-            (
-                ImapProfessorSyncState.historical_scan_status
-                == ImapProfessorHistoricalScanStatus.RUNNING.value
-            )
-            & or_(
-                ImapProfessorSyncState.historical_scan_started_at.is_(None),
-                ImapProfessorSyncState.historical_scan_started_at <= stale_running_cutoff,
+        _professor_history_claimable(now),
+    ]
+
+
+def _professor_history_claimable(now):
+    stale_running_cutoff = now - STALE_RUNNING_SCAN_AFTER
+    return or_(
+        ImapProfessorSyncState.historical_scan_status.in_(
+            [
+                ImapProfessorHistoricalScanStatus.PENDING.value,
+                ImapProfessorHistoricalScanStatus.FAILED.value,
+            ],
+        ),
+        (
+            ImapProfessorSyncState.historical_scan_status
+            == ImapProfessorHistoricalScanStatus.RUNNING.value
+        )
+        & or_(
+            ImapProfessorSyncState.history_lease_expires_at <= now,
+            and_(
+                ImapProfessorSyncState.history_lease_expires_at.is_(None),
+                or_(
+                    ImapProfessorSyncState.historical_scan_started_at.is_(None),
+                    ImapProfessorSyncState.historical_scan_started_at
+                    <= stale_running_cutoff,
+                ),
             ),
         ),
-    ]
+    )
+
+
+def _mailbox_history_claimable(now):
+    stale_running_cutoff = now - STALE_RUNNING_MAILBOX_HISTORY_AFTER
+    return or_(
+        ImapMailboxSyncState.history_scan_status.in_(
+            [
+                ImapMailboxHistoricalScanStatus.PENDING.value,
+                ImapMailboxHistoricalScanStatus.FAILED.value,
+            ],
+        ),
+        (
+            ImapMailboxSyncState.history_scan_status
+            == ImapMailboxHistoricalScanStatus.RUNNING.value
+        )
+        & or_(
+            ImapMailboxSyncState.history_lease_expires_at <= now,
+            and_(
+                ImapMailboxSyncState.history_lease_expires_at.is_(None),
+                or_(
+                    ImapMailboxSyncState.history_scan_started_at.is_(None),
+                    ImapMailboxSyncState.history_scan_started_at
+                    <= stale_running_cutoff,
+                ),
+            ),
+        ),
+    )
 
 
 async def ensure_professor_scan_states_if_needed(
@@ -557,31 +741,12 @@ async def claim_next_professor_scan(
     session_factory: async_sessionmaker[AsyncSession],
     identity_id: int,
 ) -> ImapProfessorSyncState | None:
-    async with session_factory() as session:
-        state = await session.scalar(
-            select(ImapProfessorSyncState)
-            .where(
-                ImapProfessorSyncState.identity_id == identity_id,
-                ImapProfessorSyncState.historical_scan_status.in_(
-                    [
-                        ImapProfessorHistoricalScanStatus.PENDING.value,
-                        ImapProfessorHistoricalScanStatus.FAILED.value,
-                    ],
-                ),
-            )
-            .order_by(
-                ImapProfessorSyncState.updated_at.asc(),
-                ImapProfessorSyncState.id.asc(),
-            ),
-        )
-        if state is None:
-            return None
-        state.historical_scan_status = ImapProfessorHistoricalScanStatus.RUNNING.value
-        state.historical_scan_started_at = utc_now()
-        state.last_error = None
-        await session.commit()
-        await session.refresh(state)
-        return state
+    states = await claim_next_professor_scans(
+        session_factory,
+        identity_id,
+        limit=1,
+    )
+    return states[0] if states else None
 
 
 async def claim_next_professor_scans(
@@ -594,25 +759,10 @@ async def claim_next_professor_scans(
     if limit <= 0:
         return []
     async with session_factory() as session:
-        stale_running_cutoff = utc_now() - STALE_RUNNING_SCAN_AFTER
+        now = utc_now()
         conditions = [
             ImapProfessorSyncState.identity_id == identity_id,
-            or_(
-                ImapProfessorSyncState.historical_scan_status.in_(
-                    [
-                        ImapProfessorHistoricalScanStatus.PENDING.value,
-                        ImapProfessorHistoricalScanStatus.FAILED.value,
-                    ],
-                ),
-                (
-                    ImapProfessorSyncState.historical_scan_status
-                    == ImapProfessorHistoricalScanStatus.RUNNING.value
-                )
-                & (
-                    (ImapProfessorSyncState.historical_scan_started_at.is_(None))
-                    | (ImapProfessorSyncState.historical_scan_started_at <= stale_running_cutoff)
-                ),
-            ),
+            _professor_history_claimable(now),
         ]
         if strategy_version is not None:
             conditions.append(ImapProfessorSyncState.history_strategy_version == strategy_version)
@@ -625,19 +775,41 @@ async def claim_next_professor_scans(
                         ImapProfessorSyncState.updated_at.asc(),
                         ImapProfessorSyncState.id.asc(),
                     )
-                    .limit(limit),
+                    .limit(max(limit * 4, limit)),
                 )
             ).scalars(),
         )
-        now = utc_now()
+        claimed: list[ImapProfessorSyncState] = []
         for state in states:
-            state.historical_scan_status = ImapProfessorHistoricalScanStatus.RUNNING.value
-            state.historical_scan_started_at = now
-            state.last_error = None
+            if len(claimed) >= limit:
+                break
+            claim_id = str(uuid.uuid4())
+            update_conditions = [
+                ImapProfessorSyncState.id == state.id,
+                _professor_history_claimable(now),
+            ]
+            if strategy_version is not None:
+                update_conditions.append(
+                    ImapProfessorSyncState.history_strategy_version == strategy_version
+                )
+            transition = await session.execute(
+                update(ImapProfessorSyncState)
+                .where(*update_conditions)
+                .values(
+                    historical_scan_status=ImapProfessorHistoricalScanStatus.RUNNING.value,
+                    historical_scan_started_at=now,
+                    history_claim_id=claim_id,
+                    history_lease_expires_at=now + IMAP_HISTORY_WORK_LEASE,
+                    last_error=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if transition.rowcount == 1:
+                claimed.append(state)
         await session.commit()
-        for state in states:
+        for state in claimed:
             await session.refresh(state)
-        return states
+        return claimed
 
 
 async def mark_professor_scan_states_completed_for_identity(
@@ -660,6 +832,8 @@ async def mark_professor_scan_states_completed_for_identity(
         for state in states:
             state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
             state.historical_scan_completed_at = now
+            state.history_claim_id = None
+            state.history_lease_expires_at = None
             state.last_error = None
         await session.commit()
 
@@ -667,23 +841,45 @@ async def mark_professor_scan_states_completed_for_identity(
 async def reset_professor_scans_to_pending(
     session_factory: async_sessionmaker[AsyncSession],
     state_ids: Iterable[int],
+    *,
+    claim_ids: dict[int, str] | None = None,
+    last_scanned_uids: dict[int, int | None] | None = None,
 ) -> None:
     ids = list(dict.fromkeys(state_ids))
     if not ids:
         return
     async with session_factory() as session:
-        states = list(
-            (
-                await session.execute(
-                    select(ImapProfessorSyncState).where(ImapProfessorSyncState.id.in_(ids)),
+        for state_id in ids:
+            conditions = [
+                ImapProfessorSyncState.id == state_id,
+                ImapProfessorSyncState.historical_scan_status
+                != ImapProfessorHistoricalScanStatus.COMPLETED.value,
+            ]
+            if claim_ids is not None:
+                claim_id = claim_ids.get(state_id)
+                if claim_id is None:
+                    continue
+                conditions.extend(
+                    [
+                        ImapProfessorSyncState.history_claim_id == claim_id,
+                        ImapProfessorSyncState.history_lease_expires_at > utc_now(),
+                    ]
                 )
-            ).scalars(),
-        )
-        for state in states:
-            if state.historical_scan_status == ImapProfessorHistoricalScanStatus.COMPLETED.value:
-                continue
-            state.historical_scan_status = ImapProfessorHistoricalScanStatus.PENDING.value
-            state.historical_scan_started_at = None
+            values: dict[str, object] = {
+                "historical_scan_status": ImapProfessorHistoricalScanStatus.PENDING.value,
+                "historical_scan_started_at": None,
+                "history_claim_id": None,
+                "history_lease_expires_at": None,
+            }
+            if last_scanned_uids is not None and state_id in last_scanned_uids:
+                values["last_scanned_uid"] = last_scanned_uids[state_id]
+                values["last_error"] = None
+            await session.execute(
+                update(ImapProfessorSyncState)
+                .where(*conditions)
+                .values(**values)
+                .execution_options(synchronize_session=False)
+            )
         await session.commit()
 
 
@@ -700,7 +896,7 @@ async def claim_next_mailbox_history_scans(
     if not folder_keys:
         return []
     async with session_factory() as session:
-        stale_running_cutoff = utc_now() - STALE_RUNNING_MAILBOX_HISTORY_AFTER
+        now = utc_now()
         folder_filter = or_(
             *[
                 (ImapMailboxSyncState.folder_role == folder_role)
@@ -715,67 +911,81 @@ async def claim_next_mailbox_history_scans(
                     .where(
                         ImapMailboxSyncState.identity_id == identity_id,
                         folder_filter,
-                        or_(
-                            ImapMailboxSyncState.history_scan_status.in_(
-                                [
-                                    ImapMailboxHistoricalScanStatus.PENDING.value,
-                                    ImapMailboxHistoricalScanStatus.FAILED.value,
-                                ],
-                            ),
-                            (
-                                ImapMailboxSyncState.history_scan_status
-                                == ImapMailboxHistoricalScanStatus.RUNNING.value
-                            )
-                            & (
-                                (
-                                    ImapMailboxSyncState.history_scan_started_at.is_(None)
-                                )
-                                | (
-                                    ImapMailboxSyncState.history_scan_started_at
-                                    <= stale_running_cutoff
-                                )
-                            ),
-                        ),
+                        _mailbox_history_claimable(now),
                     )
                     .order_by(
                         ImapMailboxSyncState.updated_at.asc(),
                         ImapMailboxSyncState.id.asc(),
                     )
-                    .limit(limit),
+                    .limit(max(limit * 4, limit)),
                 )
             ).scalars(),
         )
-        now = utc_now()
+        claimed: list[ImapMailboxSyncState] = []
         for state in states:
-            state.history_scan_status = ImapMailboxHistoricalScanStatus.RUNNING.value
-            state.history_scan_started_at = now
-            state.history_last_error = None
+            if len(claimed) >= limit:
+                break
+            claim_id = str(uuid.uuid4())
+            transition = await session.execute(
+                update(ImapMailboxSyncState)
+                .where(
+                    ImapMailboxSyncState.id == state.id,
+                    _mailbox_history_claimable(now),
+                )
+                .values(
+                    history_scan_status=ImapMailboxHistoricalScanStatus.RUNNING.value,
+                    history_scan_started_at=now,
+                    history_claim_id=claim_id,
+                    history_lease_expires_at=now + IMAP_HISTORY_WORK_LEASE,
+                    history_last_error=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if transition.rowcount == 1:
+                claimed.append(state)
         await session.commit()
-        for state in states:
+        for state in claimed:
             await session.refresh(state)
-        return states
+        return claimed
 
 
 async def reset_mailbox_history_scans_to_pending(
     session_factory: async_sessionmaker[AsyncSession],
     state_ids: Iterable[int],
+    *,
+    claim_ids: dict[int, str] | None = None,
 ) -> None:
     ids = list(dict.fromkeys(state_ids))
     if not ids:
         return
     async with session_factory() as session:
-        states = list(
-            (
-                await session.execute(
-                    select(ImapMailboxSyncState).where(ImapMailboxSyncState.id.in_(ids)),
+        for state_id in ids:
+            conditions = [
+                ImapMailboxSyncState.id == state_id,
+                ImapMailboxSyncState.history_scan_status
+                != ImapMailboxHistoricalScanStatus.COMPLETED.value,
+            ]
+            if claim_ids is not None:
+                claim_id = claim_ids.get(state_id)
+                if claim_id is None:
+                    continue
+                conditions.extend(
+                    [
+                        ImapMailboxSyncState.history_claim_id == claim_id,
+                        ImapMailboxSyncState.history_lease_expires_at > utc_now(),
+                    ]
                 )
-            ).scalars(),
-        )
-        for state in states:
-            if state.history_scan_status == ImapMailboxHistoricalScanStatus.COMPLETED.value:
-                continue
-            state.history_scan_status = ImapMailboxHistoricalScanStatus.PENDING.value
-            state.history_scan_started_at = None
+            await session.execute(
+                update(ImapMailboxSyncState)
+                .where(*conditions)
+                .values(
+                    history_scan_status=ImapMailboxHistoricalScanStatus.PENDING.value,
+                    history_scan_started_at=None,
+                    history_claim_id=None,
+                    history_lease_expires_at=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
         await session.commit()
 
 
@@ -791,32 +1001,72 @@ async def mark_mailbox_history_scan_progress(
     last_seen_uid_floor: int | None,
     completed: bool,
     uidvalidity_reset: bool = False,
+    claim_id: str | None = None,
 ) -> None:
     async with session_factory() as session:
-        state = await session.get(ImapMailboxSyncState, state_id)
-        if state is None:
-            return
-        if uidvalidity_reset:
-            state.last_seen_uid = None
-            state.history_high_water_uid = None
-            state.history_scanned_count = 0
-            state.history_matched_count = 0
-            state.history_scan_completed_at = None
+        now = utc_now()
+        conditions = [ImapMailboxSyncState.id == state_id]
+        if claim_id is not None:
+            conditions.extend(
+                [
+                    ImapMailboxSyncState.id == state_id,
+                    ImapMailboxSyncState.history_scan_status
+                    == ImapMailboxHistoricalScanStatus.RUNNING.value,
+                    ImapMailboxSyncState.history_claim_id == claim_id,
+                    ImapMailboxSyncState.history_lease_expires_at > now,
+                ]
+            )
+        values: dict[str, object] = {
+            "history_next_before_uid": next_before_uid,
+            "history_scanned_count": (
+                max(0, scanned_count_delta)
+                if uidvalidity_reset
+                else func.coalesce(ImapMailboxSyncState.history_scanned_count, 0)
+                + max(0, scanned_count_delta)
+            ),
+            "history_matched_count": (
+                max(0, matched_count_delta)
+                if uidvalidity_reset
+                else func.coalesce(ImapMailboxSyncState.history_matched_count, 0)
+                + max(0, matched_count_delta)
+            ),
+            "history_last_error": None,
+            "history_scan_status": (
+                ImapMailboxHistoricalScanStatus.COMPLETED.value
+                if completed
+                else ImapMailboxHistoricalScanStatus.PENDING.value
+            ),
+            "history_scan_completed_at": now if completed else None,
+            "history_claim_id": None,
+            "history_lease_expires_at": None,
+            "updated_at": now,
+        }
         if uidvalidity is not None:
-            state.uidvalidity = uidvalidity
-        if high_water_uid is not None:
-            state.history_high_water_uid = high_water_uid
-        if last_seen_uid_floor is not None:
-            state.last_seen_uid = max(state.last_seen_uid or 0, last_seen_uid_floor)
-        state.history_next_before_uid = next_before_uid
-        state.history_scanned_count = (state.history_scanned_count or 0) + max(0, scanned_count_delta)
-        state.history_matched_count = (state.history_matched_count or 0) + max(0, matched_count_delta)
-        state.history_last_error = None
-        if completed:
-            state.history_scan_status = ImapMailboxHistoricalScanStatus.COMPLETED.value
-            state.history_scan_completed_at = utc_now()
+            values["uidvalidity"] = uidvalidity
+        if uidvalidity_reset:
+            values["history_high_water_uid"] = high_water_uid
+            values["last_seen_uid"] = last_seen_uid_floor
         else:
-            state.history_scan_status = ImapMailboxHistoricalScanStatus.PENDING.value
+            if high_water_uid is not None:
+                values["history_high_water_uid"] = high_water_uid
+            if last_seen_uid_floor is not None:
+                values["last_seen_uid"] = case(
+                    (
+                        ImapMailboxSyncState.last_seen_uid.is_(None),
+                        last_seen_uid_floor,
+                    ),
+                    (
+                        ImapMailboxSyncState.last_seen_uid < last_seen_uid_floor,
+                        last_seen_uid_floor,
+                    ),
+                    else_=ImapMailboxSyncState.last_seen_uid,
+                )
+        await session.execute(
+            update(ImapMailboxSyncState)
+            .where(*conditions)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
         await session.commit()
 
 
@@ -824,13 +1074,31 @@ async def mark_mailbox_history_scan_failed(
     session_factory: async_sessionmaker[AsyncSession],
     state_id: int,
     error: str,
+    *,
+    claim_id: str | None = None,
 ) -> None:
     async with session_factory() as session:
-        state = await session.get(ImapMailboxSyncState, state_id)
-        if state is None:
-            return
-        state.history_scan_status = ImapMailboxHistoricalScanStatus.FAILED.value
-        state.history_last_error = error
+        conditions = [ImapMailboxSyncState.id == state_id]
+        if claim_id is not None:
+            conditions.extend(
+                [
+                    ImapMailboxSyncState.history_scan_status
+                    == ImapMailboxHistoricalScanStatus.RUNNING.value,
+                    ImapMailboxSyncState.history_claim_id == claim_id,
+                    ImapMailboxSyncState.history_lease_expires_at > utc_now(),
+                ]
+            )
+        await session.execute(
+            update(ImapMailboxSyncState)
+            .where(*conditions)
+            .values(
+                history_scan_status=ImapMailboxHistoricalScanStatus.FAILED.value,
+                history_last_error=error,
+                history_claim_id=None,
+                history_lease_expires_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
         await session.commit()
 
 
@@ -838,15 +1106,33 @@ async def mark_professor_scan_completed(
     session_factory: async_sessionmaker[AsyncSession],
     state_id: int,
     last_scanned_uid: int | None,
+    *,
+    claim_id: str | None = None,
 ) -> None:
     async with session_factory() as session:
-        state = await session.get(ImapProfessorSyncState, state_id)
-        if state is None:
-            return
-        state.historical_scan_status = ImapProfessorHistoricalScanStatus.COMPLETED.value
-        state.historical_scan_completed_at = utc_now()
-        state.last_scanned_uid = last_scanned_uid
-        state.last_error = None
+        conditions = [ImapProfessorSyncState.id == state_id]
+        if claim_id is not None:
+            conditions.extend(
+                [
+                    ImapProfessorSyncState.historical_scan_status
+                    == ImapProfessorHistoricalScanStatus.RUNNING.value,
+                    ImapProfessorSyncState.history_claim_id == claim_id,
+                    ImapProfessorSyncState.history_lease_expires_at > utc_now(),
+                ]
+            )
+        await session.execute(
+            update(ImapProfessorSyncState)
+            .where(*conditions)
+            .values(
+                historical_scan_status=ImapProfessorHistoricalScanStatus.COMPLETED.value,
+                historical_scan_completed_at=utc_now(),
+                last_scanned_uid=last_scanned_uid,
+                last_error=None,
+                history_claim_id=None,
+                history_lease_expires_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
         await session.commit()
 
 
@@ -854,13 +1140,31 @@ async def mark_professor_scan_failed(
     session_factory: async_sessionmaker[AsyncSession],
     state_id: int,
     error: str,
+    *,
+    claim_id: str | None = None,
 ) -> None:
     async with session_factory() as session:
-        state = await session.get(ImapProfessorSyncState, state_id)
-        if state is None:
-            return
-        state.historical_scan_status = ImapProfessorHistoricalScanStatus.FAILED.value
-        state.last_error = error
+        conditions = [ImapProfessorSyncState.id == state_id]
+        if claim_id is not None:
+            conditions.extend(
+                [
+                    ImapProfessorSyncState.historical_scan_status
+                    == ImapProfessorHistoricalScanStatus.RUNNING.value,
+                    ImapProfessorSyncState.history_claim_id == claim_id,
+                    ImapProfessorSyncState.history_lease_expires_at > utc_now(),
+                ]
+            )
+        await session.execute(
+            update(ImapProfessorSyncState)
+            .where(*conditions)
+            .values(
+                historical_scan_status=ImapProfessorHistoricalScanStatus.FAILED.value,
+                last_error=error,
+                history_claim_id=None,
+                history_lease_expires_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
         await session.commit()
 
 

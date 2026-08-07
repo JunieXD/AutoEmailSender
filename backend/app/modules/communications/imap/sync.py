@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -36,8 +38,10 @@ from .errors import (
 )
 from .fetcher import ImapFetchedMessage
 from .state import (
+    ImapIdentitySyncClaim,
     RECENT_V2_STRATEGY_VERSION,
     claim_next_professor_scans,
+    claim_imap_identity_sync,
     claim_recent_v2_professor_scans,
     clear_identity_sent_folder_discovery_cache,
     ensure_recent_v2_professor_scan_states,
@@ -46,6 +50,8 @@ from .state import (
     mark_professor_scan_failed,
     mark_recent_v2_batch_completed,
     prepare_recent_v2_bulk_sent_batch,
+    release_imap_identity_sync_claim,
+    renew_imap_identity_sync_claim,
     reset_professor_scans_to_pending,
 )
 
@@ -76,6 +82,10 @@ IMAP_HISTORY_THROTTLE_PREFIX = "history:"
 IMAP_ACCOUNT_THROTTLE_PREFIX = "account:"
 
 IMAP_HISTORY_BODY_FETCH_COMMANDS_PER_MESSAGE = 6
+
+_IMAP_TASK_CANCEL_GRACE_SECONDS = 1.0
+
+_DETACHED_IMAP_TASKS: set[asyncio.Task[object]] = set()
 
 RECENT_HISTORY_STRATEGY_NAME = RECENT_V2_STRATEGY_VERSION
 
@@ -148,12 +158,12 @@ async def poll_for_replies_once(
             ).scalars()
         )
 
-    detected = 0
-    for identity_id in identity_ids:
-        detected += await sync_identity_incremental_poll_once(
-            session_factory, identity_id
-        )
-    return detected
+    return await _run_imap_identities_bounded(
+        session_factory,
+        identity_ids,
+        sync_identity_incremental_poll_once,
+        poll_name="incremental",
+    )
 
 
 async def poll_imap_history_once(
@@ -176,10 +186,40 @@ async def poll_imap_history_once(
             ).scalars()
         )
 
-    detected = 0
-    for identity_id in identity_ids:
-        detected += await sync_identity_history_poll_once(session_factory, identity_id)
-    return detected
+    return await _run_imap_identities_bounded(
+        session_factory,
+        identity_ids,
+        sync_identity_history_poll_once,
+        poll_name="history",
+    )
+
+
+async def _run_imap_identities_bounded(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_ids: list[int],
+    worker: Callable[[async_sessionmaker[AsyncSession], int], Awaitable[int]],
+    *,
+    poll_name: str,
+) -> int:
+    if not identity_ids:
+        return 0
+    semaphore = asyncio.Semaphore(get_settings().imap_identity_concurrency)
+
+    async def run_identity(identity_id: int) -> int:
+        async with semaphore:
+            try:
+                return await worker(session_factory, identity_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "IMAP %s poll failed for identity_id=%s",
+                    poll_name,
+                    identity_id,
+                )
+                return 0
+
+    return sum(await asyncio.gather(*(run_identity(item) for item in identity_ids)))
 
 
 async def poll_identity_replies(
@@ -201,7 +241,15 @@ async def sync_identity_imap_once(
     async with lock:
         if incremental_lock.locked() or history_lock.locked():
             return 0
-        return await _sync_identity_imap_once_unlocked(session_factory, identity_id)
+        return await _run_identity_sync_with_lease(
+            session_factory,
+            identity_id,
+            claim_kind="full",
+            operation=lambda: _sync_identity_imap_once_unlocked(
+                session_factory,
+                identity_id,
+            ),
+        )
 
 
 async def sync_identity_incremental_poll_once(
@@ -220,8 +268,14 @@ async def sync_identity_incremental_poll_once(
     async with lock:
         if identity_lock.locked() or history_lock.locked():
             return 0
-        return await _sync_identity_incremental_once_unlocked(
-            session_factory, identity_id
+        return await _run_identity_sync_with_lease(
+            session_factory,
+            identity_id,
+            claim_kind="incremental",
+            operation=lambda: _sync_identity_incremental_once_unlocked(
+                session_factory,
+                identity_id,
+            ),
         )
 
 
@@ -239,7 +293,137 @@ async def sync_identity_history_poll_once(
             return 0
         if await is_imap_history_paused(session_factory, identity_id):
             return 0
-        return await sync_identity_history_once(session_factory, identity_id)
+        return await _run_identity_sync_with_lease(
+            session_factory,
+            identity_id,
+            claim_kind="history",
+            operation=lambda: sync_identity_history_once(
+                session_factory,
+                identity_id,
+            ),
+        )
+
+
+async def _run_identity_sync_with_lease(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    *,
+    claim_kind: str,
+    operation: Callable[[], Awaitable[int]],
+) -> int:
+    settings = get_settings()
+    claim = await claim_imap_identity_sync(
+        session_factory,
+        identity_id,
+        claim_kind=claim_kind,
+        lease_seconds=settings.imap_identity_lease_seconds,
+    )
+    if claim is None:
+        return 0
+
+    work_task = asyncio.create_task(operation())
+    heartbeat_task = asyncio.create_task(
+        _run_imap_identity_heartbeat(
+            session_factory,
+            claim,
+            lease_seconds=settings.imap_identity_lease_seconds,
+        )
+    )
+    release_claim = False
+    try:
+        async with asyncio.timeout(settings.imap_identity_sync_timeout_seconds):
+            done, _ = await asyncio.wait(
+                {work_task, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if work_task in done:
+                release_claim = True
+                return await work_task
+            claim_is_current = await heartbeat_task
+            if not claim_is_current:
+                work_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await work_task
+                return 0
+            return await work_task
+    except TimeoutError:
+        await _cancel_imap_task_with_grace(work_task)
+        logger.warning(
+            "IMAP identity sync timed out: identity_id=%s kind=%s timeout=%ss",
+            identity_id,
+            claim_kind,
+            settings.imap_identity_sync_timeout_seconds,
+        )
+        return 0
+    except asyncio.CancelledError:
+        await _cancel_imap_task_with_grace(work_task)
+        raise
+    finally:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+        if release_claim:
+            try:
+                await release_imap_identity_sync_claim(session_factory, claim)
+            except Exception:
+                logger.exception(
+                    "IMAP identity lease release failed: identity_id=%s kind=%s",
+                    claim.identity_id,
+                    claim.claim_kind,
+                )
+
+
+async def _cancel_imap_task_with_grace(task: asyncio.Task[object]) -> None:
+    if task.done():
+        with suppress(asyncio.CancelledError, Exception):
+            task.result()
+        return
+    if task.cancelling() == 0:
+        task.cancel()
+    done, _ = await asyncio.wait(
+        {task},
+        timeout=_IMAP_TASK_CANCEL_GRACE_SECONDS,
+    )
+    if task in done:
+        with suppress(asyncio.CancelledError, Exception):
+            task.result()
+        return
+    _DETACHED_IMAP_TASKS.add(task)
+    task.add_done_callback(_consume_detached_imap_task_result)
+
+
+def _consume_detached_imap_task_result(task: asyncio.Task[object]) -> None:
+    _DETACHED_IMAP_TASKS.discard(task)
+    with suppress(asyncio.CancelledError, Exception):
+        task.result()
+
+
+async def _run_imap_identity_heartbeat(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ImapIdentitySyncClaim,
+    *,
+    lease_seconds: int,
+) -> bool:
+    interval = max(1.0, min(30.0, lease_seconds / 3))
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            current = await renew_imap_identity_sync_claim(
+                session_factory,
+                claim,
+                lease_seconds=lease_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "IMAP identity lease heartbeat failed: identity_id=%s kind=%s",
+                claim.identity_id,
+                claim.claim_kind,
+            )
+            return False
+        if not current:
+            return False
 
 
 async def get_cached_or_discover_sent_folder(
@@ -1038,6 +1222,8 @@ async def _reset_other_targeted_professor_cursors_for_uidvalidity_change(
             sibling.historical_scan_status = "pending"
             sibling.historical_scan_started_at = None
             sibling.historical_scan_completed_at = None
+            sibling.history_claim_id = None
+            sibling.history_lease_expires_at = None
             sibling.last_error = None
         await session.commit()
 
@@ -1080,6 +1266,11 @@ async def _sync_identity_targeted_history_once(
         )
     if not states:
         return 0
+    claim_ids = {
+        state.id: state.history_claim_id
+        for state in states
+        if state.history_claim_id is not None
+    }
     if mailbox_folders is not None:
         allowed_folders = set(mailbox_folders)
         allowed_states = [
@@ -1094,7 +1285,9 @@ async def _sync_identity_targeted_history_once(
         ]
         if disallowed_state_ids:
             await reset_professor_scans_to_pending(
-                session_factory, disallowed_state_ids
+                session_factory,
+                disallowed_state_ids,
+                claim_ids=claim_ids,
             )
         states = allowed_states
         if not states:
@@ -1107,7 +1300,10 @@ async def _sync_identity_targeted_history_once(
                 identity = await session.get(IdentityProfile, identity_id)
             if identity is None:
                 await mark_professor_scan_completed(
-                    session_factory, state.id, state.last_scanned_uid
+                    session_factory,
+                    state.id,
+                    state.last_scanned_uid,
+                    claim_id=state.history_claim_id,
                 )
                 continue
             if command_budget <= 0:
@@ -1178,20 +1374,25 @@ async def _sync_identity_targeted_history_once(
             )
             max_uid = body_result.highest_scanned_uid
             if header_result.exhausted or not body_result.covered_all_headers:
-                await reset_professor_scans_to_pending(session_factory, [state.id])
-                async with session_factory() as session:
-                    pending_state = await session.get(ImapProfessorSyncState, state.id)
-                    if pending_state is not None:
-                        pending_state.last_scanned_uid = max_uid
-                        pending_state.last_error = None
-                        await session.commit()
+                await reset_professor_scans_to_pending(
+                    session_factory,
+                    [state.id],
+                    claim_ids=claim_ids,
+                    last_scanned_uids={state.id: max_uid},
+                )
                 await reset_professor_scans_to_pending(
                     session_factory,
                     [pending_state.id for pending_state in states[index + 1 :]],
+                    claim_ids=claim_ids,
                 )
                 detected_total += detected
                 break
-            await mark_professor_scan_completed(session_factory, state.id, max_uid)
+            await mark_professor_scan_completed(
+                session_factory,
+                state.id,
+                max_uid,
+                claim_id=state.history_claim_id,
+            )
             detected_total += detected
             if inbox_uidvalidity_changed:
                 break
@@ -1200,6 +1401,7 @@ async def _sync_identity_targeted_history_once(
                 await reset_professor_scans_to_pending(
                     session_factory,
                     [pending_state.id for pending_state in states[index:]],
+                    claim_ids=claim_ids,
                 )
                 break
             if is_provider_throttle_error(exc):
@@ -1212,8 +1414,14 @@ async def _sync_identity_targeted_history_once(
                 await reset_professor_scans_to_pending(
                     session_factory,
                     [pending_state.id for pending_state in states[index + 1 :]],
+                    claim_ids=claim_ids,
                 )
-            await mark_professor_scan_failed(session_factory, state.id, str(exc))
+            await mark_professor_scan_failed(
+                session_factory,
+                state.id,
+                str(exc),
+                claim_id=state.history_claim_id,
+            )
             if is_provider_throttle_error(exc):
                 break
     await log_imap_history_progress(

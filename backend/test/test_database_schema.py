@@ -104,6 +104,101 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(heads[0], get_head_revision(config))
 
+    def test_background_scheduler_lease_migration_round_trip(self) -> None:
+        database_path = Path(self.temp_dir.name) / "scheduler_leases.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260807_batch_draft_fair"
+        lease_revision = "20260807_scheduler_leases"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        self._run_alembic(env, "upgrade", lease_revision)
+        upgraded = sqlite3.connect(database_path)
+        try:
+            tables = {
+                row[0]
+                for row in upgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            job_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(match_analysis_jobs)"
+                )
+            }
+            item_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(match_analysis_job_items)"
+                )
+            }
+            mailbox_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(imap_mailbox_sync_states)"
+                )
+            }
+            professor_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(imap_professor_sync_states)"
+                )
+            }
+            item_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list(match_analysis_job_items)"
+                )
+            }
+        finally:
+            upgraded.close()
+
+        self.assertIn("imap_identity_sync_leases", tables)
+        self.assertIn("item_last_dispatched_at", job_columns)
+        self.assertTrue(
+            {"claim_id", "claimed_at", "lease_expires_at", "attempt_count"}
+            <= item_columns
+        )
+        self.assertTrue(
+            {"history_claim_id", "history_lease_expires_at"} <= mailbox_columns
+        )
+        self.assertTrue(
+            {"history_claim_id", "history_lease_expires_at"} <= professor_columns
+        )
+        self.assertIn("ix_match_analysis_job_items_lease_recovery", item_indexes)
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            tables = {
+                row[0]
+                for row in downgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            item_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(match_analysis_job_items)"
+                )
+            }
+        finally:
+            downgraded.close()
+
+        self.assertNotIn("imap_identity_sync_leases", tables)
+        self.assertNotIn("claim_id", item_columns)
+
+        self._run_alembic(env, "upgrade", "head")
+        restored = sqlite3.connect(database_path)
+        try:
+            version = restored.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
+        finally:
+            restored.close()
+        self.assertEqual(version, HEAD_REVISION)
+
     def test_crawl_job_concurrency_default_migrates_to_serial(self) -> None:
         database_path = Path(self.temp_dir.name) / "crawl_job_concurrency.db"
         env = os.environ.copy()

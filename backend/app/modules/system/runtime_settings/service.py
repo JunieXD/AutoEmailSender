@@ -17,17 +17,17 @@ async def get_or_create_app_settings(session: AsyncSession) -> AppSetting:
     if settings:
         return settings
 
-    app_settings = AppSetting(id=1)
-    session.add(app_settings)
     try:
-        await session.flush()
-        return app_settings
+        async with session.begin_nested():
+            app_settings = AppSetting(id=1)
+            session.add(app_settings)
+            await session.flush()
     except IntegrityError:
-        await session.rollback()
         settings = await session.scalar(select(AppSetting).where(AppSetting.id == 1))
         if settings:
             return settings
         raise
+    return app_settings
 
 
 def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:

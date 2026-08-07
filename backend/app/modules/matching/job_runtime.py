@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import uuid
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import timedelta
 
-from sqlalchemy import inspect, select, update
+from sqlalchemy import func, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import NO_VALUE
 
 from app.core.time import local_now, utc_now
+from app.core.config import get_settings
 from app.models import (
     EmailTask,
     EmailTaskSource,
@@ -35,12 +41,24 @@ from .task_analysis import (
     calculate_task_match,
 )
 
-_ACTIVE_MATCH_ANALYSIS_JOB_IDS: set[int] = set()
 _MATCH_ANALYSIS_CANCEL_POLL_SECONDS = 0.2
+_MATCH_ANALYSIS_ITEM_LEASE_SECONDS = 60
+_MATCH_ANALYSIS_HEARTBEAT_SECONDS = 20
+_MATCH_ANALYSIS_TIMEOUT_HEADROOM_SECONDS = 30
+_MATCH_ANALYSIS_CANCEL_GRACE_SECONDS = 1.0
+_DETACHED_MATCH_ANALYSIS_TASKS: set[asyncio.Task[object]] = set()
+logger = logging.getLogger(__name__)
 
 
 class _MatchAnalysisJobCanceled(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class _MatchAnalysisItemClaim:
+    job_id: int
+    item_id: int
+    claim_id: str
 
 
 async def create_match_analysis_job(
@@ -286,19 +304,70 @@ async def run_queued_match_analysis_jobs_once(
     *,
     item_concurrency: int = 3,
 ) -> int:
-    await _recover_interrupted_match_analysis_jobs(session_factory)
-    job_id = await _claim_next_match_analysis_job(session_factory)
-    if job_id is None:
+    await _recover_expired_match_analysis_items(session_factory)
+    await _finalize_cancel_requested_match_analysis_jobs(session_factory)
+    first_claim = await _claim_next_match_analysis_item(session_factory)
+    if first_claim is None:
         return 0
-    try:
-        await _run_match_analysis_job(
-            session_factory,
-            job_id,
-            item_concurrency=item_concurrency,
+    await _run_claimed_match_analysis_item(session_factory, first_claim)
+    await _refresh_match_analysis_job_summary(session_factory, first_claim.job_id)
+
+    claims = [first_claim]
+    remaining_claims: list[_MatchAnalysisItemClaim] = []
+    for _ in range(max(0, item_concurrency - 1)):
+        claim = await _claim_next_match_analysis_item(session_factory)
+        if claim is None:
+            break
+        claims.append(claim)
+        remaining_claims.append(claim)
+    if remaining_claims:
+        await asyncio.gather(
+            *(
+                _run_claimed_match_analysis_item(session_factory, claim)
+                for claim in remaining_claims
+            )
         )
-    finally:
-        _ACTIVE_MATCH_ANALYSIS_JOB_IDS.discard(job_id)
-    return 1
+        for job_id in dict.fromkeys(claim.job_id for claim in remaining_claims):
+            await _refresh_match_analysis_job_summary(session_factory, job_id)
+    return len(set(claim.job_id for claim in claims))
+
+
+async def _finalize_cancel_requested_match_analysis_jobs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    now = utc_now()
+    async with session_factory() as session:
+        job_ids = list(
+            await session.scalars(
+                select(MatchAnalysisJob.id).where(
+                    MatchAnalysisJob.cancel_requested_at.is_not(None),
+                    MatchAnalysisJob.status.in_(
+                        [
+                            MatchAnalysisJobStatus.QUEUED.value,
+                            MatchAnalysisJobStatus.RUNNING.value,
+                        ]
+                    ),
+                    MatchAnalysisJob.deleted_at.is_(None),
+                )
+            )
+        )
+        if job_ids:
+            await session.execute(
+                update(MatchAnalysisJobItem)
+                .where(
+                    MatchAnalysisJobItem.job_id.in_(job_ids),
+                    MatchAnalysisJobItem.status
+                    == MatchAnalysisJobItemStatus.QUEUED.value,
+                )
+                .values(
+                    status=MatchAnalysisJobItemStatus.CANCELED.value,
+                    finished_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+    for job_id in job_ids:
+        await _refresh_match_analysis_job_summary(session_factory, job_id)
 
 
 async def request_match_analysis_job_cancel(
@@ -350,6 +419,19 @@ async def request_match_analysis_job_cancel_record(
     if job.status == MatchAnalysisJobStatus.RUNNING.value:
         job.cancel_requested_at = now
         job.updated_at = now
+        await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.job_id == job.id,
+                MatchAnalysisJobItem.status
+                == MatchAnalysisJobItemStatus.QUEUED.value,
+            )
+            .values(
+                status=MatchAnalysisJobItemStatus.CANCELED.value,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
         await _record_match_analysis_job_log(session, job, event_name, metadata=metadata)
         return job
 
@@ -528,262 +610,418 @@ async def _ensure_match_email_task(
     return task
 
 
-async def _claim_next_match_analysis_job(
+async def _claim_next_match_analysis_item(
     session_factory: async_sessionmaker[AsyncSession],
-) -> int | None:
-    async with session_factory() as session:
-        job_id = await session.scalar(
-            select(MatchAnalysisJob.id)
-            .where(
-                MatchAnalysisJob.status == MatchAnalysisJobStatus.QUEUED.value,
-                MatchAnalysisJob.deleted_at.is_(None),
-            )
-            .order_by(MatchAnalysisJob.created_at.asc(), MatchAnalysisJob.id.asc())
-            .limit(1),
-        )
-        if job_id is None:
-            return None
-
-        now = utc_now()
-        claim_result = await session.execute(
-            update(MatchAnalysisJob)
-            .where(
-                MatchAnalysisJob.id == job_id,
-                MatchAnalysisJob.status == MatchAnalysisJobStatus.QUEUED.value,
-                MatchAnalysisJob.deleted_at.is_(None),
-            )
-            .values(
-                status=MatchAnalysisJobStatus.RUNNING.value,
-                started_at=now,
-                updated_at=now,
-                last_error=None,
-            ),
-        )
-        if claim_result.rowcount != 1:
-            await session.rollback()
-            return None
-        _ACTIVE_MATCH_ANALYSIS_JOB_IDS.add(job_id)
-        await session.commit()
-        return job_id
-
-
-async def _recover_interrupted_match_analysis_jobs(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with session_factory() as session:
-            running_job_ids = list(
-                await session.scalars(
-                    select(MatchAnalysisJob.id)
+) -> _MatchAnalysisItemClaim | None:
+    active_statuses = [
+        MatchAnalysisJobStatus.QUEUED.value,
+        MatchAnalysisJobStatus.RUNNING.value,
+    ]
+    for _ in range(5):
+        async with session_factory() as session:
+            candidate = (
+                await session.execute(
+                    select(MatchAnalysisJobItem.id, MatchAnalysisJobItem.job_id)
+                    .join(
+                        MatchAnalysisJob,
+                        MatchAnalysisJob.id == MatchAnalysisJobItem.job_id,
+                    )
                     .where(
-                        MatchAnalysisJob.status == MatchAnalysisJobStatus.RUNNING.value,
+                        MatchAnalysisJobItem.status
+                        == MatchAnalysisJobItemStatus.QUEUED.value,
+                        MatchAnalysisJob.status.in_(active_statuses),
+                        MatchAnalysisJob.cancel_requested_at.is_(None),
                         MatchAnalysisJob.deleted_at.is_(None),
                     )
-                    .order_by(MatchAnalysisJob.created_at.asc(), MatchAnalysisJob.id.asc()),
+                    .order_by(
+                        MatchAnalysisJob.item_last_dispatched_at.is_not(None).asc(),
+                        MatchAnalysisJob.item_last_dispatched_at.asc(),
+                        MatchAnalysisJob.created_at.asc(),
+                        MatchAnalysisJob.id.asc(),
+                        MatchAnalysisJobItem.id.asc(),
+                    )
+                    .limit(1)
                 )
-            )
+            ).first()
+            if candidate is None:
+                return None
 
-    for job_id in running_job_ids:
-        if job_id in _ACTIVE_MATCH_ANALYSIS_JOB_IDS:
-            continue
-        await _recover_interrupted_match_analysis_job(session_factory, job_id)
-
-
-async def _recover_interrupted_match_analysis_job(
-    session_factory: async_sessionmaker[AsyncSession],
-    job_id: int,
-) -> None:
-    async with session_factory() as session:
-        job = await session.get(MatchAnalysisJob, job_id)
-        if job is None or job.status != MatchAnalysisJobStatus.RUNNING.value:
-            return
-
-        unfinished_statuses = [
-            MatchAnalysisJobItemStatus.QUEUED.value,
-            MatchAnalysisJobItemStatus.RUNNING.value,
-        ]
-        unfinished_item_ids = list(
-            await session.scalars(
-                select(MatchAnalysisJobItem.id)
+            item_id, job_id = int(candidate.id), int(candidate.job_id)
+            now = utc_now()
+            claim_id = str(uuid.uuid4())
+            transition = await session.execute(
+                update(MatchAnalysisJobItem)
                 .where(
-                    MatchAnalysisJobItem.job_id == job_id,
-                    MatchAnalysisJobItem.status.in_(unfinished_statuses),
-                )
-                .order_by(MatchAnalysisJobItem.id.asc()),
-            )
-        )
-        now = utc_now()
-        if not unfinished_item_ids:
-            await session.rollback()
-            await _refresh_match_analysis_job_summary(session_factory, job_id)
-            return
-
-        unfinished_email_task_ids = list(
-            await session.scalars(
-                select(MatchAnalysisJobItem.email_task_id).where(
-                    MatchAnalysisJobItem.id.in_(unfinished_item_ids),
-                    MatchAnalysisJobItem.email_task_id.is_not(None),
-                )
-            )
-        )
-        if unfinished_email_task_ids:
-            await session.execute(
-                update(MatchAnalysisRun)
-                .where(
-                    MatchAnalysisRun.email_task_id.in_(unfinished_email_task_ids),
-                    MatchAnalysisRun.status == "running",
+                    MatchAnalysisJobItem.id == item_id,
+                    MatchAnalysisJobItem.status
+                    == MatchAnalysisJobItemStatus.QUEUED.value,
+                    MatchAnalysisJobItem.job_id.in_(
+                        select(MatchAnalysisJob.id).where(
+                            MatchAnalysisJob.status.in_(active_statuses),
+                            MatchAnalysisJob.cancel_requested_at.is_(None),
+                            MatchAnalysisJob.deleted_at.is_(None),
+                        )
+                    ),
                 )
                 .values(
-                    status="failed",
-                    success=False,
-                    error_kind="interrupted",
-                    error_message="匹配分析任务中断后恢复",
-                    finished_at=now,
-                ),
+                    status=MatchAnalysisJobItemStatus.RUNNING.value,
+                    claim_id=claim_id,
+                    claimed_at=now,
+                    lease_expires_at=now
+                    + timedelta(seconds=_MATCH_ANALYSIS_ITEM_LEASE_SECONDS),
+                    attempt_count=func.coalesce(
+                        MatchAnalysisJobItem.attempt_count,
+                        0,
+                    )
+                    + 1,
+                    started_at=now,
+                    finished_at=None,
+                    error_message=None,
+                    skip_reason=None,
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
             )
-
-        next_item_status = (
-            MatchAnalysisJobItemStatus.CANCELED.value
-            if job.cancel_requested_at is not None
-            else MatchAnalysisJobItemStatus.QUEUED.value
-        )
-        await session.execute(
-            update(MatchAnalysisJobItem)
-            .where(MatchAnalysisJobItem.id.in_(unfinished_item_ids))
-            .values(
-                status=next_item_status,
-                finished_at=now if next_item_status == MatchAnalysisJobItemStatus.CANCELED.value else None,
-                updated_at=now,
-            ),
-        )
-        if job.cancel_requested_at is not None:
-            job.updated_at = now
+            if transition.rowcount != 1:
+                await session.rollback()
+                continue
+            await session.execute(
+                update(MatchAnalysisJob)
+                .where(
+                    MatchAnalysisJob.id == job_id,
+                    MatchAnalysisJob.status.in_(active_statuses),
+                )
+                .values(
+                    status=MatchAnalysisJobStatus.RUNNING.value,
+                    started_at=func.coalesce(MatchAnalysisJob.started_at, now),
+                    finished_at=None,
+                    item_last_dispatched_at=now,
+                    last_error=None,
+                    updated_at=now,
+                )
+            )
             await session.commit()
-            await _refresh_match_analysis_job_summary(session_factory, job_id)
-            return
+            return _MatchAnalysisItemClaim(
+                job_id=job_id,
+                item_id=item_id,
+                claim_id=claim_id,
+            )
+    return None
 
-        job.status = MatchAnalysisJobStatus.QUEUED.value
-        job.updated_at = now
+
+async def _recover_expired_match_analysis_items(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    now = utc_now()
+    recovered_job_ids: set[int] = set()
+    recovered = 0
+    async with session_factory() as session:
+        rows = list(
+            await session.execute(
+                select(
+                    MatchAnalysisJobItem.id,
+                    MatchAnalysisJobItem.job_id,
+                    MatchAnalysisJobItem.email_task_id,
+                    MatchAnalysisJobItem.claim_id,
+                    MatchAnalysisJob.cancel_requested_at,
+                )
+                .join(
+                    MatchAnalysisJob,
+                    MatchAnalysisJob.id == MatchAnalysisJobItem.job_id,
+                )
+                .where(
+                    MatchAnalysisJobItem.status
+                    == MatchAnalysisJobItemStatus.RUNNING.value,
+                    or_(
+                        MatchAnalysisJobItem.lease_expires_at.is_(None),
+                        MatchAnalysisJobItem.lease_expires_at <= now,
+                    ),
+                )
+            )
+        )
+        for row in rows:
+            next_status = (
+                MatchAnalysisJobItemStatus.CANCELED.value
+                if row.cancel_requested_at is not None
+                else MatchAnalysisJobItemStatus.QUEUED.value
+            )
+            transition = await session.execute(
+                update(MatchAnalysisJobItem)
+                .where(
+                    MatchAnalysisJobItem.id == row.id,
+                    MatchAnalysisJobItem.status
+                    == MatchAnalysisJobItemStatus.RUNNING.value,
+                    MatchAnalysisJobItem.claim_id == row.claim_id,
+                    or_(
+                        MatchAnalysisJobItem.lease_expires_at.is_(None),
+                        MatchAnalysisJobItem.lease_expires_at <= now,
+                    ),
+                )
+                .values(
+                    status=next_status,
+                    claim_id=None,
+                    claimed_at=None,
+                    lease_expires_at=None,
+                    finished_at=(
+                        now
+                        if next_status == MatchAnalysisJobItemStatus.CANCELED.value
+                        else None
+                    ),
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if transition.rowcount != 1:
+                continue
+            recovered += 1
+            recovered_job_ids.add(int(row.job_id))
+            if row.email_task_id is not None:
+                await session.execute(
+                    update(MatchAnalysisRun)
+                    .where(
+                        MatchAnalysisRun.email_task_id == row.email_task_id,
+                        MatchAnalysisRun.status == "running",
+                    )
+                    .values(
+                        status="failed",
+                        success=False,
+                        error_kind="interrupted",
+                        error_message="匹配分析工作项租约过期后恢复",
+                        finished_at=now,
+                    )
+                )
         await session.commit()
 
+    for job_id in recovered_job_ids:
+        await _refresh_match_analysis_job_summary(session_factory, job_id)
+    return recovered
 
-async def _run_match_analysis_job(
+
+async def _run_claimed_match_analysis_item(
     session_factory: async_sessionmaker[AsyncSession],
-    job_id: int,
-    *,
-    item_concurrency: int,
+    claim: _MatchAnalysisItemClaim,
 ) -> None:
+    work_task = asyncio.create_task(
+        _run_match_analysis_job_item(session_factory, claim)
+    )
+    heartbeat_task = asyncio.create_task(
+        _run_match_analysis_item_heartbeat(session_factory, claim)
+    )
+    try:
+        done, _ = await asyncio.wait(
+            {work_task, heartbeat_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        await _cancel_task_with_grace(work_task)
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
+        raise
+    if work_task in done:
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+        await work_task
+        return
+
+    claim_is_current = False
+    try:
+        claim_is_current = await heartbeat_task
+    except Exception:
+        logger.exception(
+            "匹配分析租约心跳异常，停止旧 claim：item=%s",
+            claim.item_id,
+        )
+    if not claim_is_current:
+        await _cancel_task_with_grace(work_task)
+
+
+async def _cancel_task_with_grace(task: asyncio.Task[object]) -> None:
+    if task.done():
+        with suppress(asyncio.CancelledError, Exception):
+            task.result()
+        return
+    if task.cancelling() == 0:
+        task.cancel()
+    done, _ = await asyncio.wait(
+        {task},
+        timeout=_MATCH_ANALYSIS_CANCEL_GRACE_SECONDS,
+    )
+    if task in done:
+        with suppress(asyncio.CancelledError, Exception):
+            task.result()
+        return
+    _DETACHED_MATCH_ANALYSIS_TASKS.add(task)
+    task.add_done_callback(_consume_detached_task_result)
+
+
+def _consume_detached_task_result(task: asyncio.Task[object]) -> None:
+    _DETACHED_MATCH_ANALYSIS_TASKS.discard(task)
+    with suppress(asyncio.CancelledError, Exception):
+        task.result()
+
+
+async def _run_match_analysis_item_heartbeat(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: _MatchAnalysisItemClaim,
+) -> bool:
+    while True:
+        await asyncio.sleep(_MATCH_ANALYSIS_HEARTBEAT_SECONDS)
+        if not await _renew_match_analysis_item_claim(session_factory, claim):
+            return False
+
+
+async def _renew_match_analysis_item_claim(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: _MatchAnalysisItemClaim,
+) -> bool:
+    now = utc_now()
     async with session_factory() as session:
-        queued_item_ids = list(
-            await session.scalars(
-                select(MatchAnalysisJobItem.id)
-                .where(
-                    MatchAnalysisJobItem.job_id == job_id,
-                    MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.QUEUED.value,
-                )
-                .order_by(MatchAnalysisJobItem.id.asc()),
+        result = await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.id == claim.item_id,
+                MatchAnalysisJobItem.status
+                == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == claim.claim_id,
+                MatchAnalysisJobItem.lease_expires_at > now,
+            )
+            .values(
+                lease_expires_at=now
+                + timedelta(seconds=_MATCH_ANALYSIS_ITEM_LEASE_SECONDS),
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            await session.rollback()
+            return False
+        await session.commit()
+        return True
+
+
+async def _match_analysis_claim_is_current(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: _MatchAnalysisItemClaim,
+) -> bool:
+    now = utc_now()
+    async with session_factory() as session:
+        current = await session.scalar(
+            select(MatchAnalysisJobItem.id).where(
+                MatchAnalysisJobItem.id == claim.item_id,
+                MatchAnalysisJobItem.status
+                == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == claim.claim_id,
+                MatchAnalysisJobItem.lease_expires_at > now,
             )
         )
-
-    async def run_item(item_id: int) -> None:
-        await _run_match_analysis_job_item(session_factory, job_id, item_id)
-
-    if queued_item_ids:
-        await run_item(queued_item_ids[0])
-        pending_item_ids = queued_item_ids[1:]
-        item_queue: asyncio.Queue[int] = asyncio.Queue()
-        for item_id in pending_item_ids:
-            item_queue.put_nowait(item_id)
-
-        async def worker() -> None:
-            while True:
-                try:
-                    item_id = item_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
-                try:
-                    await run_item(item_id)
-                finally:
-                    item_queue.task_done()
-
-        worker_count = min(max(item_concurrency, 1), len(pending_item_ids))
-        await asyncio.gather(*(worker() for _ in range(worker_count)))
-    await _refresh_match_analysis_job_summary(session_factory, job_id)
+        return current is not None
 
 
 async def _run_match_analysis_job_item(
     session_factory: async_sessionmaker[AsyncSession],
-    job_id: int,
-    item_id: int,
+    claim: _MatchAnalysisItemClaim,
 ) -> None:
-    now = utc_now()
     async with session_factory() as session:
-        job = await session.get(MatchAnalysisJob, job_id)
+        job = await session.get(MatchAnalysisJob, claim.job_id)
         item = await session.get(
             MatchAnalysisJobItem,
-            item_id,
+            claim.item_id,
             options=[selectinload(MatchAnalysisJobItem.email_task)],
         )
-        if job is None or item is None:
+        if (
+            job is None
+            or item is None
+            or item.status != MatchAnalysisJobItemStatus.RUNNING.value
+            or item.claim_id != claim.claim_id
+        ):
             return
+        match_source_identity_id = job.match_source_identity_id
+        email_task_id = item.email_task_id
 
-        if job.cancel_requested_at is not None:
-            item.status = MatchAnalysisJobItemStatus.CANCELED.value
-            item.finished_at = now
-            item.updated_at = now
-            await session.commit()
-            return
-        if job.match_source_identity_id is None:
-            item.status = MatchAnalysisJobItemStatus.SKIPPED.value
-            item.skip_reason = "匹配依据身份已删除，无法继续分析"
-            item.finished_at = now
-            item.updated_at = now
-            await session.commit()
-            return
+    if job.cancel_requested_at is not None:
+        await _mark_item_canceled(session_factory, claim)
+        return
+    if match_source_identity_id is None:
+        await _mark_item_skipped(
+            session_factory,
+            claim,
+            skip_reason="匹配依据身份已删除，无法继续分析",
+        )
+        return
+    if email_task_id is None:
+        await _mark_item_skipped(
+            session_factory,
+            claim,
+            skip_reason="匹配分析工作项缺少邮件任务",
+        )
+        return
 
-        item.status = MatchAnalysisJobItemStatus.RUNNING.value
-        item.started_at = now
-        item.updated_at = now
-        await session.commit()
-
+    timeout_seconds = max(
+        1,
+        get_settings().llm_request_timeout_seconds
+        + _MATCH_ANALYSIS_TIMEOUT_HEADROOM_SECONDS,
+    )
     try:
-        result = await _calculate_task_match_until_canceled(
-            session_factory,
-            job_id,
-            item.email_task_id,
-            match_source_identity_id=job.match_source_identity_id,
-        )
-    except (_MatchAnalysisJobCanceled, MatchCalculationCanceledError):
-        await _mark_item_canceled(session_factory, item_id)
-        return
-    except MatchAnalysisAlreadyRunningError as exc:
-        await _mark_item_skipped(
-            session_factory,
-            item_id,
-            skip_reason=str(exc),
-        )
-        return
-    except ValueError as exc:
-        await _mark_item_skipped(
-            session_factory,
-            item_id,
-            skip_reason=str(exc),
-        )
-        return
-    except Exception as exc:
+        async with asyncio.timeout(timeout_seconds):
+            result = await _calculate_task_match_until_canceled(
+                session_factory,
+                claim,
+                email_task_id,
+                match_source_identity_id=match_source_identity_id,
+            )
+    except TimeoutError:
+        await _fail_timed_out_match_analysis_run(session_factory, claim)
         await _mark_item_failed(
             session_factory,
-            item_id,
+            claim,
+            error_message=f"匹配分析超过 {timeout_seconds} 秒，已停止",
+        )
+        return
+    except (_MatchAnalysisJobCanceled, MatchCalculationCanceledError):
+        await _mark_item_canceled(session_factory, claim)
+        return
+    except MatchAnalysisAlreadyRunningError as exc:
+        await _mark_item_skipped(session_factory, claim, skip_reason=str(exc))
+        return
+    except ValueError as exc:
+        await _mark_item_skipped(session_factory, claim, skip_reason=str(exc))
+        return
+    except Exception as exc:
+        logger.exception(
+            "匹配分析工作项执行失败：job=%s item=%s",
+            claim.job_id,
+            claim.item_id,
+        )
+        await _mark_item_failed(
+            session_factory,
+            claim,
             error_message=str(exc),
         )
         return
 
-    if await _is_match_analysis_job_cancel_requested(session_factory, job_id):
-        await _mark_item_canceled(session_factory, item_id)
+    if not await _match_analysis_claim_is_current(session_factory, claim):
         return
-
+    if await _is_match_analysis_job_cancel_requested(
+        session_factory,
+        claim.job_id,
+    ):
+        await _mark_item_canceled(session_factory, claim)
+        return
+    run_error = await _match_analysis_run_error(
+        session_factory,
+        result.run_id,
+    )
+    if run_error is not None:
+        await _mark_item_failed(
+            session_factory,
+            claim,
+            error_message=run_error,
+        )
+        return
     await _mark_item_succeeded(
         session_factory,
-        item_id,
+        claim,
         run_id=result.run_id,
         prompt_tokens=result.usage.prompt_tokens or 0,
         completion_tokens=result.usage.completion_tokens or 0,
@@ -792,15 +1030,75 @@ async def _run_match_analysis_job_item(
     )
 
 
+async def _fail_timed_out_match_analysis_run(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: _MatchAnalysisItemClaim,
+) -> None:
+    now = utc_now()
+    current_item = select(
+        MatchAnalysisJobItem.email_task_id,
+        MatchAnalysisJobItem.claimed_at,
+    ).where(
+        MatchAnalysisJobItem.id == claim.item_id,
+        MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+        MatchAnalysisJobItem.claim_id == claim.claim_id,
+    )
+    email_task_id = current_item.with_only_columns(
+        MatchAnalysisJobItem.email_task_id
+    ).scalar_subquery()
+    claimed_at = current_item.with_only_columns(
+        MatchAnalysisJobItem.claimed_at
+    ).scalar_subquery()
+    async with session_factory() as session:
+        await session.execute(
+            update(MatchAnalysisRun)
+            .where(
+                MatchAnalysisRun.email_task_id == email_task_id,
+                MatchAnalysisRun.status == "running",
+                MatchAnalysisRun.started_at >= claimed_at,
+            )
+            .values(
+                status="failed",
+                success=False,
+                error_kind="timeout",
+                error_message="匹配分析工作项总超时",
+                finished_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+
+
+async def _match_analysis_run_error(
+    session_factory: async_sessionmaker[AsyncSession],
+    run_id: int | None,
+) -> str | None:
+    if run_id is None:
+        return "匹配分析未产生运行结果"
+    async with session_factory() as session:
+        run = await session.get(MatchAnalysisRun, run_id)
+        if run is None:
+            return "匹配分析运行记录不存在"
+        if run.status == "succeeded" and run.success:
+            return None
+        return run.error_message or "匹配分析失败"
+
+
 async def _calculate_task_match_until_canceled(
     session_factory: async_sessionmaker[AsyncSession],
-    job_id: int,
+    claim: _MatchAnalysisItemClaim,
     email_task_id: int,
     *,
     match_source_identity_id: int,
 ):
     async def cancel_requested() -> bool:
-        return await _is_match_analysis_job_cancel_requested(session_factory, job_id)
+        return (
+            await _is_match_analysis_job_cancel_requested(
+                session_factory,
+                claim.job_id,
+            )
+            or not await _match_analysis_claim_is_current(session_factory, claim)
+        )
 
     calculation_task = asyncio.create_task(
         calculate_task_match(
@@ -821,19 +1119,11 @@ async def _calculate_task_match_until_canceled(
             if calculation_task in done:
                 return await calculation_task
             if await cancel_requested():
-                calculation_task.cancel()
-                try:
-                    await calculation_task
-                except asyncio.CancelledError:
-                    pass
-                raise _MatchAnalysisJobCanceled("匹配分析任务已取消")
+                await _cancel_task_with_grace(calculation_task)
+                raise _MatchAnalysisJobCanceled("匹配分析任务已取消或租约已失效")
     finally:
         if not calculation_task.done():
-            calculation_task.cancel()
-            try:
-                await calculation_task
-            except asyncio.CancelledError:
-                pass
+            await _cancel_task_with_grace(calculation_task)
 
 
 async def _is_match_analysis_job_cancel_requested(
@@ -849,7 +1139,7 @@ async def _is_match_analysis_job_cancel_requested(
 
 async def _mark_item_succeeded(
     session_factory: async_sessionmaker[AsyncSession],
-    item_id: int,
+    claim: _MatchAnalysisItemClaim,
     *,
     run_id: int | None,
     prompt_tokens: int,
@@ -858,15 +1148,16 @@ async def _mark_item_succeeded(
     total_tokens: int,
 ) -> None:
     async with session_factory() as session:
-        item = await session.get(MatchAnalysisJobItem, item_id)
+        item = await session.get(MatchAnalysisJobItem, claim.item_id)
         if item is None:
             return
         now = utc_now()
         transition = await session.execute(
             update(MatchAnalysisJobItem)
             .where(
-                MatchAnalysisJobItem.id == item_id,
+                MatchAnalysisJobItem.id == claim.item_id,
                 MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == claim.claim_id,
             )
             .values(
                 status=MatchAnalysisJobItemStatus.SUCCEEDED.value,
@@ -877,6 +1168,9 @@ async def _mark_item_succeeded(
                 total_tokens=total_tokens,
                 error_message=None,
                 skip_reason=None,
+                claim_id=None,
+                claimed_at=None,
+                lease_expires_at=None,
                 finished_at=now,
                 updated_at=now,
             )
@@ -901,28 +1195,28 @@ async def _mark_item_succeeded(
 
 async def _mark_item_canceled(
     session_factory: async_sessionmaker[AsyncSession],
-    item_id: int,
+    claim: _MatchAnalysisItemClaim,
 ) -> None:
     async with session_factory() as session:
-        item = await session.get(MatchAnalysisJobItem, item_id)
+        item = await session.get(MatchAnalysisJobItem, claim.item_id)
         if item is None:
             return
         now = utc_now()
-        await session.execute(
+        transition = await session.execute(
             update(MatchAnalysisJobItem)
             .where(
-                MatchAnalysisJobItem.id == item_id,
-                MatchAnalysisJobItem.status.in_(
-                    [
-                        MatchAnalysisJobItemStatus.QUEUED.value,
-                        MatchAnalysisJobItemStatus.RUNNING.value,
-                    ]
-                ),
+                MatchAnalysisJobItem.id == claim.item_id,
+                MatchAnalysisJobItem.status
+                == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == claim.claim_id,
             )
             .values(
                 status=MatchAnalysisJobItemStatus.CANCELED.value,
                 error_message=None,
                 skip_reason=None,
+                claim_id=None,
+                claimed_at=None,
+                lease_expires_at=None,
                 finished_at=now,
                 updated_at=now,
             )
@@ -932,30 +1226,30 @@ async def _mark_item_canceled(
 
 async def _mark_item_skipped(
     session_factory: async_sessionmaker[AsyncSession],
-    item_id: int,
+    claim: _MatchAnalysisItemClaim,
     *,
     skip_reason: str,
 ) -> None:
     async with session_factory() as session:
-        item = await session.get(MatchAnalysisJobItem, item_id)
+        item = await session.get(MatchAnalysisJobItem, claim.item_id)
         if item is None:
             return
         now = utc_now()
         transition = await session.execute(
             update(MatchAnalysisJobItem)
             .where(
-                MatchAnalysisJobItem.id == item_id,
-                MatchAnalysisJobItem.status.in_(
-                    [
-                        MatchAnalysisJobItemStatus.QUEUED.value,
-                        MatchAnalysisJobItemStatus.RUNNING.value,
-                    ]
-                ),
+                MatchAnalysisJobItem.id == claim.item_id,
+                MatchAnalysisJobItem.status
+                == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == claim.claim_id,
             )
             .values(
                 status=MatchAnalysisJobItemStatus.SKIPPED.value,
                 skip_reason=skip_reason,
                 error_message=None,
+                claim_id=None,
+                claimed_at=None,
+                lease_expires_at=None,
                 finished_at=now,
                 updated_at=now,
             )
@@ -974,24 +1268,28 @@ async def _mark_item_skipped(
 
 async def _mark_item_failed(
     session_factory: async_sessionmaker[AsyncSession],
-    item_id: int,
+    claim: _MatchAnalysisItemClaim,
     *,
     error_message: str,
 ) -> None:
     async with session_factory() as session:
-        item = await session.get(MatchAnalysisJobItem, item_id)
+        item = await session.get(MatchAnalysisJobItem, claim.item_id)
         if item is None:
             return
         now = utc_now()
         transition = await session.execute(
             update(MatchAnalysisJobItem)
             .where(
-                MatchAnalysisJobItem.id == item_id,
+                MatchAnalysisJobItem.id == claim.item_id,
                 MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == claim.claim_id,
             )
             .values(
                 status=MatchAnalysisJobItemStatus.FAILED.value,
                 error_message=error_message,
+                claim_id=None,
+                claimed_at=None,
+                lease_expires_at=None,
                 finished_at=now,
                 updated_at=now,
             )
@@ -1049,6 +1347,17 @@ async def _refresh_match_analysis_job_summary(
         job.total_cached_tokens = sum(item.cached_tokens for item in items)
         job.total_tokens = sum(item.total_tokens for item in items)
         job.updated_at = utc_now()
+        job.finished_at = None
+
+        if queued_count > 0 or running_count > 0:
+            job.status = (
+                MatchAnalysisJobStatus.RUNNING.value
+                if running_count > 0
+                else MatchAnalysisJobStatus.QUEUED.value
+            )
+            await session.commit()
+            return
+
         job.finished_at = job.updated_at
 
         if canceled_count > 0:
