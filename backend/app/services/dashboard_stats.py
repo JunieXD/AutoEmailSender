@@ -1,33 +1,44 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
-
-from app.core.time import as_utc_aware, utc_now
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload, load_only, selectinload
 
-from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskStatus, IdentityProfile, Professor
+from app.core.time import as_utc_aware, local_now, utc_now
+from app.models import (
+    EmailDirection,
+    EmailLog,
+    EmailTask,
+    EmailTaskStatus,
+    IdentityProfile,
+    Professor,
+)
+from app.modules.communications.public import (
+    CommunicationEvent,
+    load_communication_events,
+)
+from app.modules.identities.public import resolve_identity_communication_scope
 from app.schemas.dashboard import (
-    DashboardEmailFunnelBucketRead,
     DashboardEmailFollowUpRead,
+    DashboardEmailFunnelBucketRead,
     DashboardEmailSectionRead,
     DashboardEmailStatusBucketRead,
     DashboardEmailSummaryRead,
     DashboardEmailTrendBucketRead,
+    DashboardMatchContextRead,
     DashboardMentorActionItemRead,
     DashboardMentorFilterRead,
     DashboardMentorMatchBucketRead,
-    DashboardMatchContextRead,
-    DashboardProfileCompletenessBucketRead,
-    DashboardProfileCompletenessRead,
     DashboardMentorSectionRead,
     DashboardMentorSummaryRead,
-    DashboardOverviewRead,
     DashboardOutreachCoverageItemRead,
     DashboardOutreachCoverageRead,
+    DashboardOverviewRead,
+    DashboardProfileCompletenessBucketRead,
+    DashboardProfileCompletenessRead,
     DashboardReplyWaitBucketRead,
     DashboardReplyWaitRead,
     DashboardSchoolDistributionRead,
@@ -35,15 +46,12 @@ from app.schemas.dashboard import (
     DashboardSchoolFilterSchoolRead,
 )
 from app.services.contact_status import build_contact_status_by_professor
-from app.modules.communications.public import CommunicationEvent, load_communication_events
-from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.match_results import (
     MatchResultView,
     ResolvedMatchResults,
     load_resolved_match_results,
     match_result_is_stale,
 )
-
 
 HIGH_SCORE_DEFAULT = 80
 EmailTrendEvent = tuple[int | None, int, datetime]
@@ -399,8 +407,20 @@ async def _build_email_section(
     start_date: str | None,
     end_date: str | None,
 ) -> DashboardEmailSectionRead:
-    start_at = _parse_date_filter(start_date, field_name="start_date")
-    end_at = _end_of_day(_parse_date_filter(end_date, field_name="end_date"))
+    local_timezone = _local_timezone()
+    start_at = _parse_date_filter(
+        start_date,
+        field_name="start_date",
+        local_timezone=local_timezone,
+    )
+    end_at = _end_of_day(
+        _parse_date_filter(
+            end_date,
+            field_name="end_date",
+            local_timezone=local_timezone,
+        ),
+        local_timezone=local_timezone,
+    )
     if start_at is not None and end_at is not None and start_at > end_at:
         raise ValueError("start_date 不能晚于 end_date")
 
@@ -581,6 +601,7 @@ async def _build_email_section(
         replied_fallback_tasks=replied_fallback_tasks,
         start_at=start_at,
         end_at=end_at,
+        local_timezone=local_timezone,
     )
     outreach_coverage = _build_outreach_coverage(
         professors=professors,
@@ -1075,12 +1096,13 @@ def _build_email_trend(
     replied_fallback_tasks: list[EmailTask],
     start_at: datetime | None,
     end_at: datetime | None,
+    local_timezone: tzinfo,
 ) -> list[DashboardEmailTrendBucketRead]:
     if start_at is not None and end_at is not None:
-        start_day = _floor_day(start_at)
-        current_day = _floor_day(end_at)
+        start_day = _floor_day(start_at, local_timezone=local_timezone)
+        current_day = _floor_day(end_at, local_timezone=local_timezone)
     else:
-        current_day = _floor_day(utc_now())
+        current_day = _floor_day(utc_now(), local_timezone=local_timezone)
         start_day = current_day - timedelta(days=29)
 
     buckets: dict[str, DashboardEmailTrendBucketRead] = {}
@@ -1091,18 +1113,18 @@ def _build_email_trend(
         current += timedelta(days=1)
 
     for _, _, event_time in sent_events:
-        key = _floor_day(event_time).date().isoformat()
+        key = _floor_day(event_time, local_timezone=local_timezone).date().isoformat()
         if key in buckets:
             buckets[key].sent_count += 1
 
     replied_professors_by_bucket: dict[str, set[int]] = defaultdict(set)
     for professor_id, event_time in received_events:
-        key = _floor_day(event_time).date().isoformat()
+        key = _floor_day(event_time, local_timezone=local_timezone).date().isoformat()
         if key in buckets:
             replied_professors_by_bucket[key].add(professor_id)
 
     for task in replied_fallback_tasks:
-        key = _floor_day(task.updated_at).date().isoformat()
+        key = _floor_day(task.updated_at, local_timezone=local_timezone).date().isoformat()
         if key in buckets:
             replied_professors_by_bucket[key].add(task.professor_id)
 
@@ -1291,21 +1313,30 @@ def _has_text(value: str | None) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _parse_date_filter(value: str | None, *, field_name: str) -> datetime | None:
+def _parse_date_filter(
+    value: str | None,
+    *,
+    field_name: str,
+    local_timezone: tzinfo,
+) -> datetime | None:
     normalized = value.strip() if value else None
     if not normalized:
         return None
     try:
-        parsed = datetime.strptime(normalized, "%Y-%m-%d")
+        parsed = date.fromisoformat(normalized)
     except ValueError as exc:
         raise ValueError(f"{field_name} 日期格式应为 YYYY-MM-DD") from exc
-    return as_utc_aware(parsed)
+    return datetime.combine(parsed, time.min, tzinfo=local_timezone).astimezone(UTC)
 
 
-def _end_of_day(value: datetime | None) -> datetime | None:
+def _end_of_day(value: datetime | None, *, local_timezone: tzinfo) -> datetime | None:
     if value is None:
         return None
-    return value.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return (
+        value.astimezone(local_timezone)
+        .replace(hour=23, minute=59, second=59, microsecond=999999)
+        .astimezone(UTC)
+    )
 
 
 def _as_utc_datetime(value: datetime) -> datetime:
@@ -1323,7 +1354,11 @@ def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: da
     return True
 
 
-def _floor_day(value: datetime) -> datetime:
+def _floor_day(value: datetime, *, local_timezone: tzinfo) -> datetime:
     if value.tzinfo is None:
         value = as_utc_aware(value)
-    return value.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return value.astimezone(local_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _local_timezone() -> tzinfo:
+    return local_now().tzinfo or UTC

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -20,10 +21,12 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
-from app.modules.crawler.v2.enrichment_worker import run_crawler_v2_enrichment_worker_once
-from app.modules.crawler.v2.scheduler import finalize_idle_jobs
 from app.modules.crawler.jobs.runtime import recover_interrupted_crawl_jobs
+from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
+from app.modules.crawler.v2.enrichment_worker import (
+    run_crawler_v2_enrichment_worker_once,
+)
+from app.modules.crawler.v2.scheduler import finalize_idle_jobs
 from app.modules.professors.public import (
     create_professor_information_enrichment_job,
     finalize_professor_information_enrichment_job,
@@ -102,6 +105,36 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[1].skip_reason, "缺少有效的导师主页链接")
         self.assertEqual(items[2].skip_reason, "资料已完整，无需补全")
         self.assertEqual(items[3].skip_reason, "导师已在回收站")
+
+    async def test_batch_creation_uses_local_time_in_default_name(self) -> None:
+        professor_id = await self._create_professor(
+            name="可补全导师",
+            profile_url="https://example.edu/active",
+        )
+        utc_time = datetime(2026, 8, 7, 0, 15, tzinfo=UTC)
+        local_time = utc_time.astimezone(timezone(timedelta(hours=8)))
+
+        with (
+            patch(
+                "app.modules.professors.enrichment.service.utc_now",
+                return_value=utc_time,
+            ),
+            patch(
+                "app.modules.professors.enrichment.service.local_now",
+                return_value=local_time,
+            ),
+        ):
+            job_id = await create_professor_information_enrichment_job(
+                self.session_factory,
+                professor_ids=[professor_id],
+                llm_profile_id=self.llm_profile_id,
+                trigger_mode="batch",
+            )
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.display_name, "信息补全 2026-08-07 08:15")
 
     async def test_successes_and_skips_finalize_as_completed(self) -> None:
         active_id = await self._create_professor(

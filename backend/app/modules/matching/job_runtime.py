@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import NO_VALUE
 
-from app.core.time import utc_now
+from app.core.time import local_now, utc_now
 from app.models import (
     EmailTask,
     EmailTaskSource,
@@ -117,8 +117,9 @@ async def create_match_analysis_job_record(
         raise ValueError("已选导师都缺少研究方向或近期论文，暂不能分析匹配度")
 
     now = utc_now()
+    display_time = local_now()
     job = MatchAnalysisJob(
-        name=name or f"批量匹配分析 {now:%Y-%m-%d %H:%M}",
+        name=name or f"批量匹配分析 {display_time:%Y-%m-%d %H:%M}",
         identity_id=identity_id,
         match_source_identity_id=match_scope.source_identity_id,
         llm_profile_id=llm_profile_id,

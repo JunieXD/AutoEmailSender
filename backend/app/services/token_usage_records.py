@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
-from app.core.time import as_utc_aware, as_utc_naive, utc_now
-
 from sqlalchemy import select
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
+from app.core.time import as_utc_aware, as_utc_naive, local_now, utc_now
 from app.models import (
     CrawlJob,
     CrawlJobKind,
@@ -99,11 +97,13 @@ async def build_token_usage_chart(
     model_name: str | None = None,
     now: datetime | None = None,
 ) -> TokenUsageChartRead:
+    local_timezone = _local_timezone()
     range_start, range_end, granularity = _resolve_chart_range(
         preset=preset,
         start_at=start_at,
         end_at=end_at,
         now=now,
+        local_timezone=local_timezone,
     )
     filter_start, filter_end = _resolve_chart_filter_range(
         preset=preset,
@@ -127,6 +127,7 @@ async def build_token_usage_chart(
         range_start=range_start,
         range_end=range_end,
         granularity=granularity,
+        local_timezone=local_timezone,
     )
 
 
@@ -138,11 +139,13 @@ async def build_token_usage_visualization(
     end_at: datetime | None = None,
     now: datetime | None = None,
 ) -> TokenUsageVisualizationRead:
+    local_timezone = _local_timezone()
     range_start, range_end, granularity = _resolve_chart_range(
         preset=preset,
         start_at=start_at,
         end_at=end_at,
         now=now,
+        local_timezone=local_timezone,
     )
     filter_start, filter_end = _resolve_chart_filter_range(
         preset=preset,
@@ -170,6 +173,7 @@ async def build_token_usage_visualization(
         range_start=range_start,
         range_end=range_end,
         granularity=granularity,
+        local_timezone=local_timezone,
     )
 
     return TokenUsageVisualizationRead(
@@ -189,8 +193,13 @@ def _build_token_usage_chart_from_records(
     range_start: datetime,
     range_end: datetime,
     granularity: TokenUsageChartGranularity,
+    local_timezone: tzinfo,
 ) -> TokenUsageChartRead:
-    bucket_totals = _aggregate_chart_buckets(records, granularity=granularity)
+    bucket_totals = _aggregate_chart_buckets(
+        records,
+        granularity=granularity,
+        local_timezone=local_timezone,
+    )
     buckets = [
         TokenUsageChartBucketRead(
             bucket_start=bucket_start,
@@ -644,6 +653,7 @@ def _resolve_chart_range(
     start_at: datetime | None,
     end_at: datetime | None,
     now: datetime | None,
+    local_timezone: tzinfo,
 ) -> tuple[datetime, datetime, TokenUsageChartGranularity]:
     resolved_now = as_utc_aware(now) if now is not None else utc_now()
     if preset == "last_6_hours":
@@ -653,10 +663,10 @@ def _resolve_chart_range(
         range_end = _floor_hour(resolved_now)
         return range_end - timedelta(hours=23), range_end, "hour"
     if preset == "last_7_days":
-        range_end = _floor_day(resolved_now)
+        range_end = _floor_day(resolved_now, local_timezone=local_timezone)
         return range_end - timedelta(days=6), range_end, "day"
     if preset == "last_30_days":
-        range_end = _floor_day(resolved_now)
+        range_end = _floor_day(resolved_now, local_timezone=local_timezone)
         return range_end - timedelta(days=29), range_end, "day"
 
     if start_at is None or end_at is None:
@@ -668,7 +678,11 @@ def _resolve_chart_range(
     range_end = as_utc_aware(end_at)
     if range_end - range_start <= timedelta(hours=48):
         return _floor_hour(range_start), _floor_hour(range_end), "hour"
-    return _floor_day(range_start), _floor_day(range_end), "day"
+    return (
+        _floor_day(range_start, local_timezone=local_timezone),
+        _floor_day(range_end, local_timezone=local_timezone),
+        "day",
+    )
 
 
 
@@ -691,10 +705,15 @@ def _aggregate_chart_buckets(
     records: list[TokenUsageRecordRead],
     *,
     granularity: TokenUsageChartGranularity,
+    local_timezone: tzinfo,
 ) -> dict[datetime, tuple[int, int, int]]:
     buckets: dict[datetime, tuple[int, int, int]] = {}
     for record in records:
-        bucket_start = _bucket_start(record.created_at, granularity)
+        bucket_start = _bucket_start(
+            record.created_at,
+            granularity,
+            local_timezone=local_timezone,
+        )
         current_input, current_output, current_cached = buckets.get(
             bucket_start,
             (0, 0, 0),
@@ -729,11 +748,13 @@ def _iter_chart_buckets(
 def _bucket_start(
     value: datetime,
     granularity: TokenUsageChartGranularity,
+    *,
+    local_timezone: tzinfo,
 ) -> datetime:
     utc_value = as_utc_aware(value)
     if granularity == "hour":
         return _floor_hour(utc_value)
-    return _floor_day(utc_value)
+    return _floor_day(utc_value, local_timezone=local_timezone)
 
 
 def _next_bucket(
@@ -764,8 +785,17 @@ def _floor_hour(value: datetime) -> datetime:
     return as_utc_aware(value).replace(minute=0, second=0, microsecond=0)
 
 
-def _floor_day(value: datetime) -> datetime:
-    return as_utc_aware(value).replace(hour=0, minute=0, second=0, microsecond=0)
+def _floor_day(value: datetime, *, local_timezone: tzinfo) -> datetime:
+    return as_utc_aware(value).astimezone(local_timezone).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _local_timezone() -> tzinfo:
+    return local_now().tzinfo or UTC
 
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -85,6 +85,29 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual([item.status for item in items], ["queued", "skipped"])
         self.assertIsNotNone(items[0].email_task_id)
         self.assertEqual(items[1].skip_reason, "缺少研究方向或近期论文")
+
+    def test_create_job_uses_local_time_in_default_name(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        utc_time = datetime(2026, 8, 7, 0, 15, tzinfo=UTC)
+        local_time = utc_time.astimezone(timezone(timedelta(hours=8)))
+
+        with (
+            patch("app.modules.matching.job_runtime.utc_now", return_value=utc_time),
+            patch("app.modules.matching.job_runtime.local_now", return_value=local_time),
+        ):
+            job = self._run_async(
+                create_match_analysis_job(
+                    self.session_factory,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_profile_id,
+                    professor_ids=[professor_ids[0]],
+                ),
+            )
+
+        self.assertEqual(job.name, "批量匹配分析 2026-08-07 08:15")
+        self.assertEqual(job.created_at, utc_time)
 
     def test_create_job_records_operation_log(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(

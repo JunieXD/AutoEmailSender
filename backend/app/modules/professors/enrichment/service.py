@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.core.time import utc_now
+from app.core.time import local_now, utc_now
 from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
@@ -22,18 +22,13 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from .schemas import (
-    ProfessorInformationEnrichmentItemRead,
-    ProfessorInformationEnrichmentJobRead,
-)
-from app.modules.crawler.public import build_crawl_job_metrics
 from app.modules.crawler.public import (
+    build_crawl_job_metrics,
     create_initial_crawl_job_run,
     mark_crawl_job_run_finished,
+    profile_text_cache,
+    validate_safe_public_crawl_url,
 )
-from app.modules.crawler.public import validate_safe_public_crawl_url
-from app.modules.crawler.public import profile_text_cache
-from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
@@ -41,7 +36,15 @@ from app.modules.professors.public import (
     normalize_recent_papers,
     normalize_research_direction,
 )
+from app.services.operation_logs import (
+    record_operation_log,
+    sanitize_user_visible_error,
+)
 
+from .schemas import (
+    ProfessorInformationEnrichmentItemRead,
+    ProfessorInformationEnrichmentJobRead,
+)
 
 INFORMATION_ENRICHMENT_FIELDS = (
     "email",
@@ -150,7 +153,7 @@ async def create_professor_information_enrichment_job_record(
         ordered_professors,
         trigger_mode=trigger_mode,
         requested_name=name,
-        now=now,
+        now=local_now(),
     )
     valid_urls = [
         professor.profile_url.strip()
