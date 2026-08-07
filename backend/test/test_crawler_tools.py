@@ -223,6 +223,102 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertTrue(options["headless"])
         self.assertNotIn("channel", options)
 
+    def test_certificate_compatibility_only_accepts_date_errors(self) -> None:
+        self.assertTrue(
+            crawler_tools._is_certificate_date_error(
+                "Page.goto: net::ERR_CERT_DATE_INVALID"
+            )
+        )
+        self.assertTrue(
+            crawler_tools._is_certificate_date_error(
+                "certificate verify failed: certificate has expired"
+            )
+        )
+        self.assertFalse(
+            crawler_tools._is_certificate_date_error(
+                "Page.goto: net::ERR_CERT_COMMON_NAME_INVALID"
+            )
+        )
+        self.assertFalse(
+            crawler_tools._is_certificate_date_error(
+                "certificate verify failed: self-signed certificate"
+            )
+        )
+
+    def test_playwright_browser_fetch_retries_date_error_once_in_compatibility_mode(self) -> None:
+        async def run() -> None:
+            failed = PageSnapshot(
+                url="https://example.edu/faculty",
+                text="",
+                html="",
+                links=[],
+                fetch_method="browser",
+                status="failed",
+                error_message="Page.goto: net::ERR_CERT_DATE_INVALID",
+            )
+            succeeded = PageSnapshot(
+                url="https://example.edu/faculty",
+                text="张三",
+                html="<p>张三</p>",
+                links=[],
+                fetch_method="browser",
+                status="succeeded",
+            )
+
+            with patch(
+                "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                new=AsyncMock(side_effect=[failed, succeeded]),
+            ) as fetch_once:
+                actual = await crawler_tools._try_playwright_browser_fetch(
+                    "https://example.edu/faculty",
+                    crawler_tools.BrowserFetchOptions(max_retries=2),
+                )
+
+            self.assertEqual(actual, succeeded)
+            self.assertEqual(fetch_once.await_count, 2)
+            first_options = fetch_once.await_args_list[0].args[1]
+            compatibility_options = fetch_once.await_args_list[1].args[1]
+            self.assertFalse(first_options.ignore_https_errors)
+            self.assertTrue(compatibility_options.ignore_https_errors)
+            self.assertEqual(compatibility_options.max_retries, 0)
+
+        asyncio.run(run())
+
+    def test_browser_pagination_retries_date_error_once_in_compatibility_mode(self) -> None:
+        async def run() -> None:
+            failed = crawler_tools.BrowserPaginationExpansion(
+                status="failed",
+                stopped_reason="browser_error",
+                error_message="Page.goto: net::ERR_CERT_DATE_INVALID",
+            )
+            succeeded = crawler_tools.BrowserPaginationExpansion(
+                status="succeeded",
+                stopped_reason="control_disabled",
+            )
+
+            with patch(
+                "app.modules.crawler.pages.tools._try_fetch_browser_pagination_once",
+                new=AsyncMock(side_effect=[failed, succeeded]),
+            ) as fetch_once:
+                actual = await crawler_tools._fetch_browser_pagination_direct(
+                    "https://example.edu/faculty",
+                    {"tag": "a"},
+                    intent="directory",
+                    max_pages=10,
+                )
+
+            self.assertEqual(actual, succeeded)
+            self.assertEqual(fetch_once.await_count, 2)
+            self.assertNotIn(
+                "ignore_https_errors",
+                fetch_once.await_args_list[0].kwargs,
+            )
+            self.assertTrue(
+                fetch_once.await_args_list[1].kwargs["ignore_https_errors"]
+            )
+
+        asyncio.run(run())
+
     def test_is_allowed_crawl_url_allows_same_host(self) -> None:
         with patch(
             "app.modules.crawler.pages.tools.socket.getaddrinfo",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from html import unescape
 import hashlib
@@ -129,6 +129,13 @@ BROWSER_EXTRA_ARGS = (
     "--disable-features=HttpsUpgrades",
     "--disable-blink-features=AutomationControlled",
 )
+CERTIFICATE_DATE_ERROR_MARKERS = (
+    "certificate has expired",
+    "certificate is not yet valid",
+    "cert_has_expired",
+    "cert_not_yet_valid",
+    "err_cert_date_invalid",
+)
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -152,6 +159,7 @@ class BrowserFetchOptions:
     dynamic_directory_ready_timeout_ms: int = DYNAMIC_DIRECTORY_READY_TIMEOUT_MS
     dynamic_directory_ready_poll_ms: int = DYNAMIC_DIRECTORY_READY_POLL_MS
     dynamic_directory_stable_ms: int = DYNAMIC_DIRECTORY_STABLE_MS
+    ignore_https_errors: bool = False
 
 
 class PageSnapshot(BaseModel):
@@ -1626,6 +1634,14 @@ async def _fetch_browser_pagination_direct(
             intent=intent,
             max_pages=max_pages,
         )
+        if _is_certificate_date_error(result.error_message):
+            return await _try_fetch_browser_pagination_once(
+                absolute_url,
+                target,
+                intent=intent,
+                max_pages=max_pages,
+                ignore_https_errors=True,
+            )
         if result.status == "succeeded" or result.stopped_reason != "browser_error":
             return result
         last_result = result
@@ -1642,6 +1658,7 @@ async def _try_fetch_browser_pagination_once(
     *,
     intent: CrawlPageIntent,
     max_pages: int,
+    ignore_https_errors: bool = False,
 ) -> BrowserPaginationExpansion:
     if async_playwright is None:
         return BrowserPaginationExpansion(
@@ -1655,7 +1672,10 @@ async def _try_fetch_browser_pagination_once(
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
-            context = await browser.new_context(user_agent=options.user_agent)
+            context = await browser.new_context(
+                user_agent=options.user_agent,
+                ignore_https_errors=ignore_https_errors,
+            )
             page = await context.new_page()
             await page.goto(
                 absolute_url,
@@ -1869,6 +1889,19 @@ async def _try_playwright_browser_fetch(
     last_result: PageSnapshot | None = None
     for _attempt in range(max(0, options.max_retries) + 1):
         last_result = await _try_playwright_browser_fetch_once(absolute_url, options)
+        if (
+            not options.ignore_https_errors
+            and _is_certificate_date_error(last_result.error_message)
+        ):
+            compatibility_options = replace(
+                options,
+                ignore_https_errors=True,
+                max_retries=0,
+            )
+            return await _try_playwright_browser_fetch_once(
+                absolute_url,
+                compatibility_options,
+            )
         if last_result.status == "succeeded" or _is_wait_condition_failure(last_result.error_message):
             return last_result
     return last_result or _failed_snapshot(
@@ -1893,7 +1926,10 @@ async def _try_playwright_browser_fetch_once(
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
-            context = await browser.new_context(user_agent=options.user_agent)
+            context = await browser.new_context(
+                user_agent=options.user_agent,
+                ignore_https_errors=options.ignore_https_errors,
+            )
             page = await context.new_page()
             await page.goto(
                 absolute_url,
@@ -2001,6 +2037,14 @@ def _is_wait_condition_failure(message: str | None) -> bool:
         "wait_for_selector" in normalized_message
         and "timeout" in normalized_message
         and "exceeded" in normalized_message
+    )
+
+
+def _is_certificate_date_error(message: str | None) -> bool:
+    normalized_message = (message or "").strip().lower()
+    return any(
+        marker in normalized_message
+        for marker in CERTIFICATE_DATE_ERROR_MARKERS
     )
 
 
