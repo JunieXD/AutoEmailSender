@@ -29,6 +29,39 @@ const OLDER_MANIFEST_SCHEMA_VERSION = 2;
 const LEGACY_MANIFEST_SCHEMA_VERSION = 1;
 const ZSH_PATH_BLOCK_START = "# >>> Auto Email Sender Agent support >>>";
 const ZSH_PATH_BLOCK_END = "# <<< Auto Email Sender Agent support <<<";
+const WINDOWS_ENVIRONMENT_CHANGE_SCRIPT = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class AutoEmailSenderEnvironment {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        uint message,
+        UIntPtr wParam,
+        string lParam,
+        uint flags,
+        uint timeout,
+        out UIntPtr result
+    );
+}
+'@
+
+[UIntPtr] $result = [UIntPtr]::Zero
+$sent = [AutoEmailSenderEnvironment]::SendMessageTimeout(
+    [IntPtr] 0xffff,
+    0x001a,
+    [UIntPtr]::Zero,
+    'Environment',
+    0x0002,
+    5000,
+    [ref] $result
+)
+if ($sent -eq [IntPtr]::Zero) {
+    exit 1
+}
+`;
 
 export const AGENT_INTEGRATION_IDS = [
   "codex",
@@ -111,8 +144,10 @@ export type AgentSupportServiceOptions = {
   localAppDataPath?: string;
   appVersion: string;
   environmentPath?: string;
+  processEnvironment?: NodeJS.ProcessEnv;
   readWindowsUserPath?: () => Promise<string>;
   writeWindowsUserPath?: (value: string) => Promise<void>;
+  broadcastWindowsEnvironmentChange?: () => Promise<void>;
   now?: () => Date;
 };
 
@@ -155,6 +190,9 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
   const now = options.now ?? (() => new Date());
   const readWindowsPath = options.readWindowsUserPath ?? readWindowsUserPath;
   const writeWindowsPath = options.writeWindowsUserPath ?? writeWindowsUserPath;
+  const processEnvironment = options.processEnvironment ?? process.env;
+  const broadcastWindowsChange = options.broadcastWindowsEnvironmentChange
+    ?? broadcastWindowsEnvironmentChange;
 
   const getStatus = async (): Promise<AgentSupportStatus> => {
     const manifest = await readManifest(paths.manifestPath);
@@ -290,6 +328,10 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
         if (updatedPath !== currentPath) {
           await writeWindowsPath(updatedPath);
         }
+        synchronizeWindowsProcessPath(processEnvironment, paths.commandDirectory, false);
+        if (updatedPath !== currentPath) {
+          await broadcastWindowsEnvironmentChangeSafely(broadcastWindowsChange);
+        }
       }
     }
 
@@ -319,6 +361,9 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       return getStatus();
     }
     if (await isInstallationHealthy({ options, paths, manifest, readWindowsPath })) {
+      if (options.platform === "win32") {
+        synchronizeWindowsProcessPath(processEnvironment, paths.commandDirectory, true);
+      }
       return getStatus();
     }
 
@@ -355,6 +400,8 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
           Boolean(previousManifest?.enabled && previousManifest.path_managed),
           readWindowsPath,
           writeWindowsPath,
+          processEnvironment,
+          broadcastWindowsChange,
         );
     await writeEnabledManifest(previousManifest, pathManaged, []);
     return getStatus();
@@ -379,6 +426,8 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
           previousManifest.path_managed,
           readWindowsPath,
           writeWindowsPath,
+          processEnvironment,
+          broadcastWindowsChange,
         );
     await writeEnabledManifest(previousManifest, pathManaged, agentIds);
     return getStatus();
@@ -726,13 +775,40 @@ async function ensureWindowsPath(
   previouslyManaged: boolean,
   readPath: () => Promise<string>,
   writePath: (value: string) => Promise<void>,
+  processEnvironment: NodeJS.ProcessEnv,
+  broadcastEnvironmentChange: () => Promise<void>,
 ): Promise<boolean> {
   const currentPath = await readPath();
   if (hasPathEntry(currentPath, commandDirectory, ";")) {
+    synchronizeWindowsProcessPath(processEnvironment, commandDirectory, true);
     return previouslyManaged;
   }
   await writePath(addPathEntry(currentPath, commandDirectory, ";"));
+  synchronizeWindowsProcessPath(processEnvironment, commandDirectory, true);
+  await broadcastWindowsEnvironmentChangeSafely(broadcastEnvironmentChange);
   return true;
+}
+
+export function synchronizeWindowsProcessPath(
+  environment: NodeJS.ProcessEnv,
+  commandDirectory: string,
+  enabled: boolean,
+): void {
+  const pathKey = Object.keys(environment).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const currentPath = environment[pathKey] ?? "";
+  environment[pathKey] = enabled
+    ? addPathEntry(currentPath, commandDirectory, ";")
+    : removePathEntry(currentPath, commandDirectory, ";");
+}
+
+async function broadcastWindowsEnvironmentChangeSafely(
+  broadcastEnvironmentChange: () => Promise<void>,
+): Promise<void> {
+  try {
+    await broadcastEnvironmentChange();
+  } catch {
+    // The registry update remains valid even if Windows cannot notify existing shell processes.
+  }
 }
 
 async function macPathIsConfigured(paths: AgentSupportPaths, environmentPath: string): Promise<boolean> {
@@ -831,6 +907,15 @@ async function writeWindowsUserPath(value: string): Promise<void> {
     "reg.exe",
     ["add", "HKCU\\Environment", "/v", "Path", "/t", "REG_EXPAND_SZ", "/d", value, "/f"],
     { windowsHide: true },
+  );
+}
+
+async function broadcastWindowsEnvironmentChange(): Promise<void> {
+  const encodedCommand = Buffer.from(WINDOWS_ENVIRONMENT_CHANGE_SCRIPT, "utf16le").toString("base64");
+  await execFileAsync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand],
+    { windowsHide: true, timeout: 15_000 },
   );
 }
 

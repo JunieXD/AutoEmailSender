@@ -32,6 +32,8 @@ async function createFixture(
     localAppDataPath: path.join(root, "local-app-data"),
     appVersion: "2.4.1",
     environmentPath: platform === "darwin" ? "/usr/bin:/bin" : undefined,
+    processEnvironment: { PATH: platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin" },
+    broadcastWindowsEnvironmentChange: async () => {},
     now: () => new Date("2026-08-04T00:00:00.000Z"),
   };
   const paths = resolveAgentSupportPaths(options);
@@ -151,21 +153,68 @@ describe("Agent support installation", () => {
   it("copies Windows CLI files and manages only its own user PATH entry", async () => {
     const { options, paths } = await createFixture("win32");
     let userPath = "C:\\Windows\\System32;C:\\Tools";
+    const processEnvironment = { Path: "C:\\Windows\\System32;C:\\Tools" };
+    let environmentChangeBroadcasts = 0;
     const service = createAgentSupportService({
       ...options,
+      processEnvironment,
       readWindowsUserPath: async () => userPath,
       writeWindowsUserPath: async (value) => {
         userPath = value;
+      },
+      broadcastWindowsEnvironmentChange: async () => {
+        environmentChangeBroadcasts += 1;
       },
     });
 
     await expect(service.enable()).resolves.toMatchObject({ state: "enabled" });
     expect(await readFile(paths.cliTarget, "utf8")).toBe("cli-binary");
     expect(userPath.split(";")).toContain(paths.commandDirectory);
+    expect(processEnvironment.Path.split(";")).toContain(paths.commandDirectory);
+    expect(environmentChangeBroadcasts).toBe(1);
+
+    const restartedProcessEnvironment = { PATH: "C:\\Windows\\System32;C:\\Tools" };
+    const restartedService = createAgentSupportService({
+      ...options,
+      processEnvironment: restartedProcessEnvironment,
+      readWindowsUserPath: async () => userPath,
+      writeWindowsUserPath: async (value) => {
+        userPath = value;
+      },
+      broadcastWindowsEnvironmentChange: async () => {
+        environmentChangeBroadcasts += 1;
+      },
+    });
+    await expect(restartedService.synchronize()).resolves.toMatchObject({ state: "enabled" });
+    expect(restartedProcessEnvironment.PATH.split(";")).toContain(paths.commandDirectory);
+    expect(environmentChangeBroadcasts).toBe(1);
 
     await expect(service.disable()).resolves.toMatchObject({ state: "not_enabled" });
     expect(userPath).toBe("C:\\Windows\\System32;C:\\Tools");
+    expect(processEnvironment.Path).toBe("C:\\Windows\\System32;C:\\Tools");
+    expect(environmentChangeBroadcasts).toBe(2);
     expect(await exists(paths.cliTarget)).toBe(false);
+  });
+
+  it("keeps Windows CLI installation successful when environment broadcasting fails", async () => {
+    const { options, paths } = await createFixture("win32");
+    let userPath = "C:\\Windows\\System32";
+    const processEnvironment = { PATH: userPath };
+    const service = createAgentSupportService({
+      ...options,
+      processEnvironment,
+      readWindowsUserPath: async () => userPath,
+      writeWindowsUserPath: async (value) => {
+        userPath = value;
+      },
+      broadcastWindowsEnvironmentChange: async () => {
+        throw new Error("broadcast unavailable");
+      },
+    });
+
+    await expect(service.enable()).resolves.toMatchObject({ state: "enabled" });
+    expect(userPath.split(";")).toContain(paths.commandDirectory);
+    expect(processEnvironment.PATH.split(";")).toContain(paths.commandDirectory);
   });
 
   it("silently overwrites product-managed CLI and Skills after an app update", async () => {
@@ -228,18 +277,28 @@ describe("Agent support installation", () => {
     const { options, paths } = await createFixture("win32");
     let userPath = `C:\\Windows\\System32;${paths.commandDirectory}`;
     const originalPath = userPath;
+    const processEnvironment = { PATH: "C:\\Windows\\System32" };
+    let environmentChangeBroadcasts = 0;
     const service = createAgentSupportService({
       ...options,
+      processEnvironment,
       readWindowsUserPath: async () => userPath,
       writeWindowsUserPath: async (value) => {
         userPath = value;
+      },
+      broadcastWindowsEnvironmentChange: async () => {
+        environmentChangeBroadcasts += 1;
       },
     });
 
     await expect(service.enable()).resolves.toMatchObject({ state: "enabled" });
     expect(JSON.parse(await readFile(paths.manifestPath, "utf8")).path_managed).toBe(false);
+    expect(processEnvironment.PATH.split(";")).toContain(paths.commandDirectory);
+    expect(environmentChangeBroadcasts).toBe(0);
     await expect(service.disable()).resolves.toMatchObject({ state: "not_enabled" });
     expect(userPath).toBe(originalPath);
+    expect(processEnvironment.PATH.split(";")).toContain(paths.commandDirectory);
+    expect(environmentChangeBroadcasts).toBe(0);
   });
 });
 
