@@ -118,6 +118,15 @@ const overview: DashboardOverviewDTO = {
       high_score_uncontacted_count: 1,
       high_score_threshold: 85,
     },
+    match_context: {
+      source_identity_id: 1,
+      source_identity_name: "博士申请邮箱",
+      source_identity_email: "applicant@example.com",
+      source_material_id: 3,
+      source_material_name: "个人简历.pdf",
+      uses_group_match_source: false,
+      stale_result_count: 0,
+    },
     match_score_distribution: [
       { bucket: "unmatched", label: "未分析", count: 1 },
       { bucket: "0_59", label: "0-59", count: 0 },
@@ -387,6 +396,8 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("统计面板")).toBeInTheDocument();
     expect(screen.queryByText("身份：博士申请邮箱")).not.toBeInTheDocument();
     expect(screen.queryByText("模型：OpenAI")).not.toBeInTheDocument();
+    expect(screen.queryByText(/匹配依据/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/默认材料/)).not.toBeInTheDocument();
     expect(await screen.findByText("导师概览")).toBeInTheDocument();
     expect(await screen.findByText("联系进展")).toBeInTheDocument();
     expect(await screen.findByText("匹配分数分布")).toBeInTheDocument();
