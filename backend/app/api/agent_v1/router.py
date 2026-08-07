@@ -5688,6 +5688,7 @@ def _serialize_agent_workspace_thread(
                     "content_html": message.content_html,
                     "rfc_message_id": message.rfc_message_id,
                     "failure_summary": sanitize_optional_error(message.failure_summary),
+                    "delivery_status": message.delivery_status,
                     "prompt_tokens": message.prompt_tokens,
                     "completion_tokens": message.completion_tokens,
                     "total_tokens": message.total_tokens,

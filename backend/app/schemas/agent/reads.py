@@ -486,6 +486,7 @@ class AgentWorkspaceMessageRead(ApiSchema):
     content_html: str | None = None
     rfc_message_id: str | None = None
     failure_summary: str | None = None
+    delivery_status: Literal["succeeded", "failed"] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None

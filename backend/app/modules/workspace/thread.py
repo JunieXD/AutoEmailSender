@@ -661,6 +661,7 @@ def _serialize_workspace_event(event: CommunicationEvent) -> WorkspaceMessageRea
         created_at_override=event.created_at,
         source_identities=event.source_identities,
         fallback_logs=event.logs,
+        sent_successful=event.successful,
     )
 
 
@@ -671,6 +672,7 @@ def _serialize_workspace_message(
     created_at_override: datetime | None = None,
     source_identities: tuple[IdentityProfile, ...] = (),
     fallback_logs: tuple[EmailLog, ...] = (),
+    sent_successful: bool | None = None,
 ) -> WorkspaceMessageRead:
     ordered_logs = (
         log,
@@ -694,6 +696,14 @@ def _serialize_workspace_message(
     )
     usage = _extract_usage(log.provider_payload)
     is_received = log.direction == "received"
+    delivery_status = None
+    if log.direction == EmailDirection.SENT.value:
+        successful = (
+            sent_successful
+            if sent_successful is not None
+            else not (log.failure_summary or "").strip()
+        )
+        delivery_status = "succeeded" if successful else "failed"
     return WorkspaceMessageRead(
         id=id_override if id_override is not None else log.id,
         direction=log.direction,
@@ -706,6 +716,7 @@ def _serialize_workspace_message(
         ),
         rfc_message_id=rfc_message_id,
         failure_summary=log.failure_summary,
+        delivery_status=delivery_status,
         reply_headers=reply_headers,
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),

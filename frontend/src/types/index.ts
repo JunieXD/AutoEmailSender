@@ -757,6 +757,7 @@ export interface WorkspaceMessageDTO {
   content_html: string | null;
   rfc_message_id: string | null;
   failure_summary: string | null;
+  delivery_status?: 'succeeded' | 'failed' | null;
   reply_headers: Record<string, unknown> | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;

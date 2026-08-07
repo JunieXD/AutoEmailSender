@@ -326,6 +326,7 @@ const buildWorkspaceMessage = (
   content_html: "<p>老师您好</p>",
   rfc_message_id: null,
   failure_summary: null,
+  delivery_status: "succeeded",
   reply_headers: null,
   prompt_tokens: null,
   completion_tokens: null,
@@ -703,6 +704,28 @@ describe("WorkspacePage next-step", () => {
 
     expect(await screen.findByText("已发送")).toBeInTheDocument();
     expect(screen.queryByText("已算匹配")).not.toBeInTheDocument();
+  });
+
+  it("does not treat a failed send attempt as sent relationship status", async () => {
+    mockedGetWorkspaceThread.mockResolvedValue(
+      buildThread({
+        status: "matched",
+        messages: [
+          buildWorkspaceMessage({
+            id: 10,
+            direction: "sent",
+            subject: "未成功发送的主题",
+            delivery_status: "failed",
+            failure_summary: "SMTP 连接中断",
+          }),
+        ],
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("待生成")).toBeInTheDocument();
+    expect(screen.queryByText("已发送")).not.toBeInTheDocument();
   });
 
   it("shows replied relationship status ahead of the current follow-up draft state", async () => {

@@ -14,6 +14,7 @@ const buildMessage = (
     '<p style="color: #111827;">老师您好 <strong>重点内容</strong></p><table><tbody><tr><td>表格内容</td></tr></tbody></table>',
   rfc_message_id: null,
   failure_summary: null,
+  delivery_status: "succeeded",
   reply_headers: null,
   prompt_tokens: null,
   completion_tokens: null,
@@ -112,6 +113,25 @@ describe("WorkspaceMessageThread", () => {
     fireEvent.click(screen.getByRole("button", { name: "刷新通信记录" }));
 
     expect(handleRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels failed send attempts without counting them as communication", () => {
+    render(
+      <WorkspaceMessageThread
+        messages={[
+          buildMessage({
+            delivery_status: "failed",
+            failure_summary: "SMTP 连接中断",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("发送失败")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("发送失败：SMTP 连接中断");
+    expect(screen.getByText("0 条")).toBeInTheDocument();
+    expect(screen.getByText("1 次失败尝试")).toBeInTheDocument();
+    expect(screen.queryByText("已发送")).not.toBeInTheDocument();
   });
 
   it("labels shared message sources and shows identity-level sync warnings", () => {
