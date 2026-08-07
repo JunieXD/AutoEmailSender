@@ -1167,6 +1167,32 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertIn("已抓取页面：Faculty", messages)
         self.assertIn("发现候选导师：高分导师、低分导师、无邮箱导师", messages)
 
+    def test_crawl_job_details_returns_summary_and_reuses_detail_records(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._seed_page_and_candidates(job_id)
+        self._set_job_status(job_id, "needs_review")
+
+        response = self.client.get(f"/api/crawl-jobs/{job_id}/details")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["job"]["id"], job_id)
+        self.assertEqual(payload["job"]["page_count"], 1)
+        self.assertEqual(payload["job"]["candidate_count"], 3)
+        self.assertEqual(len(payload["pages"]), 1)
+        self.assertEqual(len(payload["candidates"]), 3)
+        self.assertIn("任务进入待审核", [event["message"] for event in payload["events"]])
+
     def test_approve_requires_candidate_ids(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",

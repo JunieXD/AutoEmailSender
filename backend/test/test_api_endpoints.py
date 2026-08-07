@@ -5188,14 +5188,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         from app.modules.campaigns.batch_tasks.api import _serialize_batch_task
 
-        unloaded_item_columns: list[set[str]] = []
+        unloaded_task_relationships: list[set[str]] = []
 
-        def capture_batch_task_projection(task):
-            unloaded_item_columns.extend(
-                inspect(email_task).unloaded
-                for email_task in task.email_tasks
-            )
-            return _serialize_batch_task(task)
+        def capture_batch_task_projection(task, *, metrics=None):
+            unloaded_task_relationships.append(inspect(task).unloaded)
+            return _serialize_batch_task(task, metrics=metrics)
 
         with patch(
             "app.modules.campaigns.batch_tasks.api._serialize_batch_task",
@@ -5208,10 +5205,8 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(listed.status_code, 200, msg=listed.text)
         self.assertEqual([item["id"] for item in listed.json()], [created.json()["id"]])
-        self.assertTrue(unloaded_item_columns)
-        self.assertIn("match_reason", unloaded_item_columns[0])
-        self.assertIn("generated_content_text", unloaded_item_columns[0])
-        self.assertIn("generated_content_html", unloaded_item_columns[0])
+        self.assertTrue(unloaded_task_relationships)
+        self.assertIn("email_tasks", unloaded_task_relationships[0])
 
     def test_remove_batch_task_item_soft_deletes_single_draft_and_updates_target_count(self) -> None:
         identity_id = self._create_identity(with_imap=False)

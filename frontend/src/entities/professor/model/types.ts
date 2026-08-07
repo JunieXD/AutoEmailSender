@@ -231,6 +231,13 @@ export interface ProfessorInformationEnrichmentItemDTO {
   updated_at: string;
 }
 
+export interface ProfessorInformationEnrichmentItemsPageDTO {
+  items: ProfessorInformationEnrichmentItemDTO[];
+  total_count: number;
+  next_cursor: number | null;
+  has_more: boolean;
+}
+
 export interface ProfessorInformationEnrichmentActiveDTO {
   active: boolean;
   job: ProfessorInformationEnrichmentJobDTO | null;

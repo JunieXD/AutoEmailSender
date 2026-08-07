@@ -301,6 +301,13 @@ export interface CrawlJobSummaryDTO extends CrawlJobDTO {
   duration_seconds: number;
 }
 
+export interface CrawlJobDetailsDTO {
+  job: CrawlJobSummaryDTO;
+  pages: CrawlPageDTO[];
+  candidates: CrawlCandidateDTO[];
+  events: CrawlJobEventDTO[];
+}
+
 export interface CrawlPageDTO {
   id: number;
   job_id: number;

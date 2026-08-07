@@ -32,6 +32,7 @@ from app.modules.professors.public import (
     finalize_professor_information_enrichment_job,
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
+    list_professor_information_enrichment_items_page,
 )
 from app.services.token_usage_records import list_token_usage_records
 from test.schema_database import create_schema_sqlite_database
@@ -105,6 +106,57 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[1].skip_reason, "缺少有效的导师主页链接")
         self.assertEqual(items[2].skip_reason, "资料已完整，无需补全")
         self.assertEqual(items[3].skip_reason, "导师已在回收站")
+
+    async def test_batch_items_page_filters_and_counts_without_loading_all_items(self) -> None:
+        active_id = await self._create_professor(
+            name="可补全导师",
+            profile_url="https://example.edu/active",
+        )
+        missing_url_id = await self._create_professor(name="缺少主页导师")
+        complete_id = await self._create_professor(
+            name="资料完整导师",
+            email="complete@example.edu",
+            title="教授",
+            department="计算机系",
+            research_direction="人工智能",
+            recent_papers=["Paper A"],
+            profile_url="https://example.edu/complete",
+        )
+        archived_id = await self._create_professor(
+            name="回收站导师",
+            profile_url="https://example.edu/archived",
+            archived=True,
+        )
+        job_id = await create_professor_information_enrichment_job(
+            self.session_factory,
+            professor_ids=[active_id, missing_url_id, complete_id, archived_id],
+            llm_profile_id=self.llm_profile_id,
+            trigger_mode="batch",
+        )
+
+        async with self.session_factory() as session:
+            first_page = await list_professor_information_enrichment_items_page(
+                session,
+                job_id,
+                cursor=0,
+                limit=1,
+            )
+            skipped_page = await list_professor_information_enrichment_items_page(
+                session,
+                job_id,
+                cursor=0,
+                limit=1,
+                status_filter="skipped",
+            )
+
+        assert first_page is not None and skipped_page is not None
+        self.assertEqual(first_page.total_count, 4)
+        self.assertEqual(len(first_page.items), 1)
+        self.assertTrue(first_page.has_more)
+        self.assertEqual(first_page.next_cursor, 1)
+        self.assertEqual(skipped_page.total_count, 3)
+        self.assertEqual([item.status for item in skipped_page.items], ["skipped"])
+        self.assertTrue(skipped_page.has_more)
 
     async def test_batch_creation_uses_local_time_in_default_name(self) -> None:
         professor_id = await self._create_professor(

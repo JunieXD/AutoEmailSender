@@ -11,6 +11,7 @@ import {
   cancelCrawlJob,
   enrichCrawlCandidates,
   getCrawlJob,
+  getCrawlJobDetails,
   getCrawlJobEvents,
   listCrawlCandidates,
   listCrawlJobs,
@@ -23,6 +24,18 @@ const confirm = vi.hoisted(() => vi.fn());
 const notifyError = vi.hoisted(() => vi.fn());
 const notifySuccess = vi.hoisted(() => vi.fn());
 const scrollIntoView = vi.hoisted(() => vi.fn());
+const crawlApiMocks = vi.hoisted(() => ({
+  listCrawlJobs: vi.fn(),
+  approveCrawlCandidates: vi.fn(),
+  cancelCrawlJob: vi.fn(),
+  enrichCrawlCandidates: vi.fn(),
+  getCrawlJob: vi.fn(),
+  getCrawlJobDetails: vi.fn(),
+  listCrawlPages: vi.fn(),
+  listCrawlCandidates: vi.fn(),
+  getCrawlJobEvents: vi.fn(),
+  updateCrawlCandidate: vi.fn(),
+}));
 const backgroundTaskNotificationMocks = vi.hoisted(() => ({
   stopTrackingInformationEnrichmentJob: vi.fn(),
   trackCrawlCandidateEnrichment: vi.fn(),
@@ -71,6 +84,12 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
 vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs: vi.fn().mockResolvedValue([]),
   listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
+  listProfessorInformationEnrichmentItemsPage: vi.fn().mockResolvedValue({
+    items: [],
+    total_count: 0,
+    next_cursor: null,
+    has_more: false,
+  }),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),
@@ -78,15 +97,16 @@ vi.mock("@/entities/professor/api/informationEnrichment", () => ({
 }));
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
-  listCrawlJobs: vi.fn(),
-  approveCrawlCandidates: vi.fn(),
-  cancelCrawlJob: vi.fn(),
-  enrichCrawlCandidates: vi.fn(),
-  getCrawlJob: vi.fn(),
-  listCrawlPages: vi.fn(),
-  listCrawlCandidates: vi.fn(),
-  getCrawlJobEvents: vi.fn(),
-  updateCrawlCandidate: vi.fn(),
+  listCrawlJobs: crawlApiMocks.listCrawlJobs,
+  approveCrawlCandidates: crawlApiMocks.approveCrawlCandidates,
+  cancelCrawlJob: crawlApiMocks.cancelCrawlJob,
+  enrichCrawlCandidates: crawlApiMocks.enrichCrawlCandidates,
+  getCrawlJob: crawlApiMocks.getCrawlJob,
+  getCrawlJobDetails: crawlApiMocks.getCrawlJobDetails,
+  listCrawlPages: crawlApiMocks.listCrawlPages,
+  listCrawlCandidates: crawlApiMocks.listCrawlCandidates,
+  getCrawlJobEvents: crawlApiMocks.getCrawlJobEvents,
+  updateCrawlCandidate: crawlApiMocks.updateCrawlCandidate,
 }));
 
 const runningJob = {
@@ -218,6 +238,12 @@ describe("TasksPage crawler jobs tab", () => {
         raw: null,
       },
     ]);
+    vi.mocked(getCrawlJobDetails).mockImplementation(async (jobId: number) => ({
+      job: await getCrawlJob(jobId),
+      pages: await listCrawlPages(jobId),
+      candidates: await listCrawlCandidates(jobId),
+      events: await getCrawlJobEvents(jobId),
+    }));
   });
 
   it("shows crawl job cards after switching to the crawler tab", async () => {
@@ -286,9 +312,7 @@ describe("TasksPage crawler jobs tab", () => {
     );
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.documentElement.style.overflow).toBe("hidden");
-    expect(listCrawlPages).toHaveBeenCalledWith(7);
-    expect(listCrawlCandidates).toHaveBeenCalledWith(7);
-    expect(getCrawlJobEvents).toHaveBeenCalledWith(7);
+    expect(getCrawlJobDetails).toHaveBeenCalledWith(7);
     expect(getDiagnosticEvents()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

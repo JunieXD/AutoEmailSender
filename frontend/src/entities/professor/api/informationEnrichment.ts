@@ -2,7 +2,9 @@ import { apiFetch } from '@/lib/api/client';
 import type {
   ProfessorInformationEnrichmentActiveDTO,
   ProfessorInformationEnrichmentItemDTO,
+  ProfessorInformationEnrichmentItemsPageDTO,
   ProfessorInformationEnrichmentJobDTO,
+  ProfessorInformationEnrichmentItemStatus,
   ProfessorInformationEnrichmentListView,
 } from '../model/types';
 
@@ -58,6 +60,24 @@ export const getProfessorInformationEnrichmentJob = (jobId: number) =>
 export const listProfessorInformationEnrichmentItems = (jobId: number) =>
   apiFetch<ProfessorInformationEnrichmentItemDTO[]>(
     `/api/professor-information-enrichment-jobs/${jobId}/items`,
+  );
+
+export const listProfessorInformationEnrichmentItemsPage = (
+  jobId: number,
+  params?: {
+    cursor?: number;
+    limit?: number;
+    status?: ProfessorInformationEnrichmentItemStatus | null;
+  },
+) =>
+  apiFetch<ProfessorInformationEnrichmentItemsPageDTO>(
+    `/api/professor-information-enrichment-jobs/${jobId}/items/page`,
+    undefined,
+    {
+      cursor: params?.cursor ?? 0,
+      limit: params?.limit ?? 20,
+      status: params?.status ?? undefined,
+    },
   );
 
 export const cancelProfessorInformationEnrichmentJob = (jobId: number) =>

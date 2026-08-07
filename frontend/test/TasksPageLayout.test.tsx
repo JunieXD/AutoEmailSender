@@ -56,6 +56,12 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
 vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs: vi.fn().mockResolvedValue([]),
   listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
+  listProfessorInformationEnrichmentItemsPage: vi.fn().mockResolvedValue({
+    items: [],
+    total_count: 0,
+    next_cursor: null,
+    has_more: false,
+  }),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),

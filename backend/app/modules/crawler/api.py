@@ -39,6 +39,7 @@ from .schemas import (
     CrawlJobApprovePayload,
     CrawlJobApproveResult,
     CrawlJobCreatePayload,
+    CrawlJobDetailsRead,
     CrawlJobEventRead,
     CrawlJobRead,
     CrawlJobSummaryRead,
@@ -280,6 +281,35 @@ async def get_crawl_job(
     job = await _get_crawl_job_or_404(session, job_id)
     summaries = await _build_crawl_job_summaries(session, [job])
     return summaries[0]
+
+
+@router.get("/{job_id}/details", response_model=CrawlJobDetailsRead)
+async def get_crawl_job_details(
+    job_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> CrawlJobDetailsRead:
+    job = await _get_crawl_job_or_404(session, job_id)
+    pages = await _list_crawl_pages_for_job(session, job_id)
+    candidates = await _list_crawl_candidates_for_job(session, job_id)
+    metrics = build_crawl_job_metrics(job)
+    summary = CrawlJobSummaryRead.model_validate(job).model_copy(
+        update={
+            "page_count": len(pages),
+            "candidate_count": len(candidates),
+            "latest_event_message": _latest_event_message(job.agent_trace),
+            "input_tokens": metrics.input_tokens,
+            "output_tokens": metrics.output_tokens,
+            "cached_tokens": metrics.cached_tokens,
+            "total_tokens": metrics.total_tokens,
+            "duration_seconds": metrics.duration_seconds,
+        },
+    )
+    return CrawlJobDetailsRead(
+        job=summary,
+        pages=pages,
+        candidates=candidates,
+        events=build_crawl_job_events(job, pages=pages, candidates=candidates),
+    )
 
 
 @router.get("/{job_id}/events", response_model=list[CrawlJobEventRead])

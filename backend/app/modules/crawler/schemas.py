@@ -138,6 +138,13 @@ class CrawlJobSummaryRead(CrawlJobRead):
     duration_seconds: int = 0
 
 
+class CrawlJobDetailsRead(ApiSchema):
+    job: CrawlJobSummaryRead
+    pages: list["CrawlPageRead"]
+    candidates: list["CrawlCandidateRead"]
+    events: list["CrawlJobEventRead"]
+
+
 class CrawlJobEventRead(ApiSchema):
     id: str
     job_id: int

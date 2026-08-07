@@ -14,6 +14,7 @@ import type {
   ProfessorDTO,
   ProfessorManagementItemDTO,
   ProfessorInformationEnrichmentItemDTO,
+  ProfessorInformationEnrichmentItemsPageDTO,
   ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
 } from "@/types";
@@ -49,6 +50,7 @@ const apiMocks = vi.hoisted(() => ({
   restoreBatchTaskItemSend: vi.fn(),
   listCrawlJobs: vi.fn(),
   getCrawlJob: vi.fn(),
+  getCrawlJobDetails: vi.fn(),
   getCrawlJobEvents: vi.fn(),
   listCrawlCandidates: vi.fn(),
   listCrawlPages: vi.fn(),
@@ -70,6 +72,7 @@ const apiMocks = vi.hoisted(() => ({
   restoreMatchAnalysisJob: vi.fn(),
   listProfessorInformationEnrichmentJobs: vi.fn(),
   listProfessorInformationEnrichmentItems: vi.fn(),
+  listProfessorInformationEnrichmentItemsPage: vi.fn(),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),
@@ -154,6 +157,7 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
 vi.mock("@/lib/api/crawlJobsApi", () => ({
   listCrawlJobs: apiMocks.listCrawlJobs,
   getCrawlJob: apiMocks.getCrawlJob,
+  getCrawlJobDetails: apiMocks.getCrawlJobDetails,
   getCrawlJobEvents: apiMocks.getCrawlJobEvents,
   listCrawlCandidates: apiMocks.listCrawlCandidates,
   listCrawlPages: apiMocks.listCrawlPages,
@@ -183,6 +187,8 @@ vi.mock("@/entities/professor/api/informationEnrichment", () => ({
     apiMocks.listProfessorInformationEnrichmentJobs,
   listProfessorInformationEnrichmentItems:
     apiMocks.listProfessorInformationEnrichmentItems,
+  listProfessorInformationEnrichmentItemsPage:
+    apiMocks.listProfessorInformationEnrichmentItemsPage,
   cancelProfessorInformationEnrichmentJob:
     apiMocks.cancelProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob:
@@ -693,6 +699,17 @@ const buildInformationEnrichmentItem = (
   ...overrides,
 });
 
+const buildInformationEnrichmentItemsPage = (
+  items: ProfessorInformationEnrichmentItemDTO[] = [],
+  overrides: Partial<ProfessorInformationEnrichmentItemsPageDTO> = {},
+): ProfessorInformationEnrichmentItemsPageDTO => ({
+  items,
+  total_count: items.length,
+  next_cursor: null,
+  has_more: false,
+  ...overrides,
+});
+
 const buildBatchItem = (
   overrides: Partial<BatchTaskItemDTO> = {},
 ): BatchTaskItemDTO => ({
@@ -883,12 +900,21 @@ beforeEach(() => {
   apiMocks.getCrawlJobEvents.mockResolvedValue([]);
   apiMocks.listCrawlCandidates.mockResolvedValue([]);
   apiMocks.listCrawlPages.mockResolvedValue([]);
+  apiMocks.getCrawlJobDetails.mockImplementation(async (jobId: number) => ({
+    job: await apiMocks.getCrawlJob(jobId),
+    pages: await apiMocks.listCrawlPages(jobId),
+    candidates: await apiMocks.listCrawlCandidates(jobId),
+    events: await apiMocks.getCrawlJobEvents(jobId),
+  }));
   apiMocks.listMatchAnalysisJobs.mockResolvedValue([]);
   apiMocks.listMatchAnalysisJobItems.mockResolvedValue(
     buildMatchAnalysisJobItemsPage(),
   );
   apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([]);
   apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([]);
+  apiMocks.listProfessorInformationEnrichmentItemsPage.mockResolvedValue(
+    buildInformationEnrichmentItemsPage(),
+  );
   apiMocks.getProfessor.mockResolvedValue(buildProfessor());
   apiMocks.updateProfessor.mockResolvedValue(buildProfessorManagementItem());
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
@@ -1184,18 +1210,23 @@ describe("TasksPage information enrichment", () => {
     apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([
       buildInformationEnrichmentJob(),
     ]);
-    apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([
-      buildInformationEnrichmentItem(),
-      buildInformationEnrichmentItem({
-        id: 62,
-        professor_name: "李老师",
-        status: "failed",
-        enriched_fields: [],
-        error_message: "browser fallback failed: net::ERR_CONNECTION_RESET",
-        total_tokens: 300,
-        attempt_count: 3,
-      }),
-    ]);
+    apiMocks.listProfessorInformationEnrichmentItemsPage.mockResolvedValue(
+      buildInformationEnrichmentItemsPage(
+        [
+          buildInformationEnrichmentItem(),
+          buildInformationEnrichmentItem({
+            id: 62,
+            professor_name: "李老师",
+            status: "failed",
+            enriched_fields: [],
+            error_message: "browser fallback failed: net::ERR_CONNECTION_RESET",
+            total_tokens: 300,
+            attempt_count: 3,
+          }),
+        ],
+        { total_count: 2 },
+      ),
+    );
 
     render(
       <MemoryRouter>
@@ -1265,6 +1296,56 @@ describe("TasksPage information enrichment", () => {
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByText("尝试 3 次")).toBeInTheDocument();
+  });
+
+  it("loads a server-side page and prefetches the next information enrichment page", async () => {
+    const job = buildInformationEnrichmentJob({ target_count: 20 });
+    apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([job]);
+    apiMocks.listProfessorInformationEnrichmentItemsPage.mockImplementation(
+      (_jobId: number, params?: { cursor?: number; limit?: number }) =>
+        Promise.resolve(
+          buildInformationEnrichmentItemsPage(
+            params?.cursor === 0 ? [buildInformationEnrichmentItem()] : [],
+            {
+              total_count: 20,
+              has_more: params?.cursor === 0,
+              next_cursor: params?.cursor === 0 ? params.limit : null,
+            },
+          ),
+        ),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看信息补全任务 导师信息补全 2026-05-08",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listProfessorInformationEnrichmentItemsPage).toHaveBeenCalledWith(
+        51,
+        {
+          cursor: 0,
+          limit: 10,
+          status: null,
+        },
+      );
+      expect(apiMocks.listProfessorInformationEnrichmentItemsPage).toHaveBeenCalledWith(
+        51,
+        {
+          cursor: 10,
+          limit: 10,
+          status: null,
+        },
+      );
+    });
   });
 
   it("supports canceling and retrying failed information enrichment items", async () => {

@@ -142,7 +142,7 @@ from app.modules.professors.public import (
     get_professor_with_tags_or_raise,
     restore_professor_record,
     delete_professor_information_enrichment_job_record,
-    list_professor_information_enrichment_items,
+    list_professor_information_enrichment_items_page,
     list_professor_information_enrichment_jobs,
     request_professor_information_enrichment_cancel,
     restore_professor_information_enrichment_job_record,
@@ -2471,11 +2471,19 @@ async def list_agent_professor_information_enrichment_job_items(
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentPage[ProfessorInformationEnrichmentItemRead]:
-    items = await list_professor_information_enrichment_items(session, job_id)
-    if items is None:
+    page = await list_professor_information_enrichment_items_page(
+        session,
+        job_id,
+        cursor=cursor,
+        limit=limit,
+    )
+    if page is None:
         raise HTTPException(status_code=404, detail="信息补全任务不存在")
-    page, next_cursor, has_more = _slice_page(items[cursor:], cursor=cursor, limit=limit)
-    return AgentPage(items=list(page), next_cursor=next_cursor, has_more=has_more)
+    return AgentPage(
+        items=page.items,
+        next_cursor=page.next_cursor,
+        has_more=page.has_more,
+    )
 
 
 @router.post(
