@@ -5766,51 +5766,57 @@ export const TasksPage = () => {
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
                       {filteredMatchJobItems.length > 0 ? (
-                        visibleMatchJobItems.map((item) => (
-                          <tr key={item.id}>
-                            <td className="px-4 py-3 align-middle">
-                              <div className="font-medium text-stone-900">
-                                {item.professor_name}
-                              </div>
-                              <div className="mt-1 text-xs text-stone-500">
-                                {[
-                                  item.professor_title,
-                                  item.professor_university,
-                                  item.professor_school,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" / ") || "暂无补充信息"}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-center align-middle">
-                              <span
-                                className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_ITEM_STATUS_TONES[item.status]}`}
-                              >
-                                {MATCH_ANALYSIS_ITEM_STATUS_LABELS[item.status]}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center align-middle tabular-nums">
-                              {item.match_score ?? "未生成"}
-                            </td>
-                            <td className="px-4 py-3 align-middle">
-                              {item.error_message || item.skip_reason || "已完成"}
-                            </td>
-                            <td className="w-44 px-3 py-3 text-center align-middle">
-                              <TokenUsageBreakdown
-                                inputTokens={item.prompt_tokens}
-                                outputTokens={item.completion_tokens}
-                                cachedTokens={item.cached_tokens}
-                                totalTokens={item.total_tokens}
-                                ariaLabel={`${item.professor_name} Token 使用明细`}
-                                compactLayout="tight"
-                                className="text-left"
-                              />
-                            </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-center align-middle tabular-nums">
-                              {formatDisplayTime(item.updated_at, { withSeconds: true })}
-                            </td>
-                          </tr>
-                        ))
+                        visibleMatchJobItems.map((item) => {
+                          const professorDetails = [
+                            item.professor_title,
+                            item.professor_university,
+                            item.professor_school,
+                          ]
+                            .filter(Boolean)
+                            .join(" / ");
+
+                          return (
+                            <tr key={item.id}>
+                              <td className="px-4 py-3 align-middle">
+                                <div className="font-medium text-stone-900">
+                                  {item.professor_name}
+                                </div>
+                                {professorDetails ? (
+                                  <div className="mt-1 text-xs text-stone-500">
+                                    {professorDetails}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-4 py-3 text-center align-middle">
+                                <span
+                                  className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_ITEM_STATUS_TONES[item.status]}`}
+                                >
+                                  {MATCH_ANALYSIS_ITEM_STATUS_LABELS[item.status]}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-center align-middle tabular-nums">
+                                {item.match_score ?? "未生成"}
+                              </td>
+                              <td className="px-4 py-3 text-center align-middle">
+                                {item.error_message || item.skip_reason || "已完成"}
+                              </td>
+                              <td className="w-44 px-3 py-3 text-center align-middle">
+                                <TokenUsageBreakdown
+                                  inputTokens={item.prompt_tokens}
+                                  outputTokens={item.completion_tokens}
+                                  cachedTokens={item.cached_tokens}
+                                  totalTokens={item.total_tokens}
+                                  ariaLabel={`${item.professor_name} Token 使用明细`}
+                                  compactLayout="tight"
+                                  className="text-left"
+                                />
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-center align-middle tabular-nums">
+                                {formatDisplayTime(item.updated_at, { withSeconds: true })}
+                              </td>
+                            </tr>
+                          );
+                        })
                       ) : (
                         <tr>
                           <td
@@ -6063,7 +6069,7 @@ export const TasksPage = () => {
                                   <span className="text-stone-400">--</span>
                                 )}
                               </td>
-                              <td className="max-w-64 px-4 py-3 align-middle">
+                              <td className="max-w-64 px-4 py-3 text-center align-middle">
                                 <div
                                   className={`whitespace-pre-wrap break-words leading-6 ${
                                     item.error_message ? "text-red-700" : "text-stone-700"

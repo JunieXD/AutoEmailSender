@@ -1015,7 +1015,11 @@ describe("TasksPage match analysis token usage", () => {
     });
     apiMocks.listMatchAnalysisJobs.mockResolvedValue([job]);
     apiMocks.listMatchAnalysisJobItems.mockResolvedValue([
-      buildMatchAnalysisJobItem(),
+      buildMatchAnalysisJobItem({
+        professor_title: null,
+        professor_university: null,
+        professor_school: null,
+      }),
     ]);
 
     render(
@@ -1074,10 +1078,9 @@ describe("TasksPage match analysis token usage", () => {
     expect(itemRow).not.toBeNull();
     const itemCells = within(itemRow as HTMLTableRowElement).getAllByRole("cell");
     expect(itemCells[0]).toHaveClass("align-middle");
-    expect(
-      within(itemCells[0]).getByText("教授 / 测试大学 / 计算机学院"),
-    ).toBeInTheDocument();
-    [1, 2, 4, 5].forEach((index) => {
+    expect(itemCells[0]).not.toHaveTextContent("暂无补充信息");
+    expect(itemCells[0].querySelector(".mt-1")).toBeNull();
+    [1, 2, 3, 4, 5].forEach((index) => {
       expect(itemCells[index]).toHaveClass("text-center", "align-middle");
     });
     expect(within(itemSummary).getByText("900")).toBeInTheDocument();
@@ -1186,7 +1189,7 @@ describe("TasksPage information enrichment", () => {
     expect(itemRow).not.toBeNull();
     const itemCells = within(itemRow as HTMLTableRowElement).getAllByRole("cell");
     expect(itemCells[0]).toHaveClass("align-middle");
-    [1, 2, 4, 5].forEach((index) => {
+    [1, 2, 3, 4, 5].forEach((index) => {
       expect(itemCells[index]).toHaveClass("text-center", "align-middle");
     });
     expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
