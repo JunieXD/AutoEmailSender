@@ -437,31 +437,11 @@ async def resolve_thinking_extra_body(profile: LLMProfile) -> dict[str, object] 
     except Exception:
         return None
 
-
-
-def adapt_failure_message_for_thinking_error(message: str | None) -> str | None:
-    """If ``message`` looks like a thinking-mode protocol error from the upstream model,
-    append a user-facing hint pointing at the remediation path."""
-
-    if not message:
-        return message
-    # 抓取通过 LangChain 触发的协议错没有显式 status_code；统一以 400 视角做关键词匹配
-    if not is_thinking_mode_protocol_error(400, message):
-        return message
-    return (
-        f"{message}\n\n"
-        "提示：模型在多轮调用中要求回传 thinking 字段。"
-        "请在 LLM Profile 设置中点击「测试连接」重新触发自适应探活，再重新启动抓取。"
-        "如果反复失败，请在 GitHub Issue 报告该模型与对应错误信息。"
-    )
-
-
 __all__ = [
     "EndpointKind",
     "THINKING_DISABLE_CANDIDATES",
     "THINKING_PROTOCOL_ERROR_KEYWORDS",
     "ThinkingAdaptationFailed",
-    "adapt_failure_message_for_thinking_error",
     "ensure_thinking_adaptation",
     "get_cached_extra_body",
     "invalidate_thinking_adaptation",

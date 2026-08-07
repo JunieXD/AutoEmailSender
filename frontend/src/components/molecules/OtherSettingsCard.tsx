@@ -101,17 +101,7 @@ const hiddenDraftPreferenceKeys = Object.keys(
   defaultDraftRewritePreferences,
 ) as HiddenDraftPreferenceKey[];
 
-const hiddenNumberFields: Array<{
-  key: NumberSettingsKey;
-  defaultValue: number;
-}> = [
-  {
-    key: "crawler_agent_max_chunks_per_run",
-    defaultValue: 2,
-  },
-];
-
-const emptyForm = [...numberFields, ...hiddenNumberFields].reduce((state, field) => {
+const emptyForm = numberFields.reduce((state, field) => {
   state[field.key] = "";
   return state;
 }, {} as FormState);
@@ -536,9 +526,6 @@ function toFormState(settings: RuntimeSettingsDTO): FormState {
   for (const field of numberFields) {
     state[field.key] = String(getNumberSetting(settings, field.key, field.defaultValue));
   }
-  for (const field of hiddenNumberFields) {
-    state[field.key] = String(getNumberSetting(settings, field.key, field.defaultValue));
-  }
   for (const key of hiddenDraftPreferenceKeys) {
     state[key] = defaultDraftRewritePreferences[key];
   }
@@ -561,10 +548,6 @@ function toUpdatePayload(form: FormState): RuntimeSettingsUpdateDTO {
   for (const field of numberFields) {
     const value = Number(form[field.key]);
     payload[field.key] = Number.isFinite(value) ? value : field.min;
-  }
-  for (const field of hiddenNumberFields) {
-    const value = Number(form[field.key]);
-    payload[field.key] = Number.isFinite(value) ? value : field.defaultValue;
   }
   Object.assign(payload, defaultDraftRewritePreferences);
   payload.draft_custom_instruction = form.draft_custom_instruction.trim();

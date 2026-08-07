@@ -24,6 +24,7 @@ from ..pages.tools import (
     CandidateEnrichmentPayload,
     CrawlToolContext,
     PageSnapshot,
+    build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
     validate_safe_public_crawl_url,
 )
@@ -453,8 +454,6 @@ async def enrich_candidate_profile_with_llm_with_usage(
     candidate: CrawlCandidate,
     page_text: str,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
-    from ..jobs.runtime import build_candidate_enrichment_prompt
-
     prompt = build_candidate_enrichment_prompt(candidate, page_text)
     completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
         ctx.session_factory,

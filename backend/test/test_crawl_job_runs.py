@@ -11,7 +11,6 @@ from app.modules.crawler.jobs.runs import (
     _settle_active_segment,
     create_initial_crawl_job_run,
     create_retry_crawl_job_run,
-    extract_token_usage,
     extract_token_usage_from_llm_response,
 )
 
@@ -80,24 +79,6 @@ class CrawlJobRunTokenUsageTests(unittest.TestCase):
             },
         )
 
-    def test_extracts_cached_tokens_from_usage_metadata(self) -> None:
-        usage = extract_token_usage(
-            {
-                "raw": {
-                    "message": (
-                        "usage_metadata={'input_tokens': 100, 'output_tokens': 20, "
-                        "'total_tokens': 120, 'input_token_details': {'cache_read': 64}}"
-                    )
-                }
-            }
-        )
-
-        self.assertIsNotNone(usage)
-        self.assertEqual(usage["input_tokens"], 100)
-        self.assertEqual(usage["output_tokens"], 20)
-        self.assertEqual(usage["total_tokens"], 120)
-        self.assertEqual(usage["cached_tokens"], 64)
-
     def test_extracts_cached_tokens_from_normalized_response_usage(self) -> None:
         response = type(
             "NormalizedUsageResponse",
@@ -147,46 +128,6 @@ class CrawlJobRunTokenUsageTests(unittest.TestCase):
         self.assertEqual(usage["input_tokens"], 100)
         self.assertEqual(usage["output_tokens"], 20)
         self.assertEqual(usage["cached_tokens"], 80)
-
-    def test_extracts_cached_tokens_from_response_metadata(self) -> None:
-        usage = extract_token_usage(
-            {
-                "raw": {
-                    "message": (
-                        "response_metadata={'token_usage': {'completion_tokens': 12, "
-                        "'prompt_tokens': 34, 'total_tokens': 46, "
-                        "'prompt_tokens_details': {'cached_tokens': 16}}}"
-                    )
-                }
-            }
-        )
-
-        self.assertIsNotNone(usage)
-        self.assertEqual(usage["input_tokens"], 34)
-        self.assertEqual(usage["output_tokens"], 12)
-        self.assertEqual(usage["total_tokens"], 46)
-        self.assertEqual(usage["cached_tokens"], 16)
-
-
-    def test_extracts_deepseek_prompt_cache_hit_tokens_from_trace(self) -> None:
-        usage = extract_token_usage(
-            {
-                "raw": {
-                    "message": (
-                        "response_metadata={'token_usage': {'completion_tokens': 12, "
-                        "'prompt_tokens': 34, 'total_tokens': 46, "
-                        "'prompt_cache_hit_tokens': 18, "
-                        "'prompt_cache_miss_tokens': 16}}"
-                    )
-                }
-            }
-        )
-
-        self.assertIsNotNone(usage)
-        self.assertEqual(usage["input_tokens"], 34)
-        self.assertEqual(usage["output_tokens"], 12)
-        self.assertEqual(usage["total_tokens"], 46)
-        self.assertEqual(usage["cached_tokens"], 18)
 
 if __name__ == "__main__":
     unittest.main()

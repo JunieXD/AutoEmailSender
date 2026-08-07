@@ -58,10 +58,6 @@ def update_runtime_settings(
         int | None,
         typer.Option("--crawler-host-concurrency", min=1, max=10),
     ] = None,
-    crawler_agent_max_chunks_per_run: Annotated[
-        int | None,
-        typer.Option("--crawler-agent-max-chunks-per-run", min=1, max=20),
-    ] = None,
     draft_max_tokens: Annotated[
         int | None,
         typer.Option("--draft-max-tokens", min=256, max=32000),
@@ -112,7 +108,6 @@ def update_runtime_settings(
             "crawler_worker_count": crawler_worker_count,
             "crawler_profile_enrichment_concurrency": crawler_profile_enrichment_concurrency,
             "crawler_host_concurrency": crawler_host_concurrency,
-            "crawler_agent_max_chunks_per_run": crawler_agent_max_chunks_per_run,
             "draft_max_tokens": draft_max_tokens,
             "batch_draft_generation_concurrency": batch_draft_generation_concurrency,
             "draft_rewrite_intensity": draft_rewrite_intensity,
@@ -191,7 +186,6 @@ def _runtime_settings_payload(current: dict[str, Any]) -> dict[str, Any]:
         "crawler_worker_count",
         "crawler_profile_enrichment_concurrency",
         "crawler_host_concurrency",
-        "crawler_agent_max_chunks_per_run",
         "draft_max_tokens",
         "batch_draft_generation_concurrency",
         "draft_rewrite_intensity",

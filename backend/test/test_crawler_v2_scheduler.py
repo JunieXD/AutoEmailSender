@@ -1050,7 +1050,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
                     chunk_hash="h1",
                     content="张三",
                     status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
-                    last_error="No module named 'tiktoken_ext'",
+                    last_error="No module named 'crawler_dependency'",
                 )
             )
             await session.flush()
@@ -1068,8 +1068,8 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             run = await session.get(CrawlJobRun, run_id)
         assert job is not None and run is not None
         self.assertEqual(job.status, CrawlJobStatus.FAILED.value)
-        self.assertEqual(job.error_message, "No module named 'tiktoken_ext'")
-        self.assertEqual(run.error_message, "No module named 'tiktoken_ext'")
+        self.assertEqual(job.error_message, "No module named 'crawler_dependency'")
+        self.assertEqual(run.error_message, "No module named 'crawler_dependency'")
 
     async def test_terminal_connection_error_is_adapted_for_final_job_message(self) -> None:
         job_id = await self._create_job()
@@ -1188,7 +1188,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
 
     async def _create_job(self, *, status: str = CrawlJobStatus.RUNNING.value, entry_type: str = "list") -> int:
         async with self.session_factory() as session:
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=status, runtime_version="v2", entry_type=entry_type)
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=status, entry_type=entry_type)
             session.add(job)
             await session.commit()
             await session.refresh(job)

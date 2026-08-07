@@ -25,7 +25,7 @@ class CrawlerV2TokenUsageTests(unittest.IsolatedAsyncioTestCase):
                 await connection.run_sync(Base.metadata.create_all)
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
             async with session_factory() as session:
-                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value)
                 session.add(job)
                 await session.commit()
                 await session.refresh(job)
@@ -56,7 +56,7 @@ class CrawlerV2TokenUsageTests(unittest.IsolatedAsyncioTestCase):
                 await connection.run_sync(Base.metadata.create_all)
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
             async with session_factory() as session:
-                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value)
                 session.add(job)
                 await session.flush()
                 run = CrawlJobRun(job_id=job.id, attempt_number=1, status=CrawlJobStatus.RUNNING.value, input_tokens=3, output_tokens=2, total_tokens=5, cached_tokens=1)
@@ -96,7 +96,7 @@ class CrawlerV2TokenUsageTests(unittest.IsolatedAsyncioTestCase):
                 await connection.run_sync(Base.metadata.create_all)
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
             async with session_factory() as session:
-                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value)
                 session.add(job)
                 await session.commit()
                 await session.refresh(job)
@@ -134,7 +134,6 @@ class CrawlerV2TokenUsageTests(unittest.IsolatedAsyncioTestCase):
                     school="计算机学院",
                     start_url="https://example.edu",
                     status=CrawlJobStatus.RUNNING.value,
-                    runtime_version="v2",
                 )
                 session.add(job)
                 await session.flush()

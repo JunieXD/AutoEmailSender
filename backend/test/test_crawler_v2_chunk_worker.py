@@ -939,8 +939,6 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(processed, 1)
-        import app.modules.crawler.v2.chunk_worker as module
-        self.assertFalse(hasattr(module, "run_faculty_crawler_agent"))
         invoke_mock.assert_awaited_once()
         async with self.session_factory() as session:
             chunk = await session.get(CrawlPageChunk, chunk_id)
@@ -1209,7 +1207,7 @@ class CrawlerV2ChunkWorkerTests(unittest.IsolatedAsyncioTestCase):
                 session.add(profile)
                 await session.flush()
                 llm_profile_id = profile.id
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2", llm_profile_id=llm_profile_id)
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, llm_profile_id=llm_profile_id)
             session.add(job)
             await session.flush()
             chunk = CrawlPageChunk(job_id=job.id, page_id=None, source_url="https://example.edu/faculty", page_fingerprint="p", chunk_id="c1", chunk_index=0, chunk_hash="h", content="张三", status=CrawlPageChunkStatus.PROCESSING.value, worker_id="w1")

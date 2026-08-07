@@ -45,10 +45,6 @@ class CrawlJobTriggerMode(str, Enum):
     BATCH = "batch"
 
 
-class CrawlRuntimeVersion(str, Enum):
-    V1 = "v1"
-    V2 = "v2"
-
 class CrawlPageTaskStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
@@ -134,12 +130,6 @@ class CrawlJob(Base):
         server_default=text("1"),
     )
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    runtime_version: Mapped[str] = mapped_column(
-        String(16),
-        nullable=False,
-        server_default=text("'v2'"),
-        index=True,
-    )
     llm_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("llm_profiles.id", ondelete="SET NULL"),
         nullable=True,

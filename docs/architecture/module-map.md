@@ -13,7 +13,7 @@
 | `communications` | SMTP、IMAP、邮件历史、回复检测、测试邮件 | `mail_runtime.py`、`imap_*`、`email_log*`、`test_compose*` | `identities`、`professors` |
 | `workspace` | 单导师会话、审核、发送与后续动作的应用编排 | `modules/workspace/{api,thread,tasks/*}` | `matching`、`campaigns`、`communications` |
 | `matching` | 匹配计算、分析任务、分析运行记录 | `matching.py`、`match_analysis*` | `identities`、`professors`、`llm` |
-| `crawler` | 抓取任务、运行、worker、页面策略、证据与调试 | `crawl_*`、`crawler_*`、crawler agent | `llm`，通过用例向 `professors` 交付候选结果 |
+| `crawler` | 抓取任务、运行、worker、页面策略、证据与调试 | `modules/crawler/{jobs,pages,llm,v2}` | `llm`，通过用例向 `professors` 交付候选结果 |
 | `llm` | LLM profile、调用、端点适配、结构化输出、thinking、token 记录 | `llm_*`、`structured_output_*`、`thinking_*` | 平台能力 |
 | `automation` | Agent 计划、确认、幂等、变更计划和回执 | `agent_*` | 各模块 `public` application API |
 | `reporting` | Dashboard、统计与只读 usage 投影 | `dashboard_stats.py`、`token_usage_records.py` | 只读端口，不拥有源实体 |
@@ -111,17 +111,17 @@ runtime 与 adaptation 的双向延迟导入属于同领域内部探测协议，
 
 ## crawler 基础子切片（第 6A 批，已完成）
 
-`backend/app/modules/crawler/` 按 `jobs`、`pages`、`llm`、`v2` 四个内部子包组织。6A 拥有 DTO、
-job record/run/event/metrics、页面抓取与 chunk 基础、crawler 专用 LLM wire adapter，以及不直接调度
-worker 的 v2 策略与路由；6B 已迁入 UI/Agent adapter、job 编排、scheduler 和 workers。
+`backend/app/modules/crawler/` 按 `jobs`、`pages`、`llm`、`v2` 四个内部子包组织。`v2` 是当前单一
+抓取运行时的历史包名，不再表示可选择的运行时版本。模块拥有 DTO、job record/run/event/metrics、
+页面抓取与 chunk 基础、crawler 专用 LLM wire adapter、调度策略和 workers。
 领域外只经 `crawler.public` 使用 record use cases、投影、安全 URL 合同、debug 路径、run/token 合同
 和 profile text cache；Professor enrichment 仍拥有补全 job 生命周期，仅把抓取执行委托给 crawler。
 
 ## crawler 编排子切片（第 6B 批，已完成）
 
-`crawler.api` 与 `crawler.agent` 是 UI/Agent 适配器，`jobs.runtime` 负责 job 恢复及兼容编排，`v2.scheduler`
-负责 claim/finalize，page/chunk/enrichment workers 只处理各自 work item。RuntimeManager 仅通过
-`crawler.public` 启动 worker；worker 通过域内相对导入使用 6A 的持久化、页面、LLM 与策略能力。
+`crawler.api` 是 UI 适配器，`jobs.recovery` 负责进程重启后的任务恢复，`v2.scheduler` 负责
+claim/finalize，page/chunk/enrichment workers 只处理各自 work item。RuntimeManager 仅通过
+`crawler.public` 启动当前 worker；创建、补全、重试和恢复都没有 V1 分支或运行时版本选择。
 
 ## campaigns 活动与模板子切片（第 7A 批，已完成）
 

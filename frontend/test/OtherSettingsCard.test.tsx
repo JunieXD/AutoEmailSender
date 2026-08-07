@@ -19,7 +19,6 @@ vi.mock("@/lib/api/runtimeSettings", () => ({
     crawler_worker_count: 1,
     crawler_profile_enrichment_concurrency: 3,
     crawler_host_concurrency: 2,
-    crawler_agent_max_chunks_per_run: 2,
     draft_max_tokens: 6000,
     batch_draft_generation_concurrency: 5,
     draft_rewrite_intensity: "moderate",
@@ -77,7 +76,6 @@ describe("OtherSettingsCard", () => {
           match_analysis_job_item_concurrency: 4,
           draft_max_tokens: 4800,
           batch_draft_generation_concurrency: 6,
-          crawler_agent_max_chunks_per_run: 2,
         }),
       );
     });
@@ -97,7 +95,6 @@ describe("OtherSettingsCard", () => {
       crawler_worker_count: 1,
       crawler_profile_enrichment_concurrency: 3,
       crawler_host_concurrency: 2,
-      crawler_agent_max_chunks_per_run: 2,
       draft_max_tokens: 6000,
       draft_rewrite_intensity: "moderate",
       draft_rewrite_tone: "polite",

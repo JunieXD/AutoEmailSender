@@ -25,7 +25,6 @@ CrawlJobStatusDTO = Literal[
     "canceled",
 ]
 CrawlJobEntryTypeDTO = Literal["list", "profile"]
-CrawlRuntimeVersionDTO = Literal["v1", "v2"]
 CrawlCandidateReviewStatusDTO = Literal["pending", "accepted", "rejected", "merged"]
 
 
@@ -35,7 +34,6 @@ class CrawlJobCreatePayload(BaseModel):
     start_url: str
     start_urls: list[str] | None = None
     entry_type: CrawlJobEntryTypeDTO = "list"
-    runtime_version: CrawlRuntimeVersionDTO = "v2"
     llm_profile_id: int | None = None
 
     @field_validator("university", "school", "start_url", mode="before")
@@ -106,7 +104,6 @@ class CrawlJobRead(ApiSchema):
     start_url: str
     start_urls: list[str] | None = None
     entry_type: CrawlJobEntryTypeDTO = "list"
-    runtime_version: CrawlRuntimeVersionDTO = "v2"
     llm_profile_id: int | None
     status: CrawlJobStatusDTO
     progress_current: int

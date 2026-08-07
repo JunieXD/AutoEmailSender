@@ -846,7 +846,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["skipped_count"], 1)
         self.assertEqual(body["failed_count"], 0)
         self.assertIn("跳过 1 位缺少详情页 URL", body["message"])
-    def test_v2_enrich_selected_candidates_enqueues_database_tasks(self) -> None:
+    def test_enrich_selected_candidates_enqueues_database_tasks(self) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -863,14 +863,12 @@ class CrawlJobsApiTests(unittest.TestCase):
         self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
         candidate_id = self._latest_candidate_id(job_id)
 
-        with patch("app.modules.crawler.api.enrich_selected_crawl_candidates") as legacy_enrich:
-            response = self.client.post(
-                f"/api/crawl-jobs/{job_id}/enrich",
-                json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
-            )
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        legacy_enrich.assert_not_called()
         body = response.json()
         self.assertEqual(body["selected_count"], 1)
         self.assertEqual(body["enriched_count"], 0)
@@ -976,26 +974,10 @@ class CrawlJobsApiTests(unittest.TestCase):
         self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
         candidate_id = self._latest_candidate_id(job_id)
 
-        from app.modules.crawler.jobs.runtime import SelectedCandidateEnrichmentSummary
-
-        async def fake_enrich_selected_crawl_candidates(*args: object, **kwargs: object) -> SelectedCandidateEnrichmentSummary:
-            llm_profile = kwargs["llm_profile"]
-            self.assertEqual(llm_profile.id, new_profile_id)
-            return SelectedCandidateEnrichmentSummary(
-                selected_count=1,
-                enriched_count=1,
-                unchanged_count=0,
-                failed_count=0,
-            )
-
-        with patch(
-            "app.modules.crawler.api.enrich_selected_crawl_candidates",
-            new=fake_enrich_selected_crawl_candidates,
-        ):
-            response = self.client.post(
-                f"/api/crawl-jobs/{job_id}/enrich",
-                json={"candidate_ids": [candidate_id], "llm_profile_id": new_profile_id},
-            )
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": new_profile_id},
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(self._get_job_llm_profile_id(job_id), new_profile_id)
@@ -1169,8 +1151,8 @@ class CrawlJobsApiTests(unittest.TestCase):
             job_id,
             [
                 {
-                    "event_type": "tool_call",
-                    "message": "Agent 调用 crawl_page",
+                    "event_type": "enrichment",
+                    "message": "候选导师详情补全成功：高分导师",
                     "created_at": "2026-04-26T10:01:00+00:00",
                 },
             ],
@@ -1181,7 +1163,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         messages = [event["message"] for event in response.json()]
         self.assertIn("任务进入待审核", messages)
-        self.assertIn("Agent 调用 crawl_page", messages)
+        self.assertIn("候选导师详情补全成功：高分导师", messages)
         self.assertIn("已抓取页面：Faculty", messages)
         self.assertIn("发现候选导师：高分导师、低分导师、无邮箱导师", messages)
 
@@ -1423,33 +1405,20 @@ class CrawlJobsApiTests(unittest.TestCase):
         job_id = create_response.json()["id"]
         self._seed_page_and_candidates(job_id)
         self._seed_default_llm_profile()
-        self._set_job_runtime_version(job_id, "v1")
         self._set_job_status(job_id, "partially_completed")
         candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
         selected_id = candidates[0]["id"]
 
-        class Summary:
-            selected_count = 1
-            enriched_count = 1
-            unchanged_count = 0
-            failed_count = 0
-
-        async def fake_enrich_selected(*args, **kwargs):
-            self.assertEqual(kwargs["job_id"], job_id)
-            self.assertEqual(kwargs["candidate_ids"], [selected_id])
-            return Summary()
-
-        with patch("app.modules.crawler.api.enrich_selected_crawl_candidates", new=fake_enrich_selected):
-            response = self.client.post(
-                f"/api/crawl-jobs/{job_id}/enrich",
-                json={"candidate_ids": [selected_id]},
-            )
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [selected_id]},
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["selected_count"], 1)
-        self.assertEqual(response.json()["enriched_count"], 1)
-        self.assertIn("补全完成", response.json()["message"])
-        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "partially_completed")
+        self.assertEqual(response.json()["enriched_count"], 0)
+        self.assertIn("已加入补全队列", response.json()["message"])
+        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running")
 
     def test_resume_review_allows_canceled_job_with_candidates(self) -> None:
         create_response = self.client.post(
@@ -1524,32 +1493,19 @@ class CrawlJobsApiTests(unittest.TestCase):
         job_id = create_response.json()["id"]
         self._seed_page_and_candidates(job_id)
         self._seed_default_llm_profile()
-        self._set_job_runtime_version(job_id, "v1")
         self._set_job_status(job_id, "needs_review")
         candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
         selected_id = candidates[0]["id"]
 
-        class Summary:
-            selected_count = 1
-            enriched_count = 1
-            unchanged_count = 0
-            failed_count = 0
-
-        async def fake_enrich_selected(*args, **kwargs):
-            self.assertEqual(kwargs["job_id"], job_id)
-            self.assertEqual(kwargs["candidate_ids"], [selected_id])
-            return Summary()
-
-        with patch("app.modules.crawler.api.enrich_selected_crawl_candidates", new=fake_enrich_selected):
-            response = self.client.post(
-                f"/api/crawl-jobs/{job_id}/enrich",
-                json={"candidate_ids": [selected_id]},
-            )
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [selected_id]},
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["selected_count"], 1)
-        self.assertEqual(response.json()["enriched_count"], 1)
-        self.assertIn("补全完成", response.json()["message"])
+        self.assertEqual(response.json()["enriched_count"], 0)
+        self.assertIn("已加入补全队列", response.json()["message"])
 
     def test_approve_partially_completed_job_can_finish_remaining_candidates(self) -> None:
         create_response = self.client.post(
@@ -2122,19 +2078,6 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201, msg=response.text)
         return int(response.json()["id"])
-    def _set_job_runtime_version(self, job_id: int, runtime_version: str) -> None:
-        async def _set_runtime_version() -> None:
-            from app.core.database import get_session_factory
-            from app.models import CrawlJob
-
-            async with get_session_factory()() as session:
-                job = await session.get(CrawlJob, job_id)
-                self.assertIsNotNone(job)
-                job.runtime_version = runtime_version
-                await session.commit()
-
-        asyncio.run(_set_runtime_version())
-
     def _set_job_status(self, job_id: int, status: str) -> None:
         async def _set_status() -> None:
             from app.core.database import get_session_factory

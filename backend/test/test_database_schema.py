@@ -2685,7 +2685,6 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "crawler_worker_count",
                 "crawler_profile_enrichment_concurrency",
                 "crawler_host_concurrency",
-                "crawler_agent_max_chunks_per_run",
                 "draft_max_tokens",
                 "batch_draft_generation_concurrency",
                 "draft_rewrite_intensity",
@@ -3776,7 +3775,7 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("history_strategy_version", professor_state_columns)
         self.assertIn("intended_research_direction", app_setting_columns)
 
-    def test_existing_crawl_jobs_are_backfilled_as_v1_when_runtime_v2_is_added(self) -> None:
+    def test_obsolete_runtime_version_is_removed_without_losing_crawl_jobs(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "runtime_v2_legacy_jobs.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
@@ -3805,14 +3804,24 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         connection = sqlite3.connect(legacy_db_path)
         try:
-            runtime_version = connection.execute(
-                "SELECT runtime_version FROM crawl_jobs WHERE university = ?",
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+            }
+            settings_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(app_settings)").fetchall()
+            }
+            job_count = connection.execute(
+                "SELECT COUNT(*) FROM crawl_jobs WHERE university = ?",
                 ("历史大学",),
             ).fetchone()[0]
         finally:
             connection.close()
 
-        self.assertEqual(runtime_version, "v1")
+        self.assertNotIn("runtime_version", columns)
+        self.assertNotIn("crawler_agent_max_chunks_per_run", settings_columns)
+        self.assertEqual(job_count, 1)
 
     def test_concurrency_guard_migration_cleans_existing_duplicates(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "concurrency_guard_duplicates.db"

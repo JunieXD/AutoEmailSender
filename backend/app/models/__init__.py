@@ -23,7 +23,6 @@ from app.models.crawl_job import (
     CrawlPageStatus,
     CrawlPageTask,
     CrawlPageTaskStatus,
-    CrawlRuntimeVersion,
     CrawlWorkerKind,
     CrawlWorkerTokenUsage,
 )
@@ -80,7 +79,6 @@ __all__ = [
     "CrawlPageFetchStatus",
     "CrawlPageTask",
     "CrawlPageTaskStatus",
-    "CrawlRuntimeVersion",
     "CrawlWorkerKind",
     "CrawlWorkerTokenUsage",
     "CrawlCandidate",

@@ -12,7 +12,6 @@ export interface CrawlBenchmarkRecord {
   entryType: "list" | "profile";
   testedAt: string | null;
   appVersion: string | null;
-  runtimeVersion: string | null;
   modelName: string | null;
   publicStatus: BenchmarkPublicStatus;
   candidateCount: number;

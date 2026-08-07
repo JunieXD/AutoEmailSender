@@ -1153,41 +1153,5 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
                     expected_extra_body=refreshed_value,
                 )
             )
-
-
-class AdaptFailureMessageTests(unittest.TestCase):
-    def test_appends_hint_for_thinking_protocol_error(self) -> None:
-        from app.modules.llm.adaptation.thinking import (
-            adapt_failure_message_for_thinking_error,
-        )
-
-        message = (
-            "Error code: 400 - The reasoning_content in the thinking mode "
-            "must be passed back to the API."
-        )
-        adapted = adapt_failure_message_for_thinking_error(message)
-        self.assertIsNotNone(adapted)
-        self.assertIn("测试连接", adapted)
-        self.assertIn("自适应探活", adapted)
-
-    def test_passes_through_unrelated_messages(self) -> None:
-        from app.modules.llm.adaptation.thinking import (
-            adapt_failure_message_for_thinking_error,
-        )
-
-        unrelated = "HTTP 500: gateway timeout"
-        self.assertEqual(
-            adapt_failure_message_for_thinking_error(unrelated),
-            unrelated,
-        )
-
-    def test_passes_through_none(self) -> None:
-        from app.modules.llm.adaptation.thinking import (
-            adapt_failure_message_for_thinking_error,
-        )
-
-        self.assertIsNone(adapt_failure_message_for_thinking_error(None))
-
-
 if __name__ == "__main__":
     unittest.main()

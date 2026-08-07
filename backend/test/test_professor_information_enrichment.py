@@ -21,7 +21,7 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.modules.crawler.jobs.runtime import recover_interrupted_crawl_jobs
+from app.modules.crawler.jobs.recovery import recover_interrupted_crawl_jobs
 from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
 from app.modules.crawler.v2.enrichment_worker import (
     run_crawler_v2_enrichment_worker_once,

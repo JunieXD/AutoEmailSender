@@ -95,7 +95,6 @@ async def create_faculty_crawl_job_record(
         job_kind=CrawlJobKind.FACULTY_CRAWL.value,
         llm_profile_id=payload.llm_profile_id,
         status=CrawlJobStatus.QUEUED.value,
-        runtime_version="v2",
         progress_current=0,
         progress_total=0,
     )
@@ -307,12 +306,6 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
     actor: str | None = None,
 ) -> CrawlJobEnrichResult:
     job = await get_faculty_crawl_job_or_raise(session, job_id)
-    if job.runtime_version != "v2":
-        raise CrawlJobRecordError(
-            status_code=409,
-            code="CRAWL_CANDIDATE_ENRICHMENT_LEGACY_UNSUPPORTED",
-            message="旧版抓取任务的候选补全暂不支持通过 Agent 启动。",
-        )
     if job.status == CrawlJobStatus.RUNNING.value:
         raise CrawlJobRecordError(
             status_code=409,
@@ -511,7 +504,7 @@ async def cancel_faculty_crawl_job_record(
     now = utc_now()
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
-    await _release_processing_v2_work(session, job.id, reason="任务已取消，释放处理中工作项")
+    await _release_processing_work(session, job.id, reason="任务已取消，释放处理中工作项")
     await mark_crawl_job_run_finished(
         session,
         job,
@@ -548,7 +541,7 @@ async def pause_faculty_crawl_job_record(
     now = utc_now()
     job.status = CrawlJobStatus.PAUSED.value
     job.updated_at = now
-    await _release_processing_v2_work(session, job.id, reason="任务已暂停，释放处理中工作项")
+    await _release_processing_work(session, job.id, reason="任务已暂停，释放处理中工作项")
     await mark_crawl_job_run_paused(session, job, now=now)
     await _record_job_event(
         session,
@@ -614,17 +607,16 @@ async def retry_faculty_crawl_job_record(
             message="仅允许重试状态为“失败”或“已取消”的抓取任务",
         )
 
-    if job.runtime_version == "v2":
+    await session.execute(
+        delete(CrawlCandidateEnrichmentTask).where(
+            CrawlCandidateEnrichmentTask.job_id == job.id,
+        ),
+    )
+    await session.execute(delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id))
+    if payload.clear_existing_data:
         await session.execute(
-            delete(CrawlCandidateEnrichmentTask).where(
-                CrawlCandidateEnrichmentTask.job_id == job.id,
-            ),
+            delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
         )
-        await session.execute(delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id))
-        if payload.clear_existing_data:
-            await session.execute(
-                delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
-            )
 
     if payload.clear_existing_data:
         await session.execute(delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id))
@@ -641,22 +633,21 @@ async def retry_faculty_crawl_job_record(
             actor=actor,
         )
 
-    if job.runtime_version == "v2":
-        for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
-            session.add(
-                CrawlPageTask(
-                    job_id=job.id,
-                    normalized_url=normalized_url,
-                    original_url=start_url,
-                    parent_url=None,
-                    discovery_reason=START_DISCOVERY_REASON,
-                    expansion_mode=(
-                        NO_EXPANSION_MODE if job.entry_type == "profile" else ENTRY_EXPANSION_MODE
-                    ),
-                    depth=0,
-                    status=CrawlPageTaskStatus.PENDING.value,
+    for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
+        session.add(
+            CrawlPageTask(
+                job_id=job.id,
+                normalized_url=normalized_url,
+                original_url=start_url,
+                parent_url=None,
+                discovery_reason=START_DISCOVERY_REASON,
+                expansion_mode=(
+                    NO_EXPANSION_MODE if job.entry_type == "profile" else ENTRY_EXPANSION_MODE
                 ),
-            )
+                depth=0,
+                status=CrawlPageTaskStatus.PENDING.value,
+            ),
+        )
 
     now = utc_now()
     job.status = CrawlJobStatus.QUEUED.value
@@ -716,8 +707,7 @@ async def resume_faculty_crawl_job_review_record(
     job.status = CrawlJobStatus.NEEDS_REVIEW.value
     job.error_message = None
     job.updated_at = now
-    if job.runtime_version == "v2":
-        await _freeze_unfinished_v2_discovery_work_for_review(session, job.id)
+    await _freeze_unfinished_discovery_work_for_review(session, job.id)
     if job.current_run is not None:
         job.current_run.status = CrawlJobStatus.NEEDS_REVIEW.value
         job.current_run.updated_at = now
@@ -970,7 +960,7 @@ async def _resolve_and_refresh_llm_profile(
     return llm_profile
 
 
-async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
+async def _freeze_unfinished_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
     terminal_values = {
         "status": "failed_terminal",
         "last_error": "任务已转入待审核，停止继续发现新候选",
@@ -1009,7 +999,7 @@ async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession,
     )
 
 
-async def _release_processing_v2_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
+async def _release_processing_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
     clear_values = {
         "status": "pending",
         "last_error": reason,

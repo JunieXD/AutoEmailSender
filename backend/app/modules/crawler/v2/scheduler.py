@@ -135,7 +135,6 @@ async def _eligible_job_ids(
         await session.scalars(
             select(CrawlJob)
             .where(
-                CrawlJob.runtime_version == "v2",
                 CrawlJob.status == CrawlJobStatus.RUNNING.value,
                 CrawlJob.deleted_at.is_(None),
             )
@@ -158,7 +157,6 @@ async def _eligible_job_ids(
                 await session.scalars(
                     select(CrawlJob)
                     .where(
-                        CrawlJob.runtime_version == "v2",
                         CrawlJob.status == CrawlJobStatus.QUEUED.value,
                         CrawlJob.deleted_at.is_(None),
                     )
@@ -220,7 +218,6 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
     jobs = list(
         await session.scalars(
             select(CrawlJob).where(
-                CrawlJob.runtime_version == "v2",
                 CrawlJob.status.in_([CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value]),
                 CrawlJob.deleted_at.is_(None),
             )
@@ -269,7 +266,6 @@ async def _claim_page_task(
             CrawlJob,
             CrawlJob.id == CrawlPageTask.job_id,
         ).where(
-            CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
@@ -282,7 +278,6 @@ async def _claim_page_task(
         select(CrawlPageTask)
         .join(CrawlJob, CrawlJob.id == CrawlPageTask.job_id)
         .where(
-            CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlPageTask.job_id == job_id,
@@ -314,7 +309,6 @@ async def _claim_chunk(
             CrawlJob,
             CrawlJob.id == CrawlPageChunk.job_id,
         ).where(
-            CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
@@ -327,7 +321,6 @@ async def _claim_chunk(
         select(CrawlPageChunk)
         .join(CrawlJob, CrawlJob.id == CrawlPageChunk.job_id)
         .where(
-            CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlPageChunk.job_id == job_id,
@@ -359,7 +352,6 @@ async def _claim_enrichment_task(
             CrawlJob,
             CrawlJob.id == CrawlCandidateEnrichmentTask.job_id,
         ).where(
-            CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
@@ -375,7 +367,6 @@ async def _claim_enrichment_task(
             .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
             .join(CrawlCandidate, CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id)
             .where(
-                CrawlJob.runtime_version == "v2",
                 CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
                 CrawlJob.deleted_at.is_(None),
                 CrawlCandidateEnrichmentTask.job_id == job_id,
@@ -410,7 +401,6 @@ async def _active_enrichment_host_counts(session: AsyncSession, *, now: datetime
         .join(CrawlCandidate, CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id)
         .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
         .where(
-            CrawlJob.runtime_version == "v2",
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,

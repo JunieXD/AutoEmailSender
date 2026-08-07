@@ -799,7 +799,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             profile = LLMProfile(name="默认", provider="openai", api_base_url="https://api.example.com/v1", api_key="sk-test", model_name="deepseek", is_default=True)
             session.add(profile)
             await session.flush()
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, runtime_version="v2", llm_profile_id=profile.id)
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu/faculty", status=CrawlJobStatus.RUNNING.value, llm_profile_id=profile.id)
             session.add(job)
             await session.flush()
             candidate = CrawlCandidate(job_id=job.id, name="张三", profile_url=profile_url)

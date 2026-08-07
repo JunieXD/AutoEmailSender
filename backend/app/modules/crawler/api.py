@@ -71,7 +71,6 @@ from app.modules.professors.public import (
     normalize_professor_email,
     normalize_recent_papers,
 )
-from .jobs.runtime import enrich_selected_crawl_candidates
 from .v2.url_utils import normalize_url
 from .v2.profile_text_cache import profile_text_cache
 from .v2.routing import (
@@ -79,7 +78,6 @@ from .v2.routing import (
     NO_EXPANSION_MODE,
     START_DISCOVERY_REASON,
 )
-from app.core.database import get_session_factory
 
 
 router = APIRouter(prefix="/api/crawl-jobs", tags=["crawl-jobs"])
@@ -120,7 +118,6 @@ async def create_crawl_job(
         entry_type=payload.entry_type,
         llm_profile_id=payload.llm_profile_id,
         status=CrawlJobStatus.QUEUED.value,
-        runtime_version="v2",
         progress_current=0,
         progress_total=0,
     )
@@ -540,7 +537,6 @@ async def enrich_crawl_candidates(
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJobEnrichResult:
     job = await _get_crawl_job_or_404(session, job_id)
-    review_status_before_enrich = job.status
     if job.status == CrawlJobStatus.RUNNING.value:
         raise HTTPException(status_code=409, detail="候选信息正在补全中，请稍后再试")
     if job.status not in {
@@ -558,77 +554,15 @@ async def enrich_crawl_candidates(
         trigger="enrich",
     )
 
-    if job.runtime_version == "v2":
-        return await _enqueue_v2_crawl_candidate_enrichment_tasks(
-            session,
-            job,
-            candidate_ids=payload.candidate_ids,
-            llm_profile_id=llm_profile.id,
-        )
-
-    now = utc_now()
-    job.status = CrawlJobStatus.RUNNING.value
-    job.error_message = None
-    job.updated_at = now
-    await mark_crawl_job_run_running(session, job, now=now)
-    await session.commit()
-
-    async def trace_callback(event: dict[str, object]) -> None:
-        async with get_session_factory()() as trace_session:
-            trace_job = await trace_session.get(CrawlJob, job_id)
-            if trace_job is None:
-                return
-            trace = list(trace_job.agent_trace or [])
-            trace.append(normalize_agent_trace_event(event))
-            trace_job.agent_trace = trace[-100:]
-            trace_job.updated_at = utc_now()
-            await trace_session.commit()
-
-    try:
-        summary = await enrich_selected_crawl_candidates(
-            get_session_factory(),
-            job_id=job_id,
-            candidate_ids=payload.candidate_ids,
-            llm_profile=llm_profile,
-            trace_callback=trace_callback,
-        )
-    finally:
-        async with get_session_factory()() as final_session:
-            final_job = await final_session.get(CrawlJob, job_id)
-            if final_job is not None and final_job.status == CrawlJobStatus.RUNNING.value:
-                final_job.status = review_status_before_enrich
-                final_job.updated_at = utc_now()
-                await mark_crawl_job_run_finished(
-                    final_session,
-                    final_job,
-                    status=review_status_before_enrich,
-                    now=utc_now(),
-                )
-                await final_session.commit()
-
-    skipped_count = int(getattr(summary, "skipped_count", 0) or 0)
-    if summary.selected_count == 0 and skipped_count == 0:
-        raise HTTPException(status_code=400, detail="未找到可补全的候选导师")
-    skipped_message = (
-        f"跳过 {skipped_count} 位缺少详情页 URL 的候选。"
-        if skipped_count > 0
-        else ""
-    )
-    return CrawlJobEnrichResult(
-        selected_count=summary.selected_count,
-        enriched_count=summary.enriched_count,
-        unchanged_count=summary.unchanged_count,
-        failed_count=summary.failed_count,
-        skipped_count=skipped_count,
-        message=(
-            f"补全完成：选中 {summary.selected_count} 位，成功补全 "
-            f"{summary.enriched_count} 位，未变化 {summary.unchanged_count} 位，"
-            f"失败 {summary.failed_count} 位。{skipped_message}"
-        ),
+    return await _enqueue_crawl_candidate_enrichment_tasks(
+        session,
+        job,
+        candidate_ids=payload.candidate_ids,
+        llm_profile_id=llm_profile.id,
     )
 
 
-async def _enqueue_v2_crawl_candidate_enrichment_tasks(
+async def _enqueue_crawl_candidate_enrichment_tasks(
     session: AsyncSession,
     job: CrawlJob,
     *,
@@ -778,8 +712,7 @@ async def resume_crawl_job_review(
     job.error_message = None
     job.updated_at = now
 
-    if job.runtime_version == "v2":
-        await _freeze_unfinished_v2_discovery_work_for_review(session, job.id)
+    await _freeze_unfinished_discovery_work_for_review(session, job.id)
 
     if job.current_run is not None:
         job.current_run.status = CrawlJobStatus.NEEDS_REVIEW.value
@@ -801,7 +734,7 @@ async def resume_crawl_job_review(
     return job
 
 
-async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
+async def _freeze_unfinished_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
     terminal_values = {
         "status": "failed_terminal",
         "last_error": "任务已转入待审核，停止继续发现新候选",
@@ -837,7 +770,7 @@ async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession,
         .values(**terminal_values),
     )
 
-async def _release_processing_v2_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
+async def _release_processing_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
     clear_values = {
         "status": "pending",
         "last_error": reason,
@@ -888,7 +821,7 @@ async def cancel_crawl_job(
     now = utc_now()
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
-    await _release_processing_v2_work(session, job.id, reason="任务已取消，释放处理中工作项")
+    await _release_processing_work(session, job.id, reason="任务已取消，释放处理中工作项")
     await mark_crawl_job_run_finished(
         session,
         job,
@@ -923,7 +856,7 @@ async def pause_crawl_job(
     now = utc_now()
     job.status = CrawlJobStatus.PAUSED.value
     job.updated_at = now
-    await _release_processing_v2_work(session, job.id, reason="任务已暂停，释放处理中工作项")
+    await _release_processing_work(session, job.id, reason="任务已暂停，释放处理中工作项")
     await mark_crawl_job_run_paused(session, job, now=now)
     await record_operation_log(
         session,
@@ -987,17 +920,16 @@ async def retry_crawl_job(
             detail="仅允许重试状态为\"失败\"或\"已取消\"的抓取任务",
         )
 
-    if job.runtime_version == "v2":
+    await session.execute(
+        delete(CrawlCandidateEnrichmentTask).where(CrawlCandidateEnrichmentTask.job_id == job.id),
+    )
+    await session.execute(
+        delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id),
+    )
+    if payload.clear_existing_data:
         await session.execute(
-            delete(CrawlCandidateEnrichmentTask).where(CrawlCandidateEnrichmentTask.job_id == job.id),
+            delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
         )
-        await session.execute(
-            delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id),
-        )
-        if payload.clear_existing_data:
-            await session.execute(
-                delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
-            )
 
     if payload.clear_existing_data:
         await session.execute(
@@ -1019,24 +951,23 @@ async def retry_crawl_job(
             trigger="retry",
         )
 
-    if job.runtime_version == "v2":
-        for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
-            session.add(
-                CrawlPageTask(
-                    job_id=job.id,
-                    normalized_url=normalized_url,
-                    original_url=start_url,
-                    parent_url=None,
-                    discovery_reason=START_DISCOVERY_REASON,
-                    expansion_mode=(
-                        NO_EXPANSION_MODE
-                        if job.entry_type == "profile"
-                        else ENTRY_EXPANSION_MODE
-                    ),
-                    depth=0,
-                    status=CrawlPageTaskStatus.PENDING.value,
-                )
+    for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
+        session.add(
+            CrawlPageTask(
+                job_id=job.id,
+                normalized_url=normalized_url,
+                original_url=start_url,
+                parent_url=None,
+                discovery_reason=START_DISCOVERY_REASON,
+                expansion_mode=(
+                    NO_EXPANSION_MODE
+                    if job.entry_type == "profile"
+                    else ENTRY_EXPANSION_MODE
+                ),
+                depth=0,
+                status=CrawlPageTaskStatus.PENDING.value,
             )
+        )
 
     now = utc_now()
     job.status = CrawlJobStatus.QUEUED.value

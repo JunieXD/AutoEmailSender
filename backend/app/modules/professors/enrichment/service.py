@@ -178,7 +178,6 @@ async def create_professor_information_enrichment_job_record(
         trigger_mode=trigger_mode,
         task_center_visible=trigger_mode == CrawlJobTriggerMode.BATCH.value,
         display_name=display_name,
-        runtime_version="v2",
         llm_profile_id=llm_profile.id,
         status=CrawlJobStatus.QUEUED.value,
         progress_current=0,

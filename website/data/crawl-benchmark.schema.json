@@ -7,7 +7,7 @@
   "required": ["schemaVersion", "generatedAt", "methodology", "records"],
   "properties": {
     "schemaVersion": {
-      "const": 2
+      "const": 3
     },
     "generatedAt": {
       "type": "string",
@@ -50,7 +50,6 @@
         "entryType",
         "testedAt",
         "appVersion",
-        "runtimeVersion",
         "modelName",
         "publicStatus",
         "candidateCount",
@@ -82,7 +81,6 @@
           ]
         },
         "appVersion": { "$ref": "#/$defs/nullableString" },
-        "runtimeVersion": { "$ref": "#/$defs/nullableString" },
         "modelName": { "$ref": "#/$defs/nullableString" },
         "publicStatus": { "enum": ["verified", "adapting"] },
         "candidateCount": { "type": "integer", "minimum": 0 },

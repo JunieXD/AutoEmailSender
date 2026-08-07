@@ -947,7 +947,6 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
                 school="计算机学院",
                 start_url="https://other.example.edu/faculty",
                 status="running",
-                runtime_version="v2",
             )
             session.add(other_job)
             await session.flush()
@@ -1216,7 +1215,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             profile = LLMProfile(name="默认模型", provider="openai", api_key="test", model_name="test-model", is_default=True)
             session.add(profile)
             await session.flush()
-            job = CrawlJob(university="示例大学", school="计算机学院", start_url=original_url, start_urls=[original_url], status=CrawlJobStatus.RUNNING.value, runtime_version="v2", entry_type=entry_type, llm_profile_id=profile.id)
+            job = CrawlJob(university="示例大学", school="计算机学院", start_url=original_url, start_urls=[original_url], status=CrawlJobStatus.RUNNING.value, entry_type=entry_type, llm_profile_id=profile.id)
             session.add(job)
             await session.flush()
             task = CrawlPageTask(

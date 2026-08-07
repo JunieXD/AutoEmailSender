@@ -1799,7 +1799,6 @@ async def _prepare_crawl_job_retry_snapshot(
         "job": {
             "id": job.id,
             "status": job.status,
-            "runtime_version": job.runtime_version,
             "llm_profile_id": job.llm_profile_id,
             "start_urls": job.start_urls or [job.start_url],
             "entry_type": job.entry_type,
@@ -1814,11 +1813,11 @@ async def _prepare_crawl_job_retry_snapshot(
     ]
     if payload.clear_existing_data:
         warnings.append(
-            "确认后会永久清空本任务现有的候选、网页、网页分块、运行轨迹和（v2 任务的）Token 用量。",
+            "确认后会永久清空本任务现有的候选、网页、网页分块、运行轨迹和 Token 用量。",
         )
-    elif job.runtime_version == "v2":
+    else:
         warnings.append(
-            "本次保留已抓取的候选和网页，但会重建 v2 抓取工作项，并清除候选补全工作项。",
+            "本次保留已抓取的候选和网页，但会重建抓取工作项，并清除候选补全工作项。",
         )
     return {
         "snapshot_version": "1",

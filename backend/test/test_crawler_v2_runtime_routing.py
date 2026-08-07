@@ -20,7 +20,7 @@ from app.services.runtime_manager import RuntimeManager
 
 
 class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_create_job_defaults_to_v2_and_seeds_page_tasks(self) -> None:
+    async def test_create_job_seeds_page_tasks(self) -> None:
         fd, db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         engine = create_async_engine(f"sqlite+aiosqlite:///{Path(db_path).as_posix()}")
@@ -39,7 +39,6 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                     session,
                 )
                 tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job.id).order_by(CrawlPageTask.id)))
-            self.assertEqual(job.runtime_version, "v2")
             self.assertEqual([task.normalized_url for task in tasks], ["https://example.edu/faculty", "https://example.edu/page2"])
         finally:
             await engine.dispose()
@@ -58,16 +57,15 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 await connection.run_sync(Base.metadata.create_all)
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
             async with session_factory() as session:
-                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value, runtime_version="v2")
+                job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value)
                 session.add(job)
                 await session.flush()
                 session.add(CrawlPageChunk(job_id=job.id, page_id=None, source_url="https://example.edu", page_fingerprint="p", chunk_id="c1", chunk_index=0, chunk_hash="h", content="张三", status=CrawlPageChunkStatus.PENDING.value))
                 await session.commit()
 
-            with patch("app.modules.crawler.jobs.runtime.run_faculty_crawler_agent", new=AsyncMock(return_value={"ok": True})):
-                from app.modules.crawler.v2.scheduler import run_crawler_v2_once
+            from app.modules.crawler.v2.scheduler import run_crawler_v2_once
 
-                processed = await run_crawler_v2_once(session_factory, worker_id="w1")
+            processed = await run_crawler_v2_once(session_factory, worker_id="w1")
 
             self.assertEqual(processed, 1)
         finally:
@@ -124,8 +122,6 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         def build_idle_loop(*args: object, **kwargs: object):
             _ = kwargs
             worker = args[2]
-            target = worker.func if isinstance(worker, partial) else worker
-            self.assertNotEqual(target.__name__, "run_queued_crawl_jobs_once")
             return idle_loop()
 
         async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:

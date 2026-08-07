@@ -56,11 +56,6 @@ class AppSetting(Base):
         nullable=False,
         server_default=text("2"),
     )
-    crawler_agent_max_chunks_per_run: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default=text("2"),
-    )
     draft_max_tokens: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

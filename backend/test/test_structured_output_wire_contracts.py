@@ -36,8 +36,6 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             profile_extraction as crawler_v2_profile_extraction,
             routing as crawler_v2_routing,
         )
-        from app.modules.crawler.jobs import runtime as crawl_job_runtime
-
         self.assertIn(
             "request_structured_completion(",
             inspect.getsource(llm_runtime.generate_match_evaluation),
@@ -49,7 +47,6 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             2,
         )
         for function in (
-            crawl_job_runtime._invoke_direct_structured_llm,
             crawler_v2_chunk_worker.invoke_v2_chunk_agent,
             crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage,
             crawler_v2_profile_extraction.invoke_v2_profile_extraction_agent,

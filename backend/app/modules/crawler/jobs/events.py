@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import UTC, date, datetime
 
 from app.core.time import as_utc_aware
@@ -19,28 +18,9 @@ STATUS_MESSAGES = {
     "failed": "任务失败",
     "canceled": "任务已取消",
 }
-TOOL_MESSAGES = {
-    "crawl_page": "Agent 调用 crawl_page 抓取页面",
-    "investigate_with_browser": "Agent 调用浏览器调查页面",
-    "claim_next_page_chunk": "Agent 领取待处理页面片段",
-    "submit_page_chunk_candidates": "Agent 提交页面片段候选",
-}
-KNOWN_TOOL_NAMES = frozenset(TOOL_MESSAGES)
-EVENT_TYPE_MESSAGES = {
-    "chunk_split_required": "页面片段候选过密，已触发拆分",
-    "duplicate_loop": "候选重复提交循环，已要求停止当前保存",
-}
 GENERIC_AGENT_MESSAGES = {
-    "Agent 事件：updates",
-    "Agent 事件：dict",
     "Agent 更新了执行状态",
 }
-LOW_VALUE_AGENT_MESSAGES = {
-    "Agent 调用 crawl_page 抓取页面",
-    "Agent 领取待处理页面片段",
-    "Agent 提交页面片段候选",
-}
-TOOL_NAME_PATTERN = re.compile(r"['\"]name['\"]\s*:\s*['\"]([^'\"]+)['\"]")
 
 
 def build_crawl_job_events(
@@ -177,13 +157,7 @@ def summarize_agent_trace_event(event: dict[str, object]) -> str:
     if isinstance(summary, str) and summary.strip():
         return summary.strip()
 
-    name = _find_nested_tool_name(event)
-    if name:
-        return TOOL_MESSAGES.get(name, f"Agent 调用 {name}")
-
     event_type = _trace_event_type(event)
-    if event_type in EVENT_TYPE_MESSAGES:
-        return EVENT_TYPE_MESSAGES[event_type]
     if event_type:
         return f"Agent 事件：{event_type}"
 
@@ -196,55 +170,14 @@ def _iter_agent_trace(value: object) -> list[object]:
     return list(value)
 
 
-def _find_nested_name(value: object) -> str | None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key == "name" and isinstance(item, str) and item.strip():
-                return item.strip()
-
-        for item in value.values():
-            nested = _find_nested_name(item)
-            if nested:
-                return nested
-    elif isinstance(value, list):
-        for item in value:
-            nested = _find_nested_name(item)
-            if nested:
-                return nested
-
-    return None
-
-
-def _find_nested_tool_name(value: object) -> str | None:
-    if isinstance(value, str):
-        match = TOOL_NAME_PATTERN.search(value)
-        if match:
-            name = match.group(1).strip()
-            return name if name in KNOWN_TOOL_NAMES else None
-        return None
-
-    if isinstance(value, dict):
-        name = value.get("name")
-        if isinstance(name, str) and name.strip() in KNOWN_TOOL_NAMES:
-            return name.strip()
-        for item in value.values():
-            nested = _find_nested_tool_name(item)
-            if nested:
-                return nested
-    elif isinstance(value, list):
-        for item in value:
-            nested = _find_nested_tool_name(item)
-            if nested:
-                return nested
-
-    return None
-
-
 def _should_include_agent_trace_event(event: dict[str, object]) -> bool:
     message = event.get("message")
-    if isinstance(message, str) and message.strip() in GENERIC_AGENT_MESSAGES:
+    if not isinstance(message, str):
         return False
-    if isinstance(message, str) and message.strip() in LOW_VALUE_AGENT_MESSAGES:
+    normalized_message = message.strip()
+    if not normalized_message:
+        return False
+    if normalized_message in GENERIC_AGENT_MESSAGES or normalized_message.startswith("Agent 事件："):
         return False
     return True
 
@@ -279,4 +212,3 @@ def _to_event_time(value: object) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
-

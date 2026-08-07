@@ -45,7 +45,6 @@ class CrawlerV2DebugLogTests(unittest.TestCase):
         rows = [json.loads(line) for line in debug_file.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(rows), 1)
         raw_event = rows[0]["raw_event"]
-        self.assertEqual(raw_event["runtime_version"], "v2")
         self.assertEqual(raw_event["worker_kind"], "chunk")
         self.assertEqual(raw_event["event_name"], "llm_response")
         self.assertEqual(raw_event["work_item_id"], "7")

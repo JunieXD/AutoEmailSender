@@ -64,7 +64,6 @@ def append_crawler_v2_debug_event(
 ) -> Path | None:
     try:
         event: dict[str, object] = {
-            "runtime_version": "v2",
             "worker_kind": worker_kind,
             "event_name": event_name,
         }
@@ -169,4 +168,3 @@ def _sanitize_debug_string(value: str) -> str:
 
 def _stringify_exception(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
-

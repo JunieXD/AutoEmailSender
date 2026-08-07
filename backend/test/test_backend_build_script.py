@@ -124,13 +124,6 @@ class BackendBuildScriptTest(unittest.TestCase):
                 self.assertEqual(api_hook["binaries"], [])
                 self.assertEqual(api_hook["hiddenimports"], [])
 
-    def test_collects_llm_tokenizer_namespace_dependencies_for_packaging(self) -> None:
-        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
-
-        self.assertIn("--collect-all tiktoken", content)
-        self.assertIn("--collect-submodules tiktoken_ext", content)
-        self.assertIn("--hidden-import tiktoken_ext.openai_public", content)
-
     def test_runs_packaged_backend_self_check_after_build(self) -> None:
         content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
@@ -173,9 +166,6 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("--additional-hooks-dir", content)
         self.assertNotIn("--collect-all playwright", content)
         self.assertIn("--collect-all tldextract", content)
-        self.assertIn("--collect-all tiktoken", content)
-        self.assertIn("--collect-submodules tiktoken_ext", content)
-        self.assertIn("--hidden-import tiktoken_ext.openai_public", content)
         self.assertNotIn("--collect-all markitdown", content)
         self.assertNotIn("--collect-all pdfplumber", content)
         for package_name in [
