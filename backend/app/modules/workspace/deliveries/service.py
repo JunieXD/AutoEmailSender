@@ -44,7 +44,9 @@ DELIVERY_STATUS_FILTERS = {
     "sending",
     "send_failed",
     "schedule_missed",
+    "draft_failed",
     "batch_stopped",
+    "schedule_expired",
     "sent",
     "replied",
     "canceled_schedule",
@@ -152,7 +154,7 @@ def _status_condition(status: str):
         return EmailTask.status == EmailTaskStatus.SEND_FAILED.value
     if status == "schedule_missed":
         return EmailTask.status == EmailTaskStatus.SCHEDULE_MISSED.value
-    if status == "batch_stopped":
+    if status == "draft_failed":
         return and_(
             EmailTask.status == EmailTaskStatus.CANCELED.value,
             EmailTask.cancellation_reason.in_(
@@ -161,6 +163,22 @@ def _status_condition(status: str):
                     EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
                 },
             ),
+            EmailTask.last_error.is_not(None),
+            func.trim(EmailTask.last_error) != "",
+        )
+    if status == "batch_stopped":
+        return and_(
+            EmailTask.status == EmailTaskStatus.CANCELED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.BATCH_STOPPED.value,
+            or_(EmailTask.last_error.is_(None), func.trim(EmailTask.last_error) == ""),
+        )
+    if status == "schedule_expired":
+        return and_(
+            EmailTask.status == EmailTaskStatus.CANCELED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
+            or_(EmailTask.last_error.is_(None), func.trim(EmailTask.last_error) == ""),
         )
     if status == "sent":
         return EmailTask.status == EmailTaskStatus.SENT.value
@@ -411,15 +429,31 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
         return "send_failed", "发送失败", "请检查失败原因后重试或重新排期"
     if task.status == EmailTaskStatus.SCHEDULE_MISSED.value:
         return "schedule_missed", "错过计划", "应用未在计划时间运行，请重新决定发送时间"
-    if (
-        task.status == EmailTaskStatus.CANCELED.value
-        and task.cancellation_reason
-        in {
+    if task.status == EmailTaskStatus.CANCELED.value:
+        if task.cancellation_reason in {
             EmailTaskCancellationReason.BATCH_STOPPED.value,
             EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
-        }
-    ):
-        return "batch_stopped", "批次已结束", "可前往所属批次查看后续处理方式"
+        } and (task.last_error or "").strip():
+            return (
+                "draft_failed",
+                "草稿生成失败",
+                "生成邮件草稿时失败，因此未进入发送流程",
+            )
+        if (
+            task.cancellation_reason
+            == EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
+        ):
+            return (
+                "schedule_expired",
+                "发送窗口已过期",
+                "所属批量任务的发送窗口已结束，因此这封邮件未发送",
+            )
+        if task.cancellation_reason == EmailTaskCancellationReason.BATCH_STOPPED.value:
+            return (
+                "batch_stopped",
+                "批量任务已终止",
+                "所属批量任务已终止，因此这封邮件未发送",
+            )
     if task.batch_task is not None and task.batch_task.status == BatchTaskStatus.PAUSED.value:
         return "batch_paused", "批次已暂停", "恢复所属批次后继续执行"
     if task.status == EmailTaskStatus.APPROVED.value:

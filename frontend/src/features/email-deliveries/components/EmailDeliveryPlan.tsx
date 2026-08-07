@@ -1,8 +1,11 @@
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Ban,
   CalendarClock,
   CheckCircle2,
+  Check,
   ChevronRight,
   Clock3,
   ExternalLink,
@@ -14,6 +17,7 @@ import {
   Send,
   X,
 } from 'lucide-react';
+import clsx from 'clsx';
 import {
   useCallback,
   useEffect,
@@ -90,7 +94,9 @@ const DELIVERY_STATUS_OPTIONS: Record<
   attention: [
     { value: 'send_failed', label: '发送失败' },
     { value: 'schedule_missed', label: '错过计划' },
-    { value: 'batch_stopped', label: '批次已结束' },
+    { value: 'draft_failed', label: '草稿生成失败' },
+    { value: 'batch_stopped', label: '批量任务已终止' },
+    { value: 'schedule_expired', label: '发送窗口已过期' },
   ],
   history: [
     { value: 'sent', label: '已发送' },
@@ -107,7 +113,9 @@ const DELIVERY_STATUS_TONES: Record<EmailDeliveryStatus, string> = {
   sending: 'border-violet-200 bg-violet-50 text-violet-700',
   send_failed: 'border-red-200 bg-red-50 text-red-700',
   schedule_missed: 'border-amber-200 bg-amber-50 text-amber-800',
+  draft_failed: 'border-red-200 bg-red-50 text-red-700',
   batch_stopped: 'border-stone-200 bg-stone-100 text-stone-700',
+  schedule_expired: 'border-amber-200 bg-amber-50 text-amber-800',
   sent: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   replied: 'border-teal-200 bg-teal-50 text-teal-700',
   canceled_schedule: 'border-stone-200 bg-stone-100 text-stone-600',
@@ -121,7 +129,9 @@ const DELIVERY_STATUS_VIEWS: Record<EmailDeliveryStatus, EmailDeliveryView> = {
   sending: 'upcoming',
   send_failed: 'attention',
   schedule_missed: 'attention',
+  draft_failed: 'attention',
   batch_stopped: 'attention',
+  schedule_expired: 'attention',
   sent: 'history',
   replied: 'history',
   canceled_schedule: 'history',
@@ -133,6 +143,21 @@ const DEFAULT_DELIVERY_SORTS: Record<EmailDeliveryView, EmailDeliverySort> = {
   attention: 'updated_desc',
   history: 'event_desc',
 };
+
+type EmailDeliverySortField = 'scheduled' | 'updated' | 'event';
+type EmailDeliverySortDirection = 'asc' | 'desc';
+
+const DEFAULT_DELIVERY_SORT_DIRECTIONS: Record<
+  EmailDeliverySortField,
+  EmailDeliverySortDirection
+> = {
+  scheduled: 'asc',
+  updated: 'desc',
+  event: 'desc',
+};
+
+const DELIVERY_TABLE_COLUMNS =
+  'lg:grid-cols-[minmax(7.75rem,0.85fr)_minmax(9rem,1fr)_minmax(10rem,1.35fr)_minmax(9rem,1fr)_minmax(10rem,1.05fr)_minmax(7rem,0.75fr)]';
 
 const DELIVERY_SEARCH_FIELD_OPTIONS: ReadonlyArray<{
   value: EmailDeliverySearchField;
@@ -161,25 +186,35 @@ const parseSearchFields = (value: string | null): EmailDeliverySearchField[] => 
     : [...DEFAULT_DELIVERY_SEARCH_FIELDS];
 };
 
-const DELIVERY_SORT_OPTIONS: Record<
+const DELIVERY_SORT_FIELD_OPTIONS: Record<
   EmailDeliveryView,
-  Array<{ value: EmailDeliverySort; label: string }>
+  Array<{ value: EmailDeliverySortField; label: string }>
 > = {
   upcoming: [
-    { value: 'scheduled_asc', label: '最先发送优先' },
-    { value: 'scheduled_desc', label: '最晚计划优先' },
-    { value: 'updated_desc', label: '最近变更优先' },
+    { value: 'scheduled', label: '计划时间' },
+    { value: 'updated', label: '更新时间' },
   ],
   attention: [
-    { value: 'updated_desc', label: '最近出现优先' },
-    { value: 'updated_asc', label: '最早问题优先' },
-    { value: 'scheduled_asc', label: '原计划最早优先' },
+    { value: 'updated', label: '问题时间' },
+    { value: 'scheduled', label: '原计划时间' },
   ],
   history: [
-    { value: 'event_desc', label: '最近完成优先' },
-    { value: 'event_asc', label: '最早完成优先' },
+    { value: 'event', label: '完成时间' },
   ],
 };
+
+const getDeliverySortField = (
+  sort: EmailDeliverySort,
+): EmailDeliverySortField => sort.split('_')[0] as EmailDeliverySortField;
+
+const getDeliverySortDirection = (
+  sort: EmailDeliverySort,
+): EmailDeliverySortDirection => sort.endsWith('_desc') ? 'desc' : 'asc';
+
+const buildDeliverySort = (
+  field: EmailDeliverySortField,
+  direction: EmailDeliverySortDirection,
+) => `${field}_${direction}` as EmailDeliverySort;
 
 const VIEW_EMPTY_COPY: Record<
   EmailDeliveryView,
@@ -211,7 +246,11 @@ const isDeliverySortForView = (
   value: string | null,
   view: EmailDeliveryView,
 ): value is EmailDeliverySort =>
-  DELIVERY_SORT_OPTIONS[view].some((option) => option.value === value);
+  DELIVERY_SORT_FIELD_OPTIONS[view].some(
+    (option) =>
+      value === buildDeliverySort(option.value, 'asc') ||
+      value === buildDeliverySort(option.value, 'desc'),
+  );
 
 const parsePositiveInteger = (value: string | null) => {
   const parsed = Number(value);
@@ -249,7 +288,10 @@ const DeliveryStatusBadge = ({ item }: { item: EmailDeliveryItemDTO }) => (
     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${DELIVERY_STATUS_TONES[item.status]}`}
     title={item.status_description}
   >
-    {item.status === 'send_failed' || item.status === 'schedule_missed' ? (
+    {item.status === 'send_failed' ||
+    item.status === 'schedule_missed' ||
+    item.status === 'draft_failed' ||
+    item.status === 'schedule_expired' ? (
       <AlertTriangle className="h-3.5 w-3.5" />
     ) : item.status === 'sent' || item.status === 'replied' ? (
       <CheckCircle2 className="h-3.5 w-3.5" />
@@ -285,6 +327,8 @@ export const EmailDeliveryPlan = ({
   const sort = isDeliverySortForView(searchParams.get('sort'), view)
     ? searchParams.get('sort') as EmailDeliverySort
     : DEFAULT_DELIVERY_SORTS[view];
+  const sortField = getDeliverySortField(sort);
+  const sortDirection = getDeliverySortDirection(sort);
   const identityId = parsePositiveInteger(searchParams.get('identity_id'));
   const locatedTaskId = parsePositiveInteger(searchParams.get('task_id'));
   const status = searchParams.get('status');
@@ -302,6 +346,12 @@ export const EmailDeliveryPlan = ({
       .join('、');
   }, [searchFields]);
   const [searchValue, setSearchValue] = useState(query);
+  const [sortDirections, setSortDirections] = useState<
+    Record<EmailDeliverySortField, EmailDeliverySortDirection>
+  >(() => ({
+    ...DEFAULT_DELIVERY_SORT_DIRECTIONS,
+    [sortField]: sortDirection,
+  }));
   const [data, setData] = useState<EmailDeliveryListDTO>(EMPTY_DELIVERY_LIST);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -325,7 +375,6 @@ export const EmailDeliveryPlan = ({
     storageKey: 'tasks:email-deliveries:page-size',
     initialPageSize: 20,
   });
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '本地时区';
   const activeFilters = Boolean(identityId || source !== 'all' || status || query);
   const activeAdvancedFilterCount =
     Number(Boolean(identityId)) + Number(source !== 'all') + Number(Boolean(status));
@@ -394,6 +443,14 @@ export const EmailDeliveryPlan = ({
   useEffect(() => {
     setSearchValue(query);
   }, [query]);
+
+  useEffect(() => {
+    setSortDirections((previous) =>
+      previous[sortField] === sortDirection
+        ? previous
+        : { ...previous, [sortField]: sortDirection },
+    );
+  }, [sortDirection, sortField]);
 
   useEffect(() => {
     if (searchValue === query) {
@@ -775,21 +832,91 @@ export const EmailDeliveryPlan = ({
             </div>
             <NativeSelectField
               ariaLabel="发送计划排序"
-              value={sort}
+              value={sortField}
+              selectedLabel={`${DELIVERY_SORT_FIELD_OPTIONS[view].find((option) => option.value === sortField)?.label ?? ''} ${sortDirection === 'desc' ? '↓' : '↑'}`}
               onChange={(event) => {
+                const nextField = event.target.value as EmailDeliverySortField;
+                const nextSort = buildDeliverySort(
+                  nextField,
+                  sortDirections[nextField],
+                );
                 setPage(1);
                 updateSearchParams({
                   sort:
-                    event.target.value === DEFAULT_DELIVERY_SORTS[view]
+                    nextSort === DEFAULT_DELIVERY_SORTS[view]
                       ? null
-                      : event.target.value,
+                      : nextSort,
                   task_id: null,
                 });
               }}
               wrapperClassName="min-w-0 flex-1"
               shellClassName="!min-h-0 h-8 border-0 bg-stone-50 px-3 py-0 shadow-none"
+              renderOption={(option, { selected, selectOption, closeMenu }) => {
+                const optionField = option.value as EmailDeliverySortField;
+                const direction = selected
+                  ? sortDirection
+                  : sortDirections[optionField];
+
+                return (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-pressed={selected}
+                      aria-label={option.label}
+                      disabled={option.disabled}
+                      onClick={selectOption}
+                      className={clsx(
+                        'flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 transition',
+                        option.disabled
+                          ? 'cursor-not-allowed text-stone-300'
+                          : selected
+                            ? 'bg-primary text-white shadow-sm shadow-primary/25'
+                            : 'text-stone-700 hover:bg-stone-100/90 hover:text-stone-900',
+                      )}
+                    >
+                      <span className="truncate">{option.label}</span>
+                      {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`切换${option.label}排序方向`}
+                      disabled={option.disabled}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const nextDirection = direction === 'desc' ? 'asc' : 'desc';
+                        const nextSort = buildDeliverySort(optionField, nextDirection);
+                        setSortDirections((previous) => ({
+                          ...previous,
+                          [optionField]: nextDirection,
+                        }));
+                        setPage(1);
+                        updateSearchParams({
+                          sort:
+                            nextSort === DEFAULT_DELIVERY_SORTS[view]
+                              ? null
+                              : nextSort,
+                          task_id: null,
+                        });
+                        closeMenu();
+                      }}
+                      className={clsx(
+                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition',
+                        selected
+                          ? 'border-primary/20 bg-primary/10 text-primary'
+                          : 'border-stone-200 text-stone-500 hover:border-stone-300 hover:bg-stone-100 hover:text-stone-800',
+                      )}
+                    >
+                      {direction === 'desc' ? (
+                        <ArrowDown className="h-4 w-4" />
+                      ) : (
+                        <ArrowUp className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                );
+              }}
             >
-              {DELIVERY_SORT_OPTIONS[view].map((option) => (
+              {DELIVERY_SORT_FIELD_OPTIONS[view].map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -942,205 +1069,236 @@ export const EmailDeliveryPlan = ({
           </div>
         ) : (
           <>
-            <div className="hidden overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm md:block">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px] table-fixed text-left">
-                  <thead className="border-b border-stone-200 bg-stone-50 text-xs font-medium text-stone-500">
-                    <tr>
-                      <th className="w-[150px] px-4 py-3">计划时间</th>
-                      <th className="w-[180px] px-4 py-3">收件人</th>
-                      <th className="px-4 py-3">邮件</th>
-                      <th className="w-[180px] px-4 py-3">发件身份</th>
-                      <th className="w-[135px] px-4 py-3">状态</th>
-                      <th className="w-[130px] px-4 py-3 text-right">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((item) => (
-                      <tr
-                        key={item.id}
-                        onClick={() => setSelectedItem(item)}
-                        className={`cursor-pointer border-b border-stone-100 transition last:border-b-0 hover:bg-stone-50 ${locatedTaskId === item.id ? 'bg-primary/5 shadow-[inset_3px_0_0_0_var(--color-primary)]' : ''}`}
-                      >
-                        <td className="px-4 py-4 align-top">
-                          <div className="text-sm font-medium text-stone-900">{formatDeliveryTime(item)}</div>
-                          <div className="mt-1 text-xs text-stone-400">{item.status_description}</div>
-                        </td>
-                        <td className="px-4 py-4 align-top">
-                          <div className="truncate text-sm font-medium text-stone-900">{item.professor_name}</div>
-                          <div className="mt-1 truncate text-xs text-stone-500">{item.professor_email ?? '未填写邮箱'}</div>
-                        </td>
-                        <td className="px-4 py-4 align-top">
-                          <div className="line-clamp-2 text-sm font-medium leading-5 text-stone-900">{item.subject?.trim() || '（无主题）'}</div>
-                          <div className="mt-1 truncate text-xs text-stone-500">
-                            {item.source === 'manual' ? '工作区邮件' : item.batch_task_name ?? '批量邮件'}
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 align-top">
-                          <div className="truncate text-sm text-stone-800">{item.identity_name}</div>
-                          <div className="mt-1 truncate text-xs text-stone-500">{item.sender_email}</div>
-                        </td>
-                        <td className="px-4 py-4 align-top"><DeliveryStatusBadge item={item} /></td>
-                        <td className="px-4 py-4 align-top">
-                          <div className="flex justify-end gap-2">
-                            {item.can_reschedule ? (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openReschedule(item);
-                                }}
-                                className="ui-btn-secondary h-9 px-3 py-1.5 shadow-none"
-                              >
-                                <CalendarClock className="h-4 w-4" />
-                                改期
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setSelectedItem(item);
-                              }}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-                              aria-label={`查看 ${item.professor_name} 的发送详情`}
-                              title="查看详情"
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm">
+              <div
+                className={`hidden gap-4 border-b border-stone-100 bg-stone-50/70 px-6 py-4 text-xs font-medium uppercase tracking-[0.16em] text-stone-400 lg:grid lg:items-center ${DELIVERY_TABLE_COLUMNS}`}
+              >
+                <div className="text-center">计划时间</div>
+                <div className="text-center">收件人</div>
+                <div className="text-center">邮件</div>
+                <div className="text-center">发件身份</div>
+                <div className="text-center">状态</div>
+                <div className="text-center">操作</div>
               </div>
-            </div>
 
-            <div className="grid gap-3 md:hidden">
-              {data.items.map((item) => (
-                <article
-                  key={item.id}
-                  className={`rounded-2xl border bg-white p-4 shadow-sm ${locatedTaskId === item.id ? 'border-primary/30 ring-2 ring-primary/10' : 'border-stone-200'}`}
-                >
-                  <button type="button" onClick={() => setSelectedItem(item)} className="w-full text-left">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-stone-900">{formatDeliveryTime(item)}</div>
-                        <div className="mt-1 text-xs text-stone-500">{item.professor_name} · {item.professor_email ?? '未填写邮箱'}</div>
+              <div className="hidden divide-y divide-stone-100 lg:block">
+                {data.items.map((item) => (
+                  <article
+                    key={item.id}
+                    className={`px-6 py-5 transition hover:bg-stone-50/80 ${locatedTaskId === item.id ? 'bg-primary/5 shadow-[inset_3px_0_0_0_var(--color-primary)]' : 'bg-white'}`}
+                  >
+                    <div className={`grid items-center gap-4 ${DELIVERY_TABLE_COLUMNS}`}>
+                      <div className="min-w-0 text-center text-sm font-medium text-stone-900">
+                        {formatDeliveryTime(item)}
                       </div>
-                      <DeliveryStatusBadge item={item} />
+                      <div className="min-w-0 text-center">
+                        <div className="truncate text-sm font-medium text-stone-900">{item.professor_name}</div>
+                        <div className="mt-1 break-all text-xs text-stone-500">{item.professor_email ?? '未填写邮箱'}</div>
+                      </div>
+                      <div className="min-w-0 text-center">
+                        <div className="line-clamp-2 text-sm font-medium leading-5 text-stone-900">{item.subject?.trim() || '（无主题）'}</div>
+                        <div className="mt-1 truncate text-xs text-stone-500">
+                          {item.source === 'manual' ? '工作区邮件' : item.batch_task_name ?? '批量邮件'}
+                        </div>
+                      </div>
+                      <div className="min-w-0 text-center">
+                        <div className="truncate text-sm text-stone-800">{item.identity_name}</div>
+                        <div className="mt-1 break-all text-xs text-stone-500">{item.sender_email}</div>
+                      </div>
+                      <div className="min-w-0 text-center">
+                        <DeliveryStatusBadge item={item} />
+                        {item.last_error ? (
+                          <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700" title={item.last_error}>
+                            {item.last_error}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="flex min-w-0 justify-center gap-2">
+                        {item.can_reschedule ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openReschedule(item);
+                            }}
+                            className="ui-btn-secondary h-9 justify-center whitespace-nowrap px-3 py-1.5 shadow-none"
+                          >
+                            <CalendarClock className="h-4 w-4" />
+                            改期
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedItem(item);
+                          }}
+                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+                          aria-label={`查看 ${item.professor_name} 的发送详情`}
+                          title="查看详情"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-3 line-clamp-2 text-sm leading-5 text-stone-800">{item.subject?.trim() || '（无主题）'}</div>
-                    <div className="mt-3 text-xs text-stone-500">{item.identity_name} · {item.sender_email}</div>
-                    <div className="mt-1 text-xs text-stone-400">{item.source === 'manual' ? '工作区邮件' : item.batch_task_name ?? '批量邮件'}</div>
-                  </button>
-                  <div className="mt-4 flex justify-end gap-2 border-t border-stone-100 pt-3">
-                    {item.can_reschedule ? (
-                      <button type="button" onClick={() => openReschedule(item)} className="ui-btn-secondary shadow-none">
-                        <CalendarClock className="h-4 w-4" />
-                        改期
-                      </button>
-                    ) : null}
-                    <button type="button" onClick={() => setSelectedItem(item)} className="ui-btn-secondary shadow-none">
-                      查看详情
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
+                  </article>
+                ))}
+              </div>
 
-            <Pagination
-              page={data.page}
-              pageSize={pageSize}
-              totalCount={data.total_count}
-              onChange={handlePaginationChange}
-              ariaLabel="发送计划分页"
-              pageSizeOptions={[20, 50, 100]}
-              unitLabel="封"
-              itemLabel="封邮件"
-              pageStatusPrefix="第 "
-              focusTargetRef={listStartRef}
-              disabled={loading || refreshing}
-              className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
-            />
+              <div className="divide-y divide-stone-100 lg:hidden">
+                {data.items.map((item) => (
+                  <article
+                    key={item.id}
+                    className={`px-5 py-4 ${locatedTaskId === item.id ? 'bg-primary/5 shadow-[inset_3px_0_0_0_var(--color-primary)]' : 'bg-white'}`}
+                  >
+                    <div className="w-full text-left">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-stone-900">{formatDeliveryTime(item)}</div>
+                          <div className="mt-1 text-xs text-stone-500">{item.professor_name} · {item.professor_email ?? '未填写邮箱'}</div>
+                        </div>
+                        <DeliveryStatusBadge item={item} />
+                      </div>
+                      {item.last_error ? (
+                        <div className="mt-2 break-words text-xs leading-5 text-red-700">{item.last_error}</div>
+                      ) : null}
+                      <div className="mt-3 line-clamp-2 text-sm leading-5 text-stone-800">{item.subject?.trim() || '（无主题）'}</div>
+                      <div className="mt-3 text-xs text-stone-500">{item.identity_name} · {item.sender_email}</div>
+                      <div className="mt-1 text-xs text-stone-400">{item.source === 'manual' ? '工作区邮件' : item.batch_task_name ?? '批量邮件'}</div>
+                    </div>
+                    <div className="mt-4 flex justify-end gap-2 border-t border-stone-100 pt-3">
+                      {item.can_reschedule ? (
+                        <button type="button" onClick={() => openReschedule(item)} className="ui-btn-secondary shadow-none">
+                          <CalendarClock className="h-4 w-4" />
+                          改期
+                        </button>
+                      ) : null}
+                      <button type="button" onClick={() => setSelectedItem(item)} className="ui-btn-secondary shadow-none">
+                        查看详情
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <Pagination
+                page={data.page}
+                pageSize={pageSize}
+                totalCount={data.total_count}
+                onChange={handlePaginationChange}
+                ariaLabel="发送计划分页"
+                unitLabel="封"
+                itemLabel="封邮件"
+                pageStatusPrefix="第 "
+                focusTargetRef={listStartRef}
+                disabled={loading || refreshing}
+                className="border-t border-stone-100 px-6 py-4"
+              />
+            </div>
           </>
         )}
       </section>
 
       {selectedItem ? (
         <div
-          className="fixed inset-0 z-[90] flex justify-end bg-stone-950/30 backdrop-blur-sm"
+          className="fixed inset-0 z-[90] flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
           onClick={detailLayer.onBackdropClick}
           onMouseDown={detailLayer.onBackdropMouseDown}
         >
-          <aside
-            className="h-full w-full max-w-lg overflow-y-auto border-l border-stone-200 bg-white p-6 shadow-2xl"
+          <section
+            role="dialog"
             aria-label="发送项详情"
+            className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-4xl sm:rounded-3xl"
             onClick={detailLayer.onContentClick}
             onMouseDown={detailLayer.onContentMouseDown}
           >
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-4 border-b border-stone-200 bg-[#fcfbf8] px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:py-5">
               <div className="min-w-0">
-                <div className="text-xs font-medium text-stone-400">发送项详情</div>
-                <h2 className="mt-2 break-words text-lg font-semibold text-stone-900">{selectedItem.subject?.trim() || '（无主题）'}</h2>
+                <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
+                  <Mail className="h-4 w-4 text-primary" />
+                  发送计划
+                </div>
+                <h2 className="mt-2 break-words text-xl font-semibold text-stone-900">{selectedItem.subject?.trim() || '（无主题）'}</h2>
+                <p className="mt-2 text-sm text-stone-500">
+                  {selectedItem.professor_name} · {selectedItem.professor_email ?? '未填写邮箱'}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={closeDetails}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 hover:bg-stone-50"
+                className="ui-btn-secondary w-full justify-center sm:w-auto"
                 aria-label="关闭发送项详情"
               >
                 <X className="h-4 w-4" />
+                关闭
               </button>
             </div>
 
-            <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
-              <DeliveryStatusBadge item={selectedItem} />
-              <p className="mt-3 text-sm leading-6 text-stone-600">{selectedItem.status_description}</p>
-              {selectedItem.last_error ? (
-                <p className="mt-3 break-words text-sm leading-6 text-red-700">{selectedItem.last_error}</p>
+            <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">当前状态</div>
+                  <div className="mt-2"><DeliveryStatusBadge item={selectedItem} /></div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">计划时间</div>
+                  <div className="mt-2 text-sm font-semibold text-stone-900">
+                    {formatFullDateTime(selectedItem.scheduled_at ?? selectedItem.last_scheduled_at)}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
+                  <div className="text-xs font-medium text-stone-500">邮件来源</div>
+                  <div className="mt-2 break-words text-sm font-semibold text-stone-900">
+                    {selectedItem.source === 'manual' ? '工作区邮件' : selectedItem.batch_task_name ?? '批量邮件'}
+                  </div>
+                </div>
+              </div>
+
+              {DELIVERY_STATUS_VIEWS[selectedItem.status] === 'attention' ? (
+                <section className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3">
+                  <h3 className="text-sm font-semibold text-red-900">
+                    {selectedItem.last_error ? '失败原因' : '未发送原因'}
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-red-800">{selectedItem.status_description}</p>
+                  {selectedItem.last_error ? (
+                    <p className="mt-2 break-words text-sm font-medium leading-6 text-red-900">{selectedItem.last_error}</p>
+                  ) : null}
+                </section>
               ) : null}
-            </div>
 
-            <dl className="mt-6 divide-y divide-stone-100 border-y border-stone-100">
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">计划时间</dt>
-                <dd className="text-sm font-medium text-stone-900">{formatFullDateTime(selectedItem.scheduled_at ?? selectedItem.last_scheduled_at)} · {timeZone}</dd>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">收件人</dt>
-                <dd className="break-words text-sm text-stone-900">{selectedItem.professor_name} · {selectedItem.professor_email ?? '未填写邮箱'}</dd>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">发件身份</dt>
-                <dd className="break-words text-sm text-stone-900">{selectedItem.identity_name} · {selectedItem.sender_email}</dd>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">来源</dt>
-                <dd className="text-sm text-stone-900">{selectedItem.source === 'manual' ? '工作区邮件' : selectedItem.batch_task_name ?? '批量邮件'}</dd>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">附件</dt>
-                <dd className="inline-flex items-center gap-2 text-sm text-stone-900">
-                  <Paperclip className="h-4 w-4 text-stone-400" />
-                  {selectedItem.attachment_count > 0
-                    ? `${selectedItem.attachment_count} 份 · ${formatFileSize(selectedItem.attachment_size_bytes)}`
-                    : '未选择附件'}
-                </dd>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">最近尝试</dt>
-                <dd className="text-sm text-stone-900">{formatFullDateTime(selectedItem.last_send_attempt_at)}</dd>
-              </div>
-              <div className="grid gap-2 py-4 sm:grid-cols-[120px_1fr]">
-                <dt className="text-sm text-stone-500">状态更新</dt>
-                <dd className="text-sm text-stone-900">{formatFullDateTime(selectedItem.updated_at)}</dd>
-              </div>
-            </dl>
+              <section className="mt-6">
+                <h3 className="text-sm font-semibold text-stone-900">发送信息</h3>
+                <dl className="mt-3 divide-y divide-stone-100 rounded-2xl border border-stone-100 text-sm">
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">收件人</dt>
+                    <dd className="break-words text-stone-800">{selectedItem.professor_name} · {selectedItem.professor_email ?? '未填写邮箱'}</dd>
+                  </div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">发件身份</dt>
+                    <dd className="break-words text-stone-800">{selectedItem.identity_name} · {selectedItem.sender_email}</dd>
+                  </div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">附件</dt>
+                    <dd className="inline-flex items-center gap-2 text-stone-800">
+                      <Paperclip className="h-4 w-4 text-stone-400" />
+                      {selectedItem.attachment_count > 0
+                        ? `${selectedItem.attachment_count} 份 · ${formatFileSize(selectedItem.attachment_size_bytes)}`
+                        : '未选择附件'}
+                    </dd>
+                  </div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">最近尝试</dt>
+                    <dd className="text-stone-800">{formatFullDateTime(selectedItem.last_send_attempt_at)}</dd>
+                  </div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
+                    <dt className="text-stone-500">状态更新</dt>
+                    <dd className="text-stone-800">{formatFullDateTime(selectedItem.updated_at)}</dd>
+                  </div>
+                </dl>
+              </section>
 
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
               {selectedItem.can_cancel ? (
                 <button
                   type="button"
@@ -1184,8 +1342,9 @@ export const EmailDeliveryPlan = ({
                   修改时间
                 </button>
               ) : null}
+              </div>
             </div>
-          </aside>
+          </section>
         </div>
       ) : null}
 

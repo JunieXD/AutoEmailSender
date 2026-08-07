@@ -132,6 +132,7 @@ const renderPlan = (initialEntry = '/tasks') =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  globalThis.localStorage.clear();
   apiMocks.listEmailDeliveries.mockImplementation(
     async (params: { page: number; pageSize: number; view: EmailDeliveryView }) =>
       buildList({
@@ -197,6 +198,25 @@ describe('EmailDeliveryPlan', () => {
     });
   });
 
+  it('uses the shared custom page-size behavior and accepts one item per page', async () => {
+    renderPlan();
+    await screen.findAllByText('博士申请咨询');
+
+    fireEvent.click(screen.getByRole('button', { name: '每页数量' }));
+    fireEvent.click(screen.getByRole('option', { name: '自定义' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: '自定义每页数量' }), {
+      target: { value: '1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+
+    await waitFor(() => {
+      expect(apiMocks.listEmailDeliveries).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1, pageSize: 1 }),
+        expect.any(AbortSignal),
+      );
+    });
+  });
+
   it('debounces search and applies advanced filters through shared selects', async () => {
     renderPlan();
     await screen.findAllByText('博士申请咨询');
@@ -257,8 +277,15 @@ describe('EmailDeliveryPlan', () => {
     renderPlan();
     await screen.findAllByText('博士申请咨询');
 
+    expect(screen.getByRole('button', { name: '发送计划排序' })).toHaveTextContent(
+      '计划时间 ↑',
+    );
     fireEvent.click(screen.getByRole('button', { name: '发送计划排序' }));
-    fireEvent.click(screen.getByRole('option', { name: '最晚计划优先' }));
+    expect(screen.getByRole('option', { name: '计划时间' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '最晚计划优先' })).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: '切换计划时间排序方向' }),
+    );
 
     await waitFor(() => {
       expect(apiMocks.listEmailDeliveries).toHaveBeenCalledWith(
@@ -276,7 +303,7 @@ describe('EmailDeliveryPlan', () => {
       );
     });
     expect(screen.getByRole('button', { name: '发送计划排序' })).toHaveTextContent(
-      '最近出现优先',
+      '问题时间 ↓',
     );
   });
 
@@ -402,5 +429,46 @@ describe('EmailDeliveryPlan', () => {
     expect((await screen.findAllByText('已缓存的即将发送邮件')).length).toBeGreaterThan(0);
     expect(screen.queryByText('正在加载发送计划...')).not.toBeInTheDocument();
     unmount();
+  });
+
+  it('shows the actual draft failure reason in the batch-style detail panel', async () => {
+    apiMocks.listEmailDeliveries.mockResolvedValue(
+      buildList({
+        items: [
+          buildItem({
+            source: 'batch',
+            batch_task_id: 8,
+            batch_task_name: '秋季申请批次',
+            status: 'draft_failed',
+            status_label: '草稿生成失败',
+            status_description: '生成邮件草稿时失败，因此未进入发送流程',
+            last_error: '模型返回的 JSON 结构无效',
+            can_reschedule: false,
+            can_cancel: false,
+            can_send_now: false,
+          }),
+        ],
+        counts: { upcoming: 0, attention: 1, history: 0 },
+        total_count: 1,
+        total_pages: 1,
+      }),
+    );
+
+    renderPlan('/tasks?section=delivery&view=attention');
+    await screen.findAllByText('模型返回的 JSON 结构无效');
+    screen.getAllByText('博士申请咨询').forEach((subject) => {
+      fireEvent.click(subject);
+    });
+    expect(screen.queryByRole('dialog', { name: '发送项详情' })).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 张老师 的发送详情' }),
+    );
+
+    const detail = screen.getByRole('dialog', { name: '发送项详情' });
+    expect(detail).toHaveClass('sm:max-w-4xl', 'sm:rounded-3xl');
+    expect(screen.getByText('失败原因')).toBeInTheDocument();
+    expect(screen.getAllByText('模型返回的 JSON 结构无效').length).toBeGreaterThan(1);
+    expect(screen.queryByText('可前往所属批次查看后续处理方式')).not.toBeInTheDocument();
+    expect(screen.queryByText('该导师的批量发送已取消')).not.toBeInTheDocument();
   });
 });
