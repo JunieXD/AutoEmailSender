@@ -359,14 +359,15 @@ class CommunityMentorDataService:
             affiliation for affiliation in record.affiliations if affiliation.is_primary
         )
         unit_projection_matches = (
-            expected.unit_type != "school" or record.school == expected.unit_name
+            expected.unit_type not in {"school", "institute"}
+            or record.school == expected.unit_name
         ) and (
             expected.unit_type != "department" or record.department == expected.unit_name
         )
-        # School and department shards may contain records whose primary
-        # organization is a more specific center or laboratory.
+        # School, institute, and department shards may contain records whose
+        # primary organization is a more specific center or laboratory.
         organization_matches = (
-            expected.unit_type in {"school", "department"}
+            expected.unit_type in {"school", "institute", "department"}
             or primary_affiliation.organization_id == expected.unit_id
         )
         if (

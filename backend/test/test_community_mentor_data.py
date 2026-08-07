@@ -143,11 +143,16 @@ def _record_payload(**overrides: object) -> dict[str, object]:
     return record
 
 
-def _shard_payload(records: list[dict[str, object]]) -> dict[str, object]:
+def _shard_payload(
+    records: list[dict[str, object]],
+    *,
+    unit_name: str = "计算机学院",
+    unit_type: str = "school",
+) -> dict[str, object]:
     return {
         "schema_version": 2,
         "university": {"id": UNIVERSITY_ID, "name": "示例大学"},
-        "unit": {"id": UNIT_ID, "name": "计算机学院", "type": "school"},
+        "unit": {"id": UNIT_ID, "name": unit_name, "type": unit_type},
         "records": records,
     }
 
@@ -163,9 +168,17 @@ def _dataset_payloads(
     minimum_app_version: str = "2.4.1",
     dataset_version: str = DATASET_VERSION,
     generated_at: str = GENERATED_AT,
+    unit_name: str = "计算机学院",
+    unit_type: str = "school",
 ) -> dict[str, bytes]:
     shard_records = records if records is not None else [_record_payload()]
-    shard_payload = _json_bytes(_shard_payload(shard_records))
+    shard_payload = _json_bytes(
+        _shard_payload(
+            shard_records,
+            unit_name=unit_name,
+            unit_type=unit_type,
+        )
+    )
     shard_path = f"objects/sha256/{hashlib.sha256(shard_payload).hexdigest()}.json"
     release_root = f"releases/{dataset_version}"
     catalog_path = f"{release_root}/catalog.json"
@@ -183,8 +196,8 @@ def _dataset_payloads(
                 "units": [
                     {
                         "id": UNIT_ID,
-                        "name": "计算机学院",
-                        "type": "school",
+                        "name": unit_name,
+                        "type": unit_type,
                         "record_count": len(shard_records),
                         "path": shard_path,
                     },
@@ -584,6 +597,57 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
             result.records[0].affiliations[0].organization_id,
             "org_example_department",
         )
+
+    async def test_accepts_institute_record_with_a_more_specific_primary_organization(
+        self,
+    ) -> None:
+        nested_record = _record_payload(school="示例研究所", department="研究中心")
+        nested_affiliation = dict(nested_record["affiliations"][0])  # type: ignore[index]
+        nested_affiliation.update(
+            organization_id="org_example_center",
+            school="示例研究所",
+            department="研究中心",
+        )
+        nested_record["affiliations"] = [nested_affiliation]
+        payloads = _dataset_payloads(
+            records=[nested_record],
+            unit_name="示例研究所",
+            unit_type="institute",
+        )
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
+        await service.get_catalog(force_refresh=True)
+
+        result = await service.load_records(
+            dataset_version=DATASET_VERSION,
+            unit_paths=[shard_path],
+        )
+
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(
+            result.records[0].affiliations[0].organization_id,
+            "org_example_center",
+        )
+
+    async def test_rejects_record_that_does_not_belong_to_shard_institute(self) -> None:
+        wrong_record = _record_payload(school="另一所研究所")
+        wrong_affiliation = dict(wrong_record["affiliations"][0])  # type: ignore[index]
+        wrong_affiliation["school"] = "另一所研究所"
+        wrong_record["affiliations"] = [wrong_affiliation]
+        payloads = _dataset_payloads(
+            records=[wrong_record],
+            unit_name="示例研究所",
+            unit_type="institute",
+        )
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
+        await service.get_catalog(force_refresh=True)
+
+        with self.assertRaisesRegex(CommunityDataError, "不属于目录声明"):
+            await service.load_records(
+                dataset_version=DATASET_VERSION,
+                unit_paths=[shard_path],
+            )
 
     async def test_rejects_record_that_does_not_belong_to_shard_school(self) -> None:
         wrong_record = _record_payload()
