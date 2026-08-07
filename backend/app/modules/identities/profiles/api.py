@@ -349,9 +349,9 @@ async def _delete_identity_match_artifacts(
         or_(
             # A run normally belongs to the identity used as the match source.
             MatchAnalysisRun.identity_id == identity_id,
-            # Shared-group jobs can analyse an active identity's task with a
-            # different source identity.  Deleting the task must still remove
-            # the run because ``email_task_id`` is non-null.
+            # Legacy shared-group runs can reference an active identity's task
+            # while belonging to a different source identity. Deleting the task
+            # must still remove those historical linked runs.
             MatchAnalysisRun.email_task_id.in_(task_ids),
         ),
     )

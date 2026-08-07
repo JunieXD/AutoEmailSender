@@ -112,6 +112,109 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(heads[0], get_head_revision(config))
 
+    def test_match_analysis_task_decoupling_migration_preserves_legacy_runs(self) -> None:
+        database_path = Path(self.temp_dir.name) / "match_task_decoupling.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260807_email_delivery_management"
+        migration_revision = "20260807_match_task_decoupling"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        identity_id = DatabaseSchemaTests._insert_identity_into(
+            connection,
+            email_address="match-decoupling@example.com",
+        )
+        llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+            connection,
+            name="匹配解耦迁移模型",
+        )
+        professor_id = DatabaseSchemaTests._insert_professor_into(
+            connection,
+            "match-decoupling-professor@example.edu",
+        )
+        task_id = DatabaseSchemaTests._insert_workspace_root_task_into(
+            connection,
+            identity_id=identity_id,
+            llm_profile_id=llm_profile_id,
+            professor_id=professor_id,
+        )
+        legacy_run_id = int(
+            connection.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    status, success, match_score
+                )
+                VALUES (?, ?, ?, ?, 'succeeded', 1, 81)
+                """,
+                (task_id, professor_id, identity_id, llm_profile_id),
+            ).lastrowid
+        )
+        connection.commit()
+        connection.close()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        upgraded = sqlite3.connect(database_path)
+        upgraded.execute("PRAGMA foreign_keys = ON")
+        column_rows = {
+            row[1]: row
+            for row in upgraded.execute(
+                "PRAGMA table_info('match_analysis_runs')"
+            ).fetchall()
+        }
+        legacy_email_task_id = upgraded.execute(
+            "SELECT email_task_id FROM match_analysis_runs WHERE id = ?",
+            (legacy_run_id,),
+        ).fetchone()[0]
+        detached_run_id = int(
+            upgraded.execute(
+                """
+                INSERT INTO match_analysis_runs (
+                    email_task_id, professor_id, identity_id, llm_profile_id,
+                    status, success, match_score
+                )
+                VALUES (NULL, ?, ?, ?, 'succeeded', 1, 92)
+                """,
+                (professor_id, identity_id, llm_profile_id),
+            ).lastrowid
+        )
+        upgraded.commit()
+
+        self.assertEqual(column_rows["email_task_id"][3], 0)
+        self.assertEqual(legacy_email_task_id, task_id)
+        self.assertIsNone(
+            upgraded.execute(
+                "SELECT email_task_id FROM match_analysis_runs WHERE id = ?",
+                (detached_run_id,),
+            ).fetchone()[0]
+        )
+
+        upgraded.execute(
+            "DELETE FROM match_analysis_runs WHERE id = ?",
+            (detached_run_id,),
+        )
+        upgraded.commit()
+        upgraded.close()
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        downgraded_columns = {
+            row[1]: row
+            for row in downgraded.execute(
+                "PRAGMA table_info('match_analysis_runs')"
+            ).fetchall()
+        }
+        preserved_email_task_id = downgraded.execute(
+            "SELECT email_task_id FROM match_analysis_runs WHERE id = ?",
+            (legacy_run_id,),
+        ).fetchone()[0]
+        downgraded.close()
+
+        self.assertEqual(downgraded_columns["email_task_id"][3], 1)
+        self.assertEqual(preserved_email_task_id, task_id)
+
     def test_background_scheduler_lease_migration_round_trip(self) -> None:
         database_path = Path(self.temp_dir.name) / "scheduler_leases.db"
         env = os.environ.copy()

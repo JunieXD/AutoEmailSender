@@ -15,9 +15,6 @@ from sqlalchemy.orm.attributes import NO_VALUE
 from app.core.time import local_now, utc_now
 from app.core.config import get_settings
 from app.models import (
-    EmailTask,
-    EmailTaskSource,
-    EmailTaskStatus,
     IdentityProfile,
     LLMProfile,
     MatchAnalysisJob,
@@ -27,10 +24,6 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
-from app.modules.campaigns.public import (
-    get_default_outreach_template_for_identity,
-    resolve_outreach_template_config,
-)
 from app.services.match_results import resolve_identity_match_scope
 from app.services.operation_logs import record_operation_log
 
@@ -38,7 +31,7 @@ from .schemas import MatchAnalysisJobItemRead, MatchAnalysisJobRead
 from .task_analysis import (
     MatchAnalysisAlreadyRunningError,
     MatchCalculationCanceledError,
-    calculate_task_match,
+    calculate_identity_professor_match,
 )
 
 _MATCH_ANALYSIS_CANCEL_POLL_SECONDS = 0.2
@@ -154,16 +147,10 @@ async def create_match_analysis_job_record(
     skipped_count = 0
     for professor in professors:
         if has_evidence[professor.id]:
-            email_task = await _ensure_match_email_task(
-                session,
-                professor=professor,
-                identity=identity,
-                llm_profile=llm_profile,
-            )
             item = MatchAnalysisJobItem(
                 job_id=job.id,
                 professor_id=professor.id,
-                email_task_id=email_task.id,
+                email_task_id=None,
                 status=MatchAnalysisJobItemStatus.QUEUED.value,
                 created_at=now,
                 updated_at=now,
@@ -564,52 +551,6 @@ def _has_professor_match_evidence(professor: Professor) -> bool:
     return bool(professor.recent_papers)
 
 
-async def _ensure_match_email_task(
-    session: AsyncSession,
-    *,
-    professor: Professor,
-    identity: IdentityProfile,
-    llm_profile: LLMProfile,
-) -> EmailTask:
-    existing_task = await session.scalar(
-        select(EmailTask)
-        .where(
-            EmailTask.professor_id == professor.id,
-            EmailTask.identity_id == identity.id,
-            EmailTask.status != EmailTaskStatus.CANCELED.value,
-        )
-        .order_by(EmailTask.created_at.desc(), EmailTask.id.desc())
-        .limit(1),
-    )
-    if existing_task is not None:
-        return existing_task
-
-    selected_template = await get_default_outreach_template_for_identity(
-        session,
-        identity,
-    )
-    snapshot = resolve_outreach_template_config(identity, template=selected_template)
-    task = EmailTask(
-        professor_id=professor.id,
-        identity_id=identity.id,
-        llm_profile_id=llm_profile.id,
-        source=EmailTaskSource.MANUAL.value,
-        status=EmailTaskStatus.DISCOVERED.value,
-        outreach_template_id=(
-            selected_template.id if selected_template is not None else None
-        ),
-        outreach_template_snapshot_version=1,
-        outreach_generation_mode=snapshot.generation_mode,
-        outreach_template_subject=snapshot.subject_template,
-        outreach_template_body_text=snapshot.body_text_template,
-        outreach_template_body_html=snapshot.body_html_template,
-        selected_material_ids=[],
-    )
-    session.add(task)
-    await session.flush()
-    return task
-
-
 async def _claim_next_match_analysis_item(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> _MatchAnalysisItemClaim | None:
@@ -721,9 +662,10 @@ async def _recover_expired_match_analysis_items(
                 select(
                     MatchAnalysisJobItem.id,
                     MatchAnalysisJobItem.job_id,
-                    MatchAnalysisJobItem.email_task_id,
+                    MatchAnalysisJobItem.professor_id,
                     MatchAnalysisJobItem.claim_id,
                     MatchAnalysisJob.cancel_requested_at,
+                    MatchAnalysisJob.match_source_identity_id,
                 )
                 .join(
                     MatchAnalysisJob,
@@ -775,11 +717,12 @@ async def _recover_expired_match_analysis_items(
                 continue
             recovered += 1
             recovered_job_ids.add(int(row.job_id))
-            if row.email_task_id is not None:
+            if row.match_source_identity_id is not None:
                 await session.execute(
                     update(MatchAnalysisRun)
                     .where(
-                        MatchAnalysisRun.email_task_id == row.email_task_id,
+                        MatchAnalysisRun.identity_id == row.match_source_identity_id,
+                        MatchAnalysisRun.professor_id == row.professor_id,
                         MatchAnalysisRun.status == "running",
                     )
                     .values(
@@ -936,8 +879,10 @@ async def _run_match_analysis_job_item(
             or item.claim_id != claim.claim_id
         ):
             return
+        active_identity_id = job.identity_id
         match_source_identity_id = job.match_source_identity_id
-        email_task_id = item.email_task_id
+        llm_profile_id = job.llm_profile_id
+        professor_id = item.professor_id
 
     if job.cancel_requested_at is not None:
         await _mark_item_canceled(session_factory, claim)
@@ -949,14 +894,6 @@ async def _run_match_analysis_job_item(
             skip_reason="匹配依据身份已删除，无法继续分析",
         )
         return
-    if email_task_id is None:
-        await _mark_item_skipped(
-            session_factory,
-            claim,
-            skip_reason="匹配分析工作项缺少邮件任务",
-        )
-        return
-
     timeout_seconds = max(
         1,
         get_settings().llm_request_timeout_seconds
@@ -964,10 +901,12 @@ async def _run_match_analysis_job_item(
     )
     try:
         async with asyncio.timeout(timeout_seconds):
-            result = await _calculate_task_match_until_canceled(
+            result = await _calculate_identity_professor_match_until_canceled(
                 session_factory,
                 claim,
-                email_task_id,
+                active_identity_id=active_identity_id,
+                professor_id=professor_id,
+                llm_profile_id=llm_profile_id,
                 match_source_identity_id=match_source_identity_id,
             )
     except TimeoutError:
@@ -1035,25 +974,34 @@ async def _fail_timed_out_match_analysis_run(
     claim: _MatchAnalysisItemClaim,
 ) -> None:
     now = utc_now()
-    current_item = select(
-        MatchAnalysisJobItem.email_task_id,
-        MatchAnalysisJobItem.claimed_at,
-    ).where(
-        MatchAnalysisJobItem.id == claim.item_id,
-        MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
-        MatchAnalysisJobItem.claim_id == claim.claim_id,
+    current_item = (
+        select(
+            MatchAnalysisJobItem.professor_id,
+            MatchAnalysisJobItem.claimed_at,
+            MatchAnalysisJob.match_source_identity_id,
+        )
+        .join(MatchAnalysisJob, MatchAnalysisJob.id == MatchAnalysisJobItem.job_id)
+        .where(
+            MatchAnalysisJobItem.id == claim.item_id,
+            MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+            MatchAnalysisJobItem.claim_id == claim.claim_id,
+        )
     )
-    email_task_id = current_item.with_only_columns(
-        MatchAnalysisJobItem.email_task_id
+    professor_id = current_item.with_only_columns(
+        MatchAnalysisJobItem.professor_id
+    ).scalar_subquery()
+    match_source_identity_id = current_item.with_only_columns(
+        MatchAnalysisJob.match_source_identity_id
     ).scalar_subquery()
     claimed_at = current_item.with_only_columns(
-        MatchAnalysisJobItem.claimed_at
+        MatchAnalysisJobItem.claimed_at,
     ).scalar_subquery()
     async with session_factory() as session:
         await session.execute(
             update(MatchAnalysisRun)
             .where(
-                MatchAnalysisRun.email_task_id == email_task_id,
+                MatchAnalysisRun.identity_id == match_source_identity_id,
+                MatchAnalysisRun.professor_id == professor_id,
                 MatchAnalysisRun.status == "running",
                 MatchAnalysisRun.started_at >= claimed_at,
             )
@@ -1084,11 +1032,13 @@ async def _match_analysis_run_error(
         return run.error_message or "匹配分析失败"
 
 
-async def _calculate_task_match_until_canceled(
+async def _calculate_identity_professor_match_until_canceled(
     session_factory: async_sessionmaker[AsyncSession],
     claim: _MatchAnalysisItemClaim,
-    email_task_id: int,
     *,
+    active_identity_id: int,
+    professor_id: int,
+    llm_profile_id: int,
     match_source_identity_id: int,
 ):
     async def cancel_requested() -> bool:
@@ -1101,13 +1051,13 @@ async def _calculate_task_match_until_canceled(
         )
 
     calculation_task = asyncio.create_task(
-        calculate_task_match(
+        calculate_identity_professor_match(
             session_factory,
-            email_task_id,
-            force=True,
-            ignore_batch_status=True,
-            cancel_requested=cancel_requested,
+            active_identity_id=active_identity_id,
+            professor_id=professor_id,
+            llm_profile_id=llm_profile_id,
             match_source_identity_id=match_source_identity_id,
+            cancel_requested=cancel_requested,
         )
     )
     try:

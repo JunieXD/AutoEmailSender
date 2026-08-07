@@ -17,6 +17,7 @@ from app.models import (
     EmailTaskStatus,
     IdentityMaterial,
     IdentityMaterialType,
+    IdentityProfessorMatchResult,
     IdentityProfile,
     LLMProfile,
     MatchAnalysisJob,
@@ -90,7 +91,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         items = self._run_async(self._get_job_items(job.id))
         self.assertEqual(len(items), 2)
         self.assertEqual([item.status for item in items], ["queued", "skipped"])
-        self.assertIsNotNone(items[0].email_task_id)
+        self.assertIsNone(items[0].email_task_id)
         self.assertEqual(items[1].skip_reason, "缺少研究方向或近期论文")
 
     def test_create_job_uses_local_time_in_default_name(self) -> None:
@@ -175,6 +176,20 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.total_tokens, 100)
         items = self._run_async(self._get_job_items(job.id))
         self.assertEqual(items[0].cached_tokens, 25)
+        self.assertIsNone(items[0].email_task_id)
+        self.assertEqual(
+            self._run_async(
+                self._list_email_task_ids(
+                    identity_id=identity_id,
+                    professor_id=professor_ids[0],
+                )
+            ),
+            [],
+        )
+        [run] = self._run_async(self._list_match_analysis_runs())
+        [match_result] = self._run_async(self._list_canonical_match_results())
+        self.assertIsNone(run.email_task_id)
+        self.assertIsNone(match_result.source_email_task_id)
 
     def test_llm_runtime_failure_marks_item_and_job_failed(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
@@ -263,7 +278,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 running_runs = list(
                     await session.scalars(
                         select(MatchAnalysisRun).where(
-                            MatchAnalysisRun.email_task_id == item.email_task_id,
+                            MatchAnalysisRun.professor_id == item.professor_id,
                             MatchAnalysisRun.status == "running",
                         )
                     )
@@ -554,7 +569,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.failed_count, 0)
         self.assertEqual(stored.skipped_count, 1)
 
-    def test_run_queued_job_reuses_existing_identity_task_across_llm_profiles(self) -> None:
+    def test_legacy_queued_item_uses_job_profile_without_mutating_email_task(self) -> None:
         identity_id, first_llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
         )
@@ -575,10 +590,17 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 name=None,
             ),
         )
+        self._run_async(self._link_job_item_to_email_task(job.id, existing_task_id))
+
+        used_llm_profile_ids: list[int] = []
+
+        async def fake_generate_match_evaluation(**kwargs):
+            used_llm_profile_ids.append(kwargs["llm_profile"].id)
+            return self._build_match_evaluation_result(match_score=93)
 
         with patch(
             "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
-            AsyncMock(return_value=self._build_match_evaluation_result(match_score=93)),
+            AsyncMock(side_effect=fake_generate_match_evaluation),
         ):
             processed = self._run_async(
                 run_queued_match_analysis_jobs_once(
@@ -591,11 +613,18 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         task_ids = self._run_async(
             self._list_email_task_ids(identity_id=identity_id, professor_id=professor_ids[0]),
         )
+        task = self._run_async(self._get_email_task(existing_task_id))
         self.assertEqual(processed, 1)
         self.assertEqual(items[0].email_task_id, existing_task_id)
         self.assertEqual(task_ids, [existing_task_id])
+        self.assertEqual(used_llm_profile_ids, [second_llm_profile_id])
+        self.assertEqual(task.llm_profile_id, first_llm_profile_id)
+        [run] = self._run_async(self._list_match_analysis_runs())
+        [match_result] = self._run_async(self._list_canonical_match_results())
+        self.assertIsNone(run.email_task_id)
+        self.assertIsNone(match_result.source_email_task_id)
 
-    def test_match_job_does_not_backfill_task_primary_material(self) -> None:
+    def test_match_job_does_not_touch_existing_email_task(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
         )
@@ -619,7 +648,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
 
         items = self._run_async(self._get_job_items(job.id))
         task = self._run_async(self._get_email_task(existing_task_id))
-        self.assertEqual(items[0].email_task_id, existing_task_id)
+        self.assertIsNone(items[0].email_task_id)
         self.assertIsNone(task.primary_material_id)
 
     def test_run_queued_job_records_completion_operation_log(self) -> None:
@@ -986,6 +1015,26 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 ),
             )
 
+    async def _list_match_analysis_runs(self) -> list[MatchAnalysisRun]:
+        async with self.session_factory() as session:
+            return list(
+                await session.scalars(
+                    select(MatchAnalysisRun).order_by(MatchAnalysisRun.id.asc()),
+                ),
+            )
+
+    async def _list_canonical_match_results(
+        self,
+    ) -> list[IdentityProfessorMatchResult]:
+        async with self.session_factory() as session:
+            return list(
+                await session.scalars(
+                    select(IdentityProfessorMatchResult).order_by(
+                        IdentityProfessorMatchResult.id.asc()
+                    ),
+                ),
+            )
+
     async def _create_llm_profile(self, *, name: str) -> int:
         async with self.session_factory() as session:
             llm_profile = LLMProfile(
@@ -1029,6 +1078,17 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                     .order_by(EmailTask.id.asc()),
                 ),
             )
+
+    async def _link_job_item_to_email_task(self, job_id: int, task_id: int) -> None:
+        async with self.session_factory() as session:
+            item = await session.scalar(
+                select(MatchAnalysisJobItem).where(
+                    MatchAnalysisJobItem.job_id == job_id
+                )
+            )
+            assert item is not None
+            item.email_task_id = task_id
+            await session.commit()
 
     async def _mark_job_partially_canceled(self, job_id: int) -> None:
         async with self.session_factory() as session:

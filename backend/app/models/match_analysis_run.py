@@ -38,10 +38,10 @@ class MatchAnalysisRun(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email_task_id: Mapped[int] = mapped_column(
+    email_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("email_tasks.id"),
         index=True,
-        nullable=False,
+        nullable=True,
     )
     professor_id: Mapped[int] = mapped_column(
         ForeignKey("professors.id"),
@@ -90,7 +90,7 @@ class MatchAnalysisRun(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    email_task: Mapped["EmailTask"] = relationship()
+    email_task: Mapped["EmailTask | None"] = relationship()
     professor: Mapped["Professor"] = relationship()
     identity: Mapped["IdentityProfile"] = relationship()
     llm_profile: Mapped["LLMProfile"] = relationship()
