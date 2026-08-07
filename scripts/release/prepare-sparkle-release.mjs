@@ -62,6 +62,16 @@ export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_
       continue;
     }
 
+    // generate_appcast rewrites every retained item's download prefix to the
+    // newest release tag. Recover the original release from our canonical DMG
+    // filename so older delta sources are downloaded from the correct release.
+    const canonicalName = /^AutoEmailSender-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-arm64\.dmg$/i.exec(
+      asset.name,
+    );
+    if (canonicalName !== null) {
+      asset.tag = `v${canonicalName[1]}`;
+    }
+
     const key = `${asset.tag}\0${asset.name}`;
     if (seen.has(key)) {
       continue;

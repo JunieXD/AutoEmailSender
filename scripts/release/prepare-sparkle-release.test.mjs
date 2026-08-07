@@ -71,6 +71,23 @@ test("limits delta source downloads to the most recent three unique DMGs", () =>
   assert.deepEqual(assets.map(({ tag }) => tag), ["v2.3.9", "v2.3.8", "v2.3.7"]);
 });
 
+test("recovers historical release tags after Sparkle rewrites retained download URLs", () => {
+  const appcast = `
+    <channel>
+      <item>
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.1-arm64.dmg" />
+      </item>
+      <item>
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.0-arm64.dmg" />
+      </item>
+    </channel>`;
+
+  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
+    { tag: "v2.4.1", name: "AutoEmailSender-2.4.1-arm64.dmg" },
+    { tag: "v2.4.0", name: "AutoEmailSender-2.4.0-arm64.dmg" },
+  ]);
+});
+
 test("passes the private key through stdin and stages only publishable files", () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "sparkle-release-test-"));
   try {
