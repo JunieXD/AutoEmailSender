@@ -2797,6 +2797,80 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(attempt_mock.await_count, 2)
 
+    async def test_playwright_browser_pagination_waits_for_dynamic_directory_before_matching_control(self) -> None:
+        events: list[str] = []
+
+        class _Page:
+            url = "https://example.edu/directory"
+
+            async def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                self.url = url
+                events.append("goto")
+
+            async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                events.append("selector")
+
+            async def content(self) -> str:
+                events.append("content")
+                return '<html><body><a href="/profile">张三</a></body></html>'
+
+            async def evaluate(self, script: str, argument: object = None) -> object:
+                events.append("match")
+                return {"index": 0, "disabled": True}
+
+        class _Context:
+            async def new_page(self) -> _Page:
+                return _Page()
+
+        class _Browser:
+            async def new_context(self, **kwargs: object) -> _Context:
+                return _Context()
+
+            async def close(self) -> None:
+                return None
+
+        class _Chromium:
+            async def launch(self, **kwargs: object) -> _Browser:
+                return _Browser()
+
+        class _Playwright:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> "_Playwright":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        async def wait_for_directory(page: _Page, **kwargs: object) -> tuple[str, bool]:
+            events.append("directory_ready")
+            return await page.content(), True
+
+        with (
+            patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()),
+            patch(
+                "app.modules.crawler.pages.tools._wait_for_dynamic_directory_html",
+                new=wait_for_directory,
+            ),
+        ):
+            result = await crawler_tools._try_fetch_browser_pagination_once(
+                "https://example.edu/directory",
+                {
+                    "tag": "li",
+                    "text": "",
+                    "title": "下一页",
+                    "ariaLabel": "图标: right",
+                    "classTokens": ["pagination-next"],
+                    "matchIndex": 0,
+                },
+                intent="directory",
+                max_pages=2,
+            )
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(result.stopped_reason, "control_disabled")
+        self.assertLess(events.index("directory_ready"), events.index("match"))
+
     async def test_playwright_browser_pagination_retries_unchanged_click(self) -> None:
         click_count = 0
 

@@ -1670,12 +1670,19 @@ async def _try_fetch_browser_pagination_once(
                     selector,
                     timeout=options.wait_for_timeout_ms,
                 )
-            if options.delay_before_return_html_seconds > 0:
+            if options.wait_for_dynamic_directory:
+                initial_html, _ = await _wait_for_dynamic_directory_html(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                )
+            elif options.delay_before_return_html_seconds > 0:
                 await page.wait_for_timeout(
                     options.delay_before_return_html_seconds * 1000
                 )
-
-            initial_html = await page.content()
+                initial_html = await page.content()
+            else:
+                initial_html = await page.content()
             initial_url = str(getattr(page, "url", "") or absolute_url)
             initial_snapshot = _snapshot_from_browser_html(
                 html=initial_html,

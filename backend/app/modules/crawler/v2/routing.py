@@ -338,17 +338,11 @@ def build_v2_pagination_routing_prompt(
     routing_context: str,
 ) -> str:
     return (
-        "你只负责当前页面的分页保险丝，不提取人员，也不横向发现新栏目。\n"
-        "只选择与当前页面属于同一份人员名单、仅页码或翻页状态不同的链接；可包含下一页、其他明确页码或同一列表的等价翻页 URL。判断链接关系和页面结构，不依赖固定字眼。\n"
-        "当前页面自身或只跳到当前页某个位置的链接不是分页，不能选择。\n"
-        "个人主页、另一类人员名单、筛选分类、上级或兄弟栏目、普通导航及用途不同的页面都不是分页。无法明确证明是同一份名单的下一部分时不要选择。\n"
-        "若页面同时给出多个真实页码 URL，可一次选全，避免漏页。只能逐字返回下方可选择链接中的 URL，不能改写或猜造 URL。\n"
-        "如果没有分页 URL，但页面存在一个可以反复点击、每次只前进到同一名单下一页的真实控件，可把它的 control ID 放入 pagination_control_id；不要选择具体页码、筛选、选项卡或跳页控件。优先使用 URL，不能同时选择 URL 和控件。\n"
-        "没有可直接访问的 http/https URL 的页码或翻页控件（包括只执行页面脚本或提交表单的链接）不是分页 URL；绝不能根据它们拼接 URL，应选择下方真实存在的逐页前进控件 ID。\n"
-        "存在分页 URL 或分页控件时 allow_expansion 必须为 true；两者都没有时必须为 false。\n"
-        "只输出一个 JSON 对象，不要解释、Markdown 或代码块，格式为：{\"allow_expansion\":false,\"pagination_urls\":[],\"pagination_control_id\":null}。\n"
-        f"学校：{university}\n"
-        f"学院/单位：{school}\n"
+        "你只判断当前页是否还有同一份人员名单的下一部分。\n"
+        "只能从下方候选中选择：有真实分页 URL 就返回 URL；否则只选择能反复逐页向后推进当前名单的一个控件。"
+        "当前页已显示人员记录时，候选控件只要能从文字、标题、无障碍标签或样式明确看出它属于该名单的分页并向后一步，就应选择；不要求它带 URL。"
+        "忽略个人页、分类或筛选、页内位置、具体页码、跳转和返回操作；没有就不扩展。URL 与控件不能同时选择。\n"
+        "只输出 JSON：{\"allow_expansion\":false,\"pagination_urls\":[],\"pagination_control_id\":null}。\n"
         f"当前 URL：{source_url}\n"
         f"{routing_context}"
     )
