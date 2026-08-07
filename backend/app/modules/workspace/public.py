@@ -16,6 +16,7 @@ from .tasks.delivery import (
     dispatch_due_tasks_once,
     dispatch_email_task,
     expire_batch_task_if_needed,
+    mark_overdue_manual_schedules_missed,
     process_pending_drafts_once,
     recover_stale_sending_tasks,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "ensure_workspace_task",
     "expire_batch_task_if_needed",
     "generate_task_draft",
+    "mark_overdue_manual_schedules_missed",
     "preview_task_draft",
     "process_pending_drafts_once",
     "recover_stale_sending_tasks",

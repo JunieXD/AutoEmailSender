@@ -71,6 +71,8 @@ const buildThread = (
     selected_material_ids: null,
     approved_at: null,
     scheduled_at: null,
+    last_scheduled_at: null,
+    schedule_canceled_at: null,
     last_send_attempt_at: null,
     sent_at: null,
     last_rfc_message_id: null,

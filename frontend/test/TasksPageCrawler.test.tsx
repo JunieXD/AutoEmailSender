@@ -120,7 +120,7 @@ const buildCrawlJob = (id: number) => ({
 
 const renderPage = () =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/tasks?section=background"]}>
       <TasksPage />
     </MemoryRouter>,
   );

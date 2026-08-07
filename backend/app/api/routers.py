@@ -26,6 +26,7 @@ from app.modules.system.runtime_settings.api import router as runtime_settings_r
 from app.modules.communications.test_compose.api import router as test_compose_router
 from app.api.token_usage import router as token_usage_router
 from app.modules.workspace.api import router as workspaces_router
+from app.modules.workspace.deliveries.api import router as email_deliveries_router
 
 API_ROUTERS: tuple[APIRouter, ...] = (
     agent_v1_router,
@@ -45,6 +46,7 @@ API_ROUTERS: tuple[APIRouter, ...] = (
     batch_tasks_router,
     dashboard_router,
     email_tasks_router,
+    email_deliveries_router,
     workspaces_router,
     token_usage_router,
     runtime_settings_router,

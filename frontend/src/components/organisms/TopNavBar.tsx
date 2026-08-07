@@ -1,4 +1,5 @@
-import { Link, NavLink } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import clsx from "clsx";
 import { BrainCircuit, Mail, UserCircle2 } from "lucide-react";
 import { DesktopUpdateButton } from "@/components/molecules/DesktopUpdateButton";
@@ -8,6 +9,10 @@ import { useSelectionContext } from "@/context/SelectionContext";
 import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
 
 export const TopNavBar = () => {
+  const { pathname, search } = useLocation();
+  const [taskCenterHref, setTaskCenterHref] = useState(() =>
+    pathname === "/tasks" ? `/tasks${search}` : "/tasks",
+  );
   const {
     identities,
     llmProfiles,
@@ -19,10 +24,16 @@ export const TopNavBar = () => {
   } = useSelectionContext();
   const { requestWorkspaceDraftGuard } = useWorkspaceDraftGuard();
 
+  useEffect(() => {
+    if (pathname === "/tasks") {
+      setTaskCenterHref(`/tasks${search}`);
+    }
+  }, [pathname, search]);
+
   const navItems = [
     { label: "首页", href: "/" },
     { label: "导师管理", href: "/professors" },
-    { label: "任务中心", href: "/tasks" },
+    { label: "任务中心", href: taskCenterHref },
     { label: "统计面板", href: "/dashboard" },
     { label: "个人中心", href: "/profile" },
     { label: "社区导师库", href: "/community" },

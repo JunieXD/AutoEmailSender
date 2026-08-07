@@ -373,8 +373,9 @@ describe("HomePage match analysis", () => {
     });
     renderPage();
 
+    fireEvent.click(await screen.findByRole("button", { name: "选择 王教授" }));
     expect(
-      await screen.findByText("组内匹配统一依据 申请身份 A"),
+      await screen.findByText("匹配分析将统一使用 申请身份 A 的默认材料。"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "分析匹配度" })[0]);
 

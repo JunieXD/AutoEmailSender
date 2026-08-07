@@ -68,6 +68,7 @@ type WorkspaceComposerDockProps = {
   onSendNow: () => void;
   onScheduleSend: () => void;
   onCancelSchedule: () => void;
+  onViewSchedule: () => void;
   onContinueManually: () => void;
   onStartFollowUp: () => void;
   onCalculateMatch: () => void;
@@ -264,6 +265,7 @@ export const WorkspaceComposerDock = ({
   onSendNow,
   onScheduleSend,
   onCancelSchedule,
+  onViewSchedule,
   onContinueManually,
   onStartFollowUp,
   onCalculateMatch,
@@ -670,15 +672,25 @@ export const WorkspaceComposerDock = ({
                     ) : null}
                     {canSubmitDraft ? (
                       currentTask.status === 'scheduled' ? (
-                        <button
-                          type="button"
-                          onClick={onCancelSchedule}
-                          disabled={editorDisabled}
-                          className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <TimerReset className="h-4 w-4" />
-                          取消定时
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={onViewSchedule}
+                            className="ui-btn-secondary"
+                          >
+                            <CalendarClock className="h-4 w-4" />
+                            查看发送计划
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onCancelSchedule}
+                            disabled={editorDisabled}
+                            className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <TimerReset className="h-4 w-4" />
+                            取消定时
+                          </button>
+                        </>
                       ) : (
                         <button
                           type="button"
@@ -756,6 +768,16 @@ export const WorkspaceComposerDock = ({
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   写跟进邮件
+                </button>
+              ) : null}
+              {currentTask.status === 'scheduled' ? (
+                <button
+                  type="button"
+                  onClick={onViewSchedule}
+                  className="ui-btn-secondary"
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  查看发送计划
                 </button>
               ) : null}
               <button

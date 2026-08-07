@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Activity,
   Ban,
@@ -73,6 +73,11 @@ import {
   writeSelectedProfessorIdsForBatchTask,
 } from "@/features/batch-tasks/client/batchTaskResendPrefill";
 import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
+import { EmailDeliveryPlan } from "@/features/email-deliveries/components/EmailDeliveryPlan";
+import {
+  TaskCenterSectionSwitch,
+  type TaskCenterSection,
+} from "@/features/email-deliveries/components/TaskCenterSectionSwitch";
 import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
 import {
   buildBulkLargeAttachmentWarning,
@@ -392,6 +397,7 @@ const BATCH_ITEM_STATUS_TONES: Record<WorkspaceTaskStatus, string> = {
   review_required: "bg-amber-50 text-amber-700",
   approved: "bg-primary/10 text-primary",
   scheduled: "bg-indigo-50 text-indigo-700",
+  schedule_missed: "bg-amber-50 text-amber-700",
   sending: "bg-sky-50 text-sky-700",
   sent: "bg-emerald-50 text-emerald-700",
   send_failed: "bg-red-50 text-red-700",
@@ -959,6 +965,7 @@ const getBatchReviewDraft = (thread: WorkspaceThreadDTO) => {
 
 export const TasksPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     identities = [],
     selectedIdentityId,
@@ -974,6 +981,9 @@ export const TasksPage = () => {
     trackMatchAnalysisJob,
   } = useBackgroundTaskNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
+  const taskCenterSection: TaskCenterSection =
+    searchParams.get("section") === "background" ? "background" : "delivery";
+  const requestedBatchTaskId = Number(searchParams.get("batch_task_id"));
   const hasTaskSelection = selectedIdentityId !== null;
   const [activeTab, setActiveTab] = useState<TasksTab>(() =>
     hasTaskSelection ? "batch" : "crawl",
@@ -1246,6 +1256,40 @@ export const TasksPage = () => {
     selectedIdentityId
       ? `${selectedIdentityId}:${taskListViews.batch}`
       : null;
+  const updateTaskCenterSection = useCallback(
+    (section: TaskCenterSection) => {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("section", section);
+        if (section === "delivery") {
+          next.delete("batch_task_id");
+        } else {
+          next.delete("task_id");
+          next.delete("view");
+          next.delete("identity_id");
+          next.delete("source");
+          next.delete("status");
+          next.delete("q");
+        }
+        return next;
+      });
+    },
+    [setSearchParams],
+  );
+  const openBatchTaskFromDeliveryPlan = useCallback(
+    (identityId: number, batchTaskId: number) => {
+      setSelectedIdentityId(identityId);
+      setActiveTab("batch");
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("section", "background");
+        next.set("batch_task_id", String(batchTaskId));
+        next.delete("task_id");
+        return next;
+      });
+    },
+    [setSearchParams, setSelectedIdentityId],
+  );
   const renderCandidateExternalUrl = useCallback(
     (url: string | null) => {
       const normalizedUrl = url?.trim();
@@ -2102,7 +2146,7 @@ export const TasksPage = () => {
   );
 
   useEffect(() => {
-    if (activeTab !== "batch") {
+    if (taskCenterSection !== "background" || activeTab !== "batch") {
       return undefined;
     }
     void loadTasks();
@@ -2110,7 +2154,7 @@ export const TasksPage = () => {
       void loadTasks();
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [activeTab, loadTasks]);
+  }, [activeTab, loadTasks, taskCenterSection]);
 
   useEffect(() => {
     setBatchPage((currentPage) =>
@@ -2206,22 +2250,28 @@ export const TasksPage = () => {
   ]);
 
   useEffect(() => {
-    if (crawlJobsPreloadedRef.current) {
+    if (taskCenterSection !== "background" || crawlJobsPreloadedRef.current) {
       return;
     }
     crawlJobsPreloadedRef.current = true;
     void loadCrawlJobs({ showLoading: false });
-  }, [loadCrawlJobs]);
+  }, [loadCrawlJobs, taskCenterSection]);
 
   useEffect(() => {
-    if (informationEnrichmentJobsPreloadedRef.current) {
+    if (
+      taskCenterSection !== "background" ||
+      informationEnrichmentJobsPreloadedRef.current
+    ) {
       return;
     }
     informationEnrichmentJobsPreloadedRef.current = true;
     void loadInformationEnrichmentJobs({ showLoading: false });
-  }, [loadInformationEnrichmentJobs]);
+  }, [loadInformationEnrichmentJobs, taskCenterSection]);
 
   useEffect(() => {
+    if (taskCenterSection !== "background") {
+      return;
+    }
     if (activeTab === "batch") {
       return;
     }
@@ -2235,9 +2285,39 @@ export const TasksPage = () => {
     }
     batchTasksPreloadedKeyRef.current = tasksRequestKey;
     void loadTasks();
-  }, [activeTab, loadTasks, tasksRequestKey]);
+  }, [activeTab, loadTasks, taskCenterSection, tasksRequestKey]);
 
   useEffect(() => {
+    if (
+      taskCenterSection !== "background" ||
+      activeTab !== "batch" ||
+      !Number.isInteger(requestedBatchTaskId) ||
+      requestedBatchTaskId <= 0
+    ) {
+      return;
+    }
+    const requestedTask = tasks.find((task) => task.id === requestedBatchTaskId);
+    if (!requestedTask) {
+      return;
+    }
+    setSelectedBatchTask(requestedTask);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("batch_task_id");
+      return next;
+    }, { replace: true });
+  }, [
+    activeTab,
+    requestedBatchTaskId,
+    setSearchParams,
+    taskCenterSection,
+    tasks,
+  ]);
+
+  useEffect(() => {
+    if (taskCenterSection !== "background") {
+      return;
+    }
     if (!tasksRequestKey) {
       matchJobsPreloadedKeyRef.current = null;
       void loadMatchAnalysisJobs({ showLoading: false });
@@ -2248,10 +2328,10 @@ export const TasksPage = () => {
     }
     matchJobsPreloadedKeyRef.current = tasksRequestKey;
     void loadMatchAnalysisJobs({ showLoading: false });
-  }, [loadMatchAnalysisJobs, tasksRequestKey]);
+  }, [loadMatchAnalysisJobs, taskCenterSection, tasksRequestKey]);
 
   useEffect(() => {
-    if (activeTab !== "crawl") {
+    if (taskCenterSection !== "background" || activeTab !== "crawl") {
       return undefined;
     }
     void loadCrawlJobs({ showLoading: crawlJobs.length === 0 });
@@ -2259,10 +2339,10 @@ export const TasksPage = () => {
       void loadCrawlJobs({ showLoading: false });
     }, CRAWL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [activeTab, crawlJobs.length, loadCrawlJobs]);
+  }, [activeTab, crawlJobs.length, loadCrawlJobs, taskCenterSection]);
 
   useEffect(() => {
-    if (activeTab !== "match") {
+    if (taskCenterSection !== "background" || activeTab !== "match") {
       return undefined;
     }
     void loadMatchAnalysisJobs({ showLoading: matchAnalysisJobs.length === 0 });
@@ -2270,10 +2350,10 @@ export const TasksPage = () => {
       void loadMatchAnalysisJobs({ showLoading: false });
     }, CRAWL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [activeTab, loadMatchAnalysisJobs, matchAnalysisJobs.length]);
+  }, [activeTab, loadMatchAnalysisJobs, matchAnalysisJobs.length, taskCenterSection]);
 
   useEffect(() => {
-    if (activeTab !== "enrichment") {
+    if (taskCenterSection !== "background" || activeTab !== "enrichment") {
       return undefined;
     }
     void loadInformationEnrichmentJobs({
@@ -2287,6 +2367,7 @@ export const TasksPage = () => {
     activeTab,
     informationEnrichmentJobs.length,
     loadInformationEnrichmentJobs,
+    taskCenterSection,
   ]);
 
   useEffect(() => {
@@ -4023,13 +4104,27 @@ export const TasksPage = () => {
   const canSendBatchReviewImmediately =
     selectedBatchTask?.schedule_type === "immediate";
 
+  if (taskCenterSection === "delivery") {
+    return (
+      <EmailDeliveryPlan
+        onSectionChange={updateTaskCenterSection}
+        onOpenBatchTask={openBatchTaskFromDeliveryPlan}
+      />
+    );
+  }
+
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">
       <div className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-stone-900">任务中心</h1>
+            <p className="mt-1 text-sm text-stone-500">管理批量流程与后台任务</p>
           </div>
+          <TaskCenterSectionSwitch
+            activeSection="background"
+            onChange={updateTaskCenterSection}
+          />
         </div>
 
         {!hasTaskSelection ? (

@@ -64,7 +64,7 @@ vi.mock("@/entities/professor/api/informationEnrichment", () => ({
 
 const renderPage = () =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/tasks?section=background"]}>
       <TasksPage />
     </MemoryRouter>,
   );

@@ -31,6 +31,7 @@ class EmailTaskStatus(StrEnum):
     REVIEW_REQUIRED = "review_required"
     APPROVED = "approved"
     SCHEDULED = "scheduled"
+    SCHEDULE_MISSED = "schedule_missed"
     SENDING = "sending"
     SENT = "sent"
     SEND_FAILED = "send_failed"
@@ -110,6 +111,38 @@ class EmailTask(Base):
             postgresql_where=text(
                 "batch_task_id IS NOT NULL "
                 "AND (status = 'sent' OR status = 'reply_detected')"
+            ),
+        ),
+        Index(
+            "ix_email_tasks_schedule_canceled_at",
+            "schedule_canceled_at",
+            sqlite_where=text("schedule_canceled_at IS NOT NULL"),
+            postgresql_where=text("schedule_canceled_at IS NOT NULL"),
+        ),
+        Index(
+            "ix_email_tasks_delivery_upcoming_schedule",
+            "scheduled_at",
+            "id",
+            sqlite_where=text(
+                "schedule_canceled_at IS NULL "
+                "AND batch_send_canceled_at IS NULL"
+            ),
+            postgresql_where=text(
+                "schedule_canceled_at IS NULL "
+                "AND batch_send_canceled_at IS NULL"
+            ),
+        ),
+        Index(
+            "ix_email_tasks_delivery_attention_updated",
+            "updated_at",
+            "id",
+            sqlite_where=text(
+                "schedule_canceled_at IS NULL "
+                "AND batch_send_canceled_at IS NULL"
+            ),
+            postgresql_where=text(
+                "schedule_canceled_at IS NULL "
+                "AND batch_send_canceled_at IS NULL"
             ),
         ),
     )
@@ -208,6 +241,14 @@ class EmailTask(Base):
     approved_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    last_scheduled_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    schedule_canceled_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
     )

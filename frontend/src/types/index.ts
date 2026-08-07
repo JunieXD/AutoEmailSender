@@ -495,6 +495,7 @@ export type WorkspaceTaskStatus =
   | 'review_required'
   | 'approved'
   | 'scheduled'
+  | 'schedule_missed'
   | 'sending'
   | 'sent'
   | 'send_failed'
@@ -502,7 +503,85 @@ export type WorkspaceTaskStatus =
   | 'canceled';
 
 export type WorkspaceTaskStatusLabelKey = WorkspaceTaskStatus;
-export type WorkspaceTaskCancellationReason = 'batch_stopped' | 'schedule_expired';
+export type WorkspaceTaskCancellationReason = 'batch_stopped' | 'schedule_expired' | 'user_removed';
+
+export type EmailDeliveryView = 'upcoming' | 'attention' | 'history';
+export type EmailDeliverySourceFilter = 'all' | 'manual' | 'batch';
+export type EmailDeliverySearchField =
+  | 'recipient_name'
+  | 'recipient_email'
+  | 'subject'
+  | 'batch_name';
+export type EmailDeliverySort =
+  | 'scheduled_asc'
+  | 'scheduled_desc'
+  | 'updated_desc'
+  | 'updated_asc'
+  | 'event_desc'
+  | 'event_asc';
+export type EmailDeliveryStatus =
+  | 'waiting_scheduled'
+  | 'send_asap'
+  | 'batch_paused'
+  | 'sending'
+  | 'send_failed'
+  | 'schedule_missed'
+  | 'batch_stopped'
+  | 'sent'
+  | 'replied'
+  | 'canceled_schedule'
+  | 'canceled_send';
+
+export interface EmailDeliveryItemDTO {
+  id: number;
+  source: 'manual' | 'batch';
+  batch_task_id: number | null;
+  batch_task_name: string | null;
+  batch_task_status: BatchTaskRuntimeStatus | null;
+  professor_id: number;
+  professor_name: string;
+  professor_email: string | null;
+  identity_id: number;
+  identity_name: string;
+  sender_email: string;
+  subject: string | null;
+  attachment_count: number;
+  attachment_size_bytes: number;
+  status: EmailDeliveryStatus;
+  status_label: string;
+  status_description: string;
+  scheduled_at: string | null;
+  last_scheduled_at: string | null;
+  schedule_canceled_at: string | null;
+  batch_send_canceled_at: string | null;
+  approved_at: string | null;
+  last_send_attempt_at: string | null;
+  sent_at: string | null;
+  last_error: string | null;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+  can_reschedule: boolean;
+  can_cancel: boolean;
+  can_send_now: boolean;
+  can_restore: boolean;
+  can_edit: boolean;
+}
+
+export interface EmailDeliveryListDTO {
+  items: EmailDeliveryItemDTO[];
+  counts: Record<EmailDeliveryView, number>;
+  page: number;
+  page_size: number;
+  total_count: number;
+  total_pages: number;
+}
+
+export interface EmailDeliveryActionDTO {
+  ok: boolean;
+  task_id: number;
+  message: string;
+}
 export type BatchTaskItemNextAction =
   | 'waiting_draft_generation'
   | 'complete_professor_profile'
@@ -698,6 +777,8 @@ export interface WorkspaceTaskSummaryDTO {
   selected_material_ids: number[] | null;
   approved_at: string | null;
   scheduled_at: string | null;
+  last_scheduled_at: string | null;
+  schedule_canceled_at: string | null;
   last_send_attempt_at: string | null;
   sent_at: string | null;
   last_rfc_message_id: string | null;
@@ -1169,6 +1250,7 @@ export const PROFESSOR_STATUS_LABELS = {
   review_required: '待审核',
   approved: '待发送',
   scheduled: '已排程',
+  schedule_missed: '错过计划',
   sending: '发送中',
   sent: '已发送',
   reply_detected: '已回复',

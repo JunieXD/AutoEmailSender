@@ -7,6 +7,7 @@ import type { WorkspaceThreadDTO } from "@/types";
 import { WorkspacePage } from "./WorkspacePage";
 
 const apiMocks = vi.hoisted(() => ({
+  getEmailTaskThread: vi.fn(),
   getWorkspaceThread: vi.fn(),
   refreshWorkspaceReplies: vi.fn(),
   saveDraft: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("@/lib/api/workspacesApi", () => ({
 }));
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
+  getEmailTaskThread: apiMocks.getEmailTaskThread,
   saveDraft: apiMocks.saveDraft,
   rewriteDraft: apiMocks.rewriteDraft,
   calculateMatch: apiMocks.calculateMatch,
@@ -216,6 +218,8 @@ const buildWorkspaceThread = (
     selected_material_ids: [],
     approved_at: null,
     scheduled_at: null,
+    last_scheduled_at: null,
+    schedule_canceled_at: null,
     last_send_attempt_at: null,
     sent_at: null,
     last_rfc_message_id: null,
@@ -251,13 +255,14 @@ const buildWorkspaceThread = (
   ...overrides,
 });
 
-const renderWorkspace = () => {
+const renderWorkspace = (initialEntry = "/workspace/21") => {
   const router = createMemoryRouter(
     [
       { path: "/", element: <div>首页</div> },
       { path: "/workspace/:id", element: <WorkspacePage /> },
+      { path: "/tasks", element: <div>发送计划页</div> },
     ],
-    { initialEntries: ["/workspace/21"] },
+    { initialEntries: [initialEntry] },
   );
   render(<RouterProvider router={router} />);
   return router;
@@ -272,6 +277,7 @@ beforeEach(() => {
   selectionMock.selectedLlmProfileId = 2;
   selectionMock.communicationScopeKey = "1";
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.getEmailTaskThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.refreshWorkspaceReplies.mockResolvedValue(buildWorkspaceThread());
   apiMocks.listOutreachTemplates.mockResolvedValue([
     {
@@ -335,6 +341,15 @@ beforeEach(() => {
 });
 
 describe("WorkspacePage draft saving", () => {
+  it("loads the exact email task linked from the delivery plan", async () => {
+    renderWorkspace("/workspace/21?task_id=404");
+
+    await waitFor(() => {
+      expect(apiMocks.getEmailTaskThread).toHaveBeenCalledWith(404);
+    });
+    expect(apiMocks.getWorkspaceThread).not.toHaveBeenCalled();
+  });
+
   it("keeps AI actions out of the collapsed composer", async () => {
     apiMocks.getWorkspaceThread.mockResolvedValueOnce(
       buildWorkspaceThread({
@@ -1389,5 +1404,62 @@ describe("WorkspacePage draft saving", () => {
     });
     expect(screen.getByLabelText("邮件主题")).toHaveValue("跟进任务主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>跟进任务正文</p>");
+  });
+
+  it("links a scheduled workspace email directly to its delivery item", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          status: "scheduled",
+          scheduled_at: "2099-08-08T02:00:00Z",
+        },
+      }),
+    );
+    const router = renderWorkspace();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "查看发送计划" }),
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/tasks");
+    });
+    expect(router.state.location.search).toBe(
+      "?section=delivery&view=upcoming&task_id=101",
+    );
+  });
+
+  it("explains where to manage a newly scheduled email", async () => {
+    apiMocks.approveAndSchedule.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          status: "scheduled",
+          scheduled_at: "2099-08-08T02:00:00Z",
+        },
+      }),
+    );
+    renderWorkspace();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑草稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "定时发送" }));
+    fireEvent.change(screen.getByLabelText("发送时间"), {
+      target: { value: "2099-08-08T10:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认定时" }));
+
+    await waitFor(() => {
+      expect(apiMocks.approveAndSchedule).toHaveBeenCalledWith(
+        101,
+        expect.objectContaining({
+          scheduled_at: new Date("2099-08-08T10:00").toISOString(),
+        }),
+      );
+    });
+    expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
+      "已加入发送计划",
+      "邮件将在设定时间发送，可前往任务中心统一查看或修改。",
+    );
   });
 });

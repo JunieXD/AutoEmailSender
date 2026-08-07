@@ -254,6 +254,8 @@ async def _build_workspace_thread_read(
             selected_material_ids=current_task.selected_material_ids if current_task else None,
             approved_at=current_task.approved_at if current_task else None,
             scheduled_at=current_task.scheduled_at if current_task else None,
+            last_scheduled_at=current_task.last_scheduled_at if current_task else None,
+            schedule_canceled_at=current_task.schedule_canceled_at if current_task else None,
             last_send_attempt_at=current_task.last_send_attempt_at if current_task else None,
             sent_at=current_task.sent_at if current_task else None,
             last_rfc_message_id=current_task.last_rfc_message_id if current_task else None,

@@ -28,6 +28,10 @@ export const getWorkspaceNextStep = (
     return { title: "查看失败原因并重试" };
   }
 
+  if (input.status === "schedule_missed") {
+    return { title: "重新安排发送时间" };
+  }
+
   if (!input.hasPrimaryMaterial) {
     return { title: "选择 AI 写信参考材料" };
   }

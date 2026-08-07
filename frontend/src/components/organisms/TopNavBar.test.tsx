@@ -52,6 +52,33 @@ describe("TopNavBar", () => {
     expect(link).toHaveAttribute("href", "/dashboard");
   });
 
+  it("keeps the last task center URL when navigating away and back", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/tasks?section=delivery&view=attention&q=timeout&search_fields=subject&sort=updated_asc",
+        ]}
+      >
+        <TopNavBar />
+      </MemoryRouter>,
+    );
+
+    const taskCenterLink = screen.getByRole("link", { name: "任务中心" });
+    await waitFor(() => {
+      expect(taskCenterLink).toHaveAttribute(
+        "href",
+        "/tasks?section=delivery&view=attention&q=timeout&search_fields=subject&sort=updated_asc",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "统计面板" }));
+
+    expect(taskCenterLink).toHaveAttribute(
+      "href",
+      "/tasks?section=delivery&view=attention&q=timeout&search_fields=subject&sort=updated_asc",
+    );
+  });
+
   it("places the community library at the far right after profile", () => {
     render(
       <MemoryRouter>

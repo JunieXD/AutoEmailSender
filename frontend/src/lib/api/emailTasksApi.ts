@@ -11,6 +11,9 @@ import type {
 const buildRuntimeProfileBody = (llmProfileId?: number | null) =>
   JSON.stringify({ llm_profile_id: llmProfileId ?? null });
 
+export const getEmailTaskThread = (taskId: number) =>
+  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/thread`);
+
 export const regenerateDraft = (taskId: number, llmProfileId?: number | null) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/regenerate-draft`, {
     method: 'POST',

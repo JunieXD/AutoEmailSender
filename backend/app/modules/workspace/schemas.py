@@ -80,6 +80,8 @@ class WorkspaceTaskSummaryRead(ApiSchema):
     selected_material_ids: list[int] | None
     approved_at: datetime | None
     scheduled_at: datetime | None
+    last_scheduled_at: datetime | None
+    schedule_canceled_at: datetime | None
     last_send_attempt_at: datetime | None
     sent_at: datetime | None
     last_rfc_message_id: str | None

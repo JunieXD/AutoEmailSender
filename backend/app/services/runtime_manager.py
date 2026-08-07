@@ -24,6 +24,7 @@ from app.modules.communications.public import poll_for_replies_once, poll_imap_h
 from app.modules.workspace.public import (
     DEFAULT_SEND_INTERVAL_MAX_SECONDS,
     dispatch_due_tasks_once,
+    mark_overdue_manual_schedules_missed,
 )
 
 
@@ -142,7 +143,13 @@ class RuntimeManager:
                 coordinator=self._batch_draft_coordinator,
             )
 
+        dispatcher_startup_recovered = False
+
         async def run_dispatcher_once(session_factory: async_sessionmaker[AsyncSession]) -> int:
+            nonlocal dispatcher_startup_recovered
+            if not dispatcher_startup_recovered:
+                await mark_overdue_manual_schedules_missed(session_factory)
+                dispatcher_startup_recovered = True
             return await dispatch_due_tasks_once(
                 session_factory,
                 count_identity_window_deferred=True,

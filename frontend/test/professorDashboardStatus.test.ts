@@ -43,6 +43,7 @@ describe("professor dashboard status helper", () => {
       review_required: "待审核",
       approved: "待发送",
       scheduled: "已排程",
+      schedule_missed: "错过计划",
       sending: "发送中",
       sent: "已发送",
       send_failed: "发送失败",

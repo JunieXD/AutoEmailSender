@@ -16,6 +16,7 @@ from app.models import (
     EmailTaskCancellationReason,
     EmailTask,
     EmailTaskStatus,
+    EmailTaskSource,
     IdentityMaterial,
     IdentityProfile,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "dispatch_due_tasks_once",
     "dispatch_email_task",
     "expire_batch_task_if_needed",
+    "mark_overdue_manual_schedules_missed",
     "process_pending_drafts_once",
     "recover_stale_sending_tasks",
 ]
@@ -56,9 +58,51 @@ STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
 
 SCHEDULED_BATCH_SEND_GRACE_PERIOD = timedelta(minutes=2)
 
+STARTUP_MANUAL_SCHEDULE_GRACE_PERIOD = timedelta(minutes=2)
+
 DEFAULT_SEND_INTERVAL_MIN_SECONDS = 1
 
 DEFAULT_SEND_INTERVAL_MAX_SECONDS = 5
+
+
+async def mark_overdue_manual_schedules_missed(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Prevent a restarted desktop app from silently sending stale manual schedules."""
+    now_utc = as_utc_aware(now or utc_now())
+    cutoff = now_utc - STARTUP_MANUAL_SCHEDULE_GRACE_PERIOD
+    async with session_factory() as session:
+        tasks = list(
+            (
+                await session.execute(
+                    select(EmailTask).where(
+                        EmailTask.source == EmailTaskSource.MANUAL.value,
+                        EmailTask.batch_task_id.is_(None),
+                        EmailTask.status == EmailTaskStatus.SCHEDULED.value,
+                        EmailTask.scheduled_at.is_not(None),
+                        EmailTask.scheduled_at < cutoff,
+                    ),
+                )
+            ).scalars()
+        )
+        for task in tasks:
+            task.status = EmailTaskStatus.SCHEDULE_MISSED.value
+            task.updated_at = now_utc
+            await _record_email_task_log(
+                session,
+                task,
+                "email_task.schedule_missed",
+                metadata={
+                    "scheduled_at": task.scheduled_at.isoformat()
+                    if task.scheduled_at
+                    else None,
+                },
+            )
+        if tasks:
+            await session.commit()
+        return len(tasks)
 
 
 def _is_user_removed_batch_item(email_task: EmailTask) -> bool:

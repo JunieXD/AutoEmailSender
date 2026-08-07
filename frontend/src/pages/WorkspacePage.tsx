@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { Link, Navigate, useBeforeUnload, useBlocker, useParams } from 'react-router-dom';
+import { Link, Navigate, useBeforeUnload, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, Loader2, X } from 'lucide-react';
 import { WorkspaceComposerDock } from '@/components/organisms/WorkspaceComposerDock';
 import { WorkspaceMessageThread } from '@/components/organisms/WorkspaceMessageThread';
@@ -23,6 +23,7 @@ import {
   calculateMatch,
   cancelScheduledTask,
   continueManually,
+  getEmailTaskThread,
   rewriteDraft,
   saveDraft,
   startFollowUp,
@@ -60,6 +61,7 @@ const WORKSPACE_STATUS_LABELS: Record<WorkspaceTaskStatusLabelKey, string> = {
   review_required: PROFESSOR_STATUS_LABELS.review_required,
   approved: '待发送',
   scheduled: PROFESSOR_STATUS_LABELS.scheduled,
+  schedule_missed: '错过计划',
   sending: PROFESSOR_STATUS_LABELS.sending,
   sent: PROFESSOR_STATUS_LABELS.sent,
   send_failed: PROFESSOR_STATUS_LABELS.send_failed,
@@ -180,6 +182,8 @@ const getWorkspaceNextStepDescription = (title: string) => {
       return '基于当前沟通记录起草下一封跟进邮件。';
     case '查看失败原因并重试':
       return '检查失败原因，修正后重试。';
+    case '重新安排发送时间':
+      return '原计划已错过，请重新定时或确认立即发送。';
     case '选择分析材料':
       return '选择材料后可分析匹配度。';
     case '生成邮件草稿':
@@ -426,7 +430,14 @@ const ScheduleSendDialog = ({
 
 export const WorkspacePage = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const professorId = Number(id);
+  const requestedTaskIdValue = Number(searchParams.get('task_id'));
+  const requestedTaskId =
+    Number.isInteger(requestedTaskIdValue) && requestedTaskIdValue > 0
+      ? requestedTaskIdValue
+      : null;
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
   const { confirm, choose, dialog: confirmDialog } = useConfirmDialog();
   const {
@@ -477,7 +488,7 @@ export const WorkspacePage = () => {
   const captureNextRewriteActionRequestRef = useRef(false);
   const workspaceRequestKey =
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
-      ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}:${communicationScopeKey || selectedIdentityId}:${matchScopeKey || selectedIdentityId}`
+      ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}:${communicationScopeKey || selectedIdentityId}:${matchScopeKey || selectedIdentityId}:${requestedTaskId ?? 'latest'}`
       : null;
   const currentTask = getCurrentTaskOrNull(thread);
   const currentTaskId = currentTask?.id ?? null;
@@ -599,17 +610,31 @@ export const WorkspacePage = () => {
       setLoading(true);
     }
     try {
-      const data = await (options.refreshReplies ? refreshWorkspaceReplies : getWorkspaceThread)(
-        professorId,
-        selectedIdentityId,
-        selectedLlmProfileId,
-      );
-      const workspaceData = await bootstrapWorkspaceThread(
-        data,
-        professorId,
-        selectedIdentityId,
-        selectedLlmProfileId,
-      );
+      let workspaceData: WorkspaceThreadDTO;
+      if (requestedTaskId !== null) {
+        if (options.refreshReplies) {
+          await refreshWorkspaceReplies(
+            professorId,
+            selectedIdentityId,
+            selectedLlmProfileId,
+          );
+        }
+        workspaceData = await getEmailTaskThread(requestedTaskId);
+      } else {
+        const data = await (options.refreshReplies
+          ? refreshWorkspaceReplies
+          : getWorkspaceThread)(
+          professorId,
+          selectedIdentityId,
+          selectedLlmProfileId,
+        );
+        workspaceData = await bootstrapWorkspaceThread(
+          data,
+          professorId,
+          selectedIdentityId,
+          selectedLlmProfileId,
+        );
+      }
       if (
         latestThreadRequestIdRef.current !== requestId ||
         activeThreadRequestKeyRef.current !== workspaceRequestKey
@@ -698,7 +723,7 @@ export const WorkspacePage = () => {
         }
       }
     }
-  }, [notifyError, notifySuccess, professorId, resetActiveRewriteTracking, selectedIdentityId, selectedLlmProfileId, syncComposer, workspaceRequestKey]);
+  }, [notifyError, notifySuccess, professorId, requestedTaskId, resetActiveRewriteTracking, selectedIdentityId, selectedLlmProfileId, syncComposer, workspaceRequestKey]);
 
   useEffect(() => {
     void loadThread();
@@ -1135,12 +1160,17 @@ export const WorkspacePage = () => {
         setScheduledAt(pendingScheduledAt);
         setScheduleDialogOpen(false);
         setComposerExpanded(false);
+        notifySuccess(
+          '已加入发送计划',
+          '邮件将在设定时间发送，可前往任务中心统一查看或修改。',
+        );
       },
     );
   }, [
     buildDraftPayload,
     currentTaskId,
     notifyFormErrors,
+    notifySuccess,
     pendingScheduledAt,
     runAction,
   ]);
@@ -1511,6 +1541,9 @@ export const WorkspacePage = () => {
                   onSendNow={handleSendNow}
                   onScheduleSend={handleScheduleSend}
                   onCancelSchedule={handleCancelSchedule}
+                  onViewSchedule={() =>
+                    navigate(`/tasks?section=delivery&view=upcoming&task_id=${currentTask.id}`)
+                  }
                   onContinueManually={handleContinueManually}
                   onStartFollowUp={handleStartFollowUp}
                   onCalculateMatch={handleCalculateMatch}

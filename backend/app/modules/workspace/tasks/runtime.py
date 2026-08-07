@@ -942,8 +942,11 @@ async def approve_and_send_task(
         _ensure_task_allows_approval(task)
         _ensure_batch_task_has_future_window(task)
         await _snapshot_approval(session, task, payload)
+        if task.scheduled_at is not None:
+            task.last_scheduled_at = task.scheduled_at
         task.status = EmailTaskStatus.APPROVED.value
         task.scheduled_at = None
+        task.schedule_canceled_at = None
         await _record_email_task_log(
             session,
             task,
@@ -1125,8 +1128,12 @@ async def approve_and_schedule_task(
         _ensure_task_allows_approval(task)
         _ensure_batch_task_has_future_window(task)
         await _snapshot_approval(session, task, payload)
+        if task.scheduled_at is not None:
+            task.last_scheduled_at = task.scheduled_at
         task.status = EmailTaskStatus.SCHEDULED.value
         task.scheduled_at = payload.scheduled_at.astimezone(UTC)
+        task.schedule_canceled_at = None
+        task.cancellation_reason = None
         task.updated_at = utc_now()
         await _record_email_task_log(
             session,
@@ -1152,9 +1159,19 @@ async def cancel_scheduled_task(
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
         _ensure_task_allows_legacy_manual_actions(task)
+        if task.status not in {
+            EmailTaskStatus.SCHEDULED.value,
+            EmailTaskStatus.SCHEDULE_MISSED.value,
+            EmailTaskStatus.SEND_FAILED.value,
+        }:
+            raise ValueError("当前邮件状态不能取消定时")
+        now = utc_now()
+        task.last_scheduled_at = task.scheduled_at or task.last_scheduled_at
         task.status = EmailTaskStatus.REVIEW_REQUIRED.value
         task.scheduled_at = None
-        task.updated_at = utc_now()
+        task.schedule_canceled_at = now
+        task.cancellation_reason = None
+        task.updated_at = now
         await _record_email_task_log(session, task, "email_task.schedule_canceled")
         await session.commit()
         return task.professor_id, task.identity_id, task.llm_profile_id

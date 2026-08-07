@@ -22,7 +22,7 @@ from .schemas import (
 import app.modules.llm.public as llm_runtime
 
 from ..schemas import WorkspaceThreadRead
-from ..thread import build_workspace_thread
+from ..thread import build_workspace_thread, build_workspace_thread_for_task
 from .runtime import (
     approve_and_schedule_task,
     approve_and_send_task,
@@ -39,6 +39,14 @@ from .runtime import (
 )
 
 router = APIRouter(prefix="/api/email-tasks", tags=["email-tasks"])
+
+
+@router.get("/{task_id}/thread", response_model=WorkspaceThreadRead)
+async def get_task_thread(
+    task_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    return await build_workspace_thread_for_task(session, task_id=task_id)
 
 
 @router.post("/{task_id}/regenerate-draft", response_model=WorkspaceThreadRead)

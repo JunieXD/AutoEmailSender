@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { Activity, type ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter as RouterMemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchTaskCardDTO,
@@ -103,6 +103,12 @@ const selectionMock = vi.hoisted(() => ({
   setSelectedLlmProfileId: vi.fn(),
 }));
 const scrollIntoView = vi.fn();
+
+const MemoryRouter = ({ children }: { children: ReactNode }) => (
+  <RouterMemoryRouter initialEntries={["/tasks?section=background"]}>
+    {children}
+  </RouterMemoryRouter>
+);
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
@@ -818,6 +824,8 @@ const buildWorkspaceThread = (
     selected_material_ids: [7],
     approved_at: null,
     scheduled_at: null,
+    last_scheduled_at: null,
+    schedule_canceled_at: null,
     last_send_attempt_at: null,
     sent_at: null,
     last_rfc_message_id: null,

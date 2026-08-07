@@ -1,17 +1,9 @@
 import type { IdentityMaterialDTO } from '@/types';
+import { formatFileSize } from '@/lib/formatFileSize';
+
+export { formatFileSize } from '@/lib/formatFileSize';
 
 export const RECOMMENDED_ATTACHMENT_TOTAL_BYTES = 1024 * 1024;
-
-export const formatFileSize = (sizeBytes: number) => {
-  const normalizedBytes = Number.isFinite(sizeBytes) ? Math.max(0, sizeBytes) : 0;
-  if (normalizedBytes < 1024) {
-    return `${Math.round(normalizedBytes)} B`;
-  }
-  if (normalizedBytes < 1024 * 1024) {
-    return `${(normalizedBytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(normalizedBytes / (1024 * 1024)).toFixed(2)} MB`;
-};
 
 export const getSelectedAttachmentTotalBytes = (
   materials: Pick<IdentityMaterialDTO, 'id' | 'size_bytes'>[],
