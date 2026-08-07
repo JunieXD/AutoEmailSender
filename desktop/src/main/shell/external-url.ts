@@ -1,6 +1,4 @@
 import { BrowserWindow, ipcMain, shell } from "electron";
-import { access } from "node:fs/promises";
-import path from "node:path";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
 
 export const EXTERNAL_URL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.externalUrlOpen;
@@ -8,7 +6,6 @@ export const EXTERNAL_URL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.externalUrlOpe
 type ExternalUrlDependencies = {
   openExternal: (url: string) => Promise<void>;
   openElectronWindow: (url: string) => void;
-  shouldUseSystemExternalOpener: () => Promise<boolean> | boolean;
 };
 
 type ExternalUrlServiceOptions = {
@@ -33,7 +30,6 @@ const defaultDependencies: ExternalUrlDependencies = {
     });
     void externalWindow.loadURL(url);
   },
-  shouldUseSystemExternalOpener,
 };
 
 export function createExternalUrlService(options: ExternalUrlServiceOptions = {}) {
@@ -44,11 +40,6 @@ export function createExternalUrlService(options: ExternalUrlServiceOptions = {}
       const parsedUrl = parseWebUrl(url);
       if (parsedUrl === null) {
         throw new Error("Only http and https URLs can be opened externally.");
-      }
-
-      if (!(await dependencies.shouldUseSystemExternalOpener())) {
-        dependencies.openElectronWindow(parsedUrl);
-        return;
       }
 
       try {
@@ -67,7 +58,7 @@ export function registerExternalUrlIpc(): void {
   );
 }
 
-function parseWebUrl(value: unknown): string | null {
+export function parseWebUrl(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -83,23 +74,22 @@ function parseWebUrl(value: unknown): string | null {
   }
 }
 
-async function shouldUseSystemExternalOpener(): Promise<boolean> {
-  if (process.platform !== "linux") {
-    return true;
+export function parseExternalNavigationUrl(
+  targetUrl: unknown,
+  currentUrl: unknown,
+): string | null {
+  const parsedTargetUrl = parseWebUrl(targetUrl);
+  if (parsedTargetUrl === null) {
+    return null;
   }
 
-  const pathEntries = (process.env.PATH ?? "")
-    .split(path.delimiter)
-    .filter(Boolean);
-
-  for (const entry of pathEntries) {
-    try {
-      await access(path.join(entry, "xdg-open"));
-      return true;
-    } catch {
-      // Continue checking the remaining PATH entries.
-    }
+  const parsedCurrentUrl = parseWebUrl(currentUrl);
+  if (
+    parsedCurrentUrl !== null
+    && new URL(parsedTargetUrl).origin === new URL(parsedCurrentUrl).origin
+  ) {
+    return null;
   }
 
-  return false;
+  return parsedTargetUrl;
 }

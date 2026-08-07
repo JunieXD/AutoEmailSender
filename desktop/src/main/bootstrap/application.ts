@@ -22,6 +22,11 @@ import { createAgentSupportService } from "../agent-support/service.js";
 import { registerDesktopIpc } from "../ipc/register.js";
 import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "../shell/startup-at-login.js";
 import { bindTrayInteractions } from "../shell/tray.js";
+import {
+  createExternalUrlService,
+  parseExternalNavigationUrl,
+  parseWebUrl,
+} from "../shell/external-url.js";
 import { checkForUpdatesOnStartup } from "../updates/service.js";
 import {
   restoreExistingWindow,
@@ -200,6 +205,7 @@ async function createWindow(): Promise<void> {
   backend = await startDesktopBackend();
   ensureTray();
   Menu.setApplicationMenu(null);
+  const externalUrlService = createExternalUrlService();
 
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -224,11 +230,26 @@ async function createWindow(): Promise<void> {
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     const parsedUrl = parseWebUrl(url);
+    if (parsedUrl !== null) {
+      void externalUrlService.openExternalUrl(parsedUrl).catch((error: unknown) => {
+        console.error(`Failed to open external URL in the system browser: ${parsedUrl}`, error);
+      });
+    }
+    return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const parsedUrl = parseExternalNavigationUrl(
+      url,
+      mainWindow?.webContents.getURL(),
+    );
     if (parsedUrl === null) {
-      return { action: "deny" };
+      return;
     }
 
-    return { action: "allow" };
+    event.preventDefault();
+    void externalUrlService.openExternalUrl(parsedUrl).catch((error: unknown) => {
+      console.error(`Failed to open external URL in the system browser: ${parsedUrl}`, error);
+    });
   });
   mainWindow.webContents.on("did-finish-load", () => {
     if (currentBackendConnection !== null) {
@@ -269,18 +290,6 @@ async function createWindow(): Promise<void> {
     repoRoot,
   });
   await mainWindow.loadURL(pathToFileURL(indexPath).toString());
-}
-
-function parseWebUrl(value: string): string | null {
-  try {
-    const parsedUrl = new URL(value);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return null;
-    }
-    return parsedUrl.toString();
-  } catch {
-    return null;
-  }
 }
 
 async function startDesktopBackend(): Promise<BackendController> {

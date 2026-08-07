@@ -29,4 +29,3 @@ export const openExternalHttpUrl = (url: string) => {
     window.open(normalizedUrl, "_blank", "noopener,noreferrer");
   });
 };
-
