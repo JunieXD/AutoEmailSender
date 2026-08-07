@@ -7,8 +7,13 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+
+if TYPE_CHECKING:
+    from app.models import LLMProfile
 
 
 def _make_test_session_factory() -> tuple[async_sessionmaker, Path]:
@@ -442,7 +447,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
-    def _profile(self) -> "LLMProfile":  # type: ignore[name-defined]
+    def _profile(self) -> LLMProfile:
         from app.models import LLMProfile
 
         return LLMProfile(
@@ -866,7 +871,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
-    def _profile(self) -> "LLMProfile":  # type: ignore[name-defined]
+    def _profile(self) -> LLMProfile:
         from app.models import LLMProfile
 
         return LLMProfile(

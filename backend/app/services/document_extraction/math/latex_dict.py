@@ -81,7 +81,6 @@ CHR_BO = {
 }
 
 T = {
-    "\u2192": "\\rightarrow ",
     # Greek letters
     "\U0001d6fc": "\\alpha ",
     "\U0001d6fd": "\\beta ",

@@ -35,4 +35,12 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pyinstaller>=6.20.0",
+    "ruff>=0.16.1",
 ]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Start with correctness rules; enable broader style rules incrementally.
+select = ["E9", "F601", "F821"]
