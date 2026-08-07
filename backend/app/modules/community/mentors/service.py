@@ -10,7 +10,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, TypeVar
+from typing import Any, Callable, TypeVar
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -46,6 +46,7 @@ from .schemas import (
 )
 from app.services.operation_logs import record_operation_log
 from app.modules.professors.public import normalize_recent_papers
+from .system_proxy import resolve_system_proxy
 
 
 DEFAULT_COMMUNITY_DATA_BASE_URL = "https://juniexd.github.io/AutoEmailSender-MentorData/"
@@ -149,6 +150,7 @@ class CommunityMentorDataService:
         cache_directory: Path | None = None,
         base_urls: tuple[str, ...] | None = None,
         http_client: httpx.AsyncClient | None = None,
+        proxy_resolver: Callable[[str], str | None] | None = None,
         cache_max_bytes: int = COMMUNITY_CACHE_MAX_BYTES,
         cache_retained_versions: int = COMMUNITY_CACHE_RETAINED_VERSIONS,
     ) -> None:
@@ -166,6 +168,7 @@ class CommunityMentorDataService:
         if cache_max_bytes <= 0 or cache_retained_versions <= 0:
             raise ValueError("社区导师缓存容量和保留版本数必须为正整数")
         self.http_client = http_client
+        self.proxy_resolver = proxy_resolver or resolve_system_proxy
         self.cache_max_bytes = cache_max_bytes
         self.cache_retained_versions = cache_retained_versions
 
@@ -579,11 +582,68 @@ class CommunityMentorDataService:
 
     async def _download_bytes(self, base_url: str, relative_path: str, max_bytes: int) -> bytes:
         url = self._build_download_url(base_url, relative_path)
-        owned_client = self.http_client is None
-        client = self.http_client or httpx.AsyncClient(
+        if self.http_client is not None:
+            return await self._download_bytes_with_client(
+                self.http_client,
+                url=url,
+                relative_path=relative_path,
+                max_bytes=max_bytes,
+            )
+
+        initial_proxy = self.proxy_resolver(url)
+        try:
+            return await self._download_bytes_with_owned_client(
+                url=url,
+                relative_path=relative_path,
+                max_bytes=max_bytes,
+                proxy_url=initial_proxy,
+            )
+        except CommunityDataError as initial_error:
+            refreshed_proxy = self.proxy_resolver(url)
+            if refreshed_proxy == initial_proxy:
+                raise
+            try:
+                return await self._download_bytes_with_owned_client(
+                    url=url,
+                    relative_path=relative_path,
+                    max_bytes=max_bytes,
+                    proxy_url=refreshed_proxy,
+                )
+            except CommunityDataError as refreshed_error:
+                raise refreshed_error from initial_error
+
+    async def _download_bytes_with_owned_client(
+        self,
+        *,
+        url: str,
+        relative_path: str,
+        max_bytes: int,
+        proxy_url: str | None,
+    ) -> bytes:
+        client = httpx.AsyncClient(
             timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS),
             follow_redirects=False,
+            proxy=proxy_url,
+            trust_env=False,
         )
+        try:
+            return await self._download_bytes_with_client(
+                client,
+                url=url,
+                relative_path=relative_path,
+                max_bytes=max_bytes,
+            )
+        finally:
+            await client.aclose()
+
+    @staticmethod
+    async def _download_bytes_with_client(
+        client: httpx.AsyncClient,
+        *,
+        url: str,
+        relative_path: str,
+        max_bytes: int,
+    ) -> bytes:
         try:
             async with client.stream(
                 "GET",
@@ -627,9 +687,6 @@ class CommunityMentorDataService:
             raise
         except (httpx.HTTPError, TimeoutError) as exc:
             raise CommunityDataError(f"{relative_path} 下载失败或超时") from exc
-        finally:
-            if owned_client:
-                await client.aclose()
 
     @staticmethod
     def _build_download_url(base_url: str, relative_path: str) -> str:

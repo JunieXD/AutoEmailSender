@@ -8,6 +8,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -55,6 +56,39 @@ def _json_bytes(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+class _RecordingResponse:
+    def __init__(self, *, payload: bytes, fail: bool) -> None:
+        self.status_code = 200
+        self.headers: dict[str, str] = {}
+        self.payload = payload
+        self.fail = fail
+
+    async def __aenter__(self) -> _RecordingResponse:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def aiter_bytes(self, _chunk_size: int) -> AsyncIterator[bytes]:
+        if self.fail:
+            raise httpx.ConnectError("offline")
+        yield self.payload
+
+
+class _RecordingAsyncClient:
+    def __init__(self, *, kwargs: dict[str, object], payload: bytes, fail: bool = False) -> None:
+        self.kwargs = kwargs
+        self.payload = payload
+        self.fail = fail
+        self.closed = False
+
+    def stream(self, _method: str, _url: str, **_kwargs: object) -> _RecordingResponse:
+        return _RecordingResponse(payload=self.payload, fail=self.fail)
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _record_payload(**overrides: object) -> dict[str, object]:
@@ -325,6 +359,65 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached.source, "cache")
         self.assertTrue(cached.stale)
         self.assertIn("网络刷新失败", cached.warning or "")
+
+    async def test_owned_client_rechecks_proxy_after_service_start(self) -> None:
+        proxy_state: dict[str, str | None] = {"value": None}
+        created_clients: list[_RecordingAsyncClient] = []
+
+        def create_client(**kwargs: object) -> _RecordingAsyncClient:
+            client = _RecordingAsyncClient(kwargs=kwargs, payload=b"{}")
+            created_clients.append(client)
+            return client
+
+        service = CommunityMentorDataService(
+            cache_directory=self.cache_directory,
+            base_urls=(BASE_URL,),
+            proxy_resolver=lambda _url: proxy_state["value"],
+        )
+        with patch(
+            "app.modules.community.mentors.service.httpx.AsyncClient",
+            side_effect=create_client,
+        ):
+            await service._download_bytes(BASE_URL, "latest.json", 1024)
+            proxy_state["value"] = "http://127.0.0.1:7897"
+            await service._download_bytes(BASE_URL, "latest.json", 1024)
+
+        self.assertEqual(
+            [client.kwargs["proxy"] for client in created_clients],
+            [None, "http://127.0.0.1:7897"],
+        )
+        self.assertTrue(all(client.kwargs["trust_env"] is False for client in created_clients))
+        self.assertTrue(all(client.closed for client in created_clients))
+
+    async def test_owned_client_retries_when_proxy_changes_during_failure(self) -> None:
+        resolved_proxies = iter((None, "http://127.0.0.1:7897"))
+        created_clients: list[_RecordingAsyncClient] = []
+
+        def create_client(**kwargs: object) -> _RecordingAsyncClient:
+            client = _RecordingAsyncClient(
+                kwargs=kwargs,
+                payload=b"{}",
+                fail=len(created_clients) == 0,
+            )
+            created_clients.append(client)
+            return client
+
+        service = CommunityMentorDataService(
+            cache_directory=self.cache_directory,
+            base_urls=(BASE_URL,),
+            proxy_resolver=lambda _url: next(resolved_proxies),
+        )
+        with patch(
+            "app.modules.community.mentors.service.httpx.AsyncClient",
+            side_effect=create_client,
+        ):
+            payload = await service._download_bytes(BASE_URL, "latest.json", 1024)
+
+        self.assertEqual(payload, b"{}")
+        self.assertEqual(
+            [client.kwargs["proxy"] for client in created_clients],
+            [None, "http://127.0.0.1:7897"],
+        )
 
     async def test_reuses_content_addressed_shard_across_dataset_versions(self) -> None:
         first_payloads = _dataset_payloads()
