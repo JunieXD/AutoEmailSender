@@ -121,6 +121,7 @@ import {
 import {
   DEFAULT_CRAWL_CANDIDATE_FILTERS,
   filterCrawlCandidates,
+  getImportableCandidateIds,
   getReviewableCandidateIdsWithoutEmail,
   getReviewableCandidateIds,
   hasActiveCrawlCandidateFilters,
@@ -1746,6 +1747,10 @@ export const TasksPage = () => {
     () => getReviewableCandidateIds(crawlJobCandidates),
     [crawlJobCandidates],
   );
+  const importableCrawlCandidateIds = useMemo(
+    () => getImportableCandidateIds(crawlJobCandidates),
+    [crawlJobCandidates],
+  );
   const reviewableCrawlCandidateIdsWithoutEmail = useMemo(
     () => getReviewableCandidateIdsWithoutEmail(crawlJobCandidates),
     [crawlJobCandidates],
@@ -1784,6 +1789,12 @@ export const TasksPage = () => {
     reviewableCrawlCandidateIdsWithoutEmail,
     selectedReviewableCrawlCandidateIds,
   ]);
+  const selectedImportableCrawlCandidateIds = useMemo(() => {
+    const importableIds = new Set(importableCrawlCandidateIds);
+    return selectedReviewableCrawlCandidateIds.filter((candidateId) =>
+      importableIds.has(candidateId),
+    );
+  }, [importableCrawlCandidateIds, selectedReviewableCrawlCandidateIds]);
   const crawlCandidateFiltersActive = hasActiveCrawlCandidateFilters(
     crawlCandidateFilters,
   );
@@ -3402,7 +3413,7 @@ export const TasksPage = () => {
   const handleApproveSelectedCrawlCandidates = async () => {
     if (
       !selectedCrawlJobId ||
-      selectedReviewableCrawlCandidateIds.length === 0
+      selectedImportableCrawlCandidateIds.length === 0
     ) {
       return;
     }
@@ -3413,10 +3424,14 @@ export const TasksPage = () => {
         : selectedCrawlJob?.status === "partially_completed"
           ? "通过后会导入所选候选，任务中剩余待审核候选仍可继续处理。"
           : "通过后，这些候选导师会写入导师库；如仍有待审核候选，任务会标记为部分已导入。";
+    const skippedMissingEmailDescription =
+      selectedCrawlCandidateIdsWithoutEmail.length > 0
+        ? ` 已选中的 ${selectedCrawlCandidateIdsWithoutEmail.length} 位无邮箱候选不会导入，可先使用补全功能。`
+        : "";
 
     const confirmed = await confirm({
-      title: `确认通过并导入这 ${selectedReviewableCrawlCandidateIds.length} 位候选导师吗？`,
-      description: approveDescription,
+      title: `确认通过并导入这 ${selectedImportableCrawlCandidateIds.length} 位候选导师吗？`,
+      description: `${approveDescription}${skippedMissingEmailDescription}`,
       confirmLabel: "确认导入",
       cancelLabel: "先保留",
       tone: "danger",
@@ -3429,7 +3444,7 @@ export const TasksPage = () => {
     try {
       const result = await approveCrawlCandidates(
         selectedCrawlJobId,
-        selectedReviewableCrawlCandidateIds,
+        selectedImportableCrawlCandidateIds,
       );
       setSelectedCrawlCandidateIds([]);
       notifySuccess("审核完成", result.message);
@@ -7223,7 +7238,8 @@ export const TasksPage = () => {
                           {selectedCrawlJobCanReview ? (
                             <>
                               {" "}
-                              · 可导入 {reviewableCrawlCandidateIds.length} 位 ·
+                              · 待审核 {reviewableCrawlCandidateIds.length} 位 ·
+                              可导入 {importableCrawlCandidateIds.length} 位 ·
                               无邮箱{" "}
                               {reviewableCrawlCandidateIdsWithoutEmail.length} 位
                             </>
@@ -7325,7 +7341,9 @@ export const TasksPage = () => {
                                 void handleApproveSelectedCrawlCandidates()
                               }
                               disabled={
-                                crawlJobApproveLoading || crawlJobEnrichLoading
+                                selectedImportableCrawlCandidateIds.length === 0 ||
+                                crawlJobApproveLoading ||
+                                crawlJobEnrichLoading
                               }
                               className="ui-btn-primary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                             >

@@ -3,6 +3,7 @@ import type { CrawlCandidateDTO } from '@/types';
 import {
   DEFAULT_CRAWL_CANDIDATE_FILTERS,
   filterCrawlCandidates,
+  getImportableCandidateIds,
   getReviewableCandidateIdsWithoutEmail,
   getReviewableCandidateIds,
   hasActiveCrawlCandidateFilters,
@@ -55,6 +56,17 @@ describe('reviewCandidates', () => {
     ];
 
     expect(getReviewableCandidateIdsWithoutEmail(candidates)).toEqual([1, 2]);
+  });
+
+  it('returns only pending candidate ids with an email as importable', () => {
+    const candidates = [
+      buildCandidate({ id: 1, email: null, review_status: 'pending' }),
+      buildCandidate({ id: 2, email: '  ', review_status: 'pending' }),
+      buildCandidate({ id: 3, email: 'alice@example.edu', review_status: 'pending' }),
+      buildCandidate({ id: 4, email: 'accepted@example.edu', review_status: 'accepted' }),
+    ];
+
+    expect(getImportableCandidateIds(candidates)).toEqual([3]);
   });
 
   it('prunes selected ids that no longer exist or are no longer pending', () => {

@@ -199,6 +199,16 @@ export const getReviewableCandidateIds = (
     .filter((candidate) => candidate.review_status === 'pending')
     .map((candidate) => candidate.id);
 
+export const getImportableCandidateIds = (
+  candidates: CrawlCandidateDTO[],
+): number[] =>
+  candidates
+    .filter(
+      (candidate) =>
+        candidate.review_status === 'pending' && Boolean(candidate.email?.trim()),
+    )
+    .map((candidate) => candidate.id);
+
 export const getReviewableCandidateIdsWithoutEmail = (
   candidates: CrawlCandidateDTO[],
 ): number[] =>

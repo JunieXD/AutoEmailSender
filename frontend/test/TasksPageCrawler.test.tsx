@@ -1347,12 +1347,17 @@ describe("TasksPage crawler jobs tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
-    expect(within(dialog).getByText(/可导入\s+2\s+位/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/待审核\s+2\s+位/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/可导入\s+1\s+位/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/无邮箱\s+1\s+位/)).toBeInTheDocument();
     expect(within(dialog).getByRole("searchbox", { name: "搜索候选导师" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /搜索范围/ })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /资料条件：/ })).toBeInTheDocument();
 
     selectAllCandidatesWithoutEmail(dialog);
+    expect(
+      within(dialog).getByRole("button", { name: "审核通过并导入" }),
+    ).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
 
     await waitFor(() => {
@@ -1365,7 +1370,7 @@ describe("TasksPage crawler jobs tab", () => {
       within(dialog).getByTestId("crawl-candidate-information-filters"),
     ).toBeInTheDocument();
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "选择候选导师 李教授" }),
+      within(dialog).getByRole("button", { name: "选择全部筛选结果" }),
     );
     fireEvent.click(
       within(dialog).getByRole("button", { name: "审核通过并导入" }),
