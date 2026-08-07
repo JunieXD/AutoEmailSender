@@ -473,6 +473,13 @@ export interface MatchAnalysisJobItemDTO {
   updated_at: string;
 }
 
+export interface MatchAnalysisJobItemsPageDTO {
+  items: MatchAnalysisJobItemDTO[];
+  total_count: number;
+  next_cursor: number | null;
+  has_more: boolean;
+}
+
 export const MATCH_ANALYSIS_JOB_STATUS_LABELS: Record<
   MatchAnalysisJobStatus,
   string

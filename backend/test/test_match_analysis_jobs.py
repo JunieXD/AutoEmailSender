@@ -32,6 +32,7 @@ from app.modules.matching.public import (
     request_match_analysis_job_cancel,
     run_queued_match_analysis_jobs_once,
 )
+from app.modules.matching.job_runtime import _mark_item_succeeded
 
 
 class MatchAnalysisJobRuntimeTests(unittest.TestCase):
@@ -168,6 +169,61 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.total_tokens, 100)
         items = self._run_async(self._get_job_items(job.id))
         self.assertEqual(items[0].cached_tokens, 25)
+
+    def test_terminal_item_update_keeps_job_summary_current_and_idempotent(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+                name=None,
+            ),
+        )
+
+        async def mark_running() -> None:
+            async with self.session_factory() as session:
+                item = await session.scalar(
+                    select(MatchAnalysisJobItem).where(MatchAnalysisJobItem.job_id == job.id)
+                )
+                assert item is not None
+                item.status = MatchAnalysisJobItemStatus.RUNNING.value
+                await session.commit()
+
+        self._run_async(mark_running())
+        self._run_async(
+            _mark_item_succeeded(
+                self.session_factory,
+                self._run_async(self._get_job_items(job.id))[0].id,
+                run_id=None,
+                prompt_tokens=11,
+                completion_tokens=7,
+                cached_tokens=3,
+                total_tokens=18,
+            ),
+        )
+        self._run_async(
+            _mark_item_succeeded(
+                self.session_factory,
+                self._run_async(self._get_job_items(job.id))[0].id,
+                run_id=None,
+                prompt_tokens=11,
+                completion_tokens=7,
+                cached_tokens=3,
+                total_tokens=18,
+            ),
+        )
+
+        stored = self._run_async(self._get_job(job.id))
+        self.assertEqual(stored.status, MatchAnalysisJobStatus.QUEUED.value)
+        self.assertEqual(stored.succeeded_count, 1)
+        self.assertEqual(stored.total_prompt_tokens, 11)
+        self.assertEqual(stored.total_completion_tokens, 7)
+        self.assertEqual(stored.total_cached_tokens, 3)
+        self.assertEqual(stored.total_tokens, 18)
 
     def test_run_queued_job_with_successes_and_skips_is_completed(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(

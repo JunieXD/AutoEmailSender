@@ -2,7 +2,7 @@ import { apiFetch } from '@/lib/api/client';
 import type {
   CreateMatchAnalysisJobRequestDTO,
   MatchAnalysisJobDTO,
-  MatchAnalysisJobItemDTO,
+  MatchAnalysisJobItemsPageDTO,
   TaskListView,
 } from '@/types';
 
@@ -29,9 +29,22 @@ export const createMatchAnalysisJob = (
     body: JSON.stringify(payload),
   });
 
-export const listMatchAnalysisJobItems = (jobId: number) =>
-  apiFetch<MatchAnalysisJobItemDTO[]>(
+export const listMatchAnalysisJobItems = (
+  jobId: number,
+  params?: {
+    cursor?: number;
+    limit?: number;
+    status?: string | null;
+  },
+) =>
+  apiFetch<MatchAnalysisJobItemsPageDTO>(
     `/api/match-analysis-jobs/${jobId}/items`,
+    undefined,
+    {
+      cursor: params?.cursor ?? 0,
+      limit: params?.limit ?? 20,
+      status: params?.status ?? undefined,
+    },
   );
 
 export const getMatchAnalysisJob = (jobId: number) =>

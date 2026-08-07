@@ -684,15 +684,29 @@ async def _run_match_analysis_job(
             )
         )
 
-    semaphore = asyncio.Semaphore(max(item_concurrency, 1))
-
     async def run_item(item_id: int) -> None:
-        async with semaphore:
-            await _run_match_analysis_job_item(session_factory, job_id, item_id)
+        await _run_match_analysis_job_item(session_factory, job_id, item_id)
 
     if queued_item_ids:
         await run_item(queued_item_ids[0])
-        await asyncio.gather(*(run_item(item_id) for item_id in queued_item_ids[1:]))
+        pending_item_ids = queued_item_ids[1:]
+        item_queue: asyncio.Queue[int] = asyncio.Queue()
+        for item_id in pending_item_ids:
+            item_queue.put_nowait(item_id)
+
+        async def worker() -> None:
+            while True:
+                try:
+                    item_id = item_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    await run_item(item_id)
+                finally:
+                    item_queue.task_done()
+
+        worker_count = min(max(item_concurrency, 1), len(pending_item_ids))
+        await asyncio.gather(*(worker() for _ in range(worker_count)))
     await _refresh_match_analysis_job_summary(session_factory, job_id)
 
 
@@ -848,16 +862,40 @@ async def _mark_item_succeeded(
         if item is None:
             return
         now = utc_now()
-        item.status = MatchAnalysisJobItemStatus.SUCCEEDED.value
-        item.match_analysis_run_id = run_id
-        item.prompt_tokens = prompt_tokens
-        item.completion_tokens = completion_tokens
-        item.cached_tokens = cached_tokens
-        item.total_tokens = total_tokens
-        item.error_message = None
-        item.skip_reason = None
-        item.finished_at = now
-        item.updated_at = now
+        transition = await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.id == item_id,
+                MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+            )
+            .values(
+                status=MatchAnalysisJobItemStatus.SUCCEEDED.value,
+                match_analysis_run_id=run_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
+                total_tokens=total_tokens,
+                error_message=None,
+                skip_reason=None,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
+        if transition.rowcount == 1:
+            await session.execute(
+                update(MatchAnalysisJob)
+                .where(MatchAnalysisJob.id == item.job_id)
+                .values(
+                    succeeded_count=MatchAnalysisJob.succeeded_count + 1,
+                    total_prompt_tokens=MatchAnalysisJob.total_prompt_tokens + prompt_tokens,
+                    total_completion_tokens=(
+                        MatchAnalysisJob.total_completion_tokens + completion_tokens
+                    ),
+                    total_cached_tokens=MatchAnalysisJob.total_cached_tokens + cached_tokens,
+                    total_tokens=MatchAnalysisJob.total_tokens + total_tokens,
+                    updated_at=now,
+                )
+            )
         await session.commit()
 
 
@@ -870,11 +908,25 @@ async def _mark_item_canceled(
         if item is None:
             return
         now = utc_now()
-        item.status = MatchAnalysisJobItemStatus.CANCELED.value
-        item.error_message = None
-        item.skip_reason = None
-        item.finished_at = now
-        item.updated_at = now
+        await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.id == item_id,
+                MatchAnalysisJobItem.status.in_(
+                    [
+                        MatchAnalysisJobItemStatus.QUEUED.value,
+                        MatchAnalysisJobItemStatus.RUNNING.value,
+                    ]
+                ),
+            )
+            .values(
+                status=MatchAnalysisJobItemStatus.CANCELED.value,
+                error_message=None,
+                skip_reason=None,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
         await session.commit()
 
 
@@ -889,11 +941,34 @@ async def _mark_item_skipped(
         if item is None:
             return
         now = utc_now()
-        item.status = MatchAnalysisJobItemStatus.SKIPPED.value
-        item.skip_reason = skip_reason
-        item.error_message = None
-        item.finished_at = now
-        item.updated_at = now
+        transition = await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.id == item_id,
+                MatchAnalysisJobItem.status.in_(
+                    [
+                        MatchAnalysisJobItemStatus.QUEUED.value,
+                        MatchAnalysisJobItemStatus.RUNNING.value,
+                    ]
+                ),
+            )
+            .values(
+                status=MatchAnalysisJobItemStatus.SKIPPED.value,
+                skip_reason=skip_reason,
+                error_message=None,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
+        if transition.rowcount == 1:
+            await session.execute(
+                update(MatchAnalysisJob)
+                .where(MatchAnalysisJob.id == item.job_id)
+                .values(
+                    skipped_count=MatchAnalysisJob.skipped_count + 1,
+                    updated_at=now,
+                )
+            )
         await session.commit()
 
 
@@ -908,10 +983,28 @@ async def _mark_item_failed(
         if item is None:
             return
         now = utc_now()
-        item.status = MatchAnalysisJobItemStatus.FAILED.value
-        item.error_message = error_message
-        item.finished_at = now
-        item.updated_at = now
+        transition = await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.id == item_id,
+                MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+            )
+            .values(
+                status=MatchAnalysisJobItemStatus.FAILED.value,
+                error_message=error_message,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
+        if transition.rowcount == 1:
+            await session.execute(
+                update(MatchAnalysisJob)
+                .where(MatchAnalysisJob.id == item.job_id)
+                .values(
+                    failed_count=MatchAnalysisJob.failed_count + 1,
+                    updated_at=now,
+                )
+            )
         await session.commit()
 
 

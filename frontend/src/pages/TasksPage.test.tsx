@@ -10,6 +10,7 @@ import type {
   CrawlJobSummaryDTO,
   MatchAnalysisJobDTO,
   MatchAnalysisJobItemDTO,
+  MatchAnalysisJobItemsPageDTO,
   ProfessorDTO,
   ProfessorManagementItemDTO,
   ProfessorInformationEnrichmentItemDTO,
@@ -622,6 +623,17 @@ const buildMatchAnalysisJobItem = (
   ...overrides,
 });
 
+const buildMatchAnalysisJobItemsPage = (
+  items: MatchAnalysisJobItemDTO[] = [],
+  overrides: Partial<MatchAnalysisJobItemsPageDTO> = {},
+): MatchAnalysisJobItemsPageDTO => ({
+  items,
+  total_count: items.length,
+  next_cursor: null,
+  has_more: false,
+  ...overrides,
+});
+
 const buildInformationEnrichmentJob = (
   overrides: Partial<ProfessorInformationEnrichmentJobDTO> = {},
 ): ProfessorInformationEnrichmentJobDTO => ({
@@ -872,7 +884,9 @@ beforeEach(() => {
   apiMocks.listCrawlCandidates.mockResolvedValue([]);
   apiMocks.listCrawlPages.mockResolvedValue([]);
   apiMocks.listMatchAnalysisJobs.mockResolvedValue([]);
-  apiMocks.listMatchAnalysisJobItems.mockResolvedValue([]);
+  apiMocks.listMatchAnalysisJobItems.mockResolvedValue(
+    buildMatchAnalysisJobItemsPage(),
+  );
   apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([]);
   apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([]);
   apiMocks.getProfessor.mockResolvedValue(buildProfessor());
@@ -1014,13 +1028,15 @@ describe("TasksPage match analysis token usage", () => {
       total_tokens: 1333,
     });
     apiMocks.listMatchAnalysisJobs.mockResolvedValue([job]);
-    apiMocks.listMatchAnalysisJobItems.mockResolvedValue([
-      buildMatchAnalysisJobItem({
-        professor_title: null,
-        professor_university: null,
-        professor_school: null,
-      }),
-    ]);
+    apiMocks.listMatchAnalysisJobItems.mockResolvedValue(
+      buildMatchAnalysisJobItemsPage([
+        buildMatchAnalysisJobItem({
+          professor_title: null,
+          professor_university: null,
+          professor_school: null,
+        }),
+      ]),
+    );
 
     render(
       <MemoryRouter>
@@ -1088,6 +1104,50 @@ describe("TasksPage match analysis token usage", () => {
     expect(within(itemSummary).getByText("100")).toBeInTheDocument();
     expect(within(itemSummary).getByText("700")).toBeInTheDocument();
     expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
+  });
+
+  it("loads a server-side page and prefetches the next match detail page", async () => {
+    const job = buildMatchAnalysisJob({ target_count: 20 });
+    apiMocks.listMatchAnalysisJobs.mockResolvedValue([job]);
+    apiMocks.listMatchAnalysisJobItems.mockImplementation(
+      (_jobId: number, params?: { cursor?: number; limit?: number }) =>
+        Promise.resolve(
+          buildMatchAnalysisJobItemsPage(
+            params?.cursor === 0 ? [buildMatchAnalysisJobItem()] : [],
+            {
+              total_count: 20,
+              has_more: params?.cursor === 0,
+              next_cursor: params?.cursor === 0 ? params.limit : null,
+            },
+          ),
+        ),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "匹配分析" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看匹配分析任务 批量匹配分析",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listMatchAnalysisJobItems).toHaveBeenCalledWith(31, {
+        cursor: 0,
+        limit: 10,
+        status: null,
+      });
+      expect(apiMocks.listMatchAnalysisJobItems).toHaveBeenCalledWith(31, {
+        cursor: 10,
+        limit: 10,
+        status: null,
+      });
+    });
   });
 });
 

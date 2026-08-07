@@ -170,6 +170,7 @@ import {
   type CrawlPageDTO,
   type MatchAnalysisJobDTO,
   type MatchAnalysisJobItemDTO,
+  type MatchAnalysisJobItemsPageDTO,
   type MatchAnalysisJobItemStatus,
   type MatchAnalysisJobStatus,
   type ProfessorInformationEnrichmentItemDTO,
@@ -487,6 +488,7 @@ const MONITOR_SECTION_PAGE_SIZE = 5;
 const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;
 const TASKS_PAGE_SIZE_OPTIONS = [8, 16, 32] as const;
 const DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+const MATCH_JOB_ITEMS_PAGE_CACHE_SIZE = 5;
 const MONITOR_PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
 const PAGE_SIZE_STORAGE_KEYS = {
   batchTasks: "tasks:batch:page-size",
@@ -502,6 +504,13 @@ const PAGE_SIZE_STORAGE_KEYS = {
   crawlPages: "tasks:crawl-details:pages:page-size",
   crawlCandidates: "tasks:crawl-details:candidates:page-size",
 } as const;
+
+const getMatchJobItemsCacheKey = (
+  jobId: number,
+  cursor: number,
+  limit: number,
+  status: MatchAnalysisJobItemStatus | "all",
+) => `${jobId}:${cursor}:${limit}:${status}`;
 
 const formatScheduleDate = (value: string) => {
   const match = SCHEDULE_DATE_PATTERN.exec(value);
@@ -1030,6 +1039,7 @@ export const TasksPage = () => {
   const [selectedMatchJobItems, setSelectedMatchJobItems] = useState<
     MatchAnalysisJobItemDTO[]
   >([]);
+  const [matchJobItemTotalCount, setMatchJobItemTotalCount] = useState(0);
   const [matchJobDetailsLoading, setMatchJobDetailsLoading] = useState(false);
   const [informationEnrichmentJobs, setInformationEnrichmentJobs] = useState<
     ProfessorInformationEnrichmentJobDTO[]
@@ -1044,22 +1054,9 @@ export const TasksPage = () => {
     useState<ProfessorInformationEnrichmentItemDTO[]>([]);
   const [informationEnrichmentDetailsLoading, setInformationEnrichmentDetailsLoading] =
     useState(false);
-  const {
-    filteredItems: filteredMatchJobItems,
-    page: matchJobItemPage,
-    pageSize: matchJobItemPageSize,
-    setPagination: setMatchJobItemPagination,
-    setStatusFilter: setMatchJobItemStatusFilter,
-    statusFilter: matchJobItemStatusFilter,
-    visibleItems: visibleMatchJobItems,
-  } = useTaskDetailItems(
-    selectedMatchJobItems,
-    selectedMatchJob?.id ?? null,
-    {
-      initialPageSize: 10,
-      pageSizeStorageKey: PAGE_SIZE_STORAGE_KEYS.matchJobItems,
-    },
-  );
+  const [matchJobItemStatusFilter, setMatchJobItemStatusFilterState] = useState<
+    "all" | MatchAnalysisJobItemStatus
+  >("all");
   const {
     filteredItems: filteredInformationEnrichmentItems,
     page: informationEnrichmentItemPage,
@@ -1088,6 +1085,15 @@ export const TasksPage = () => {
   } = usePaginationState({
     storageKey: PAGE_SIZE_STORAGE_KEYS.batchTasks,
     initialPageSize: TASKS_PAGE_SIZE,
+  });
+  const {
+    page: matchJobItemPage,
+    pageSize: matchJobItemPageSize,
+    setPage: setMatchJobItemPage,
+    onChange: handleMatchJobItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.matchJobItems,
+    initialPageSize: 10,
   });
   const {
     page: matchPage,
@@ -1228,6 +1234,9 @@ export const TasksPage = () => {
   const latestProfessorEditRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
   const latestMatchJobDetailsRequestIdRef = useRef(0);
+  const matchJobItemsPageCacheRef = useRef(
+    new Map<string, MatchAnalysisJobItemsPageDTO>(),
+  );
   const latestInformationEnrichmentJobsRequestIdRef = useRef(0);
   const latestInformationEnrichmentDetailsRequestIdRef = useRef(0);
   const latestCrawlJobsRequestIdRef = useRef(0);
@@ -1834,18 +1843,99 @@ export const TasksPage = () => {
     }
   }, [notifyError, selectedIdentityId, selectedLlmProfileId, taskListViews.match]);
 
+  const cacheMatchJobItemsPage = useCallback(
+    (key: string, page: MatchAnalysisJobItemsPageDTO) => {
+      const cache = matchJobItemsPageCacheRef.current;
+      cache.delete(key);
+      cache.set(key, page);
+      while (cache.size > MATCH_JOB_ITEMS_PAGE_CACHE_SIZE) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey === undefined) {
+          return;
+        }
+        cache.delete(oldestKey);
+      }
+    },
+    [],
+  );
+
+  const prefetchMatchJobItemsPage = useCallback(
+    async (
+      jobId: number,
+      cursor: number,
+      limit: number,
+      status: MatchAnalysisJobItemStatus | "all",
+    ) => {
+      if (cursor < 0) {
+        return;
+      }
+      const key = getMatchJobItemsCacheKey(jobId, cursor, limit, status);
+      if (matchJobItemsPageCacheRef.current.has(key)) {
+        return;
+      }
+      try {
+        const page = await listMatchAnalysisJobItems(jobId, {
+          cursor,
+          limit,
+          status: status === "all" ? null : status,
+        });
+        cacheMatchJobItemsPage(key, page);
+      } catch {
+        // Prefetch failures should not interrupt the currently visible page.
+      }
+    },
+    [cacheMatchJobItemsPage],
+  );
+
   const loadMatchJobDetails = useCallback(
     async (jobId: number) => {
       const requestId = latestMatchJobDetailsRequestIdRef.current + 1;
       latestMatchJobDetailsRequestIdRef.current = requestId;
-      setMatchJobDetailsLoading(true);
+      const cursor = (matchJobItemPage - 1) * matchJobItemPageSize;
+      const key = getMatchJobItemsCacheKey(
+        jobId,
+        cursor,
+        matchJobItemPageSize,
+        matchJobItemStatusFilter,
+      );
+      const cached = matchJobItemsPageCacheRef.current.get(key);
+      if (cached) {
+        setSelectedMatchJobItems(cached.items);
+        setMatchJobItemTotalCount(cached.total_count);
+      }
+      setMatchJobDetailsLoading(!cached);
       try {
-        const data = await listMatchAnalysisJobItems(jobId);
+        const data = await listMatchAnalysisJobItems(jobId, {
+          cursor,
+          limit: matchJobItemPageSize,
+          status:
+            matchJobItemStatusFilter === "all"
+              ? null
+              : matchJobItemStatusFilter,
+        });
+        cacheMatchJobItemsPage(key, data);
         if (latestMatchJobDetailsRequestIdRef.current !== requestId) {
           return;
         }
-        setSelectedMatchJobItems(data);
+        setSelectedMatchJobItems(data.items);
+        setMatchJobItemTotalCount(data.total_count);
         lastMatchJobDetailsLoadErrorRef.current = null;
+        if (data.has_more) {
+          void prefetchMatchJobItemsPage(
+            jobId,
+            cursor + matchJobItemPageSize,
+            matchJobItemPageSize,
+            matchJobItemStatusFilter,
+          );
+        }
+        if (cursor > 0) {
+          void prefetchMatchJobItemsPage(
+            jobId,
+            cursor - matchJobItemPageSize,
+            matchJobItemPageSize,
+            matchJobItemStatusFilter,
+          );
+        }
       } catch (loadError) {
         if (latestMatchJobDetailsRequestIdRef.current !== requestId) {
           return;
@@ -1864,7 +1954,22 @@ export const TasksPage = () => {
         }
       }
     },
-    [notifyError],
+    [
+      cacheMatchJobItemsPage,
+      matchJobItemPage,
+      matchJobItemPageSize,
+      matchJobItemStatusFilter,
+      notifyError,
+      prefetchMatchJobItemsPage,
+    ],
+  );
+
+  const setMatchJobItemStatusFilter = useCallback(
+    (status: MatchAnalysisJobItemStatus | "all") => {
+      setMatchJobItemStatusFilterState(status);
+      setMatchJobItemPage(1);
+    },
+    [setMatchJobItemPage],
   );
 
   const loadInformationEnrichmentJobs = useCallback(
@@ -2150,6 +2255,15 @@ export const TasksPage = () => {
   ]);
 
   useEffect(() => {
+    setMatchJobItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(matchJobItemTotalCount, matchJobItemPageSize),
+      ),
+    );
+  }, [matchJobItemPageSize, matchJobItemTotalCount, setMatchJobItemPage]);
+
+  useEffect(() => {
     setCrawlEventPage((currentPage) =>
       Math.min(
         currentPage,
@@ -2327,6 +2441,13 @@ export const TasksPage = () => {
     setBatchPendingItemPage,
     setBatchSentItemPage,
   ]);
+
+  useEffect(() => {
+    setMatchJobItemStatusFilterState("all");
+    setMatchJobItemPage(1);
+    setSelectedMatchJobItems([]);
+    setMatchJobItemTotalCount(0);
+  }, [selectedMatchJob?.id, setMatchJobItemPage]);
 
   useEffect(() => {
     if (!selectedMatchJob) {
@@ -3716,6 +3837,7 @@ export const TasksPage = () => {
     latestMatchJobDetailsRequestIdRef.current += 1;
     setSelectedMatchJob(null);
     setSelectedMatchJobItems([]);
+    setMatchJobItemTotalCount(0);
     setMatchJobDetailsLoading(false);
     lastMatchJobDetailsLoadErrorRef.current = null;
   };
@@ -5747,7 +5869,7 @@ export const TasksPage = () => {
                       )}
                     </NativeSelectField>
                     <span className="text-xs tabular-nums text-stone-500">
-                      {filteredMatchJobItems.length} / {selectedMatchJobItems.length} 位
+                      {matchJobItemTotalCount} / {selectedMatchJob.target_count + selectedMatchJob.skipped_count} 位
                     </span>
                   </div>
                 </div>
@@ -5765,8 +5887,8 @@ export const TasksPage = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {filteredMatchJobItems.length > 0 ? (
-                        visibleMatchJobItems.map((item) => {
+                      {selectedMatchJobItems.length > 0 ? (
+                        selectedMatchJobItems.map((item) => {
                           const professorDetails = [
                             item.professor_title,
                             item.professor_university,
@@ -5837,8 +5959,8 @@ export const TasksPage = () => {
                 <Pagination
                   page={matchJobItemPage}
                   pageSize={matchJobItemPageSize}
-                  totalCount={filteredMatchJobItems.length}
-                  onChange={setMatchJobItemPagination}
+                  totalCount={matchJobItemTotalCount}
+                  onChange={handleMatchJobItemPaginationChange}
                   ariaLabel="匹配分析导师明细分页"
                   pageSizeAriaLabel="匹配分析导师明细每页数量"
                   variant="compact"

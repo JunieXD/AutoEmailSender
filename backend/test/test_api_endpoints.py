@@ -6052,9 +6052,19 @@ class ApiEndpointTests(unittest.TestCase):
                 f"/api/match-analysis-jobs/{created.json()['id']}/items",
             )
         self.assertEqual(items.status_code, 200, msg=items.text)
-        self.assertEqual(items.json()[0]["professor_university"], "Example University")
-        self.assertEqual(items.json()[0]["professor_school"], "School of Computing")
+        self.assertEqual(items.json()["total_count"], 1)
+        self.assertFalse(items.json()["has_more"])
+        self.assertEqual(items.json()["items"][0]["professor_university"], "Example University")
+        self.assertEqual(items.json()["items"][0]["professor_school"], "School of Computing")
         self.assertIn("recent_papers", unloaded_professor_columns[0])
+
+        filtered_items = self.client.get(
+            f"/api/match-analysis-jobs/{created.json()['id']}/items",
+            params={"cursor": 0, "limit": 1, "status": "succeeded"},
+        )
+        self.assertEqual(filtered_items.status_code, 200, msg=filtered_items.text)
+        self.assertEqual(filtered_items.json()["total_count"], 0)
+        self.assertEqual(filtered_items.json()["items"], [])
 
     def test_match_analysis_jobs_list_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id = self._create_identity(with_imap=False)
