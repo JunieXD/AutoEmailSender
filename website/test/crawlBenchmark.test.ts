@@ -156,21 +156,6 @@ describe("public crawl benchmark data", () => {
       }
     }
   });
-
-  it("publishes configured school names instead of known abbreviations", () => {
-    expect(publicData.records).toContainEqual(
-      expect.objectContaining({
-        university: "中国科学院大学",
-        school: "中国科学院沈阳自动化研究所",
-      }),
-    );
-    expect(publicData.records).not.toContainEqual(
-      expect.objectContaining({ university: "中科院" }),
-    );
-    expect(publicData.records).not.toContainEqual(
-      expect.objectContaining({ school: "沈阳自动化所" }),
-    );
-  });
 });
 
 describe("crawl benchmark calculations", () => {

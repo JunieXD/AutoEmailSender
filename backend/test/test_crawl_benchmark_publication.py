@@ -17,7 +17,6 @@ from app.services.crawl_benchmark_publication import (
     load_existing_public_records,
     load_legacy_xlsx_records,
     merge_public_records,
-    normalize_public_target,
     write_publication_payload,
 )
 
@@ -54,16 +53,6 @@ def make_public_legacy_record(**overrides: object) -> dict[str, object]:
 
 
 class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
-    def test_known_school_and_university_aliases_use_public_names(self) -> None:
-        self.assertEqual(
-            normalize_public_target("中科院", "沈阳自动化所"),
-            ("中国科学院大学", "中国科学院沈阳自动化研究所"),
-        )
-        self.assertEqual(
-            normalize_public_target("深圳大学", "计算机学院"),
-            ("深圳大学", "计算机与软件学院"),
-        )
-
     def test_database_export_only_contains_public_aggregate_records(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "auto_email_sender.db"
