@@ -6,6 +6,7 @@ import { NativeSelectField } from '@/components/atoms/NativeSelectField';
 import { AttachmentSizeSummary } from '@/components/molecules/AttachmentSizeSummary';
 import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor';
 import { Pagination } from '@/components/molecules/Pagination';
+import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
 import { TaskDateSelector } from '@/components/molecules/TaskDateSelector';
 import { useNotification } from '@/context/NotificationContext';
@@ -866,10 +867,12 @@ export const CreateTaskPage = () => {
                           className="flex items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700"
                         >
                           <span className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
+                            <SelectionToggleButton
+                              label={`选择附件 ${material.display_name}`}
+                              selected={checked}
+                              semantics="checkbox"
+                              size="md"
+                              onToggle={() => {
                                 setSelectedMaterialIds((previous) =>
                                   previous.includes(material.id)
                                     ? previous.filter((item) => item !== material.id)

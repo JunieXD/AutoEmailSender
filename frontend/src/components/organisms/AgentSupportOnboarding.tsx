@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Bot, Check, Loader2, Terminal } from "lucide-react";
+import { Bot, Loader2, Terminal } from "lucide-react";
+import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { DesktopAgentSupportStatus } from "@/types/desktop";
 
 export function AgentSupportOnboarding() {
@@ -92,16 +93,15 @@ export function AgentSupportOnboarding() {
         </p>
         {canInstallCodex ? (
           <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl border border-primary/20 bg-primary/[0.045] px-4 py-3.5 transition hover:border-primary/35 hover:bg-primary/[0.07]">
-            <input
-              type="checkbox"
-              className="peer sr-only"
-              checked={installCodex}
+            <SelectionToggleButton
+              label="同时接入 Codex"
+              selected={installCodex}
               disabled={working}
-              onChange={(event) => setInstallCodex(event.target.checked)}
+              semantics="checkbox"
+              size="md"
+              className="mt-0.5"
+              onToggle={() => setInstallCodex((current) => !current)}
             />
-            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white text-transparent shadow-sm transition peer-checked:border-primary peer-checked:bg-primary peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30 peer-focus-visible:ring-offset-2">
-              <Check className="h-3.5 w-3.5" strokeWidth={3} />
-            </span>
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-stone-900">
                 同时接入 Codex

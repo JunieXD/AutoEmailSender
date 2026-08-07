@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { Mail, Target, BrainCircuit } from 'lucide-react';
 import { StatusBadge } from '../atoms/StatusBadge';
 import { ActionOutlineButton } from '../atoms/ActionOutlineButton';
+import { SelectionToggleButton } from './SelectionToggleButton';
 import type { Mentor } from '../../types';
 
 interface MentorRowCardProps {
@@ -51,21 +52,13 @@ export const MentorRowCard: React.FC<MentorRowCardProps> = ({
 
   return (
     <div className="flex items-center gap-4">
-      {/* 左侧自定义圆形复选框 */}
-      <label className="relative shrink-0 cursor-pointer group">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={() => onToggle(mentor.id)}
-          className="peer sr-only"
-        />
-        <div className="w-6 h-6 rounded-full border-2 border-stone-300 bg-white transition-all duration-200 group-hover:border-primary peer-checked:border-primary peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30" />
-        <div className="absolute inset-0 flex items-center justify-center transition-all duration-200 opacity-0 peer-checked:opacity-100">
-          <svg className="w-3 h-3 text-white" viewBox="0 0 12 10" fill="none">
-            <path d="M1.5 5.5L4.5 8.5L10.5 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
-      </label>
+      <SelectionToggleButton
+        label={`选择 ${mentor.name}`}
+        selected={selected}
+        shape="circle"
+        size="lg"
+        onToggle={() => onToggle(mentor.id)}
+      />
 
       {/* 圆角矩形卡片 */}
       <div className={`${baseClasses} ${containerClasses}`}>

@@ -27,6 +27,7 @@ import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTa
 import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
 import { OnboardingChecklistCard } from "@/components/molecules/OnboardingChecklistCard";
 import { Pagination } from "@/components/molecules/Pagination";
+import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
@@ -1501,14 +1502,17 @@ export const HomePage = () => {
                     </div>
                   ) : null}
                   <label className="mt-2 flex items-center gap-2 text-sm text-stone-700">
-                    <input
-                      type="checkbox"
-                      checked={
+                    <SelectionToggleButton
+                      label="仅看无匹配度"
+                      selected={
                         filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE
                       }
-                      onChange={(event) =>
+                      semantics="checkbox"
+                      size="sm"
+                      onToggle={() =>
                         updateFilters({
-                          minMatchScore: event.target.checked
+                          minMatchScore:
+                            filters.minMatchScore !== NO_MATCH_SCORE_FILTER_VALUE
                             ? NO_MATCH_SCORE_FILTER_VALUE
                             : "",
                           maxMatchScore: "",

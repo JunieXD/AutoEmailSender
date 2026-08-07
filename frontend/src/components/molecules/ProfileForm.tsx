@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ImapConfig, Profile, ResumeFile, SmtpConfig } from '@/types';
+import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 
 interface ProfileFormProps {
   initialProfile?: Profile;
@@ -219,10 +220,12 @@ export const ProfileForm: React.FC<ProfileFormProps> = ({
       </details>
 
       <label className="flex items-center gap-2 text-sm text-stone-700">
-        <input
-          type="checkbox"
-          checked={isDefault}
-          onChange={(event) => setIsDefault(event.target.checked)}
+        <SelectionToggleButton
+          label="设为默认身份"
+          selected={isDefault}
+          semantics="checkbox"
+          size="sm"
+          onToggle={() => setIsDefault((current) => !current)}
         />
         设为默认身份
       </label>

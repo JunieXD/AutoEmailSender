@@ -6,6 +6,7 @@ import { useSelectionContext } from "@/context/SelectionContext";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { AttachmentSizeSummary } from "@/components/molecules/AttachmentSizeSummary";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
+import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
 import {
@@ -452,10 +453,12 @@ export const TestComposePage = () => {
                               {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
                             </span>
                           </span>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
+                          <SelectionToggleButton
+                            label={`选择附件 ${material.display_name}`}
+                            selected={checked}
+                            semantics="checkbox"
+                            size="md"
+                            onToggle={() => {
                               setSelectedMaterialIds((previous) =>
                                 checked
                                   ? previous.filter((item) => item !== material.id)

@@ -5628,10 +5628,13 @@ export const TasksPage = () => {
                                       key={material.id}
                                       className="flex items-start gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700"
                                     >
-                                      <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={() =>
+                                      <SelectionToggleButton
+                                        label={`选择附件 ${material.display_name}`}
+                                        selected={checked}
+                                        semantics="checkbox"
+                                        size="sm"
+                                        className="mt-0.5"
+                                        onToggle={() =>
                                           setBatchReviewSelectedMaterialIds((current) =>
                                             checked
                                               ? current.filter((id) => id !== material.id)

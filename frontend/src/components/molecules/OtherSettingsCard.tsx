@@ -11,6 +11,7 @@ import {
   type RuntimeSettingsUpdateDTO,
 } from "@/lib/api/runtimeSettings";
 import { formatApiDateTime } from "@/lib/dateTime";
+import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
@@ -408,17 +409,19 @@ export function OtherSettingsCard() {
                       </p>
                     </div>
                     <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(startupStatus?.supported && startupStatus.enabled)}
+                      <SelectionToggleButton
+                        label="开机自启动"
+                        selected={Boolean(startupStatus?.supported && startupStatus.enabled)}
                         disabled={
                           startupLoading ||
                           startupSaving ||
                           !startupStatus?.supported ||
                           !window.autoEmailSender?.setStartupAtLoginEnabled
                         }
-                        onChange={(event) => void handleStartupChange(event.target.checked)}
-                        className="mt-1 h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
+                        semantics="checkbox"
+                        size="sm"
+                        className="mt-1"
+                        onToggle={() => void handleStartupChange(!startupStatus?.enabled)}
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-semibold text-stone-900">开机自启动</span>

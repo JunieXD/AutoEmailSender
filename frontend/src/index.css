@@ -82,7 +82,6 @@ body {
 button,
 select,
 summary,
-input[type="checkbox"],
 input[type="radio"],
 input[type="file"] {
   -webkit-tap-highlight-color: transparent;
@@ -102,7 +101,6 @@ button,
 button:not(:disabled),
 select:not(:disabled),
 summary,
-input[type="checkbox"]:not(:disabled),
 input[type="radio"]:not(:disabled),
 input[type="file"]:not(:disabled) {
   cursor: pointer;
@@ -110,7 +108,6 @@ input[type="file"]:not(:disabled) {
 
 button:disabled,
 select:disabled,
-input[type="checkbox"]:disabled,
 input[type="radio"]:disabled,
 input[type="file"]:disabled {
   cursor: not-allowed;
@@ -221,7 +218,6 @@ select:not([multiple]) {
 select:not(:disabled):focus-visible,
 button:not(:disabled):focus-visible,
 summary:focus-visible,
-input[type="checkbox"]:not(:disabled):focus-visible,
 input[type="radio"]:not(:disabled):focus-visible {
   outline: 2px solid color-mix(in srgb, var(--color-primary, #991b1b) 40%, transparent);
   outline-offset: 2px;

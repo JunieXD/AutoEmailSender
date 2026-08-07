@@ -18,6 +18,7 @@ import {
 } from '@/lib/api/communicationGroups';
 import { ApiError } from '@/lib/api/client';
 import { useConfirmDialog } from '@/lib/useConfirmDialog';
+import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 import type { IdentityCommunicationGroupDTO, IdentityDTO } from '@/types';
 
 type GroupEditorId = number | 'new' | null;
@@ -400,12 +401,14 @@ export const CommunicationSharingPanel = () => {
                             key={identity.id}
                             className="flex cursor-pointer items-start gap-3 rounded-lg border border-stone-200 px-3 py-3 transition hover:bg-stone-50"
                           >
-                            <input
-                              type="checkbox"
-                              checked={selectedMemberIdSet.has(identity.id)}
-                              onChange={() => toggleIdentity(identity.id)}
+                            <SelectionToggleButton
+                              label={`${getIdentityName(identity)}${identity.email_address}`}
+                              selected={selectedMemberIdSet.has(identity.id)}
+                              onToggle={() => toggleIdentity(identity.id)}
                               disabled={saving}
-                              className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/20"
+                              semantics="checkbox"
+                              size="sm"
+                              className="mt-0.5"
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-medium text-stone-900">

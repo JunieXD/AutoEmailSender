@@ -19,6 +19,7 @@ import {
 import { EmailTemplateEditor } from '@/components/molecules/EmailTemplateEditor';
 import { AttachmentSizeSummary } from '@/components/molecules/AttachmentSizeSummary';
 import { NativeSelectField } from '@/components/atoms/NativeSelectField';
+import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInput';
 import {
   formatFileSize,
@@ -536,11 +537,13 @@ export const WorkspaceComposerDock = ({
                                   )}
                                 >
                                   <span className="flex min-w-0 items-center gap-3">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
+                                    <SelectionToggleButton
+                                      label={`选择附件 ${material.display_name}`}
+                                      selected={checked}
                                       disabled={editorDisabled}
-                                      onChange={() => {
+                                      semantics="checkbox"
+                                      size="md"
+                                      onToggle={() => {
                                         if (editorDisabled) {
                                           return;
                                         }

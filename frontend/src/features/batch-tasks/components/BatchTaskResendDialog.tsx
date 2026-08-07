@@ -5,6 +5,7 @@ import {
   getOutreachTemplateSourceLabel,
 } from '@/features/batch-tasks/client/batchTaskDisplay';
 import { PROFESSOR_STATUS_LABELS, type BatchTaskResendContextDTO } from '@/types';
+import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 
 type BatchTaskResendDialogProps = {
   context: BatchTaskResendContextDTO | null;
@@ -124,12 +125,13 @@ export const BatchTaskResendDialog = ({
                     key={item.email_task_id}
                     className="flex cursor-pointer items-start gap-3 rounded-2xl border border-stone-100 px-4 py-3 transition hover:border-primary/25 hover:bg-primary/5"
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => onToggleProfessor(professorId)}
-                      aria-label={`选择老师 ${item.professor_name}`}
-                      className="mt-1 h-4 w-4 rounded border-stone-300 text-primary focus:ring-primary/30"
+                    <SelectionToggleButton
+                      label={`选择老师 ${item.professor_name}`}
+                      selected={checked}
+                      semantics="checkbox"
+                      size="sm"
+                      className="mt-1"
+                      onToggle={() => onToggleProfessor(professorId)}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
