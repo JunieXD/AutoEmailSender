@@ -24,6 +24,7 @@ from ..pages.tools import (
     CandidateEnrichmentPayload,
     CrawlToolContext,
     PageSnapshot,
+    build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
     validate_safe_public_crawl_url,
 )
@@ -32,10 +33,12 @@ from .profile_url_policy import (
     CandidateProfileUrlPolicyError,
     has_explicit_markdown_link,
 )
-from .retry import MAX_CRAWLER_V2_ATTEMPTS, mark_crawler_v2_failed
+from .retry import mark_crawler_v2_failed
 from .profile_text_cache import profile_text_cache
 from .scheduler import ensure_job_active
 from .token_usage import record_crawler_v2_token_usage
+from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from .models import CrawlerV2WorkKind
 from .url_utils import is_same_domain
 from ..jobs.runs import extract_token_usage_from_llm_response
 from app.modules.llm.public import ensure_llm_runtime_adaptation
@@ -45,6 +48,10 @@ from ..llm.structured_output import (
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.modules.professors.public import apply_enrichment_to_professor
+from app.modules.crawler.candidate_identity import (
+    apply_candidate_enrichment_values,
+    consolidate_candidate_identity,
+)
 from app.modules.professors.public import normalize_recent_papers
 
 
@@ -159,8 +166,29 @@ async def run_crawler_v2_enrichment_worker_once(
                 output_tokens=usage.get("output_tokens") or 0,
                 cached_tokens=usage.get("cached_tokens") or 0,
                 raw_usage=dict(usage),
+                claim=CrawlerV2ClaimFence(
+                    kind=CrawlerV2WorkKind.ENRICHMENT,
+                    work_item_id=task_id,
+                    worker_id=worker_id,
+                ),
             )
         async with session_factory() as session:
+            if not await fence_crawler_v2_claim(
+                session,
+                CrawlerV2ClaimFence(
+                    kind=CrawlerV2WorkKind.ENRICHMENT,
+                    work_item_id=task_id,
+                    worker_id=worker_id,
+                ),
+            ):
+                await session.rollback()
+                await _discard_cached_profile_text_if_terminal(
+                    session_factory,
+                    task_id=task_id,
+                    job_id=job_id,
+                    candidate_id=candidate_id,
+                )
+                return 0
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             current_candidate = await session.get(CrawlCandidate, candidate_id)
             if task is None or current_candidate is None:
@@ -189,6 +217,7 @@ async def run_crawler_v2_enrichment_worker_once(
                 return 0
             candidate = current_candidate
             _apply_enrichment(candidate, payload)
+            await consolidate_candidate_identity(session, candidate)
             enriched_fields: list[str] = []
             skip_reason = None
             if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
@@ -256,7 +285,7 @@ async def run_crawler_v2_enrichment_worker_once(
                     max_attempts=(
                         1
                         if isinstance(exc, CandidateProfileUrlPolicyError)
-                        else MAX_CRAWLER_V2_ATTEMPTS
+                        else None
                     ),
                 )
                 if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value:
@@ -425,8 +454,6 @@ async def enrich_candidate_profile_with_llm_with_usage(
     candidate: CrawlCandidate,
     page_text: str,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
-    from ..jobs.runtime import build_candidate_enrichment_prompt
-
     prompt = build_candidate_enrichment_prompt(candidate, page_text)
     completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
         ctx.session_factory,
@@ -613,13 +640,4 @@ async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfi
 
 
 def _apply_enrichment(candidate: CrawlCandidate, payload: CandidateEnrichmentPayload) -> None:
-    if payload.email and not candidate.email:
-        candidate.email = payload.email.strip()
-    if payload.title and not candidate.title:
-        candidate.title = payload.title.strip()
-    if payload.department and not candidate.department:
-        candidate.department = payload.department.strip()
-    if payload.research_direction and not candidate.research_direction:
-        candidate.research_direction = payload.research_direction.strip()
-    if payload.recent_papers and not candidate.recent_papers:
-        candidate.recent_papers = normalize_recent_papers(payload.recent_papers)
+    apply_candidate_enrichment_values(candidate, payload.model_dump())

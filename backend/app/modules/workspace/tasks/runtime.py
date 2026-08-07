@@ -132,6 +132,7 @@ async def generate_task_draft(
     automatic_batch: bool = False,
     require_running_batch: bool = False,
     llm_profile_id: int | None = None,
+    draft_claim_id: str | None = None,
 ) -> tuple[int, int, int]:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
@@ -139,6 +140,8 @@ async def generate_task_draft(
             raise ValueError(f"EmailTask {task_id} 不存在")
         task_identity = (task.professor_id, task.identity_id, task.llm_profile_id)
         runtime_llm_profile: LLMProfile | None = None
+        if draft_claim_id is not None and task.draft_claim_id != draft_claim_id:
+            return task_identity
         if (
             task.status == EmailTaskStatus.GENERATING_DRAFT.value
             and not automatic_batch
@@ -150,7 +153,14 @@ async def generate_task_draft(
             and not ignore_batch_status
         ):
             if automatic_batch or require_running_batch:
+                if not await _lock_current_batch_draft_claim(
+                    session,
+                    task,
+                    draft_claim_id,
+                ):
+                    return task_identity
                 _restore_or_cancel_interrupted_draft_generation(task)
+                _clear_batch_draft_claim(task)
                 await session.commit()
             return task_identity
 
@@ -322,14 +332,29 @@ async def generate_task_draft(
                         ),
                     )
                     if batch_status != BatchTaskStatus.RUNNING.value:
+                        if not await _lock_current_batch_draft_claim(
+                            session,
+                            task,
+                            draft_claim_id,
+                        ):
+                            return task_identity
                         _restore_or_cancel_interrupted_draft_generation(
                             task, batch_status=batch_status
                         )
+                        _clear_batch_draft_claim(task)
                         await session.commit()
                         return task.professor_id, task.identity_id, task.llm_profile_id
         except asyncio.CancelledError:
             await session.refresh(task)
+            if draft_claim_id is not None and task.draft_claim_id != draft_claim_id:
+                raise
             if _is_user_removed_batch_item(task):
+                raise
+            if not await _lock_current_batch_draft_claim(
+                session,
+                task,
+                draft_claim_id,
+            ):
                 raise
             batch_status = (
                 await session.scalar(
@@ -347,10 +372,22 @@ async def generate_task_draft(
             await session.refresh(task)
             if _is_user_removed_batch_item(task):
                 raise
+            if draft_claim_id is not None and (
+                task.status != EmailTaskStatus.GENERATING_DRAFT.value
+                or task.draft_claim_id != draft_claim_id
+            ):
+                return task_identity
+            if not await _lock_current_batch_draft_claim(
+                session,
+                task,
+                draft_claim_id,
+            ):
+                return task_identity
             task.last_error = str(exc)
             if automatic_batch:
                 task.status = EmailTaskStatus.DRAFT_FAILED.value
                 task.draft_generation_previous_status = None
+                _clear_batch_draft_claim(task)
             else:
                 task.status = (
                     task.draft_generation_previous_status
@@ -366,10 +403,22 @@ async def generate_task_draft(
             await session.refresh(task)
             if _is_user_removed_batch_item(task):
                 raise
+            if draft_claim_id is not None and (
+                task.status != EmailTaskStatus.GENERATING_DRAFT.value
+                or task.draft_claim_id != draft_claim_id
+            ):
+                return task_identity
+            if not await _lock_current_batch_draft_claim(
+                session,
+                task,
+                draft_claim_id,
+            ):
+                return task_identity
             task.last_error = str(exc)
             if automatic_batch:
                 task.status = EmailTaskStatus.DRAFT_FAILED.value
                 task.draft_generation_previous_status = None
+                _clear_batch_draft_claim(task)
             else:
                 task.status = (
                     task.draft_generation_previous_status
@@ -385,8 +434,18 @@ async def generate_task_draft(
         await session.refresh(task)
         if (
             task.status != EmailTaskStatus.GENERATING_DRAFT.value
+            or (
+                draft_claim_id is not None
+                and task.draft_claim_id != draft_claim_id
+            )
             or task.cancellation_reason
             == EmailTaskCancellationReason.USER_REMOVED.value
+        ):
+            return task_identity
+        if not await _lock_current_batch_draft_claim(
+            session,
+            task,
+            draft_claim_id,
         ):
             return task_identity
 
@@ -418,6 +477,8 @@ async def generate_task_draft(
         task.draft_fallback_reason = None
         task.status = EmailTaskStatus.REVIEW_REQUIRED.value
         task.draft_generation_previous_status = None
+        if automatic_batch:
+            _clear_batch_draft_claim(task)
         task.updated_at = utc_now()
         task.last_error = None
 
@@ -1461,6 +1522,33 @@ def _restore_or_cancel_interrupted_draft_generation(
         task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
     task.draft_generation_previous_status = None
     task.updated_at = utc_now()
+
+
+def _clear_batch_draft_claim(task: EmailTask) -> None:
+    task.draft_generation_started_at = None
+    task.draft_claim_id = None
+    task.draft_claimed_at = None
+    task.draft_lease_expires_at = None
+
+
+async def _lock_current_batch_draft_claim(
+    session: AsyncSession,
+    task: EmailTask,
+    draft_claim_id: str | None,
+) -> bool:
+    if draft_claim_id is None:
+        return True
+    result = await session.execute(
+        update(EmailTask)
+        .where(
+            EmailTask.id == task.id,
+            EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value,
+            EmailTask.draft_claim_id == draft_claim_id,
+        )
+        .values(draft_claim_id=draft_claim_id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 def _resolve_task_outreach_config(task: EmailTask):

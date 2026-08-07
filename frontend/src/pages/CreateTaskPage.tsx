@@ -118,6 +118,8 @@ export const CreateTaskPage = () => {
   const targetMentorsStartRef = useRef<HTMLElement | null>(null);
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
+  const requiresDraftGeneration =
+    !isResendPrefillActive || resendPrefillContext?.requiresRegeneration !== false;
   const professorsRequestKey =
     selectedIdentityId && selectedProfessorIds.length > 0
       ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
@@ -424,19 +426,19 @@ export const CreateTaskPage = () => {
     ) {
       validationErrors.push('当前定时发送窗口已全部过期，请重新选择发送日期或结束时间');
     }
-    if (taskMode === 'template' && !templateSubject.trim()) {
+    if (requiresDraftGeneration && taskMode === 'template' && !templateSubject.trim()) {
       validationErrors.push('直接套用模板需要填写模板主题');
     }
-    if (taskMode === 'template' && !templateBodyText.trim()) {
+    if (requiresDraftGeneration && taskMode === 'template' && !templateBodyText.trim()) {
       validationErrors.push('直接套用模板需要填写模板纯文本正文');
     }
-    if (taskMode === 'llm' && !subject.trim()) {
+    if (requiresDraftGeneration && taskMode === 'llm' && !subject.trim()) {
       validationErrors.push('AI 辅助写信需要填写套磁信模板主题');
     }
-    if (taskMode === 'llm' && !body.trim()) {
+    if (requiresDraftGeneration && taskMode === 'llm' && !body.trim()) {
       validationErrors.push('AI 辅助写信需要填写套磁信模板正文');
     }
-    if (taskMode === 'llm' && primaryMaterialId === null) {
+    if (requiresDraftGeneration && taskMode === 'llm' && primaryMaterialId === null) {
       validationErrors.push('AI 写信参考材料为必选项');
     }
 
@@ -528,6 +530,9 @@ export const CreateTaskPage = () => {
         outreach_template_body_text: taskTemplateBodyText,
         outreach_template_body_html: taskTemplateBodyHtml,
         outreach_template_id: selectedOutreachTemplateId,
+        ...(isResendPrefillActive && resendPrefillContext
+          ? { resend_source_batch_task_id: resendPrefillContext.sourceTaskId }
+          : {}),
       });
       safeRecordUserAction({
         eventName: 'tasks.batch_create_succeeded',
@@ -589,7 +594,7 @@ export const CreateTaskPage = () => {
           </p>
           {isResendPrefillActive && resendPrefillContext ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位老师、原身份、模板和材料。模型使用当前选择，发送时间需要重新设置；提交前可自行修改。
+              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位老师。系统会优先沿用每位老师上次已审核或 AI 改写后的邮件；当前模板和模型只用于没有可复用草稿的邮件。发送时间需要重新设置。
               {resendPrefillContext.warnings.map((warning) => (
                 <span key={warning} className="mt-1 block text-xs text-amber-800">{warning}</span>
               ))}

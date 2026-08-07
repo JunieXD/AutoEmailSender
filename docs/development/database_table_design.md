@@ -10,7 +10,6 @@
 | `id` | INTEGER PK | 固定使用 `1` |
 | `created_at` | DATETIME | 创建时间 |
 | `updated_at` | DATETIME | 最近更新时间 |
-| `crawler_agent_max_chunks_per_run` | INTEGER | 单次智能抓取 Agent 运行最多完成的 chunk 数 |
 
 ## 2. `identity_profiles`
 发送身份表。
@@ -326,12 +325,12 @@ LLM 端点协议自适应缓存表。按 `(api_base_url, model_name)` 维度记�
 - 测活路径 `POST /api/llm-profiles/{id}/test` 在单轮探活成功后也会触发 `ensure_thinking_adaptation`，让用户在保存模型后第一次点测试时就能完成学习；预览测活 `POST /api/llm-profiles/preview/test` 不传 session，不会写缓存。
 - 候选 `extra_body` 列表见 `app/modules/llm/adaptation/thinking.py` 的 `THINKING_DISABLE_CANDIDATES`（当前覆盖 `thinking={"type":"disabled"}` / `enable_thinking=False` / `reasoning={"effort":"off"}` / `thinking_budget=0`）。
 - 如果候选列表全部用尽仍失败，会抛 `ThinkingAdaptationFailed`，抓取任务被标 FAILED，并在 `error_message` 中提示用户在 GitHub 上报。
-- 抓取过程中如果 LangChain 内部仍然吐出协议错（极端边角场景），`_mark_job_failed` 与 `_complete_running_job` 两条路径都会调用 `adapt_failure_message_for_thinking_error`，给用户拼一段引导提示。
+- 当前 page/chunk/enrichment worker 统一通过 crawler 的结构化输出适配层调用模型；失败由 worker retry 与 scheduler 终态逻辑记录，不存在旧 Agent 的独立失败分支。
 
 
 ## `crawl_page_chunks`
 
-列表页 chunk 处理状态表，用于让抓取 Agent 每次只处理一个页面片段，避免重复处理完整页面。
+列表页 chunk 处理状态表。Chunk worker 每次领取一个页面片段，避免重复处理完整页面。
 
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
@@ -344,7 +343,7 @@ LLM 端点协议自适应缓存表。按 `(api_base_url, model_name)` 维度记�
 | `parent_chunk_id` | TEXT NULL | 父 chunk ID |
 | `chunk_index` | INTEGER | 同级顺序 |
 | `chunk_hash` | TEXT | chunk 内容指纹 |
-| `status` | TEXT | `pending`、`processing`、`completed`、`no_candidates`、`split_required`、`superseded`、`failed` |
+| `status` | TEXT | `pending`、`processing`、`completed`、`no_candidates`、`split_required`、`superseded`、`failed_retryable`、`failed_terminal` |
 | `content` | TEXT | 链接增强文本 |
 | `token_estimate` | INTEGER | token 估算 |
 | `text_start_offset` | INTEGER NULL | 页面文本起始位置 |

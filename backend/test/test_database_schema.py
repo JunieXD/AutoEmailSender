@@ -104,6 +104,343 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(heads[0], get_head_revision(config))
 
+    def test_background_scheduler_lease_migration_round_trip(self) -> None:
+        database_path = Path(self.temp_dir.name) / "scheduler_leases.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260807_batch_draft_fair"
+        lease_revision = "20260807_scheduler_leases"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        self._run_alembic(env, "upgrade", lease_revision)
+        upgraded = sqlite3.connect(database_path)
+        try:
+            tables = {
+                row[0]
+                for row in upgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            job_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(match_analysis_jobs)"
+                )
+            }
+            item_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(match_analysis_job_items)"
+                )
+            }
+            mailbox_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(imap_mailbox_sync_states)"
+                )
+            }
+            professor_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info(imap_professor_sync_states)"
+                )
+            }
+            item_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list(match_analysis_job_items)"
+                )
+            }
+        finally:
+            upgraded.close()
+
+        self.assertIn("imap_identity_sync_leases", tables)
+        self.assertIn("item_last_dispatched_at", job_columns)
+        self.assertTrue(
+            {"claim_id", "claimed_at", "lease_expires_at", "attempt_count"}
+            <= item_columns
+        )
+        self.assertTrue(
+            {"history_claim_id", "history_lease_expires_at"} <= mailbox_columns
+        )
+        self.assertTrue(
+            {"history_claim_id", "history_lease_expires_at"} <= professor_columns
+        )
+        self.assertIn("ix_match_analysis_job_items_lease_recovery", item_indexes)
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            tables = {
+                row[0]
+                for row in downgraded.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            item_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(match_analysis_job_items)"
+                )
+            }
+        finally:
+            downgraded.close()
+
+        self.assertNotIn("imap_identity_sync_leases", tables)
+        self.assertNotIn("claim_id", item_columns)
+
+        self._run_alembic(env, "upgrade", "head")
+        restored = sqlite3.connect(database_path)
+        try:
+            version = restored.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
+        finally:
+            restored.close()
+        self.assertEqual(version, HEAD_REVISION)
+
+    def test_crawl_job_concurrency_default_migrates_to_serial(self) -> None:
+        database_path = Path(self.temp_dir.name) / "crawl_job_concurrency.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260805_merge_match_fallback"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT crawler_worker_count FROM app_settings WHERE id = 1"
+                ).fetchone()[0],
+                2,
+            )
+            connection.execute(
+                "INSERT INTO app_settings (id, crawler_worker_count) VALUES (2, 3)"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+        upgraded = sqlite3.connect(database_path)
+        try:
+            values = upgraded.execute(
+                "SELECT id, crawler_worker_count FROM app_settings ORDER BY id"
+            ).fetchall()
+            column = next(
+                row
+                for row in upgraded.execute("PRAGMA table_info(app_settings)").fetchall()
+                if row[1] == "crawler_worker_count"
+            )
+        finally:
+            upgraded.close()
+
+        self.assertEqual(values, [(1, 1), (2, 3)])
+        self.assertEqual(column[4], "1")
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            values = downgraded.execute(
+                "SELECT id, crawler_worker_count FROM app_settings ORDER BY id"
+            ).fetchall()
+        finally:
+            downgraded.close()
+        self.assertEqual(values, [(1, 2), (2, 3)])
+
+    def test_crawler_identity_migration_preserves_historical_candidates_and_tasks(self) -> None:
+        database_path = Path(self.temp_dir.name) / "crawler_recovery.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260806_crawl_job_serial"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        try:
+            job_id = connection.execute(
+                """
+                INSERT INTO crawl_jobs (
+                    university, school, start_url, status,
+                    progress_current, progress_total, runtime_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "示例大学",
+                    "计算机学院",
+                    "https://example.edu/faculty",
+                    "running",
+                    0,
+                    0,
+                    "v2",
+                ),
+            ).lastrowid
+            first_candidate_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, email, title, identity_key
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, "张三", "ZHANG@example.edu", "教授", "legacy-a"),
+            ).lastrowid
+            second_candidate_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, email, department, identity_key
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, "张三", "zhang@example.edu", "计算机系", "legacy-b"),
+            ).lastrowid
+            first_invalid_profile_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, profile_url, identity_key
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (job_id, "无效主页一", "not-a-url", "legacy-invalid-a"),
+            ).lastrowid
+            second_invalid_profile_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (
+                    job_id, name, profile_url, identity_key
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (job_id, "无效主页二", "not-a-url", "legacy-invalid-b"),
+            ).lastrowid
+            connection.execute(
+                """
+                INSERT INTO crawl_candidate_enrichment_tasks (
+                    job_id, candidate_id, status, attempt_count
+                ) VALUES (?, ?, ?, ?), (?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    first_candidate_id,
+                    "succeeded",
+                    1,
+                    job_id,
+                    second_candidate_id,
+                    "skipped",
+                    1,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(database_path)
+        try:
+            candidates = upgraded.execute(
+                """
+                SELECT id, email, title, department, merged_into_candidate_id
+                FROM crawl_candidates
+                WHERE job_id = ?
+                ORDER BY id
+                """,
+                (job_id,),
+            ).fetchall()
+            candidate_indexes = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA index_list('crawl_candidates')"
+                ).fetchall()
+            }
+            page_task_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info('crawl_page_tasks')"
+                ).fetchall()
+            }
+            token_usage_columns = {
+                row[1]
+                for row in upgraded.execute(
+                    "PRAGMA table_info('crawl_worker_token_usages')"
+                ).fetchall()
+            }
+            enrichment_task_count = upgraded.execute(
+                "SELECT count(*) FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            identity_keys = upgraded.execute(
+                """
+                SELECT candidate_id, key_type, normalized_value
+                FROM crawl_candidate_identity_keys
+                WHERE job_id = ?
+                ORDER BY key_type, normalized_value
+                """,
+                (job_id,),
+            ).fetchall()
+        finally:
+            upgraded.close()
+
+        self.assertEqual(
+            candidates,
+            [
+                (
+                    first_candidate_id,
+                    "ZHANG@example.edu",
+                    "教授",
+                    None,
+                    second_candidate_id,
+                ),
+                (
+                    second_candidate_id,
+                    "zhang@example.edu",
+                    "教授",
+                    "计算机系",
+                    None,
+                ),
+                (first_invalid_profile_id, None, None, None, None),
+                (second_invalid_profile_id, None, None, None, None),
+            ],
+        )
+        self.assertTrue(
+            {
+                "uq_crawl_candidates_job_identity_key",
+                "uq_crawl_candidates_job_email_ci",
+                "uq_crawl_candidates_job_profile_url",
+            }.isdisjoint(candidate_indexes)
+        )
+        self.assertEqual(enrichment_task_count, 2)
+        self.assertEqual(
+            identity_keys,
+            [(second_candidate_id, "email", "zhang@example.edu")],
+        )
+        self.assertIn("failure_count", page_task_columns)
+        self.assertTrue({"run_id", "claim_id"}.issubset(token_usage_columns))
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        downgraded = sqlite3.connect(database_path)
+        try:
+            candidate_count = downgraded.execute(
+                "SELECT count(*) FROM crawl_candidates WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            enrichment_task_count = downgraded.execute(
+                "SELECT count(*) FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            candidate_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info('crawl_candidates')"
+                ).fetchall()
+            }
+            identity_table = downgraded.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name = 'crawl_candidate_identity_keys'
+                """
+            ).fetchone()
+        finally:
+            downgraded.close()
+
+        self.assertEqual(candidate_count, 4)
+        self.assertEqual(enrichment_task_count, 2)
+        self.assertNotIn("merged_into_candidate_id", candidate_columns)
+        self.assertIsNone(identity_table)
+
     def test_professor_history_queue_migration_upgrades_and_downgrades(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_history_queue.db"
         env = os.environ.copy()
@@ -2443,7 +2780,6 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "crawler_worker_count",
                 "crawler_profile_enrichment_concurrency",
                 "crawler_host_concurrency",
-                "crawler_agent_max_chunks_per_run",
                 "draft_max_tokens",
                 "batch_draft_generation_concurrency",
                 "draft_rewrite_intensity",
@@ -3534,7 +3870,7 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("history_strategy_version", professor_state_columns)
         self.assertIn("intended_research_direction", app_setting_columns)
 
-    def test_existing_crawl_jobs_are_backfilled_as_v1_when_runtime_v2_is_added(self) -> None:
+    def test_obsolete_runtime_version_is_removed_without_losing_crawl_jobs(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "runtime_v2_legacy_jobs.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
@@ -3563,14 +3899,24 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         connection = sqlite3.connect(legacy_db_path)
         try:
-            runtime_version = connection.execute(
-                "SELECT runtime_version FROM crawl_jobs WHERE university = ?",
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+            }
+            settings_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(app_settings)").fetchall()
+            }
+            job_count = connection.execute(
+                "SELECT COUNT(*) FROM crawl_jobs WHERE university = ?",
                 ("历史大学",),
             ).fetchone()[0]
         finally:
             connection.close()
 
-        self.assertEqual(runtime_version, "v1")
+        self.assertNotIn("runtime_version", columns)
+        self.assertNotIn("crawler_agent_max_chunks_per_run", settings_columns)
+        self.assertEqual(job_count, 1)
 
     def test_concurrency_guard_migration_cleans_existing_duplicates(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "concurrency_guard_duplicates.db"

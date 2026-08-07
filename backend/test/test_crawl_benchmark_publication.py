@@ -32,7 +32,6 @@ def make_public_legacy_record(**overrides: object) -> dict[str, object]:
         "entryType": "list",
         "testedAt": None,
         "appVersion": "2.3.7",
-        "runtimeVersion": None,
         "modelName": "legacy-model",
         "publicStatus": "verified",
         "candidateCount": 10,
@@ -198,7 +197,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     school TEXT NOT NULL,
                     start_url TEXT NOT NULL,
                     entry_type TEXT NOT NULL,
-                    runtime_version TEXT,
                     status TEXT NOT NULL,
                     job_kind TEXT NOT NULL,
                     deleted_at TEXT,
@@ -254,7 +252,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     "计算机学院",
                     "https://example.edu/faculty",
                     "list",
-                    "v2",
                     "needs_review",
                     "faculty_crawl",
                     None,
@@ -267,7 +264,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     "软件学院",
                     "https://example.edu/software",
                     "list",
-                    "v2",
                     "failed",
                     "faculty_crawl",
                     None,
@@ -280,7 +276,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     "取消任务学院",
                     "https://example.edu/canceled",
                     "list",
-                    "v2",
                     "canceled",
                     "faculty_crawl",
                     None,
@@ -293,7 +288,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     "cs",
                     "https://example.edu/internal",
                     "list",
-                    "v2",
                     "needs_review",
                     "faculty_crawl",
                     None,
@@ -306,7 +300,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     "测试学院",
                     "https://example.edu/placeholder",
                     "list",
-                    "v2",
                     "completed",
                     "faculty_crawl",
                     None,
@@ -319,7 +312,6 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                     "物理学院",
                     "https://user:password@example.edu/faculty",
                     "list",
-                    "v2",
                     "completed",
                     "faculty_crawl",
                     None,
@@ -330,10 +322,10 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
             connection.executemany(
                 """
                 INSERT INTO crawl_jobs (
-                    id, university, school, start_url, entry_type, runtime_version,
-                    status, job_kind, deleted_at, current_run_id, llm_profile_id,
+                    id, university, school, start_url, entry_type, status,
+                    job_kind, deleted_at, current_run_id, llm_profile_id,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-08-03 10:00:00', '2026-08-03 10:05:00')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-08-03 10:00:00', '2026-08-03 10:05:00')
                 """,
                 jobs,
             )

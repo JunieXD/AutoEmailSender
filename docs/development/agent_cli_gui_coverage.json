@@ -113,6 +113,7 @@
         "createCrawlJob",
         "listCrawlJobs",
         "getCrawlJob",
+        "getCrawlJobDetails",
         "listCrawlCandidates",
         "listCrawlPages",
         "getCrawlJobEvents",
@@ -181,9 +182,35 @@
       "reason": "诊断日志和抓取调试导出均为脱敏的 Agent 读取能力。"
     },
     {
+      "id": "email-deliveries",
+      "source": "lib/api/emailDeliveriesApi.ts",
+      "exported_actions": [
+        "listEmailDeliveries",
+        "rescheduleEmailDelivery",
+        "cancelEmailDelivery",
+        "sendEmailDeliveryNow"
+      ],
+      "action_overrides": {
+        "cancelEmailDelivery": {
+          "status": "available",
+          "required_capabilities": ["tasks.cancel-schedule"],
+          "reason": "Agent 可通过受控任务动作取消单封邮件的发送计划。"
+        },
+        "sendEmailDeliveryNow": {
+          "status": "available",
+          "required_capabilities": ["drafts.prepare-send"],
+          "reason": "Agent 可通过发送计划协议确认并立即发送已完成草稿。"
+        }
+      },
+      "status": "planned",
+      "required_capabilities": [],
+      "reason": "统一发送计划列表和已排程任务改期尚无对应的 Agent 读取与修改合同。"
+    },
+    {
       "id": "email-tasks",
       "source": "lib/api/emailTasksApi.ts",
       "exported_actions": [
+        "getEmailTaskThread",
         "regenerateDraft",
         "calculateMatch",
         "generateDraft",
@@ -420,6 +447,7 @@
         "listProfessorInformationEnrichmentJobs",
         "getProfessorInformationEnrichmentJob",
         "listProfessorInformationEnrichmentItems",
+        "listProfessorInformationEnrichmentItemsPage",
         "cancelProfessorInformationEnrichmentJob",
         "retryFailedProfessorInformationEnrichmentJob",
         "deleteProfessorInformationEnrichmentJob",

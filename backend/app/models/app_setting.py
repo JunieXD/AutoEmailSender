@@ -44,7 +44,7 @@ class AppSetting(Base):
     crawler_worker_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
-        server_default=text("8"),
+        server_default=text("1"),
     )
     crawler_profile_enrichment_concurrency: Mapped[int] = mapped_column(
         Integer,
@@ -52,11 +52,6 @@ class AppSetting(Base):
         server_default=text("3"),
     )
     crawler_host_concurrency: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default=text("2"),
-    )
-    crawler_agent_max_chunks_per_run: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         server_default=text("2"),

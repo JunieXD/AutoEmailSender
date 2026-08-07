@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.core.time import utc_now
+from app.core.time import local_now, utc_now
 from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
@@ -22,18 +22,13 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from .schemas import (
-    ProfessorInformationEnrichmentItemRead,
-    ProfessorInformationEnrichmentJobRead,
-)
-from app.modules.crawler.public import build_crawl_job_metrics
 from app.modules.crawler.public import (
+    build_crawl_job_metrics,
     create_initial_crawl_job_run,
     mark_crawl_job_run_finished,
+    profile_text_cache,
+    validate_safe_public_crawl_url,
 )
-from app.modules.crawler.public import validate_safe_public_crawl_url
-from app.modules.crawler.public import profile_text_cache
-from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
 from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
@@ -41,7 +36,16 @@ from app.modules.professors.public import (
     normalize_recent_papers,
     normalize_research_direction,
 )
+from app.services.operation_logs import (
+    record_operation_log,
+    sanitize_user_visible_error,
+)
 
+from .schemas import (
+    ProfessorInformationEnrichmentItemRead,
+    ProfessorInformationEnrichmentItemsPageRead,
+    ProfessorInformationEnrichmentJobRead,
+)
 
 INFORMATION_ENRICHMENT_FIELDS = (
     "email",
@@ -150,7 +154,7 @@ async def create_professor_information_enrichment_job_record(
         ordered_professors,
         trigger_mode=trigger_mode,
         requested_name=name,
-        now=now,
+        now=local_now(),
     )
     valid_urls = [
         professor.profile_url.strip()
@@ -175,7 +179,6 @@ async def create_professor_information_enrichment_job_record(
         trigger_mode=trigger_mode,
         task_center_visible=trigger_mode == CrawlJobTriggerMode.BATCH.value,
         display_name=display_name,
-        runtime_version="v2",
         llm_profile_id=llm_profile.id,
         status=CrawlJobStatus.QUEUED.value,
         progress_current=0,
@@ -383,6 +386,50 @@ async def list_professor_information_enrichment_items(
     session: AsyncSession,
     job_id: int,
 ) -> list[ProfessorInformationEnrichmentItemRead] | None:
+    result = await _list_professor_information_enrichment_items(
+        session,
+        job_id,
+        with_total_count=False,
+    )
+    return None if result is None else result[0]
+
+
+async def list_professor_information_enrichment_items_page(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    cursor: int = 0,
+    limit: int = 20,
+    status_filter: str | None = None,
+) -> ProfessorInformationEnrichmentItemsPageRead | None:
+    result = await _list_professor_information_enrichment_items(
+        session,
+        job_id,
+        cursor=cursor,
+        limit=limit,
+        status_filter=status_filter,
+        with_total_count=True,
+    )
+    if result is None:
+        return None
+    items, total_count, has_more = result
+    return ProfessorInformationEnrichmentItemsPageRead(
+        items=items,
+        total_count=total_count,
+        next_cursor=cursor + limit if has_more else None,
+        has_more=has_more,
+    )
+
+
+async def _list_professor_information_enrichment_items(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    cursor: int | None = None,
+    limit: int | None = None,
+    status_filter: str | None = None,
+    with_total_count: bool,
+) -> tuple[list[ProfessorInformationEnrichmentItemRead], int, bool] | None:
     job_exists = await session.scalar(
         select(CrawlJob.id).where(
             CrawlJob.id == job_id,
@@ -391,74 +438,125 @@ async def list_professor_information_enrichment_items(
     )
     if job_exists is None:
         return None
-    tasks = list(
-        await session.scalars(
-            select(CrawlCandidateEnrichmentTask)
-            .options(
-                selectinload(CrawlCandidateEnrichmentTask.candidate),
-                selectinload(CrawlCandidateEnrichmentTask.professor),
-            )
-            .where(CrawlCandidateEnrichmentTask.job_id == job_id)
-            .order_by(CrawlCandidateEnrichmentTask.id.asc())
-        )
-    )
-    usages = list(
-        await session.scalars(
-            select(CrawlWorkerTokenUsage).where(
-                CrawlWorkerTokenUsage.job_id == job_id,
-                CrawlWorkerTokenUsage.worker_kind == CrawlWorkerKind.ENRICHMENT.value,
-            )
-        )
-    )
-    usage_by_task: dict[str, dict[str, int]] = {}
-    for usage in usages:
-        totals = usage_by_task.setdefault(
-            usage.work_item_id,
-            {"input": 0, "output": 0, "cached": 0},
-        )
-        totals["input"] += int(usage.input_tokens or 0)
-        totals["output"] += int(usage.output_tokens or 0)
-        totals["cached"] += int(usage.cached_tokens or 0)
 
-    items: list[ProfessorInformationEnrichmentItemRead] = []
-    for task in tasks:
-        candidate = task.candidate
-        professor = task.professor
-        usage = usage_by_task.get(str(task.id), {"input": 0, "output": 0, "cached": 0})
-        items.append(
-            ProfessorInformationEnrichmentItemRead(
-                id=task.id,
-                job_id=task.job_id,
-                professor_id=task.professor_id,
-                professor_name=(professor.name if professor is not None else candidate.name),
-                professor_email=(professor.email if professor is not None else candidate.email),
-                professor_title=(professor.title if professor is not None else candidate.title),
-                professor_university=(
-                    professor.university if professor is not None else candidate.university
-                ),
-                professor_school=(professor.school if professor is not None else candidate.school),
-                professor_department=(
-                    professor.department if professor is not None else candidate.department
-                ),
-                profile_url=candidate.profile_url,
-                status=_public_item_status(task.status),
-                enriched_fields=list(task.enriched_fields or []),
-                error_message=(
-                    sanitize_user_visible_error(task.last_error) if task.last_error else None
-                ),
-                skip_reason=task.skip_reason,
-                input_tokens=usage["input"],
-                output_tokens=usage["output"],
-                cached_tokens=usage["cached"],
-                total_tokens=usage["input"] + usage["output"],
-                attempt_count=int(task.attempt_count or 0),
-                started_at=task.started_at,
-                finished_at=task.finished_at,
-                created_at=task.created_at,
-                updated_at=task.updated_at,
+    filters = [CrawlCandidateEnrichmentTask.job_id == job_id]
+    if status_filter is not None:
+        filters.append(
+            CrawlCandidateEnrichmentTask.status.in_(
+                _internal_item_statuses_for_filter(status_filter)
             )
         )
-    return items
+    total_count = 0
+    if with_total_count:
+        total_count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(CrawlCandidateEnrichmentTask)
+                .where(*filters)
+            )
+            or 0
+        )
+    statement = (
+        select(CrawlCandidateEnrichmentTask)
+        .options(
+            selectinload(CrawlCandidateEnrichmentTask.candidate),
+            selectinload(CrawlCandidateEnrichmentTask.professor),
+        )
+        .where(*filters)
+        .order_by(CrawlCandidateEnrichmentTask.id.asc())
+    )
+    if cursor is not None:
+        statement = statement.offset(cursor)
+    if limit is not None:
+        statement = statement.limit(limit + 1)
+    tasks = list(await session.scalars(statement))
+    has_more = limit is not None and len(tasks) > limit
+    page_tasks = tasks[:limit] if limit is not None else tasks
+    usage_by_task = await _load_item_usage_totals(session, job_id, page_tasks)
+    return (
+        [
+            _serialize_professor_information_enrichment_item(
+                task,
+                usage=usage_by_task.get(
+                    str(task.id),
+                    {"input": 0, "output": 0, "cached": 0},
+                ),
+            )
+            for task in page_tasks
+        ],
+        total_count,
+        has_more,
+    )
+
+
+async def _load_item_usage_totals(
+    session: AsyncSession,
+    job_id: int,
+    tasks: list[CrawlCandidateEnrichmentTask],
+) -> dict[str, dict[str, int]]:
+    task_ids = [str(task.id) for task in tasks]
+    if not task_ids:
+        return {}
+    rows = await session.execute(
+        select(
+            CrawlWorkerTokenUsage.work_item_id,
+            func.coalesce(func.sum(CrawlWorkerTokenUsage.input_tokens), 0),
+            func.coalesce(func.sum(CrawlWorkerTokenUsage.output_tokens), 0),
+            func.coalesce(func.sum(CrawlWorkerTokenUsage.cached_tokens), 0),
+        )
+        .where(
+            CrawlWorkerTokenUsage.job_id == job_id,
+            CrawlWorkerTokenUsage.worker_kind == CrawlWorkerKind.ENRICHMENT.value,
+            CrawlWorkerTokenUsage.work_item_id.in_(task_ids),
+        )
+        .group_by(CrawlWorkerTokenUsage.work_item_id)
+    )
+    return {
+        work_item_id: {
+            "input": int(input_tokens),
+            "output": int(output_tokens),
+            "cached": int(cached_tokens),
+        }
+        for work_item_id, input_tokens, output_tokens, cached_tokens in rows
+    }
+
+
+def _serialize_professor_information_enrichment_item(
+    task: CrawlCandidateEnrichmentTask,
+    *,
+    usage: dict[str, int],
+) -> ProfessorInformationEnrichmentItemRead:
+    candidate = task.candidate
+    professor = task.professor
+    return ProfessorInformationEnrichmentItemRead(
+        id=task.id,
+        job_id=task.job_id,
+        professor_id=task.professor_id,
+        professor_name=(professor.name if professor is not None else candidate.name),
+        professor_email=(professor.email if professor is not None else candidate.email),
+        professor_title=(professor.title if professor is not None else candidate.title),
+        professor_university=(
+            professor.university if professor is not None else candidate.university
+        ),
+        professor_school=(professor.school if professor is not None else candidate.school),
+        professor_department=(
+            professor.department if professor is not None else candidate.department
+        ),
+        profile_url=candidate.profile_url,
+        status=_public_item_status(task.status),
+        enriched_fields=list(task.enriched_fields or []),
+        error_message=sanitize_user_visible_error(task.last_error) if task.last_error else None,
+        skip_reason=task.skip_reason,
+        input_tokens=usage["input"],
+        output_tokens=usage["output"],
+        cached_tokens=usage["cached"],
+        total_tokens=usage["input"] + usage["output"],
+        attempt_count=int(task.attempt_count or 0),
+        started_at=task.started_at,
+        finished_at=task.finished_at,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
 
 
 async def request_professor_information_enrichment_cancel(
@@ -931,3 +1029,20 @@ def _public_item_status(status: str) -> str:
     if status == CrawlCandidateEnrichmentTaskStatus.SKIPPED.value:
         return "skipped"
     return "canceled"
+
+
+def _internal_item_statuses_for_filter(status: str) -> tuple[str, ...]:
+    statuses = {
+        "queued": (
+            CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+            CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+        ),
+        "running": (CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,),
+        "succeeded": (CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value,),
+        "failed": (CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,),
+        "skipped": (CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,),
+        "canceled": (CrawlCandidateEnrichmentTaskStatus.CANCELED.value,),
+    }.get(status)
+    if statuses is None:
+        raise ValueError("未知信息补全导师状态")
+    return statuses

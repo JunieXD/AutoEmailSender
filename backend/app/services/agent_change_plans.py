@@ -48,6 +48,7 @@ from app.modules.professors.public import (
     delete_professor_tag_record,
     import_professor_records,
     is_valid_professor_email,
+    get_or_create_professor_by_email,
     normalize_professor_email,
     parse_professor_import_file,
     prepare_bulk_professor_archive_snapshot,
@@ -75,6 +76,8 @@ from app.modules.campaigns.public import (
 )
 from app.modules.crawler.public import (
     CrawlJobRecordError,
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
     retry_faculty_crawl_job_record,
 )
 from app.modules.community.public import (
@@ -1650,17 +1653,12 @@ async def _execute_crawl_candidate_approval(
             CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
         ),
     )
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job_id,
-                CrawlCandidate.id.in_(candidate_ids),
-            )
-            .order_by(CrawlCandidate.id.asc()),
-        ),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job_id,
+        candidate_ids=candidate_ids,
     )
-    if job is None or len(candidates) != len(candidate_ids):
+    if job is None or missing_candidate_ids:
         raise _crawl_candidate_approval_plan_stale_error()
 
     inserted_count = 0
@@ -1674,10 +1672,12 @@ async def _execute_crawl_candidate_approval(
             skipped_count += 1
             continue
 
-        professor = await session.scalar(select(Professor).where(Professor.email == email))
-        if professor is None:
-            professor = Professor(email=email)
-            session.add(professor)
+        professor, inserted = await get_or_create_professor_by_email(
+            session,
+            email,
+            name=candidate.name,
+        )
+        if inserted:
             inserted_count += 1
         else:
             updated_count += 1
@@ -1700,6 +1700,7 @@ async def _execute_crawl_candidate_approval(
             .select_from(CrawlCandidate)
             .where(
                 CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
                 CrawlCandidate.review_status == CrawlCandidateReviewStatus.PENDING.value,
             ),
         )
@@ -1798,7 +1799,6 @@ async def _prepare_crawl_job_retry_snapshot(
         "job": {
             "id": job.id,
             "status": job.status,
-            "runtime_version": job.runtime_version,
             "llm_profile_id": job.llm_profile_id,
             "start_urls": job.start_urls or [job.start_url],
             "entry_type": job.entry_type,
@@ -1813,11 +1813,11 @@ async def _prepare_crawl_job_retry_snapshot(
     ]
     if payload.clear_existing_data:
         warnings.append(
-            "确认后会永久清空本任务现有的候选、网页、网页分块、运行轨迹和（v2 任务的）Token 用量。",
+            "确认后会永久清空本任务现有的候选、网页、网页分块、运行轨迹和 Token 用量。",
         )
-    elif job.runtime_version == "v2":
+    else:
         warnings.append(
-            "本次保留已抓取的候选和网页，但会重建 v2 抓取工作项，并清除候选补全工作项。",
+            "本次保留已抓取的候选和网页，但会重建抓取工作项，并清除候选补全工作项。",
         )
     return {
         "snapshot_version": "1",
@@ -1975,18 +1975,11 @@ async def _prepare_crawl_candidate_approval_snapshot(
             message="抓取任务尚未进入可审核状态，不能导入候选导师。",
         )
 
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job_id,
-                CrawlCandidate.id.in_(candidate_ids),
-            )
-            .order_by(CrawlCandidate.id.asc()),
-        ),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job_id,
+        candidate_ids=candidate_ids,
     )
-    found_candidate_ids = {candidate.id for candidate in candidates}
-    missing_candidate_ids = sorted(set(candidate_ids) - found_candidate_ids)
     if missing_candidate_ids:
         raise AgentApiError(
             status_code=404,
@@ -1994,6 +1987,7 @@ async def _prepare_crawl_candidate_approval_snapshot(
             message="部分候选导师不存在或不属于该抓取任务。",
             details={"candidate_ids": missing_candidate_ids},
         )
+    candidate_ids = [candidate.id for candidate in candidates]
 
     valid_emails = sorted(
         {

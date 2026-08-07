@@ -1,7 +1,7 @@
 """add email delivery management state
 
 Revision ID: 20260807_email_delivery_management
-Revises: 20260805_merge_match_fallback
+Revises: 20260807_scheduler_leases
 Create Date: 2026-08-07 10:30:00.000000
 """
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 
 revision: str = "20260807_email_delivery_management"
-down_revision: Union[str, Sequence[str], None] = "20260805_merge_match_fallback"
+down_revision: Union[str, Sequence[str], None] = "20260807_scheduler_leases"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

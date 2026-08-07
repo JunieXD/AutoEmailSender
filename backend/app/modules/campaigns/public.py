@@ -10,6 +10,7 @@ from .item_actions import (
 from .status import (
     batch_item_counts_as_completed,
     count_completed_batch_task_items,
+    email_task_is_not_user_removed_expression,
     should_mark_batch_task_completed,
     sync_batch_task_completion,
 )
@@ -125,11 +126,15 @@ _RESEND_EXPORTS = {
     "BatchTaskResendContextError",
     "ResendItemDecision",
     "build_batch_task_resend_context",
+    "classify_resend_content",
     "decide_resend_item",
     "filter_available_material_defaults",
+    "normalize_resend_body",
+    "reused_content_requires_review",
 }
 _DRAFT_RUNTIME_EXPORTS = {
     "BatchDraftGenerationCoordinator",
+    "BatchDraftScheduler",
     "materialize_missing_research_template_fallbacks",
     "recover_interrupted_workspace_draft_rewrites",
     "recover_stale_generating_drafts",

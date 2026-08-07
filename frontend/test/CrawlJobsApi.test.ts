@@ -5,6 +5,7 @@ import {
   deleteCrawlJob,
   enrichCrawlCandidates,
   getCrawlJob,
+  getCrawlJobDetails,
   getCrawlJobEvents,
   listCrawlJobs,
   listCrawlPages,
@@ -111,6 +112,14 @@ describe('crawlJobsApi', () => {
     await expect(getCrawlJob(7)).resolves.toBe(job);
 
     expect(mockedApiFetch).toHaveBeenCalledWith('/api/crawl-jobs/7');
+  });
+
+  it('gets the combined crawl job details from the expected URL', async () => {
+    mockedApiFetch.mockResolvedValue({});
+
+    await getCrawlJobDetails(7);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith('/api/crawl-jobs/7/details');
   });
 
   it('lists crawl pages from the expected job URL', async () => {

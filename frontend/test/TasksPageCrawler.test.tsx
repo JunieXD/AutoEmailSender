@@ -11,6 +11,7 @@ import {
   cancelCrawlJob,
   enrichCrawlCandidates,
   getCrawlJob,
+  getCrawlJobDetails,
   getCrawlJobEvents,
   listCrawlCandidates,
   listCrawlJobs,
@@ -23,6 +24,18 @@ const confirm = vi.hoisted(() => vi.fn());
 const notifyError = vi.hoisted(() => vi.fn());
 const notifySuccess = vi.hoisted(() => vi.fn());
 const scrollIntoView = vi.hoisted(() => vi.fn());
+const crawlApiMocks = vi.hoisted(() => ({
+  listCrawlJobs: vi.fn(),
+  approveCrawlCandidates: vi.fn(),
+  cancelCrawlJob: vi.fn(),
+  enrichCrawlCandidates: vi.fn(),
+  getCrawlJob: vi.fn(),
+  getCrawlJobDetails: vi.fn(),
+  listCrawlPages: vi.fn(),
+  listCrawlCandidates: vi.fn(),
+  getCrawlJobEvents: vi.fn(),
+  updateCrawlCandidate: vi.fn(),
+}));
 const backgroundTaskNotificationMocks = vi.hoisted(() => ({
   stopTrackingInformationEnrichmentJob: vi.fn(),
   trackCrawlCandidateEnrichment: vi.fn(),
@@ -71,6 +84,12 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
 vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs: vi.fn().mockResolvedValue([]),
   listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
+  listProfessorInformationEnrichmentItemsPage: vi.fn().mockResolvedValue({
+    items: [],
+    total_count: 0,
+    next_cursor: null,
+    has_more: false,
+  }),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),
@@ -78,15 +97,16 @@ vi.mock("@/entities/professor/api/informationEnrichment", () => ({
 }));
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
-  listCrawlJobs: vi.fn(),
-  approveCrawlCandidates: vi.fn(),
-  cancelCrawlJob: vi.fn(),
-  enrichCrawlCandidates: vi.fn(),
-  getCrawlJob: vi.fn(),
-  listCrawlPages: vi.fn(),
-  listCrawlCandidates: vi.fn(),
-  getCrawlJobEvents: vi.fn(),
-  updateCrawlCandidate: vi.fn(),
+  listCrawlJobs: crawlApiMocks.listCrawlJobs,
+  approveCrawlCandidates: crawlApiMocks.approveCrawlCandidates,
+  cancelCrawlJob: crawlApiMocks.cancelCrawlJob,
+  enrichCrawlCandidates: crawlApiMocks.enrichCrawlCandidates,
+  getCrawlJob: crawlApiMocks.getCrawlJob,
+  getCrawlJobDetails: crawlApiMocks.getCrawlJobDetails,
+  listCrawlPages: crawlApiMocks.listCrawlPages,
+  listCrawlCandidates: crawlApiMocks.listCrawlCandidates,
+  getCrawlJobEvents: crawlApiMocks.getCrawlJobEvents,
+  updateCrawlCandidate: crawlApiMocks.updateCrawlCandidate,
 }));
 
 const runningJob = {
@@ -218,6 +238,12 @@ describe("TasksPage crawler jobs tab", () => {
         raw: null,
       },
     ]);
+    vi.mocked(getCrawlJobDetails).mockImplementation(async (jobId: number) => ({
+      job: await getCrawlJob(jobId),
+      pages: await listCrawlPages(jobId),
+      candidates: await listCrawlCandidates(jobId),
+      events: await getCrawlJobEvents(jobId),
+    }));
   });
 
   it("shows crawl job cards after switching to the crawler tab", async () => {
@@ -286,9 +312,7 @@ describe("TasksPage crawler jobs tab", () => {
     );
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.documentElement.style.overflow).toBe("hidden");
-    expect(listCrawlPages).toHaveBeenCalledWith(7);
-    expect(listCrawlCandidates).toHaveBeenCalledWith(7);
-    expect(getCrawlJobEvents).toHaveBeenCalledWith(7);
+    expect(getCrawlJobDetails).toHaveBeenCalledWith(7);
     expect(getDiagnosticEvents()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -933,6 +957,58 @@ describe("TasksPage crawler jobs tab", () => {
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     expect(crawlDialog).toHaveTextContent("候选导师详情补全失败：张教授");
     expect(crawlDialog).toHaveTextContent("WinError 2");
+  });
+
+  it("shows crawled pages only in the page list, not in the execution log", async () => {
+    vi.mocked(getCrawlJobEvents).mockResolvedValue([
+      {
+        id: "evt-status",
+        job_id: 7,
+        event_type: "job_status",
+        message: "任务正在运行",
+        created_at: "2026-04-26T08:33:00",
+        raw: null,
+      },
+      {
+        id: "evt-page",
+        job_id: 7,
+        event_type: "page",
+        message: "已抓取页面：Faculty",
+        created_at: "2026-04-26T08:34:00",
+        raw: null,
+      },
+    ]);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    const logSection = within(dialog)
+      .getByRole("heading", { name: "执行日志" })
+      .closest("section");
+    const pageSection = within(dialog)
+      .getByRole("heading", { name: "已抓页面" })
+      .closest("section");
+
+    expect(logSection).toHaveTextContent("任务正在运行");
+    expect(logSection).not.toHaveTextContent("已抓取页面：Faculty");
+    expect(pageSection).toHaveTextContent("Faculty");
+
+    const logMessage = within(logSection as HTMLElement).getByText("任务正在运行");
+    const pageTitle = within(pageSection as HTMLElement).getByText("Faculty");
+    const pageLink = within(pageSection as HTMLElement).getByRole("link", {
+      name: "https://example.edu/faculty",
+    });
+
+    expect(logMessage).toHaveClass("truncate");
+    expect(logMessage.parentElement).toHaveClass("h-full");
+    expect(pageTitle).toHaveClass("truncate");
+    expect(pageTitle.parentElement).toHaveClass("h-[76px]");
+    expect(pageLink).toHaveAttribute("href", "https://example.edu/faculty");
+    expect(pageLink).toHaveAttribute("target", "_blank");
+    expect(pageLink).toHaveClass("text-primary", "decoration-primary/30");
   });
 
   it("keeps crawl log and crawled page pagination aligned in the detail dialog", async () => {

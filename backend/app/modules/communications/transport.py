@@ -5,6 +5,7 @@ import imaplib
 import logging
 import mimetypes
 import re
+import socket
 import smtplib
 import time
 from dataclasses import dataclass
@@ -84,6 +85,7 @@ REPLY_QUOTE_HTML_PATTERNS = (
 SMTP_USERNAME_ENCODING_ERROR_CODE = "SMTP_USERNAME_NON_ASCII"
 SMTP_PASSWORD_ENCODING_ERROR_CODE = "SMTP_PASSWORD_NON_ASCII"
 SMTP_LOGIN_ENCODING_ERROR_CODE = "SMTP_LOGIN_ENCODING_ERROR"
+SMTP_EHLO_FALLBACK_HOSTNAME = "[127.0.0.1]"
 CHINESE_REPLY_HEADER_PATTERN = re.compile(
     r"(?:^|\n)\s*发件人：[^\n]*"
     r"(?=\n\s*(?:发件时间|收件人|主题)：)"
@@ -1933,14 +1935,57 @@ def decode_mime_header(value: str | None) -> str | None:
 
 def _open_smtp_client(identity: IdentityProfile) -> smtplib.SMTP:
     timeout = get_settings().smtp_send_timeout_seconds
+    local_hostname = _resolve_smtp_local_hostname()
     if identity.smtp_port == 465:
-        return smtplib.SMTP_SSL(identity.smtp_host, identity.smtp_port, timeout=timeout)
+        return smtplib.SMTP_SSL(
+            identity.smtp_host,
+            identity.smtp_port,
+            local_hostname=local_hostname,
+            timeout=timeout,
+        )
 
-    server = smtplib.SMTP(identity.smtp_host, identity.smtp_port, timeout=timeout)
+    server = smtplib.SMTP(
+        identity.smtp_host,
+        identity.smtp_port,
+        local_hostname=local_hostname,
+        timeout=timeout,
+    )
     server.ehlo()
     server.starttls()
     server.ehlo()
     return server
+
+
+def _resolve_smtp_local_hostname() -> str:
+    try:
+        fqdn = socket.getfqdn().strip().rstrip(".")
+    except (OSError, UnicodeError):
+        fqdn = ""
+
+    if "." in fqdn:
+        try:
+            ascii_fqdn = fqdn.encode("idna").decode("ascii")
+        except UnicodeError:
+            ascii_fqdn = ""
+        if _is_valid_smtp_ehlo_hostname(ascii_fqdn):
+            return ascii_fqdn
+
+    try:
+        local_address = socket.gethostbyname(socket.gethostname())
+    except (OSError, UnicodeError):
+        return SMTP_EHLO_FALLBACK_HOSTNAME
+    return f"[{local_address}]"
+
+
+def _is_valid_smtp_ehlo_hostname(value: str) -> bool:
+    if not value or len(value) > 253 or "." not in value:
+        return False
+    labels = value.split(".")
+    return all(
+        1 <= len(label) <= 63
+        and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+        for label in labels
+    )
 
 
 def _open_imap_client(identity: IdentityProfile) -> IMAP4 | IMAP4_SSL:

@@ -7,6 +7,7 @@ from app.models.batch_task import BatchTask, BatchTaskStatus
 from app.models.crawl_chunk import CrawlPageChunk, CrawlPageChunkStatus
 from app.models.crawl_job import (
     CrawlCandidate,
+    CrawlCandidateIdentityKey,
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
     CrawlCandidateReviewStatus,
@@ -22,7 +23,6 @@ from app.models.crawl_job import (
     CrawlPageStatus,
     CrawlPageTask,
     CrawlPageTaskStatus,
-    CrawlRuntimeVersion,
     CrawlWorkerKind,
     CrawlWorkerTokenUsage,
 )
@@ -39,6 +39,7 @@ from app.models.identity_profile import IdentityProfile
 from app.models.identity_material import IdentityMaterial, IdentityMaterialType
 from app.models.imap_sync import (
     ImapFolderRole,
+    ImapIdentitySyncLease,
     ImapMailboxHistoricalScanStatus,
     ImapMailboxSyncState,
     ImapProfessorHistoricalScanStatus,
@@ -79,10 +80,10 @@ __all__ = [
     "CrawlPageFetchStatus",
     "CrawlPageTask",
     "CrawlPageTaskStatus",
-    "CrawlRuntimeVersion",
     "CrawlWorkerKind",
     "CrawlWorkerTokenUsage",
     "CrawlCandidate",
+    "CrawlCandidateIdentityKey",
     "CrawlCandidateReviewStatus",
     "CrawlJob",
     "CrawlJobKind",
@@ -105,6 +106,7 @@ __all__ = [
     "IdentityMaterial",
     "IdentityMaterialType",
     "ImapFolderRole",
+    "ImapIdentitySyncLease",
     "ImapMailboxHistoricalScanStatus",
     "ImapMailboxSyncState",
     "ImapProfessorHistoricalScanStatus",

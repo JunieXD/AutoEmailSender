@@ -16,10 +16,9 @@ vi.mock("@/lib/api/runtimeSettings", () => ({
     match_analysis_job_worker_count: 1,
     match_analysis_job_item_concurrency: 5,
     match_analysis_job_interval_seconds: 10,
-    crawler_worker_count: 2,
+    crawler_worker_count: 1,
     crawler_profile_enrichment_concurrency: 3,
     crawler_host_concurrency: 2,
-    crawler_agent_max_chunks_per_run: 2,
     draft_max_tokens: 6000,
     batch_draft_generation_concurrency: 5,
     draft_rewrite_intensity: "moderate",
@@ -53,7 +52,7 @@ describe("OtherSettingsCard", () => {
     expect(await screen.findByLabelText("每个匹配任务同时分析导师数")).toHaveValue(5);
     expect(screen.getByLabelText("AI 草稿输出 token 上限")).toHaveValue(6000);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(5);
-    expect(screen.getByLabelText("同时运行的抓取任务数")).toHaveValue(2);
+    expect(screen.getByLabelText("同时运行的抓取任务数")).toHaveValue(1);
     expect(screen.getByLabelText("同时补全导师详情页数")).toHaveValue(3);
     expect(
       screen.getByText(/智能抓取和导师管理页信息补全合计最多同时处理/),
@@ -77,7 +76,6 @@ describe("OtherSettingsCard", () => {
           match_analysis_job_item_concurrency: 4,
           draft_max_tokens: 4800,
           batch_draft_generation_concurrency: 6,
-          crawler_agent_max_chunks_per_run: 2,
         }),
       );
     });
@@ -94,10 +92,9 @@ describe("OtherSettingsCard", () => {
       match_analysis_job_worker_count: 1,
       match_analysis_job_item_concurrency: 5,
       match_analysis_job_interval_seconds: 10,
-      crawler_worker_count: 2,
+      crawler_worker_count: 1,
       crawler_profile_enrichment_concurrency: 3,
       crawler_host_concurrency: 2,
-      crawler_agent_max_chunks_per_run: 2,
       draft_max_tokens: 6000,
       draft_rewrite_intensity: "moderate",
       draft_rewrite_tone: "polite",

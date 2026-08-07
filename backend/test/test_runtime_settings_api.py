@@ -50,10 +50,9 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
         self.assertEqual(payload["match_analysis_job_item_concurrency"], 5)
-        self.assertEqual(payload["crawler_worker_count"], 8)
+        self.assertEqual(payload["crawler_worker_count"], 1)
         self.assertEqual(payload["crawler_profile_enrichment_concurrency"], 3)
         self.assertEqual(payload["crawler_host_concurrency"], 2)
-        self.assertEqual(payload["crawler_agent_max_chunks_per_run"], 2)
         self.assertEqual(payload["draft_max_tokens"], 6000)
         self.assertEqual(payload["batch_draft_generation_concurrency"], 5)
         self.assertEqual(payload["draft_rewrite_intensity"], "moderate")
@@ -75,7 +74,6 @@ class RuntimeSettingsApiTests(unittest.TestCase):
                 "crawler_worker_count": 3,
                 "crawler_profile_enrichment_concurrency": 4,
                 "crawler_host_concurrency": 10,
-                "crawler_agent_max_chunks_per_run": 3,
                 "draft_max_tokens": 4800,
                 "batch_draft_generation_concurrency": 5,
                 "draft_rewrite_intensity": "strong",
@@ -94,7 +92,6 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["draft_max_tokens"], 4800)
         self.assertEqual(response.json()["batch_draft_generation_concurrency"], 5)
         self.assertEqual(response.json()["crawler_host_concurrency"], 10)
-        self.assertEqual(response.json()["crawler_agent_max_chunks_per_run"], 3)
         self.assertEqual(response.json()["draft_rewrite_intensity"], "strong")
         self.assertEqual(response.json()["draft_rewrite_tone"], "professional")
         self.assertEqual(response.json()["draft_rewrite_formality"], "formal")
@@ -110,7 +107,7 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(logs.status_code, 200, msg=logs.text)
         self.assertGreaterEqual(logs.json()["total"], 1)
 
-    def test_patch_runtime_settings_accepts_legacy_payload_without_agent_budget(self) -> None:
+    def test_patch_runtime_settings_defaults_missing_research_direction(self) -> None:
         response = self.client.patch(
             "/api/runtime-settings",
             json={
@@ -133,7 +130,6 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(response.json()["crawler_agent_max_chunks_per_run"], 2)
         self.assertEqual(response.json()["intended_research_direction"], "")
 
     def test_patch_runtime_settings_rejects_out_of_range_values(self) -> None:

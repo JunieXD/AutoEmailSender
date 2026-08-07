@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -20,7 +20,14 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.services.dashboard_stats import _build_email_section, build_dashboard_overview
+from app.services.dashboard_stats import (
+    _build_email_section,
+    _build_email_trend,
+    _datetime_in_range,
+    _end_of_day,
+    _parse_date_filter,
+    build_dashboard_overview,
+)
 from test.schema_database import create_schema_sqlite_database
 
 
@@ -542,7 +549,7 @@ class DashboardStatsTests(unittest.TestCase):
                     ),
                 )
                 await session.commit()
-                return professor.id, reply_time.date().isoformat()
+                return professor.id, reply_time.astimezone().date().isoformat()
 
         professor_id, reply_date = self._run_async(seed_received_only_log())
 
@@ -685,7 +692,7 @@ class DashboardStatsTests(unittest.TestCase):
                     ),
                 )
                 await session.commit()
-                return sent_time.date().isoformat()
+                return sent_time.astimezone().date().isoformat()
 
         sent_date = self._run_async(seed_unbound_sent_log())
 
@@ -823,6 +830,38 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(coverage_by_university["第二大学"].contacted_professor_count, 1)
         self.assertEqual(coverage_by_university["第二大学"].replied_professor_count, 0)
         self.assertEqual(coverage_by_university["第二大学"].reply_rate, 0.0)
+
+    def test_dashboard_email_trend_uses_local_calendar_days(self) -> None:
+        shanghai = timezone(timedelta(hours=8))
+        event_at = datetime(2026, 8, 6, 16, 30, tzinfo=UTC)
+        start_at = _parse_date_filter(
+            "2026-08-07",
+            field_name="start_date",
+            local_timezone=shanghai,
+        )
+        end_at = _end_of_day(
+            _parse_date_filter(
+                "2026-08-07",
+                field_name="end_date",
+                local_timezone=shanghai,
+            ),
+            local_timezone=shanghai,
+        )
+
+        trend = _build_email_trend(
+            [(1, 1, event_at)],
+            [],
+            replied_fallback_tasks=[],
+            start_at=start_at,
+            end_at=end_at,
+            local_timezone=shanghai,
+        )
+
+        self.assertTrue(_datetime_in_range(event_at, start_at=start_at, end_at=end_at))
+        self.assertEqual(
+            [(bucket.date, bucket.sent_count) for bucket in trend],
+            [("2026-08-07", 1)],
+        )
 
     def test_dashboard_service_filters_reply_wait_by_first_reply_date(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())

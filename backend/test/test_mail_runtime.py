@@ -5,13 +5,15 @@ import imaplib
 import re
 import unittest
 from datetime import UTC, date, datetime
-from unittest.mock import patch
+from unittest.mock import ANY, call, patch
 
 from app.models import IdentityProfile
 from app.modules.communications.transport import (
     MailRuntimeError,
     SMTP_PASSWORD_ENCODING_ERROR_CODE,
     SMTP_USERNAME_ENCODING_ERROR_CODE,
+    _open_smtp_client,
+    _resolve_smtp_local_hostname,
     discover_sent_folder,
     fetch_inbox_messages_from_sender,
     fetch_incremental_inbox_messages,
@@ -477,6 +479,101 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         self.assertIn("授权码", message)
         self.assertIn("IMAP/SMTP", message)
+
+    def test_smtp_local_hostname_keeps_valid_ascii_fqdn(self) -> None:
+        with patch(
+            "app.modules.communications.transport.socket.getfqdn",
+            return_value="student-laptop.example.edu",
+        ):
+            hostname = _resolve_smtp_local_hostname()
+
+        self.assertEqual(hostname, "student-laptop.example.edu")
+
+    def test_smtp_local_hostname_converts_unicode_fqdn_to_idna(self) -> None:
+        with patch(
+            "app.modules.communications.transport.socket.getfqdn",
+            return_value="清清的acer.example",
+        ):
+            hostname = _resolve_smtp_local_hostname()
+
+        self.assertTrue(hostname.isascii())
+        self.assertTrue(hostname.startswith("xn--"))
+        self.assertTrue(hostname.endswith(".example"))
+
+    def test_smtp_local_hostname_uses_address_literal_for_undotted_unicode_name(self) -> None:
+        with (
+            patch(
+                "app.modules.communications.transport.socket.getfqdn",
+                return_value="清清的acer",
+            ),
+            patch(
+                "app.modules.communications.transport.socket.gethostname",
+                return_value="清清的acer",
+            ),
+            patch(
+                "app.modules.communications.transport.socket.gethostbyname",
+                return_value="192.0.2.10",
+            ),
+        ):
+            hostname = _resolve_smtp_local_hostname()
+
+        self.assertEqual(hostname, "[192.0.2.10]")
+
+    def test_smtp_local_hostname_rejects_whitespace_and_falls_back_safely(self) -> None:
+        with (
+            patch(
+                "app.modules.communications.transport.socket.getfqdn",
+                return_value="ing Q.example",
+            ),
+            patch(
+                "app.modules.communications.transport.socket.gethostbyname",
+                side_effect=OSError("unavailable"),
+            ),
+        ):
+            hostname = _resolve_smtp_local_hostname()
+
+        self.assertEqual(hostname, "[127.0.0.1]")
+
+    def test_open_smtp_ssl_passes_safe_local_hostname(self) -> None:
+        identity = _build_identity()
+        with (
+            patch(
+                "app.modules.communications.transport._resolve_smtp_local_hostname",
+                return_value="xn--acer.example",
+            ),
+            patch("app.modules.communications.transport.smtplib.SMTP_SSL") as smtp_ssl,
+        ):
+            _open_smtp_client(identity)
+
+        smtp_ssl.assert_called_once_with(
+            identity.smtp_host,
+            identity.smtp_port,
+            local_hostname="xn--acer.example",
+            timeout=ANY,
+        )
+
+    def test_open_starttls_smtp_passes_safe_local_hostname(self) -> None:
+        identity = _build_identity()
+        identity.smtp_port = 587
+        with (
+            patch(
+                "app.modules.communications.transport._resolve_smtp_local_hostname",
+                return_value="[192.0.2.10]",
+            ),
+            patch("app.modules.communications.transport.smtplib.SMTP") as smtp,
+        ):
+            server = _open_smtp_client(identity)
+
+        smtp.assert_called_once_with(
+            identity.smtp_host,
+            identity.smtp_port,
+            local_hostname="[192.0.2.10]",
+            timeout=ANY,
+        )
+        self.assertEqual(
+            server.method_calls,
+            [call.ehlo(), call.starttls(), call.ehlo()],
+        )
 
     def test_smtp_test_reports_sanitized_invalid_authorization_code_error(self) -> None:
         identity = _build_identity()

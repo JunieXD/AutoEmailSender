@@ -48,9 +48,6 @@ uv run pyinstaller \
   --collect-all pdfminer \
   --collect-all pypdf \
   --collect-all tldextract \
-  --collect-all tiktoken \
-  --collect-submodules tiktoken_ext \
-  --hidden-import tiktoken_ext.openai_public \
   --exclude-module markitdown \
   --exclude-module magika \
   --exclude-module onnxruntime \

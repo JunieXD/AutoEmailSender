@@ -97,7 +97,7 @@ import {
 import {
   cancelProfessorInformationEnrichmentJob,
   deleteProfessorInformationEnrichmentJob,
-  listProfessorInformationEnrichmentItems,
+  listProfessorInformationEnrichmentItemsPage,
   listProfessorInformationEnrichmentJobs,
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
@@ -109,10 +109,8 @@ import {
   deleteCrawlJob,
   enrichCrawlCandidates,
   getCrawlJob,
-  getCrawlJobEvents,
-  listCrawlCandidates,
+  getCrawlJobDetails,
   listCrawlJobs,
-  listCrawlPages,
   pauseCrawlJob,
   retryCrawlJob,
   restoreCrawlJob,
@@ -151,7 +149,6 @@ import {
 import { formatApiDateTime, parseApiDateTime } from "@/lib/dateTime";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
 import { usePaginationState } from "@/lib/usePaginationState";
-import { useTaskDetailItems } from "@/lib/useTaskDetailItems";
 import {
   normalizeExternalHttpUrl,
   openExternalHttpUrl,
@@ -175,9 +172,11 @@ import {
   type CrawlPageDTO,
   type MatchAnalysisJobDTO,
   type MatchAnalysisJobItemDTO,
+  type MatchAnalysisJobItemsPageDTO,
   type MatchAnalysisJobItemStatus,
   type MatchAnalysisJobStatus,
   type ProfessorInformationEnrichmentItemDTO,
+  type ProfessorInformationEnrichmentItemsPageDTO,
   type ProfessorInformationEnrichmentItemStatus,
   type ProfessorInformationEnrichmentJobDTO,
   type ProfessorInformationEnrichmentJobStatus,
@@ -485,14 +484,18 @@ const INFORMATION_ENRICHMENT_FIELD_LABELS: Record<string, string> = {
   recent_papers: "近期论文",
 };
 
-const CRAWL_REFRESH_INTERVAL_MS = 5000;
-const CRAWL_DETAILS_REFRESH_INTERVAL_MS = 5000;
+const CRAWL_REFRESH_INTERVAL_MS = 2000;
+const CRAWL_DETAILS_REFRESH_INTERVAL_MS = 2000;
+const CRAWL_DETAIL_CONTENT_REFRESH_INTERVAL_MS = 10000;
+const BATCH_TASK_DETAILS_REFRESH_INTERVAL_MS = 10000;
 const SCHEDULE_DATE_PATTERN = /^\d{4}-(\d{2})-(\d{2})$/;
 const TASKS_PAGE_SIZE = 8;
 const MONITOR_SECTION_PAGE_SIZE = 5;
 const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;
 const TASKS_PAGE_SIZE_OPTIONS = [8, 16, 32] as const;
 const DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+const MATCH_JOB_ITEMS_PAGE_CACHE_SIZE = 5;
+const INFORMATION_ENRICHMENT_ITEMS_PAGE_CACHE_SIZE = 5;
 const MONITOR_PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
 const PAGE_SIZE_STORAGE_KEYS = {
   batchTasks: "tasks:batch:page-size",
@@ -501,6 +504,10 @@ const PAGE_SIZE_STORAGE_KEYS = {
   informationEnrichmentJobs: "tasks:information-enrichment:page-size",
   batchSentItems: "tasks:batch-details:sent:page-size",
   batchPendingItems: "tasks:batch-details:pending:page-size",
+  batchGeneratingItems: "tasks:batch-details:generating:page-size",
+  batchDraftFailedItems: "tasks:batch-details:draft-failed:page-size",
+  batchFailedItems: "tasks:batch-details:failed:page-size",
+  batchReviewItems: "tasks:batch-details:review:page-size",
   matchJobItems: "tasks:match-details:items:page-size",
   informationEnrichmentItems:
     "tasks:information-enrichment-details:items:page-size",
@@ -508,6 +515,20 @@ const PAGE_SIZE_STORAGE_KEYS = {
   crawlPages: "tasks:crawl-details:pages:page-size",
   crawlCandidates: "tasks:crawl-details:candidates:page-size",
 } as const;
+
+const getMatchJobItemsCacheKey = (
+  jobId: number,
+  cursor: number,
+  limit: number,
+  status: MatchAnalysisJobItemStatus | "all",
+) => `${jobId}:${cursor}:${limit}:${status}`;
+
+const getInformationEnrichmentItemsCacheKey = (
+  jobId: number,
+  cursor: number,
+  limit: number,
+  status: ProfessorInformationEnrichmentItemStatus | "all",
+) => `${jobId}:${cursor}:${limit}:${status}`;
 
 const formatScheduleDate = (value: string) => {
   const match = SCHEDULE_DATE_PATTERN.exec(value);
@@ -1040,6 +1061,7 @@ export const TasksPage = () => {
   const [selectedMatchJobItems, setSelectedMatchJobItems] = useState<
     MatchAnalysisJobItemDTO[]
   >([]);
+  const [matchJobItemTotalCount, setMatchJobItemTotalCount] = useState(0);
   const [matchJobDetailsLoading, setMatchJobDetailsLoading] = useState(false);
   const [informationEnrichmentJobs, setInformationEnrichmentJobs] = useState<
     ProfessorInformationEnrichmentJobDTO[]
@@ -1052,41 +1074,15 @@ export const TasksPage = () => {
     useState<ProfessorInformationEnrichmentJobDTO | null>(null);
   const [selectedInformationEnrichmentItems, setSelectedInformationEnrichmentItems] =
     useState<ProfessorInformationEnrichmentItemDTO[]>([]);
+  const [informationEnrichmentItemTotalCount, setInformationEnrichmentItemTotalCount] =
+    useState(0);
   const [informationEnrichmentDetailsLoading, setInformationEnrichmentDetailsLoading] =
     useState(false);
-  const {
-    filteredItems: filteredMatchJobItems,
-    page: matchJobItemPage,
-    pageSize: matchJobItemPageSize,
-    setPagination: setMatchJobItemPagination,
-    setStatusFilter: setMatchJobItemStatusFilter,
-    statusFilter: matchJobItemStatusFilter,
-    visibleItems: visibleMatchJobItems,
-  } = useTaskDetailItems(
-    selectedMatchJobItems,
-    selectedMatchJob?.id ?? null,
-    {
-      initialPageSize: 10,
-      pageSizeStorageKey: PAGE_SIZE_STORAGE_KEYS.matchJobItems,
-    },
-  );
-  const {
-    filteredItems: filteredInformationEnrichmentItems,
-    page: informationEnrichmentItemPage,
-    pageSize: informationEnrichmentItemPageSize,
-    setPagination: setInformationEnrichmentItemPagination,
-    setStatusFilter: setInformationEnrichmentItemStatusFilter,
-    statusFilter: informationEnrichmentItemStatusFilter,
-    visibleItems: visibleInformationEnrichmentItems,
-  } = useTaskDetailItems(
-    selectedInformationEnrichmentItems,
-    selectedInformationEnrichmentJob?.id ?? null,
-    {
-      initialPageSize: 10,
-      pageSizeStorageKey:
-        PAGE_SIZE_STORAGE_KEYS.informationEnrichmentItems,
-    },
-  );
+  const [matchJobItemStatusFilter, setMatchJobItemStatusFilterState] = useState<
+    "all" | MatchAnalysisJobItemStatus
+  >("all");
+  const [informationEnrichmentItemStatusFilter, setInformationEnrichmentItemStatusFilterState] =
+    useState<"all" | ProfessorInformationEnrichmentItemStatus>("all");
   const [crawlJobs, setCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [currentCrawlJobs, setCurrentCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [crawlJobsLoading, setCrawlJobsLoading] = useState(false);
@@ -1098,6 +1094,24 @@ export const TasksPage = () => {
   } = usePaginationState({
     storageKey: PAGE_SIZE_STORAGE_KEYS.batchTasks,
     initialPageSize: TASKS_PAGE_SIZE,
+  });
+  const {
+    page: matchJobItemPage,
+    pageSize: matchJobItemPageSize,
+    setPage: setMatchJobItemPage,
+    onChange: handleMatchJobItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.matchJobItems,
+    initialPageSize: 10,
+  });
+  const {
+    page: informationEnrichmentItemPage,
+    pageSize: informationEnrichmentItemPageSize,
+    setPage: setInformationEnrichmentItemPage,
+    onChange: handleInformationEnrichmentItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.informationEnrichmentItems,
+    initialPageSize: 10,
   });
   const {
     page: matchPage,
@@ -1142,6 +1156,42 @@ export const TasksPage = () => {
     onChange: handleBatchPendingItemPaginationChange,
   } = usePaginationState({
     storageKey: PAGE_SIZE_STORAGE_KEYS.batchPendingItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchGeneratingItemPage,
+    pageSize: batchGeneratingItemPageSize,
+    setPage: setBatchGeneratingItemPage,
+    onChange: handleBatchGeneratingItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchGeneratingItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchDraftFailedItemPage,
+    pageSize: batchDraftFailedItemPageSize,
+    setPage: setBatchDraftFailedItemPage,
+    onChange: handleBatchDraftFailedItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchDraftFailedItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchFailedItemPage,
+    pageSize: batchFailedItemPageSize,
+    setPage: setBatchFailedItemPage,
+    onChange: handleBatchFailedItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchFailedItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchReviewItemPage,
+    pageSize: batchReviewItemPageSize,
+    setPage: setBatchReviewItemPage,
+    onChange: handleBatchReviewItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchReviewItems,
     initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
   });
   const {
@@ -1238,9 +1288,16 @@ export const TasksPage = () => {
   const latestProfessorEditRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
   const latestMatchJobDetailsRequestIdRef = useRef(0);
+  const matchJobItemsPageCacheRef = useRef(
+    new Map<string, MatchAnalysisJobItemsPageDTO>(),
+  );
+  const informationEnrichmentItemsPageCacheRef = useRef(
+    new Map<string, ProfessorInformationEnrichmentItemsPageDTO>(),
+  );
   const latestInformationEnrichmentJobsRequestIdRef = useRef(0);
   const latestInformationEnrichmentDetailsRequestIdRef = useRef(0);
   const latestCrawlJobsRequestIdRef = useRef(0);
+  const latestCrawlJobSummaryRequestIdRef = useRef(0);
   const latestCrawlJobDetailsRequestIdRef = useRef(0);
   const taskListStartRef = useRef<HTMLElement | null>(null);
   const batchSentItemsStartRef = useRef<HTMLElement | null>(null);
@@ -1396,15 +1453,12 @@ export const TasksPage = () => {
       selectedBatchTaskItems.filter(
         (item) =>
           item.batch_send_canceled_at !== null ||
-          (item.status === "canceled" &&
-            (item.cancellation_reason === "batch_stopped" ||
-              item.cancellation_reason === "schedule_expired")) ||
+          item.status === "canceled" ||
           (item.status !== "sent" &&
             item.status !== "reply_detected" &&
             item.status !== "generating_draft" &&
             item.status !== "draft_failed" &&
-            item.status !== "send_failed" &&
-            item.status !== "canceled"),
+            item.status !== "send_failed"),
       ),
     [selectedBatchTaskItems],
   );
@@ -1505,9 +1559,32 @@ export const TasksPage = () => {
     batchPendingItemPage,
     getTotalPages(pendingBatchTaskItems.length, batchPendingItemPageSize),
   );
+  const safeBatchGeneratingItemPage = Math.min(
+    batchGeneratingItemPage,
+    getTotalPages(
+      generatingDraftBatchTaskItems.length,
+      batchGeneratingItemPageSize,
+    ),
+  );
+  const safeBatchDraftFailedItemPage = Math.min(
+    batchDraftFailedItemPage,
+    getTotalPages(draftFailedBatchTaskItems.length, batchDraftFailedItemPageSize),
+  );
+  const safeBatchFailedItemPage = Math.min(
+    batchFailedItemPage,
+    getTotalPages(failedBatchTaskItems.length, batchFailedItemPageSize),
+  );
+  const safeBatchReviewItemPage = Math.min(
+    batchReviewItemPage,
+    getTotalPages(batchReviewQueueItems.length, batchReviewItemPageSize),
+  );
+  const crawlExecutionLogEvents = useMemo(
+    () => crawlJobEvents.filter((event) => event.event_type !== "page"),
+    [crawlJobEvents],
+  );
   const safeCrawlEventPage = Math.min(
     crawlEventPage,
-    getTotalPages(crawlJobEvents.length, crawlEventPageSize),
+    getTotalPages(crawlExecutionLogEvents.length, crawlEventPageSize),
   );
   const safeCrawlDetailPagePage = Math.min(
     crawlDetailPagePage,
@@ -1549,6 +1626,50 @@ export const TasksPage = () => {
       ),
     [batchPendingItemPageSize, pendingBatchTaskItems, safeBatchPendingItemPage],
   );
+  const visibleGeneratingDraftBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        generatingDraftBatchTaskItems,
+        safeBatchGeneratingItemPage,
+        batchGeneratingItemPageSize,
+      ),
+    [
+      batchGeneratingItemPageSize,
+      generatingDraftBatchTaskItems,
+      safeBatchGeneratingItemPage,
+    ],
+  );
+  const visibleDraftFailedBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        draftFailedBatchTaskItems,
+        safeBatchDraftFailedItemPage,
+        batchDraftFailedItemPageSize,
+      ),
+    [
+      batchDraftFailedItemPageSize,
+      draftFailedBatchTaskItems,
+      safeBatchDraftFailedItemPage,
+    ],
+  );
+  const visibleFailedBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        failedBatchTaskItems,
+        safeBatchFailedItemPage,
+        batchFailedItemPageSize,
+      ),
+    [batchFailedItemPageSize, failedBatchTaskItems, safeBatchFailedItemPage],
+  );
+  const visibleBatchReviewQueueItems = useMemo(
+    () =>
+      getPageItems(
+        batchReviewQueueItems,
+        safeBatchReviewItemPage,
+        batchReviewItemPageSize,
+      ),
+    [batchReviewItemPageSize, batchReviewQueueItems, safeBatchReviewItemPage],
+  );
   const visibleBatchTasks = useMemo(
     () => getPageItems(tasks, safeBatchPage, batchPageSize),
     [batchPageSize, safeBatchPage, tasks],
@@ -1576,8 +1697,12 @@ export const TasksPage = () => {
   );
   const visibleCrawlJobEvents = useMemo(
     () =>
-      getPageItems(crawlJobEvents, safeCrawlEventPage, crawlEventPageSize),
-    [crawlEventPageSize, crawlJobEvents, safeCrawlEventPage],
+      getPageItems(
+        crawlExecutionLogEvents,
+        safeCrawlEventPage,
+        crawlEventPageSize,
+      ),
+    [crawlEventPageSize, crawlExecutionLogEvents, safeCrawlEventPage],
   );
   const visibleCrawlJobPages = useMemo(
     () =>
@@ -1601,6 +1726,8 @@ export const TasksPage = () => {
       safeCrawlCandidatePage,
     ],
   );
+  const selectedBatchTaskId = selectedBatchTask?.id ?? null;
+  const selectedBatchTaskStatus = selectedBatchTask?.status ?? null;
   const selectedCrawlJobId = selectedCrawlJob?.id ?? null;
   const taskDetailDialogOpen =
     selectedBatchTask !== null ||
@@ -1878,18 +2005,99 @@ export const TasksPage = () => {
     }
   }, [notifyError, selectedIdentityId, selectedLlmProfileId, taskListViews.match]);
 
+  const cacheMatchJobItemsPage = useCallback(
+    (key: string, page: MatchAnalysisJobItemsPageDTO) => {
+      const cache = matchJobItemsPageCacheRef.current;
+      cache.delete(key);
+      cache.set(key, page);
+      while (cache.size > MATCH_JOB_ITEMS_PAGE_CACHE_SIZE) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey === undefined) {
+          return;
+        }
+        cache.delete(oldestKey);
+      }
+    },
+    [],
+  );
+
+  const prefetchMatchJobItemsPage = useCallback(
+    async (
+      jobId: number,
+      cursor: number,
+      limit: number,
+      status: MatchAnalysisJobItemStatus | "all",
+    ) => {
+      if (cursor < 0) {
+        return;
+      }
+      const key = getMatchJobItemsCacheKey(jobId, cursor, limit, status);
+      if (matchJobItemsPageCacheRef.current.has(key)) {
+        return;
+      }
+      try {
+        const page = await listMatchAnalysisJobItems(jobId, {
+          cursor,
+          limit,
+          status: status === "all" ? null : status,
+        });
+        cacheMatchJobItemsPage(key, page);
+      } catch {
+        // Prefetch failures should not interrupt the currently visible page.
+      }
+    },
+    [cacheMatchJobItemsPage],
+  );
+
   const loadMatchJobDetails = useCallback(
     async (jobId: number) => {
       const requestId = latestMatchJobDetailsRequestIdRef.current + 1;
       latestMatchJobDetailsRequestIdRef.current = requestId;
-      setMatchJobDetailsLoading(true);
+      const cursor = (matchJobItemPage - 1) * matchJobItemPageSize;
+      const key = getMatchJobItemsCacheKey(
+        jobId,
+        cursor,
+        matchJobItemPageSize,
+        matchJobItemStatusFilter,
+      );
+      const cached = matchJobItemsPageCacheRef.current.get(key);
+      if (cached) {
+        setSelectedMatchJobItems(cached.items);
+        setMatchJobItemTotalCount(cached.total_count);
+      }
+      setMatchJobDetailsLoading(!cached);
       try {
-        const data = await listMatchAnalysisJobItems(jobId);
+        const data = await listMatchAnalysisJobItems(jobId, {
+          cursor,
+          limit: matchJobItemPageSize,
+          status:
+            matchJobItemStatusFilter === "all"
+              ? null
+              : matchJobItemStatusFilter,
+        });
+        cacheMatchJobItemsPage(key, data);
         if (latestMatchJobDetailsRequestIdRef.current !== requestId) {
           return;
         }
-        setSelectedMatchJobItems(data);
+        setSelectedMatchJobItems(data.items);
+        setMatchJobItemTotalCount(data.total_count);
         lastMatchJobDetailsLoadErrorRef.current = null;
+        if (data.has_more) {
+          void prefetchMatchJobItemsPage(
+            jobId,
+            cursor + matchJobItemPageSize,
+            matchJobItemPageSize,
+            matchJobItemStatusFilter,
+          );
+        }
+        if (cursor > 0) {
+          void prefetchMatchJobItemsPage(
+            jobId,
+            cursor - matchJobItemPageSize,
+            matchJobItemPageSize,
+            matchJobItemStatusFilter,
+          );
+        }
       } catch (loadError) {
         if (latestMatchJobDetailsRequestIdRef.current !== requestId) {
           return;
@@ -1908,7 +2116,22 @@ export const TasksPage = () => {
         }
       }
     },
-    [notifyError],
+    [
+      cacheMatchJobItemsPage,
+      matchJobItemPage,
+      matchJobItemPageSize,
+      matchJobItemStatusFilter,
+      notifyError,
+      prefetchMatchJobItemsPage,
+    ],
+  );
+
+  const setMatchJobItemStatusFilter = useCallback(
+    (status: MatchAnalysisJobItemStatus | "all") => {
+      setMatchJobItemStatusFilterState(status);
+      setMatchJobItemPage(1);
+    },
+    [setMatchJobItemPage],
   );
 
   const loadInformationEnrichmentJobs = useCallback(
@@ -1962,18 +2185,99 @@ export const TasksPage = () => {
     [notifyError, taskListViews.enrichment],
   );
 
+  const cacheInformationEnrichmentItemsPage = useCallback(
+    (key: string, page: ProfessorInformationEnrichmentItemsPageDTO) => {
+      const cache = informationEnrichmentItemsPageCacheRef.current;
+      cache.delete(key);
+      cache.set(key, page);
+      while (cache.size > INFORMATION_ENRICHMENT_ITEMS_PAGE_CACHE_SIZE) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey === undefined) {
+          return;
+        }
+        cache.delete(oldestKey);
+      }
+    },
+    [],
+  );
+
+  const prefetchInformationEnrichmentItemsPage = useCallback(
+    async (
+      jobId: number,
+      cursor: number,
+      limit: number,
+      status: ProfessorInformationEnrichmentItemStatus | "all",
+    ) => {
+      if (cursor < 0) {
+        return;
+      }
+      const key = getInformationEnrichmentItemsCacheKey(jobId, cursor, limit, status);
+      if (informationEnrichmentItemsPageCacheRef.current.has(key)) {
+        return;
+      }
+      try {
+        const page = await listProfessorInformationEnrichmentItemsPage(jobId, {
+          cursor,
+          limit,
+          status: status === "all" ? null : status,
+        });
+        cacheInformationEnrichmentItemsPage(key, page);
+      } catch {
+        // Prefetch failures should not interrupt the currently visible page.
+      }
+    },
+    [cacheInformationEnrichmentItemsPage],
+  );
+
   const loadInformationEnrichmentDetails = useCallback(
     async (jobId: number) => {
       const requestId = latestInformationEnrichmentDetailsRequestIdRef.current + 1;
       latestInformationEnrichmentDetailsRequestIdRef.current = requestId;
-      setInformationEnrichmentDetailsLoading(true);
+      const cursor = (informationEnrichmentItemPage - 1) * informationEnrichmentItemPageSize;
+      const key = getInformationEnrichmentItemsCacheKey(
+        jobId,
+        cursor,
+        informationEnrichmentItemPageSize,
+        informationEnrichmentItemStatusFilter,
+      );
+      const cached = informationEnrichmentItemsPageCacheRef.current.get(key);
+      if (cached) {
+        setSelectedInformationEnrichmentItems(cached.items);
+        setInformationEnrichmentItemTotalCount(cached.total_count);
+      }
+      setInformationEnrichmentDetailsLoading(!cached);
       try {
-        const data = await listProfessorInformationEnrichmentItems(jobId);
+        const data = await listProfessorInformationEnrichmentItemsPage(jobId, {
+          cursor,
+          limit: informationEnrichmentItemPageSize,
+          status:
+            informationEnrichmentItemStatusFilter === "all"
+              ? null
+              : informationEnrichmentItemStatusFilter,
+        });
+        cacheInformationEnrichmentItemsPage(key, data);
         if (latestInformationEnrichmentDetailsRequestIdRef.current !== requestId) {
           return;
         }
-        setSelectedInformationEnrichmentItems(data);
+        setSelectedInformationEnrichmentItems(data.items);
+        setInformationEnrichmentItemTotalCount(data.total_count);
         lastInformationEnrichmentDetailsLoadErrorRef.current = null;
+        if (data.has_more) {
+          void prefetchInformationEnrichmentItemsPage(
+            jobId,
+            cursor + informationEnrichmentItemPageSize,
+            informationEnrichmentItemPageSize,
+            informationEnrichmentItemStatusFilter,
+          );
+        }
+        if (cursor > 0) {
+          void prefetchInformationEnrichmentItemsPage(
+            jobId,
+            cursor - informationEnrichmentItemPageSize,
+            informationEnrichmentItemPageSize,
+            informationEnrichmentItemStatusFilter,
+          );
+        }
       } catch (loadError) {
         if (latestInformationEnrichmentDetailsRequestIdRef.current !== requestId) {
           return;
@@ -1992,7 +2296,22 @@ export const TasksPage = () => {
         }
       }
     },
-    [notifyError],
+    [
+      cacheInformationEnrichmentItemsPage,
+      informationEnrichmentItemPage,
+      informationEnrichmentItemPageSize,
+      informationEnrichmentItemStatusFilter,
+      notifyError,
+      prefetchInformationEnrichmentItemsPage,
+    ],
+  );
+
+  const setInformationEnrichmentItemStatusFilter = useCallback(
+    (status: ProfessorInformationEnrichmentItemStatus | "all") => {
+      setInformationEnrichmentItemStatusFilterState(status);
+      setInformationEnrichmentItemPage(1);
+    },
+    [setInformationEnrichmentItemPage],
   );
 
   const loadBatchTaskDetails = useCallback(
@@ -2099,6 +2418,34 @@ export const TasksPage = () => {
     [loadBatchTaskDetails, loadTasks, selectedBatchTask],
   );
 
+  const loadCrawlJobSummary = useCallback(
+    async (jobId: number) => {
+      const requestId = latestCrawlJobSummaryRequestIdRef.current + 1;
+      latestCrawlJobSummaryRequestIdRef.current = requestId;
+      try {
+        const job = await getCrawlJob(jobId);
+        if (latestCrawlJobSummaryRequestIdRef.current !== requestId) {
+          return;
+        }
+        setSelectedCrawlJob(job);
+        lastCrawlJobDetailsLoadErrorRef.current = null;
+      } catch (loadError) {
+        if (latestCrawlJobSummaryRequestIdRef.current !== requestId) {
+          return;
+        }
+        const message =
+          loadError instanceof Error
+            ? loadError.message
+            : "加载抓取任务状态失败";
+        if (lastCrawlJobDetailsLoadErrorRef.current !== message) {
+          notifyError("加载抓取任务状态失败", message);
+          lastCrawlJobDetailsLoadErrorRef.current = message;
+        }
+      }
+    },
+    [notifyError],
+  );
+
   const loadCrawlJobDetails = useCallback(
     async (jobId: number, options?: { showLoading?: boolean }) => {
       const requestId = latestCrawlJobDetailsRequestIdRef.current + 1;
@@ -2107,19 +2454,14 @@ export const TasksPage = () => {
         setCrawlJobDetailsLoading(true);
       }
       try {
-        const [job, pages, candidates, events] = await Promise.all([
-          getCrawlJob(jobId),
-          listCrawlPages(jobId),
-          listCrawlCandidates(jobId),
-          getCrawlJobEvents(jobId),
-        ]);
+        const data = await getCrawlJobDetails(jobId);
         if (latestCrawlJobDetailsRequestIdRef.current !== requestId) {
           return;
         }
-        setSelectedCrawlJob(job);
-        setCrawlJobPages(pages);
-        setCrawlJobCandidates(candidates);
-        setCrawlJobEvents(events);
+        setSelectedCrawlJob(data.job);
+        setCrawlJobPages(data.pages);
+        setCrawlJobCandidates(data.candidates);
+        setCrawlJobEvents(data.events);
         lastCrawlJobDetailsLoadErrorRef.current = null;
       } catch (loadError) {
         if (latestCrawlJobDetailsRequestIdRef.current !== requestId) {
@@ -2128,9 +2470,9 @@ export const TasksPage = () => {
         const message =
           loadError instanceof Error
             ? loadError.message
-            : "加载抓取任务日志失败";
+            : "加载抓取任务详情失败";
         if (lastCrawlJobDetailsLoadErrorRef.current !== message) {
-          notifyError("加载抓取任务日志失败", message);
+          notifyError("加载抓取任务详情失败", message);
           lastCrawlJobDetailsLoadErrorRef.current = message;
         }
       } finally {
@@ -2194,13 +2536,38 @@ export const TasksPage = () => {
   ]);
 
   useEffect(() => {
+    setMatchJobItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(matchJobItemTotalCount, matchJobItemPageSize),
+      ),
+    );
+  }, [matchJobItemPageSize, matchJobItemTotalCount, setMatchJobItemPage]);
+
+  useEffect(() => {
+    setInformationEnrichmentItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(
+          informationEnrichmentItemTotalCount,
+          informationEnrichmentItemPageSize,
+        ),
+      ),
+    );
+  }, [
+    informationEnrichmentItemPageSize,
+    informationEnrichmentItemTotalCount,
+    setInformationEnrichmentItemPage,
+  ]);
+
+  useEffect(() => {
     setCrawlEventPage((currentPage) =>
       Math.min(
         currentPage,
-        getTotalPages(crawlJobEvents.length, crawlEventPageSize),
+        getTotalPages(crawlExecutionLogEvents.length, crawlEventPageSize),
       ),
     );
-  }, [crawlEventPageSize, crawlJobEvents.length, setCrawlEventPage]);
+  }, [crawlEventPageSize, crawlExecutionLogEvents.length, setCrawlEventPage]);
 
   useEffect(() => {
     setCrawlDetailPagePage((currentPage) =>
@@ -2247,6 +2614,52 @@ export const TasksPage = () => {
     batchPendingItemPageSize,
     pendingBatchTaskItems.length,
     setBatchPendingItemPage,
+  ]);
+
+  useEffect(() => {
+    setBatchGeneratingItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(
+          generatingDraftBatchTaskItems.length,
+          batchGeneratingItemPageSize,
+        ),
+      ),
+    );
+    setBatchDraftFailedItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(
+          draftFailedBatchTaskItems.length,
+          batchDraftFailedItemPageSize,
+        ),
+      ),
+    );
+    setBatchFailedItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(failedBatchTaskItems.length, batchFailedItemPageSize),
+      ),
+    );
+    setBatchReviewItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(batchReviewQueueItems.length, batchReviewItemPageSize),
+      ),
+    );
+  }, [
+    batchDraftFailedItemPageSize,
+    batchFailedItemPageSize,
+    batchGeneratingItemPageSize,
+    batchReviewItemPageSize,
+    batchReviewQueueItems.length,
+    draftFailedBatchTaskItems.length,
+    failedBatchTaskItems.length,
+    generatingDraftBatchTaskItems.length,
+    setBatchDraftFailedItemPage,
+    setBatchFailedItemPage,
+    setBatchGeneratingItemPage,
+    setBatchReviewItemPage,
   ]);
 
   useEffect(() => {
@@ -2371,19 +2784,28 @@ export const TasksPage = () => {
   ]);
 
   useEffect(() => {
-    if (!selectedBatchTask) {
+    if (!selectedBatchTaskId) {
       return undefined;
     }
     lastBatchTaskDetailsLoadErrorRef.current = null;
-    void loadBatchTaskDetails(selectedBatchTask.id);
+    void loadBatchTaskDetails(selectedBatchTaskId);
+    if (selectedBatchTaskStatus !== "running") {
+      return () => {
+        latestBatchTaskDetailsRequestIdRef.current += 1;
+      };
+    }
     const timer = window.setInterval(() => {
-      void loadBatchTaskDetails(selectedBatchTask.id);
-    }, 5000);
+      void loadBatchTaskDetails(selectedBatchTaskId);
+    }, BATCH_TASK_DETAILS_REFRESH_INTERVAL_MS);
     return () => {
       latestBatchTaskDetailsRequestIdRef.current += 1;
       window.clearInterval(timer);
     };
-  }, [loadBatchTaskDetails, selectedBatchTask]);
+  }, [
+    loadBatchTaskDetails,
+    selectedBatchTaskId,
+    selectedBatchTaskStatus,
+  ]);
 
   useEffect(() => {
     if (selectedBatchTask?.id === undefined || !hasActiveBatchRestoreDeadline) {
@@ -2403,11 +2825,45 @@ export const TasksPage = () => {
     previousSelectedBatchTaskIdRef.current = selectedBatchTask?.id;
     setBatchSentItemPage(1);
     setBatchPendingItemPage(1);
+    setBatchGeneratingItemPage(1);
+    setBatchDraftFailedItemPage(1);
+    setBatchFailedItemPage(1);
+    setBatchReviewItemPage(1);
   }, [
     selectedBatchTask?.id,
+    setBatchDraftFailedItemPage,
+    setBatchFailedItemPage,
+    setBatchGeneratingItemPage,
     setBatchPendingItemPage,
+    setBatchReviewItemPage,
     setBatchSentItemPage,
   ]);
+
+  useEffect(() => {
+    if (batchReviewItemId === null) {
+      return;
+    }
+    const itemIndex = batchReviewQueueItems.findIndex(
+      (item) => item.id === batchReviewItemId,
+    );
+    if (itemIndex >= 0) {
+      setBatchReviewItemPage(
+        Math.floor(itemIndex / batchReviewItemPageSize) + 1,
+      );
+    }
+  }, [
+    batchReviewItemId,
+    batchReviewItemPageSize,
+    batchReviewQueueItems,
+    setBatchReviewItemPage,
+  ]);
+
+  useEffect(() => {
+    setMatchJobItemStatusFilterState("all");
+    setMatchJobItemPage(1);
+    setSelectedMatchJobItems([]);
+    setMatchJobItemTotalCount(0);
+  }, [selectedMatchJob?.id, setMatchJobItemPage]);
 
   useEffect(() => {
     if (!selectedMatchJob) {
@@ -2423,6 +2879,13 @@ export const TasksPage = () => {
       window.clearInterval(timer);
     };
   }, [loadMatchJobDetails, selectedMatchJob]);
+
+  useEffect(() => {
+    setInformationEnrichmentItemStatusFilterState("all");
+    setInformationEnrichmentItemPage(1);
+    setSelectedInformationEnrichmentItems([]);
+    setInformationEnrichmentItemTotalCount(0);
+  }, [selectedInformationEnrichmentJob?.id, setInformationEnrichmentItemPage]);
 
   useEffect(() => {
     if (!selectedInformationEnrichmentJob) {
@@ -2445,14 +2908,19 @@ export const TasksPage = () => {
     }
     lastCrawlJobDetailsLoadErrorRef.current = null;
     void loadCrawlJobDetails(selectedCrawlJobId, { showLoading: true });
-    const timer = window.setInterval(() => {
-      void loadCrawlJobDetails(selectedCrawlJobId, { showLoading: false });
+    const summaryTimer = window.setInterval(() => {
+      void loadCrawlJobSummary(selectedCrawlJobId);
     }, CRAWL_DETAILS_REFRESH_INTERVAL_MS);
+    const contentTimer = window.setInterval(() => {
+      void loadCrawlJobDetails(selectedCrawlJobId, { showLoading: false });
+    }, CRAWL_DETAIL_CONTENT_REFRESH_INTERVAL_MS);
     return () => {
+      latestCrawlJobSummaryRequestIdRef.current += 1;
       latestCrawlJobDetailsRequestIdRef.current += 1;
-      window.clearInterval(timer);
+      window.clearInterval(summaryTimer);
+      window.clearInterval(contentTimer);
     };
-  }, [loadCrawlJobDetails, selectedCrawlJobId]);
+  }, [loadCrawlJobDetails, loadCrawlJobSummary, selectedCrawlJobId]);
 
   useEffect(() => {
     setSelectedCrawlCandidateIds((currentIds) =>
@@ -3797,6 +4265,7 @@ export const TasksPage = () => {
     latestMatchJobDetailsRequestIdRef.current += 1;
     setSelectedMatchJob(null);
     setSelectedMatchJobItems([]);
+    setMatchJobItemTotalCount(0);
     setMatchJobDetailsLoading(false);
     lastMatchJobDetailsLoadErrorRef.current = null;
   };
@@ -3902,10 +4371,10 @@ export const TasksPage = () => {
     const confirmed = await confirm({
       title: "确认重新发起这批老师？",
       description: [
-        "将自动切换到原任务身份，并带入原任务的模板内容和材料。",
+        "将自动切换到原任务身份，并优先沿用每位老师上次已审核或 AI 改写后的邮件。",
         `发信模板：${resendTemplateLabel}`,
         `写信方式：${resendGenerationModeLabel}`,
-        "模型使用当前已选择的模型，发送日期和时间窗口需要重新设置。进入创建页后仍可修改，最终以创建页编辑器中看到的内容为准。",
+        "当前模板和模型只用于没有可复用草稿的邮件；发送日期和时间窗口需要重新设置。",
       ].join("\n"),
       confirmLabel: "去创建新任务",
       cancelLabel: "继续选择",
@@ -3916,11 +4385,18 @@ export const TasksPage = () => {
     }
     setSelectedIdentityId(resendContext.task.identity_id);
     writeSelectedProfessorIdsForBatchTask(selectedResendProfessorIds);
+    const requiresRegeneration = resendContext.items.some(
+      (item) =>
+        item.professor_id !== null &&
+        selectedResendProfessorIds.includes(item.professor_id) &&
+        item.content_reuse_kind === "regenerate",
+    );
     writeBatchResendPrefillContext({
       sourceTaskId: resendContext.task.id,
       sourceTaskName: resendContext.task.name,
       identityId: resendContext.task.identity_id,
       professorIds: selectedResendProfessorIds,
+      requiresRegeneration,
       defaults: resendContext.defaults,
       warnings: resendContext.warnings,
     });
@@ -4336,9 +4812,16 @@ export const TasksPage = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
-                        待生成 {task.pending_generation_count}
-                      </span>
+                      {task.queued_generation_count > 0 ? (
+                        <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
+                          排队中 {task.queued_generation_count}
+                        </span>
+                      ) : null}
+                      {task.blocked_generation_count > 0 ? (
+                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                          需处理 {task.blocked_generation_count}
+                        </span>
+                      ) : null}
                       {task.generating_draft_count > 0 ? (
                         <span className="rounded-full bg-sky-50 px-2.5 py-1 text-xs text-sky-700">
                           生成中 {task.generating_draft_count}
@@ -4935,7 +5418,7 @@ export const TasksPage = () => {
                       ) : null}
                     </div>
                     <div className="mt-4 space-y-2">
-                      {batchReviewQueueItems.map((item) => {
+                      {visibleBatchReviewQueueItems.map((item) => {
                         const itemGeneratingDraft =
                           item.status === "generating_draft";
                         const itemAction = batchReviewItemActions[item.id] ?? null;
@@ -5002,6 +5485,19 @@ export const TasksPage = () => {
                         </div>
                       )})}
                     </div>
+                    <Pagination
+                      page={safeBatchReviewItemPage}
+                      pageSize={batchReviewItemPageSize}
+                      totalCount={batchReviewQueueItems.length}
+                      onChange={handleBatchReviewItemPaginationChange}
+                      ariaLabel="待审核草稿分页"
+                      pageSizeAriaLabel="待审核草稿每页数量"
+                      variant="compact"
+                      pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                      unitLabel="封"
+                      itemLabel="封草稿"
+                      className="mt-4 border-t border-stone-200 pt-3"
+                    />
                   </aside>
 
                   <section className="min-w-0 rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
@@ -5582,7 +6078,7 @@ export const TasksPage = () => {
                     正在生成草稿
                   </h3>
                   <div className="mt-3 space-y-2">
-                    {generatingDraftBatchTaskItems.map((item) => (
+                    {visibleGeneratingDraftBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-sky-100 bg-sky-50/50 px-4 py-3"
@@ -5612,6 +6108,19 @@ export const TasksPage = () => {
                       </div>
                     ))}
                   </div>
+                  <Pagination
+                    page={safeBatchGeneratingItemPage}
+                    pageSize={batchGeneratingItemPageSize}
+                    totalCount={generatingDraftBatchTaskItems.length}
+                    onChange={handleBatchGeneratingItemPaginationChange}
+                    ariaLabel="正在生成草稿分页"
+                    pageSizeAriaLabel="正在生成草稿每页数量"
+                    variant="compact"
+                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                    unitLabel="封"
+                    itemLabel="封草稿"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
                 </section>
               ) : null}
 
@@ -5621,7 +6130,7 @@ export const TasksPage = () => {
                     草稿生成失败
                   </h3>
                   <div className="mt-3 space-y-2">
-                    {draftFailedBatchTaskItems.map((item) => (
+                    {visibleDraftFailedBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
@@ -5643,6 +6152,19 @@ export const TasksPage = () => {
                       </div>
                     ))}
                   </div>
+                  <Pagination
+                    page={safeBatchDraftFailedItemPage}
+                    pageSize={batchDraftFailedItemPageSize}
+                    totalCount={draftFailedBatchTaskItems.length}
+                    onChange={handleBatchDraftFailedItemPaginationChange}
+                    ariaLabel="草稿生成失败分页"
+                    pageSizeAriaLabel="草稿生成失败每页数量"
+                    variant="compact"
+                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                    unitLabel="封"
+                    itemLabel="封草稿"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
                 </section>
               ) : null}
 
@@ -5652,7 +6174,7 @@ export const TasksPage = () => {
                     发送失败
                   </h3>
                   <div className="mt-3 space-y-2">
-                    {failedBatchTaskItems.map((item) => (
+                    {visibleFailedBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
@@ -5669,6 +6191,19 @@ export const TasksPage = () => {
                       </div>
                     ))}
                   </div>
+                  <Pagination
+                    page={safeBatchFailedItemPage}
+                    pageSize={batchFailedItemPageSize}
+                    totalCount={failedBatchTaskItems.length}
+                    onChange={handleBatchFailedItemPaginationChange}
+                    ariaLabel="发送失败分页"
+                    pageSizeAriaLabel="发送失败每页数量"
+                    variant="compact"
+                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                    unitLabel="封"
+                    itemLabel="封邮件"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
                 </section>
               ) : null}
 
@@ -5835,70 +6370,78 @@ export const TasksPage = () => {
                       )}
                     </NativeSelectField>
                     <span className="text-xs tabular-nums text-stone-500">
-                      {filteredMatchJobItems.length} / {selectedMatchJobItems.length} 位
+                      {matchJobItemTotalCount} / {selectedMatchJob.target_count + selectedMatchJob.skipped_count} 位
                     </span>
                   </div>
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="min-w-[960px] divide-y divide-stone-200 text-sm">
+                  <table className="w-full min-w-max table-auto divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
                       <tr>
                         <th className="px-4 py-3 align-middle">导师</th>
                         <th className="px-4 py-3 align-middle">状态</th>
                         <th className="px-4 py-3 align-middle">匹配分</th>
                         <th className="px-4 py-3 align-middle">说明</th>
-                        <th className="w-44 px-3 py-3 align-middle">Token 明细</th>
+                        <th className="px-3 py-3 align-middle">Token 明细</th>
                         <th className="px-4 py-3 align-middle">更新时间</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {filteredMatchJobItems.length > 0 ? (
-                        visibleMatchJobItems.map((item) => (
-                          <tr key={item.id}>
-                            <td className="px-4 py-3 align-middle">
-                              <div className="font-medium text-stone-900">
-                                {item.professor_name}
-                              </div>
-                              <div className="mt-1 text-xs text-stone-500">
-                                {[
-                                  item.professor_title,
-                                  item.professor_university,
-                                  item.professor_school,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" / ") || "暂无补充信息"}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-center align-middle">
-                              <span
-                                className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_ITEM_STATUS_TONES[item.status]}`}
-                              >
-                                {MATCH_ANALYSIS_ITEM_STATUS_LABELS[item.status]}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center align-middle tabular-nums">
-                              {item.match_score ?? "未生成"}
-                            </td>
-                            <td className="px-4 py-3 align-middle">
-                              {item.error_message || item.skip_reason || "已完成"}
-                            </td>
-                            <td className="w-44 px-3 py-3 text-center align-middle">
-                              <TokenUsageBreakdown
-                                inputTokens={item.prompt_tokens}
-                                outputTokens={item.completion_tokens}
-                                cachedTokens={item.cached_tokens}
-                                totalTokens={item.total_tokens}
-                                ariaLabel={`${item.professor_name} Token 使用明细`}
-                                compactLayout="tight"
-                                className="text-left"
-                              />
-                            </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-center align-middle tabular-nums">
-                              {formatDisplayTime(item.updated_at, { withSeconds: true })}
-                            </td>
-                          </tr>
-                        ))
+                      {selectedMatchJobItems.length > 0 ? (
+                        selectedMatchJobItems.map((item) => {
+                          const professorDetails = [
+                            item.professor_title,
+                            item.professor_university,
+                            item.professor_school,
+                          ]
+                            .filter(Boolean)
+                            .join(" / ");
+
+                          return (
+                            <tr key={item.id}>
+                              <td className="px-4 py-3 align-middle">
+                                <div className="max-w-56 break-words font-medium text-stone-900">
+                                  {item.professor_name}
+                                </div>
+                                {professorDetails ? (
+                                  <div className="mt-1 max-w-56 break-words text-xs text-stone-500">
+                                    {professorDetails}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-4 py-3 text-center align-middle">
+                                <span
+                                  className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_ITEM_STATUS_TONES[item.status]}`}
+                                >
+                                  {MATCH_ANALYSIS_ITEM_STATUS_LABELS[item.status]}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-center align-middle tabular-nums">
+                                {item.match_score ?? "未生成"}
+                              </td>
+                              <td className="px-4 py-3 text-center align-middle">
+                                <div className="max-w-[22rem] break-words">
+                                  {item.error_message || item.skip_reason || "已完成"}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-center align-middle">
+                                <TokenUsageBreakdown
+                                  inputTokens={item.prompt_tokens}
+                                  outputTokens={item.completion_tokens}
+                                  cachedTokens={item.cached_tokens}
+                                  totalTokens={item.total_tokens}
+                                  ariaLabel={`${item.professor_name} Token 使用明细`}
+                                  compactLayout="tight"
+                                  className="text-left"
+                                />
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-3 text-center align-middle tabular-nums">
+                                {formatDisplayTime(item.updated_at, { withSeconds: true })}
+                              </td>
+                            </tr>
+                          );
+                        })
                       ) : (
                         <tr>
                           <td
@@ -5917,8 +6460,8 @@ export const TasksPage = () => {
                 <Pagination
                   page={matchJobItemPage}
                   pageSize={matchJobItemPageSize}
-                  totalCount={filteredMatchJobItems.length}
-                  onChange={setMatchJobItemPagination}
+                  totalCount={matchJobItemTotalCount}
+                  onChange={handleMatchJobItemPaginationChange}
                   ariaLabel="匹配分析导师明细分页"
                   pageSizeAriaLabel="匹配分析导师明细每页数量"
                   variant="compact"
@@ -6077,29 +6620,29 @@ export const TasksPage = () => {
                       )}
                     </NativeSelectField>
                     <span className="text-xs tabular-nums text-stone-500">
-                      {filteredInformationEnrichmentItems.length} /{" "}
-                      {selectedInformationEnrichmentItems.length} 位
+                      {informationEnrichmentItemTotalCount} /{" "}
+                      {selectedInformationEnrichmentJob.target_count} 位
                     </span>
                   </div>
                 </div>
 
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="min-w-[960px] divide-y divide-stone-200 text-sm">
+                  <table className="w-full min-w-max table-auto divide-y divide-stone-200 text-sm">
                     <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
                       <tr>
                         <th className="px-4 py-3 align-middle">导师</th>
                         <th className="px-4 py-3 align-middle">状态</th>
                         <th className="px-4 py-3 align-middle">补全字段</th>
                         <th className="px-4 py-3 align-middle">说明</th>
-                        <th className="w-44 px-3 py-3 align-middle">
+                        <th className="px-3 py-3 align-middle">
                           Token 明细 / 尝试
                         </th>
                         <th className="px-4 py-3 align-middle">主页 / 完成时间</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {filteredInformationEnrichmentItems.length > 0 ? (
-                        visibleInformationEnrichmentItems.map((item) => {
+                      {selectedInformationEnrichmentItems.length > 0 ? (
+                        selectedInformationEnrichmentItems.map((item) => {
                           const itemMessage =
                             item.error_message ||
                             item.skip_reason ||
@@ -6112,13 +6655,13 @@ export const TasksPage = () => {
                           return (
                             <tr key={item.id}>
                               <td className="px-4 py-3 align-middle">
-                                <div className="font-medium text-stone-900">
+                                <div className="max-w-64 break-words font-medium text-stone-900">
                                   {item.professor_name}
                                 </div>
-                                <div className="mt-1 text-xs leading-5 text-stone-500">
+                                <div className="mt-1 max-w-64 break-words text-xs leading-5 text-stone-500">
                                   {item.professor_email || "暂无邮箱"}
                                 </div>
-                                <div className="text-xs leading-5 text-stone-500">
+                                <div className="max-w-64 break-words text-xs leading-5 text-stone-500">
                                   {[
                                     item.professor_title,
                                     item.professor_school,
@@ -6151,16 +6694,16 @@ export const TasksPage = () => {
                                   <span className="text-stone-400">--</span>
                                 )}
                               </td>
-                              <td className="max-w-64 px-4 py-3 align-middle">
+                              <td className="px-4 py-3 text-center align-middle">
                                 <div
-                                  className={`whitespace-pre-wrap break-words leading-6 ${
+                                  className={`mx-auto max-w-[22rem] whitespace-pre-wrap break-words leading-6 ${
                                     item.error_message ? "text-red-700" : "text-stone-700"
                                   }`}
                                 >
                                   {itemMessage}
                                 </div>
                               </td>
-                              <td className="w-44 px-3 py-3 text-center align-middle">
+                              <td className="px-3 py-3 text-center align-middle">
                                 <TokenUsageBreakdown
                                   inputTokens={item.input_tokens}
                                   outputTokens={item.output_tokens}
@@ -6174,7 +6717,7 @@ export const TasksPage = () => {
                                   尝试 {item.attempt_count} 次
                                 </div>
                               </td>
-                              <td className="max-w-64 px-4 py-3 text-center align-middle">
+                              <td className="px-4 py-3 text-center align-middle">
                                 <div className="mx-auto max-w-56 truncate">
                                   {renderCandidateExternalUrl(item.profile_url)}
                                 </div>
@@ -6193,7 +6736,7 @@ export const TasksPage = () => {
                             colSpan={6}
                             className="px-4 py-6 text-center text-sm text-stone-500"
                           >
-                            {selectedInformationEnrichmentItems.length > 0
+                            {selectedInformationEnrichmentJob.target_count > 0
                               ? "当前状态下暂无导师。"
                               : "暂无任务明细。"}
                           </td>
@@ -6205,8 +6748,8 @@ export const TasksPage = () => {
                 <Pagination
                   page={informationEnrichmentItemPage}
                   pageSize={informationEnrichmentItemPageSize}
-                  totalCount={filteredInformationEnrichmentItems.length}
-                  onChange={setInformationEnrichmentItemPagination}
+                  totalCount={informationEnrichmentItemTotalCount}
+                  onChange={handleInformationEnrichmentItemPaginationChange}
                   ariaLabel="信息补全导师明细分页"
                   pageSizeAriaLabel="信息补全导师明细每页数量"
                   variant="compact"
@@ -6354,29 +6897,37 @@ export const TasksPage = () => {
                     执行日志
                   </h3>
                   <div
-                    className="mt-3 flex-1 space-y-3"
+                    className="mt-3 flex-1 space-y-2"
                     data-monitor-section-list
                   >
-                    {crawlJobEvents.length > 0 ? (
+                    {crawlExecutionLogEvents.length > 0 ? (
                       visibleCrawlJobEvents.map((event) => {
                         const failureReason = getCrawlEventFailureReason(event);
                         return (
-                          <div key={event.id} className="flex gap-3">
+                          <div key={event.id} className="flex h-[76px] gap-3">
                             <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                            <div className="min-w-0 flex-1 rounded-2xl border border-stone-100 px-4 py-3">
-                              <p className="text-sm text-stone-800">
+                            <div className="flex h-full min-w-0 flex-1 flex-col justify-between rounded-2xl border border-stone-100 px-4 py-3">
+                              <p
+                                className="truncate text-sm text-stone-800"
+                                title={event.message}
+                              >
                                 {event.message}
                               </p>
-                              {failureReason ? (
-                                <p className="mt-2 text-xs leading-5 text-red-700">
-                                  失败原因：{failureReason}
+                              <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
+                                {failureReason ? (
+                                  <p
+                                    className="min-w-0 flex-1 truncate text-xs text-red-700"
+                                    title={`失败原因：${failureReason}`}
+                                  >
+                                    失败原因：{failureReason}
+                                  </p>
+                                ) : null}
+                                <p className="shrink-0 text-xs text-stone-500">
+                                  {formatDisplayTime(event.created_at, {
+                                    withSeconds: true,
+                                  })}
                                 </p>
-                              ) : null}
-                              <p className="mt-1 text-xs text-stone-500">
-                                {formatDisplayTime(event.created_at, {
-                                  withSeconds: true,
-                                })}
-                              </p>
+                              </div>
                             </div>
                           </div>
                         );
@@ -6390,7 +6941,7 @@ export const TasksPage = () => {
                   <Pagination
                     page={safeCrawlEventPage}
                     pageSize={crawlEventPageSize}
-                    totalCount={crawlJobEvents.length}
+                    totalCount={crawlExecutionLogEvents.length}
                     onChange={handleCrawlEventPaginationChange}
                     ariaLabel="抓取执行日志分页"
                     pageSizeAriaLabel="抓取执行日志每页数量"
@@ -6422,14 +6973,23 @@ export const TasksPage = () => {
                       visibleCrawlJobPages.map((page) => (
                         <div
                           key={page.id}
-                          className="rounded-2xl border border-stone-100 px-4 py-3"
+                          className="flex h-[76px] min-w-0 flex-col justify-between rounded-2xl border border-stone-100 px-4 py-3"
                         >
-                          <p className="text-sm font-medium text-stone-800">
+                          <p
+                            className="truncate text-sm font-medium text-stone-800"
+                            title={page.title ?? page.url}
+                          >
                             {page.title ?? page.url}
                           </p>
-                          <p className="mt-1 break-all text-xs text-stone-500">
+                          <a
+                            href={page.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 block truncate text-xs text-primary underline decoration-primary/30 underline-offset-2 transition-colors hover:text-primary-dark hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-1"
+                            title={page.url}
+                          >
                             {page.url}
-                          </p>
+                          </a>
                         </div>
                       ))
                     ) : (

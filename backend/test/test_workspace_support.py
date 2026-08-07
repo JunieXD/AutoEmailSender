@@ -188,6 +188,66 @@ class WorkspaceSupportTest(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), ["当前身份收到"])
 
+    def test_failed_send_attempt_stays_uncontacted_and_is_labeled_in_workspace(self) -> None:
+        async def scenario():
+            async with self.session_factory() as session:
+                now = datetime.now(UTC)
+                identity = self._identity("workspace-failed@example.com")
+                llm_profile = self._llm_profile("workspace-failed-llm")
+                professor = Professor(name="失败发送老师", email="failed@example.edu")
+                session.add_all([identity, llm_profile, professor])
+                await session.flush()
+                task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm_profile.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.MATCHED.value,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(task)
+                await session.flush()
+                session.add(
+                    EmailLog(
+                        email_task_id=task.id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        professor_id=professor.id,
+                        direction=EmailDirection.SENT.value,
+                        subject="失败的发送尝试",
+                        content="老师您好",
+                        failure_summary="SMTP 连接中断",
+                        created_at=now,
+                    ),
+                )
+                await session.commit()
+
+                dashboard_items = await list_professors(
+                    identity_id=identity.id,
+                    ids=None,
+                    session=session,
+                )
+                thread = await build_workspace_thread(
+                    session,
+                    professor_id=professor.id,
+                    identity_id=identity.id,
+                    llm_profile_id=llm_profile.id,
+                )
+                dashboard_item = next(
+                    item for item in dashboard_items if item.id == professor.id
+                )
+                message = next(
+                    item for item in thread.messages if item.direction == EmailDirection.SENT.value
+                )
+                return dashboard_item, message
+
+        dashboard_item, message = self._run_async(scenario())
+
+        self.assertEqual(dashboard_item.sent_count, 0)
+        self.assertEqual(dashboard_item.status, "preparing")
+        self.assertEqual(message.delivery_status, "failed")
+        self.assertEqual(message.failure_summary, "SMTP 连接中断")
+
     def test_workspace_uses_shared_source_result_without_overwriting_task_snapshot(self) -> None:
         async def scenario():
             async with self.session_factory() as session:

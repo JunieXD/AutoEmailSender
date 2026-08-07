@@ -61,6 +61,13 @@ class MatchAnalysisJobItemRead(ApiSchema):
     updated_at: datetime
 
 
+class MatchAnalysisJobItemsPageRead(ApiSchema):
+    items: list[MatchAnalysisJobItemRead]
+    total_count: int
+    next_cursor: int | None
+    has_more: bool
+
+
 class MatchAnalysisJobActionResponse(ApiSchema):
     ok: bool
     job: MatchAnalysisJobRead

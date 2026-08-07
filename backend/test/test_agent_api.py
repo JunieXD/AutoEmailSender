@@ -3983,7 +3983,11 @@ class AgentApiTests(unittest.TestCase):
             connection.execute(
                 """
                 UPDATE email_tasks
-                SET status = 'generating_draft', draft_generation_previous_status = 'discovered'
+                SET status = 'generating_draft',
+                    draft_generation_previous_status = 'discovered',
+                    draft_claim_id = 'agent-pause-claim',
+                    draft_claimed_at = CURRENT_TIMESTAMP,
+                    draft_lease_expires_at = datetime(CURRENT_TIMESTAMP, '+90 seconds')
                 WHERE id = ?
                 """,
                 (item_id,),
@@ -4005,6 +4009,16 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(paused.json()["generating_draft_count"], 0)
         self.assertEqual(paused.json()["pending_generation_count"], 1)
         cancel_generation.assert_called_once()
+        with sqlite3.connect(self.db_path) as connection:
+            claim_state = connection.execute(
+                """
+                SELECT draft_claim_id, draft_claimed_at, draft_lease_expires_at
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        self.assertEqual(claim_state, (None, None, None))
 
         removed = self.client.post(
             f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/remove",

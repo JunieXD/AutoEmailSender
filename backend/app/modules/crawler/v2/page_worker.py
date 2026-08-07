@@ -37,6 +37,8 @@ from .routing import (
 from .retry import mark_crawler_v2_failed
 from .token_usage import record_crawler_v2_token_usage
 from .scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON, ensure_job_active
+from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from .models import CrawlerV2WorkKind
 from .url_utils import has_spa_route_fragment
 from app.modules.llm.public import ensure_llm_runtime_adaptation, format_llm_runtime_error_for_user
 
@@ -122,6 +124,16 @@ async def run_crawler_v2_page_worker_once(
                     snapshot = browser_snapshot
                     fetch_mode = "browser"
         async with session_factory() as session:
+            if not await fence_crawler_v2_claim(
+                session,
+                CrawlerV2ClaimFence(
+                    kind=CrawlerV2WorkKind.PAGE,
+                    work_item_id=task_id,
+                    worker_id=worker_id,
+                ),
+            ):
+                await session.rollback()
+                return 0
             if not await ensure_job_active(session, task.job_id):
                 return 0
             task = await session.get(CrawlPageTask, task_id)
@@ -229,6 +241,11 @@ async def run_crawler_v2_page_worker_once(
                         output_tokens=routing_result.usage.get("output_tokens") or 0,
                         cached_tokens=routing_result.usage.get("cached_tokens") or 0,
                         raw_usage=dict(routing_result.usage),
+                        claim=CrawlerV2ClaimFence(
+                            kind=CrawlerV2WorkKind.PAGE,
+                            work_item_id=task_id,
+                            worker_id=worker_id,
+                        ),
                     )
                 for attempt in routing_result.attempts:
                     append_crawler_v2_debug_event(
@@ -294,6 +311,7 @@ async def run_crawler_v2_page_worker_once(
                 chunk_result = await _create_chunks_for_page_snapshot(
                     session_factory,
                     task_id=task_id,
+                    worker_id=worker_id,
                     page_id=page_id,
                     snapshot=snapshot,
                 )
@@ -301,6 +319,7 @@ async def run_crawler_v2_page_worker_once(
                     chunk_result += await _create_chunks_for_page_snapshot(
                         session_factory,
                         task_id=task_id,
+                        worker_id=worker_id,
                         page_id=page_id,
                         snapshot=interactive_snapshot,
                     )
@@ -516,6 +535,16 @@ async def _complete_list_page_routing(
     routing_result: V2PageRoutingResult,
 ) -> dict[str, int | bool | str]:
     async with session_factory() as session:
+        if not await fence_crawler_v2_claim(
+            session,
+            CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
+        ):
+            await session.rollback()
+            return {"status": "not_claimed", "queued_count": 0}
         task = await session.get(CrawlPageTask, task_id)
         if task is None or not _page_task_owned_by_worker(task, worker_id):
             return {"status": "not_claimed", "queued_count": 0}
@@ -614,6 +643,16 @@ async def _mark_list_page_routing_failed(
     error_message: str,
 ) -> dict[str, int | str]:
     async with session_factory() as session:
+        if not await fence_crawler_v2_claim(
+            session,
+            CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
+        ):
+            await session.rollback()
+            return {"status": "not_claimed", "queued_count": 0}
         task = await session.get(CrawlPageTask, task_id)
         if task is None or not _page_task_owned_by_worker(task, worker_id):
             return {"status": "not_claimed", "queued_count": 0}
@@ -635,6 +674,16 @@ async def _extract_profile_for_page_snapshot(
     snapshot: PageSnapshot,
 ) -> None:
     async with session_factory() as session:
+        if not await fence_crawler_v2_claim(
+            session,
+            CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
+        ):
+            await session.rollback()
+            return
         task = await session.get(CrawlPageTask, task_id)
         if task is None or not _page_task_owned_by_worker(task, worker_id):
             return
@@ -713,6 +762,11 @@ async def _extract_profile_for_page_snapshot(
             output_tokens=result.usage.get("output_tokens") or 0,
             cached_tokens=result.usage.get("cached_tokens") or 0,
             raw_usage=dict(result.usage),
+            claim=CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
         )
     await _complete_profile_page_extraction(
         session_factory,
@@ -762,6 +816,16 @@ async def _complete_profile_page_extraction(
     start_url: str,
 ) -> None:
     async with session_factory() as session:
+        if not await fence_crawler_v2_claim(
+            session,
+            CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
+        ):
+            await session.rollback()
+            return
         task = await session.get(CrawlPageTask, task_id)
         if task is None or not _page_task_owned_by_worker(task, worker_id):
             return
@@ -800,12 +864,27 @@ async def _complete_profile_page_extraction(
         school=school,
         session_factory=session_factory,
         entry_type="profile",
+        claim_fence=CrawlerV2ClaimFence(
+            kind=CrawlerV2WorkKind.PAGE,
+            work_item_id=task_id,
+            worker_id=worker_id,
+        ),
     )
     save_result = await save_candidate_payloads_shared(
         ctx,
         [ProfessorCandidatePayload.model_validate(candidate_data)],
     )
     async with session_factory() as session:
+        if not await fence_crawler_v2_claim(
+            session,
+            CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
+        ):
+            await session.rollback()
+            return
         task = await session.get(CrawlPageTask, task_id)
         if task is None or not _page_task_owned_by_worker(task, worker_id):
             return
@@ -828,6 +907,7 @@ async def _create_chunks_for_page_snapshot(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     task_id: int,
+    worker_id: str,
     page_id: int | None,
     snapshot: PageSnapshot,
 ) -> int:
@@ -850,6 +930,11 @@ async def _create_chunks_for_page_snapshot(
         job_id=job_id,
         page_id=page_id,
         drafts=drafts,
+        claim_fence=CrawlerV2ClaimFence(
+            kind=CrawlerV2WorkKind.PAGE,
+            work_item_id=task_id,
+            worker_id=worker_id,
+        ),
     )
 
 

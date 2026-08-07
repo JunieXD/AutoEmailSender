@@ -2871,7 +2871,6 @@ class CliTests(unittest.TestCase):
             "crawler_worker_count": 1,
             "crawler_profile_enrichment_concurrency": 2,
             "crawler_host_concurrency": 1,
-            "crawler_agent_max_chunks_per_run": 2,
             "draft_max_tokens": 4096,
             "batch_draft_generation_concurrency": 2,
             "draft_rewrite_intensity": "moderate",

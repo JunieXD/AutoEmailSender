@@ -17,17 +17,17 @@ async def get_or_create_app_settings(session: AsyncSession) -> AppSetting:
     if settings:
         return settings
 
-    app_settings = AppSetting(id=1)
-    session.add(app_settings)
     try:
-        await session.flush()
-        return app_settings
+        async with session.begin_nested():
+            app_settings = AppSetting(id=1)
+            session.add(app_settings)
+            await session.flush()
     except IntegrityError:
-        await session.rollback()
         settings = await session.scalar(select(AppSetting).where(AppSetting.id == 1))
         if settings:
             return settings
         raise
+    return app_settings
 
 
 def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
@@ -38,7 +38,6 @@ def serialize_runtime_settings(settings: AppSetting) -> RuntimeSettingsRead:
         crawler_worker_count=settings.crawler_worker_count,
         crawler_profile_enrichment_concurrency=settings.crawler_profile_enrichment_concurrency,
         crawler_host_concurrency=settings.crawler_host_concurrency,
-        crawler_agent_max_chunks_per_run=settings.crawler_agent_max_chunks_per_run,
         draft_max_tokens=settings.draft_max_tokens,
         batch_draft_generation_concurrency=settings.batch_draft_generation_concurrency,
         draft_rewrite_intensity=settings.draft_rewrite_intensity,

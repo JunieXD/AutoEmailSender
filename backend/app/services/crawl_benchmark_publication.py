@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from openpyxl import load_workbook
 
 
-PUBLICATION_SCHEMA_VERSION = 2
+PUBLICATION_SCHEMA_VERSION = 3
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TARGET_ALIASES_PATH = REPOSITORY_ROOT / "config" / "crawl-benchmark-aliases.json"
 PUBLIC_COMPLETE_STATUSES = {"needs_review", "partially_completed", "completed"}
@@ -150,7 +150,6 @@ def _load_database_records_from_connection(
             job.school,
             job.start_url,
             job.entry_type,
-            job.runtime_version,
             job.status,
             {app_version_expression} AS app_version,
             COALESCE(usage_models.model_names, llm_profiles.model_name) AS model_name,
@@ -236,7 +235,6 @@ def _database_row_to_public_record(row: Mapping[str, Any]) -> dict[str, object] 
         "entryType": _normalize_entry_type(row["entry_type"]),
         "testedAt": _normalize_datetime(row["tested_at"]),
         "appVersion": _normalize_version(row["app_version"]),
-        "runtimeVersion": _nullable_clean_text(row["runtime_version"]),
         "modelName": _nullable_clean_text(row["model_name"]),
         "publicStatus": public_status,
         "candidateCount": candidate_count,
@@ -333,7 +331,6 @@ def _legacy_row_to_public_record(
         "entryType": _normalize_entry_type(values["entry_type"]),
         "testedAt": None,
         "appVersion": _normalize_version(values["app_version"]),
-        "runtimeVersion": None,
         "modelName": _nullable_clean_text(values["model_name"]),
         "publicStatus": "verified" if candidate_count > 0 else "adapting",
         "candidateCount": candidate_count,
@@ -426,7 +423,6 @@ def _sanitize_existing_legacy_record(
         "entryType": _normalize_entry_type(record.get("entryType")),
         "testedAt": _normalize_datetime(record.get("testedAt")),
         "appVersion": _normalize_version(record.get("appVersion")),
-        "runtimeVersion": _nullable_clean_text(record.get("runtimeVersion")),
         "modelName": _nullable_clean_text(record.get("modelName")),
         "publicStatus": "verified" if candidate_count > 0 else "adapting",
         "candidateCount": candidate_count,
@@ -505,7 +501,6 @@ def _sanitize_existing_database_record(
         "entryType": _normalize_entry_type(record.get("entryType")),
         "testedAt": _normalize_datetime(record.get("testedAt")),
         "appVersion": _normalize_version(record.get("appVersion")),
-        "runtimeVersion": _nullable_clean_text(record.get("runtimeVersion")),
         "modelName": _nullable_clean_text(record.get("modelName")),
         "publicStatus": "verified" if candidate_count > 0 else "adapting",
         "candidateCount": candidate_count,

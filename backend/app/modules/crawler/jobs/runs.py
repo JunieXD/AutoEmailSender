@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import datetime
 
 from app.core.schema_metadata import get_current_app_version
@@ -10,25 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CrawlJob, CrawlJobRun, CrawlJobStatus
-
-
-USAGE_METADATA_PATTERN = re.compile(
-    r"usage_metadata=\{'input_tokens':\s*(?P<input>\d+),\s*"
-    r"'output_tokens':\s*(?P<output>\d+),.*?'total_tokens':\s*(?P<total>\d+)",
-)
-TOKEN_USAGE_PATTERN = re.compile(
-    r"'token_usage':\s*\{'completion_tokens':\s*(?P<output>\d+),\s*"
-    r"'prompt_tokens':\s*(?P<input>\d+),.*?'total_tokens':\s*(?P<total>\d+)",
-)
-CACHED_TOKEN_PATTERNS = (
-    re.compile(r"['\"]prompt_cache_hit_tokens['\"]:\s*(?P<cached>\d+)"),
-    re.compile(
-        r"['\"](?:prompt_tokens_details|input_tokens_details|input_token_details)['\"]"
-        r":\s*\{[^{}]*(?:['\"]cached_tokens['\"]|['\"]cache_read['\"]):\s*(?P<cached>\d+)"
-    ),
-    re.compile(r"['\"]cached_tokens['\"]:\s*(?P<cached>\d+)"),
-    re.compile(r"['\"]cache_read['\"]:\s*(?P<cached>\d+)"),
-)
 
 
 async def create_initial_crawl_job_run(
@@ -100,7 +80,8 @@ async def mark_crawl_job_run_running(
     run.status = CrawlJobStatus.RUNNING.value
     if run.started_at is None:
         run.started_at = resolved_now
-    run.active_started_at = resolved_now
+    if run.active_started_at is None:
+        run.active_started_at = resolved_now
     run.updated_at = resolved_now
     return run
 
@@ -128,6 +109,8 @@ async def mark_crawl_job_run_queued(
 ) -> CrawlJobRun:
     resolved_now = as_utc_aware(now) if now is not None else utc_now()
     run = await get_or_create_current_crawl_job_run(session, job, now=resolved_now)
+    if run.active_started_at is not None:
+        _settle_active_segment(run, now=resolved_now)
     run.status = CrawlJobStatus.QUEUED.value
     run.updated_at = resolved_now
     return run
@@ -149,46 +132,6 @@ async def mark_crawl_job_run_finished(
     run.error_message = error_message
     run.updated_at = resolved_now
     return run
-
-
-async def accumulate_crawl_job_run_tokens(
-    session: AsyncSession,
-    job_id: int,
-    event: dict[str, object],
-) -> bool:
-    usage = extract_token_usage(event)
-    if usage is None:
-        return False
-
-    job = await session.get(CrawlJob, job_id)
-    if job is None:
-        return False
-    run = await get_or_create_current_crawl_job_run(session, job)
-    run.input_tokens += usage["input_tokens"]
-    run.output_tokens += usage["output_tokens"]
-    run.total_tokens += usage["total_tokens"]
-    cached_tokens = usage.get("cached_tokens")
-    if cached_tokens is not None:
-        run.cached_tokens = (run.cached_tokens or 0) + cached_tokens
-    run.updated_at = utc_now()
-    return True
-
-
-def extract_token_usage(event: dict[str, object]) -> dict[str, int | None] | None:
-    haystack = _stringify_trace_payload(event)
-    for pattern in (USAGE_METADATA_PATTERN, TOKEN_USAGE_PATTERN):
-        match = pattern.search(haystack)
-        if match:
-            usage = {
-                "input_tokens": int(match.group("input")),
-                "output_tokens": int(match.group("output")),
-                "total_tokens": int(match.group("total")),
-            }
-            cached_tokens = _extract_cached_tokens(haystack)
-            if cached_tokens is not None:
-                usage["cached_tokens"] = cached_tokens
-            return usage
-    return None
 
 
 def extract_token_usage_from_llm_response(response: object) -> dict[str, int | None] | None:
@@ -283,14 +226,6 @@ def _extract_cached_tokens_from_mapping(value: object) -> int | None:
     return None
 
 
-def _extract_cached_tokens(haystack: str) -> int | None:
-    for pattern in CACHED_TOKEN_PATTERNS:
-        match = pattern.search(haystack)
-        if match:
-            return int(match.group("cached"))
-    return None
-
-
 def _settle_active_segment(run: CrawlJobRun, *, now: datetime) -> None:
     active_started_at = as_utc_aware(run.active_started_at) if isinstance(run.active_started_at, datetime) else None
     if active_started_at is None:
@@ -298,17 +233,3 @@ def _settle_active_segment(run: CrawlJobRun, *, now: datetime) -> None:
     resolved_now = as_utc_aware(now)
     run.active_seconds += max(0, int((resolved_now - active_started_at).total_seconds()))
     run.active_started_at = None
-
-
-def _stringify_trace_payload(event: dict[str, object]) -> str:
-    parts: list[str] = []
-    for key in ("message", "summary"):
-        value = event.get(key)
-        if isinstance(value, str):
-            parts.append(value)
-    raw = event.get("raw")
-    if raw is not None:
-        parts.append(str(raw))
-    else:
-        parts.append(str(event))
-    return "\n".join(parts)

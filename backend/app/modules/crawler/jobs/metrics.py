@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
 
 from app.models import CrawlJobStatus
-from .runs import extract_token_usage
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,37 +20,9 @@ class CrawlJobMetrics:
 
 def build_crawl_job_metrics(job: Any, *, now: datetime | None = None) -> CrawlJobMetrics:
     current_run = getattr(job, "current_run", None)
-    if current_run is not None:
-        return _build_current_run_metrics(current_run, now=now)
-
-    trace_events = _normalize_trace(getattr(job, "agent_trace", None))
-    input_tokens = 0
-    output_tokens = 0
-    cached_tokens = 0
-    total_tokens = 0
-
-    for event in trace_events:
-        usage = extract_token_usage(event)
-        if usage is None:
-            continue
-        input_tokens += usage["input_tokens"]
-        output_tokens += usage["output_tokens"]
-        cached_tokens += usage.get("cached_tokens") or 0
-        total_tokens += usage["total_tokens"]
-
-    created_at = _ensure_datetime(getattr(job, "created_at", None))
-    updated_at = _ensure_datetime(getattr(job, "updated_at", None))
-    duration_seconds = 0
-    if created_at is not None and updated_at is not None:
-        duration_seconds = max(0, int((updated_at - created_at).total_seconds()))
-
-    return CrawlJobMetrics(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cached_tokens=cached_tokens,
-        total_tokens=total_tokens,
-        duration_seconds=duration_seconds,
-    )
+    if current_run is None:
+        return CrawlJobMetrics()
+    return _build_current_run_metrics(current_run, now=now)
 
 
 def _build_current_run_metrics(current_run: Any, *, now: datetime | None) -> CrawlJobMetrics:
@@ -71,16 +42,9 @@ def _build_current_run_metrics(current_run: Any, *, now: datetime | None) -> Cra
     )
 
 
-def _normalize_trace(value: Any) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
 def _ensure_datetime(value: object) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     if value.tzinfo is None:
         return as_utc_aware(value)
     return value
-

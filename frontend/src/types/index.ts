@@ -301,6 +301,13 @@ export interface CrawlJobSummaryDTO extends CrawlJobDTO {
   duration_seconds: number;
 }
 
+export interface CrawlJobDetailsDTO {
+  job: CrawlJobSummaryDTO;
+  pages: CrawlPageDTO[];
+  candidates: CrawlCandidateDTO[];
+  events: CrawlJobEventDTO[];
+}
+
 export interface CrawlPageDTO {
   id: number;
   job_id: number;
@@ -399,6 +406,7 @@ export interface CreateBatchTaskRequestDTO {
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
   outreach_template_id?: number | null;
+  resend_source_batch_task_id?: number | null;
 }
 
 export type MatchAnalysisJobStatus =
@@ -470,6 +478,13 @@ export interface MatchAnalysisJobItemDTO {
   started_at: string | null;
   finished_at: string | null;
   updated_at: string;
+}
+
+export interface MatchAnalysisJobItemsPageDTO {
+  items: MatchAnalysisJobItemDTO[];
+  total_count: number;
+  next_cursor: number | null;
+  has_more: boolean;
 }
 
 export const MATCH_ANALYSIS_JOB_STATUS_LABELS: Record<
@@ -612,6 +627,8 @@ export interface BatchTaskCardDTO {
   identity_id: number;
   llm_profile_id: number;
   pending_generation_count: number;
+  queued_generation_count: number;
+  blocked_generation_count: number;
   generating_draft_count: number;
   draft_failed_count: number;
   review_required_count: number;
@@ -689,6 +706,8 @@ export interface BatchTaskResendItemDTO {
   default_selected: boolean;
   selectable: boolean;
   unavailable_reason: string | null;
+  content_reuse_kind: 'approved' | 'generated' | 'rewrite_source' | 'regenerate';
+  content_requires_review: boolean;
   updated_at: string;
 }
 
@@ -711,6 +730,7 @@ export interface BatchTaskResendPrefillContextDTO {
   sourceTaskName: string;
   identityId: number;
   professorIds: number[];
+  requiresRegeneration: boolean;
   defaults: BatchTaskResendDefaultsDTO;
   warnings: string[];
 }
@@ -818,6 +838,7 @@ export interface WorkspaceMessageDTO {
   content_html: string | null;
   rfc_message_id: string | null;
   failure_summary: string | null;
+  delivery_status?: 'succeeded' | 'failed' | null;
   reply_headers: Record<string, unknown> | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;

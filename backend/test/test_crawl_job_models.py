@@ -11,16 +11,11 @@ from app.models.crawl_job import (
     CrawlPageFetchMode,
     CrawlPageStatus,
     CrawlPageTaskStatus,
-    CrawlRuntimeVersion,
     CrawlWorkerKind,
 )
 
 
 class CrawlJobModelTests(unittest.TestCase):
-
-    def test_runtime_version_constants_are_stable(self) -> None:
-        self.assertEqual(CrawlRuntimeVersion.V1.value, "v1")
-        self.assertEqual(CrawlRuntimeVersion.V2.value, "v2")
 
     def test_page_task_status_constants_are_stable(self) -> None:
         self.assertEqual(CrawlPageTaskStatus.PENDING.value, "pending")

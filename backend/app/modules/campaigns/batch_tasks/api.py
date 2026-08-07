@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, time
 
 from app.core.time import as_utc_aware, local_now, utc_now
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import case, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
@@ -43,18 +44,25 @@ from app.modules.campaigns.public import (
     build_initial_batch_draft,
 )
 from app.modules.campaigns.public import (
+    batch_item_is_ready_for_llm_generation,
     batch_item_uses_llm_generation,
+    batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
     resolve_batch_task_item_next_action,
 )
 from app.modules.campaigns.public import (
     BatchTaskResendContextError,
     build_batch_task_resend_context,
+    classify_resend_content,
+    decide_resend_item,
+    normalize_resend_body,
+    reused_content_requires_review,
 )
 from app.modules.campaigns.public import (
     count_completed_batch_task_items,
     sync_batch_task_completion,
 )
+from app.modules.campaigns.status import email_task_is_not_user_removed_expression
 from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
@@ -85,6 +93,23 @@ import app.modules.llm.public as llm_runtime
 router = APIRouter(prefix="/api/batch-tasks", tags=["batch-tasks"])
 
 
+@dataclass(frozen=True)
+class BatchTaskCardMetrics:
+    completed_count: int = 0
+    pending_generation_count: int = 0
+    queued_generation_count: int = 0
+    blocked_generation_count: int = 0
+    generating_draft_count: int = 0
+    draft_failed_count: int = 0
+    review_required_count: int = 0
+    approved_count: int = 0
+    scheduled_count: int = 0
+    sent_count: int = 0
+    failed_count: int = 0
+    replied_count: int = 0
+    canceled_send_count: int = 0
+
+
 @router.get("", response_model=list[BatchTaskCardRead])
 async def list_batch_tasks(
     identity_id: int | None = None,
@@ -94,15 +119,6 @@ async def list_batch_tasks(
 ) -> list[BatchTaskCardRead]:
     statement = (
         select(BatchTask)
-        .options(
-            selectinload(BatchTask.email_tasks).load_only(
-                EmailTask.id,
-                EmailTask.status,
-                EmailTask.cancellation_reason,
-                EmailTask.batch_send_canceled_at,
-                EmailTask.scheduled_at,
-            ),
-        )
         .order_by(BatchTask.created_at.desc())
     )
     if identity_id is not None:
@@ -115,12 +131,43 @@ async def list_batch_tasks(
         raise HTTPException(status_code=400, detail="未知任务视图")
 
     tasks = list((await session.execute(statement)).scalars().unique())
-    completed_batch_task_updated = False
-    for task in tasks:
-        completed_batch_task_updated = sync_batch_task_completion(task) or completed_batch_task_updated
-    if completed_batch_task_updated:
+    now = utc_now()
+    metrics_by_task_id = await _load_batch_task_card_metrics(
+        session,
+        [task.id for task in tasks],
+        now=now,
+    )
+    completed_task_ids = [
+        task.id
+        for task in tasks
+        if _should_sync_batch_task_completion(
+            task,
+            metrics_by_task_id.get(task.id, BatchTaskCardMetrics()),
+        )
+    ]
+    if completed_task_ids:
+        completed_task_id_set = set(completed_task_ids)
+        await session.execute(
+            update(BatchTask)
+            .where(BatchTask.id.in_(completed_task_ids))
+            .values(
+                status=BatchTaskStatus.COMPLETED.value,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        for task in tasks:
+            if task.id in completed_task_id_set:
+                task.status = BatchTaskStatus.COMPLETED.value
+                task.updated_at = now
         await session.commit()
-    return [_serialize_batch_task(task) for task in tasks]
+    return [
+        _serialize_batch_task(
+            task,
+            metrics=metrics_by_task_id.get(task.id, BatchTaskCardMetrics()),
+        )
+        for task in tasks
+    ]
 
 
 @router.post("", response_model=BatchTaskCardRead, status_code=status.HTTP_201_CREATED)
@@ -176,6 +223,44 @@ async def create_batch_task(
     if len(professors) != len(set(payload.professor_ids)):
         raise HTTPException(status_code=404, detail="部分导师不存在或已被移入回收站")
 
+    resend_source_items: dict[int, EmailTask] = {}
+    if payload.resend_source_batch_task_id is not None:
+        source_batch_task = await session.scalar(
+            select(BatchTask)
+            .options(
+                selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
+            )
+            .where(BatchTask.id == payload.resend_source_batch_task_id),
+        )
+        if source_batch_task is None:
+            raise HTTPException(status_code=404, detail="未找到原批量任务")
+        if source_batch_task.identity_id != payload.identity_id:
+            raise HTTPException(status_code=400, detail="重新发起任务必须沿用原任务身份")
+        if source_batch_task.status not in {
+            BatchTaskStatus.STOPPED.value,
+            BatchTaskStatus.COMPLETED.value,
+            BatchTaskStatus.EXPIRED.value,
+        }:
+            raise HTTPException(status_code=400, detail="原批量任务尚未结束，不能重新发起")
+
+        requested_professor_ids = set(payload.professor_ids)
+        for source_item in source_batch_task.email_tasks:
+            if source_item.professor_id not in requested_professor_ids:
+                continue
+            decision = decide_resend_item(source_item)
+            if not decision.selectable:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{source_item.professor.name}不属于可重新发起项：{decision.reason_label}",
+                )
+            resend_source_items[source_item.professor_id] = source_item
+        if set(resend_source_items) != requested_professor_ids:
+            raise HTTPException(status_code=400, detail="部分导师不属于原任务的可重新发起项")
+    resend_requires_regeneration = not resend_source_items or any(
+        classify_resend_content(item) == "regenerate"
+        for item in resend_source_items.values()
+    )
+
     scheduled_at_values: list[datetime | None] = [None] * len(professors)
     if payload.schedule_type == "scheduled":
         try:
@@ -208,7 +293,7 @@ async def create_batch_task(
 
     selected_template = None
     if payload.outreach_template_id is not None:
-        allow_archived_provenance = bool(
+        allow_archived_provenance = not resend_requires_regeneration or bool(
             {
                 "outreach_template_subject",
                 "outreach_template_body_text",
@@ -263,7 +348,7 @@ async def create_batch_task(
         outreach_config.subject_template,
         outreach_config.body_text_template,
     )
-    if detail:
+    if detail and resend_requires_regeneration:
         raise HTTPException(status_code=400, detail=detail)
 
     batch_task = BatchTask(
@@ -308,26 +393,93 @@ async def create_batch_task(
         draft_fallback_reason = None
         task_status = EmailTaskStatus.DISCOVERED.value
         approved_at = None
-        try:
-            initial_draft = build_initial_batch_draft(
-                identity,
-                professor,
-                outreach_config,
-                primary_material_available=primary_material_id is not None,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if initial_draft is not None:
-            generated_subject = initial_draft.subject
-            generated_body_text = initial_draft.body_text
-            generated_body_html = initial_draft.body_html
-            draft_generation_source = initial_draft.generation_source
-            draft_fallback_reason = initial_draft.fallback_reason
-            if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
-                task_status = EmailTaskStatus.APPROVED.value
-                approved_at = utc_now()
-            else:
+        approved_subject = None
+        approved_body_text = None
+        approved_body_html = None
+        item_primary_material_id = primary_material_id
+        item_selected_material_ids = selected_material_ids
+        item_outreach_template_id = selected_template.id if selected_template is not None else None
+        item_outreach_generation_mode = outreach_config.generation_mode
+        item_outreach_template_subject = _normalize_nullable_text(outreach_config.subject_template)
+        item_outreach_template_body_text = _normalize_nullable_text(outreach_config.body_text_template)
+        item_outreach_template_body_html = _normalize_nullable_text(outreach_config.body_html_template)
+        source_item = resend_source_items.get(professor.id)
+        reuse_kind = classify_resend_content(source_item) if source_item is not None else "regenerate"
+
+        if source_item is not None and reuse_kind != "regenerate":
+            if source_item.outreach_template_snapshot_version is not None:
+                item_outreach_template_id = source_item.outreach_template_id
+                item_outreach_generation_mode = source_item.outreach_generation_mode
+                item_outreach_template_subject = source_item.outreach_template_subject
+                item_outreach_template_body_text = source_item.outreach_template_body_text
+                item_outreach_template_body_html = source_item.outreach_template_body_html
+
+            if reuse_kind == "rewrite_source":
+                generated_subject = source_item.draft_rewrite_source_subject
+                generated_body_text = source_item.draft_rewrite_source_body_text
+                generated_body_html = source_item.draft_rewrite_source_body_html
+                generated_body_text, generated_body_html = normalize_resend_body(
+                    generated_body_text,
+                    generated_body_html,
+                )
+                draft_generation_source = source_item.draft_generation_source
                 task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+            else:
+                generated_subject = source_item.generated_subject
+                generated_body_text = source_item.generated_content_text
+                generated_body_html = source_item.generated_content_html
+                generated_body_text, generated_body_html = normalize_resend_body(
+                    generated_body_text,
+                    generated_body_html,
+                )
+                draft_generation_source = source_item.draft_generation_source
+                draft_fallback_reason = source_item.draft_fallback_reason
+                if reuse_kind == "approved":
+                    approved_subject = source_item.approved_subject
+                    approved_body_text = source_item.approved_body_text
+                    approved_body_html = source_item.approved_body_html
+                    approved_body_text, approved_body_html = normalize_resend_body(
+                        approved_body_text,
+                        approved_body_html,
+                    )
+                    approved_at = utc_now()
+                    if reused_content_requires_review(source_item):
+                        generated_subject = generated_subject or approved_subject
+                        generated_body_text = generated_body_text or approved_body_text
+                        generated_body_html = generated_body_html or approved_body_html
+                        task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+                    else:
+                        task_status = (
+                            EmailTaskStatus.SCHEDULED.value
+                            if payload.schedule_type == "scheduled"
+                            else EmailTaskStatus.APPROVED.value
+                        )
+                else:
+                    task_status = EmailTaskStatus.REVIEW_REQUIRED.value
+        else:
+            try:
+                initial_draft = build_initial_batch_draft(
+                    identity,
+                    professor,
+                    outreach_config,
+                    primary_material_available=primary_material_id is not None,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if initial_draft is not None:
+                generated_subject = initial_draft.subject
+                generated_body_text = initial_draft.body_text
+                generated_body_html = initial_draft.body_html
+                draft_generation_source = initial_draft.generation_source
+                draft_fallback_reason = initial_draft.fallback_reason
+                if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
+                    task_status = EmailTaskStatus.APPROVED.value
+                    approved_subject = generated_subject
+                    approved_body_text = generated_body_text
+                    approved_body_html = generated_body_html
+                    approved_at = utc_now()
+                else:
+                    task_status = EmailTaskStatus.REVIEW_REQUIRED.value
 
         email_task = EmailTask(
             source=EmailTaskSource.BATCH.value,
@@ -335,27 +487,31 @@ async def create_batch_task(
             identity_id=payload.identity_id,
             llm_profile_id=payload.llm_profile_id,
             professor_id=professor.id,
-            primary_material_id=primary_material_id,
-            outreach_template_id=(
-                selected_template.id if selected_template is not None else None
-            ),
+            primary_material_id=item_primary_material_id,
+            outreach_template_id=item_outreach_template_id,
             outreach_template_snapshot_version=1,
-            outreach_generation_mode=outreach_config.generation_mode,
-            outreach_template_subject=_normalize_nullable_text(outreach_config.subject_template),
-            outreach_template_body_text=_normalize_nullable_text(outreach_config.body_text_template),
-            outreach_template_body_html=_normalize_nullable_text(outreach_config.body_html_template),
+            outreach_generation_mode=item_outreach_generation_mode,
+            outreach_template_subject=item_outreach_template_subject,
+            outreach_template_body_text=item_outreach_template_body_text,
+            outreach_template_body_html=item_outreach_template_body_html,
             status=task_status,
             generated_subject=generated_subject,
             generated_content_text=generated_body_text,
             generated_content_html=generated_body_html,
             draft_generation_source=draft_generation_source,
             draft_fallback_reason=draft_fallback_reason,
-            approved_subject=(generated_subject if approved_at is not None else None),
-            approved_body_text=(generated_body_text if approved_at is not None else None),
-            approved_body_html=(generated_body_html if approved_at is not None else None),
+            approved_subject=approved_subject,
+            approved_body_text=approved_body_text,
+            approved_body_html=approved_body_html,
             approved_at=approved_at,
+            match_source_identity_id=source_item.match_source_identity_id if source_item else None,
+            match_score=source_item.match_score if source_item else None,
+            match_reason=source_item.match_reason if source_item else None,
+            fit_points=list(source_item.fit_points) if source_item and source_item.fit_points else None,
+            risk_points=list(source_item.risk_points) if source_item and source_item.risk_points else None,
+            match_keywords=list(source_item.match_keywords) if source_item and source_item.match_keywords else None,
             scheduled_at=scheduled_at_values[index],
-            selected_material_ids=selected_material_ids,
+            selected_material_ids=item_selected_material_ids,
         )
         session.add(email_task)
 
@@ -374,6 +530,18 @@ async def create_batch_task(
             "outreach_template_id": batch_task.outreach_template_id,
             "outreach_template_name_snapshot": batch_task.outreach_template_name_snapshot,
             "outreach_generation_mode": batch_task.outreach_generation_mode,
+            "resend_source_batch_task_id": payload.resend_source_batch_task_id,
+            "reused_approved_count": sum(
+                1 for item in resend_source_items.values() if classify_resend_content(item) == "approved"
+            ),
+            "reused_generated_count": sum(
+                1
+                for item in resend_source_items.values()
+                if classify_resend_content(item) in {"generated", "rewrite_source"}
+            ),
+            "regenerated_count": sum(
+                1 for item in resend_source_items.values() if classify_resend_content(item) == "regenerate"
+            ),
         },
     )
     await session.commit()
@@ -448,10 +616,7 @@ async def list_batch_task_items(
         )
         .where(
             EmailTask.batch_task_id == task_id,
-            ~(
-                (EmailTask.status == EmailTaskStatus.CANCELED.value)
-                & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
-            ),
+            email_task_is_not_user_removed_expression(),
         )
         .order_by(EmailTask.created_at.asc(), EmailTask.id.asc())
     )
@@ -596,6 +761,10 @@ async def pause_batch_task(
         if email_task.status == EmailTaskStatus.GENERATING_DRAFT.value:
             email_task.status = email_task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
             email_task.draft_generation_previous_status = None
+            email_task.draft_generation_started_at = None
+            email_task.draft_claim_id = None
+            email_task.draft_claimed_at = None
+            email_task.draft_lease_expires_at = None
             email_task.updated_at = utc_now()
     await _record_batch_task_action(session, task, "batch_task.paused")
     await session.commit()
@@ -641,6 +810,10 @@ async def stop_batch_task(
             email_task.status = EmailTaskStatus.CANCELED.value
             email_task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
             email_task.draft_generation_previous_status = None
+            email_task.draft_generation_started_at = None
+            email_task.draft_claim_id = None
+            email_task.draft_claimed_at = None
+            email_task.draft_lease_expires_at = None
             email_task.updated_at = utc_now()
     await _record_batch_task_action(session, task, "batch_task.stopped")
     await session.commit()
@@ -981,6 +1154,10 @@ async def retry_batch_task_item_draft(
     item.status = EmailTaskStatus.DISCOVERED.value
     item.last_error = None
     item.draft_generation_previous_status = None
+    item.draft_generation_started_at = None
+    item.draft_claim_id = None
+    item.draft_claimed_at = None
+    item.draft_lease_expires_at = None
     item.updated_at = utc_now()
     await _record_batch_task_action(
         session,
@@ -1131,7 +1308,12 @@ async def _run_batch_task_item_workspace_action(
 async def _load_batch_task_for_serialization(session: AsyncSession, task_id: int) -> BatchTask | None:
     return await session.scalar(
         select(BatchTask)
-        .options(selectinload(BatchTask.email_tasks))
+        .options(
+            selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
+            selectinload(BatchTask.email_tasks).selectinload(
+                EmailTask.primary_material
+            ),
+        )
         .where(BatchTask.id == task_id)
         .execution_options(populate_existing=True),
     )
@@ -1251,7 +1433,145 @@ async def _sanitize_batch_task_material_references_before_restore(session: Async
         task.updated_at = utc_now()
 
 
-def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
+async def _load_batch_task_card_metrics(
+    session: AsyncSession,
+    task_ids: list[int],
+    *,
+    now: datetime,
+) -> dict[int, BatchTaskCardMetrics]:
+    if not task_ids:
+        return {}
+
+    is_visible = email_task_is_not_user_removed_expression()
+    is_active = is_visible & EmailTask.batch_send_canceled_at.is_(None)
+    is_completed = EmailTask.status.in_(
+        {
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+        }
+    )
+    is_pending_generation = is_active & EmailTask.status.in_(
+        {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+        }
+    )
+    is_queued_generation = (
+        is_pending_generation
+        & batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode)
+        & EmailTask.primary_material_id.is_not(None)
+        & Professor.research_direction.is_not(None)
+        & (func.trim(Professor.research_direction) != "")
+    )
+
+    def count_when(condition: object, name: str):
+        return func.coalesce(func.sum(case((condition, 1), else_=0)), 0).label(name)
+
+    rows = await session.execute(
+        select(
+            EmailTask.batch_task_id,
+            count_when(is_completed, "completed_count"),
+            count_when(
+                is_pending_generation,
+                "pending_generation_count",
+            ),
+            count_when(is_queued_generation, "queued_generation_count"),
+            count_when(
+                is_pending_generation & ~is_queued_generation,
+                "blocked_generation_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value),
+                "generating_draft_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.DRAFT_FAILED.value),
+                "draft_failed_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.REVIEW_REQUIRED.value),
+                "review_required_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.APPROVED.value),
+                "approved_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.SCHEDULED.value),
+                "scheduled_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.SENT.value),
+                "sent_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.SEND_FAILED.value),
+                "failed_count",
+            ),
+            count_when(
+                is_active & (EmailTask.status == EmailTaskStatus.REPLY_DETECTED.value),
+                "replied_count",
+            ),
+            count_when(
+                is_visible & EmailTask.batch_send_canceled_at.is_not(None),
+                "canceled_send_count",
+            ),
+        )
+        .join(Professor, EmailTask.professor_id == Professor.id)
+        .where(EmailTask.batch_task_id.in_(task_ids))
+        .group_by(EmailTask.batch_task_id)
+    )
+    canceled_scheduled_rows = await session.execute(
+        select(EmailTask.batch_task_id, EmailTask.scheduled_at).where(
+            EmailTask.batch_task_id.in_(task_ids),
+            EmailTask.batch_send_canceled_at.is_not(None),
+            EmailTask.scheduled_at.is_not(None),
+        )
+    )
+    completed_canceled_counts: Counter[int] = Counter()
+    for task_id, scheduled_at in canceled_scheduled_rows:
+        if scheduled_at is not None and as_utc_aware(scheduled_at) <= as_utc_aware(now):
+            completed_canceled_counts[int(task_id)] += 1
+    return {
+        int(row.batch_task_id): BatchTaskCardMetrics(
+            completed_count=(
+                int(row.completed_count)
+                + completed_canceled_counts[int(row.batch_task_id)]
+            ),
+            pending_generation_count=int(row.pending_generation_count),
+            queued_generation_count=int(row.queued_generation_count),
+            blocked_generation_count=int(row.blocked_generation_count),
+            generating_draft_count=int(row.generating_draft_count),
+            draft_failed_count=int(row.draft_failed_count),
+            review_required_count=int(row.review_required_count),
+            approved_count=int(row.approved_count),
+            scheduled_count=int(row.scheduled_count),
+            sent_count=int(row.sent_count),
+            failed_count=int(row.failed_count),
+            replied_count=int(row.replied_count),
+            canceled_send_count=int(row.canceled_send_count),
+        )
+        for row in rows
+    }
+
+
+def _should_sync_batch_task_completion(
+    task: BatchTask,
+    metrics: BatchTaskCardMetrics,
+) -> bool:
+    return (
+        task.target_count > 0
+        and metrics.completed_count >= task.target_count
+        and task.status
+        not in {
+            BatchTaskStatus.STOPPED.value,
+            BatchTaskStatus.EXPIRED.value,
+            BatchTaskStatus.COMPLETED.value,
+        }
+    )
+
+
+def _batch_task_card_metrics_from_email_tasks(task: BatchTask) -> BatchTaskCardMetrics:
     visible_email_tasks = _visible_batch_email_tasks(task)
     active_email_tasks = [
         email_task
@@ -1259,26 +1579,58 @@ def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
         if email_task.batch_send_canceled_at is None
     ]
     status_counter = Counter(email_task.status for email_task in active_email_tasks)
+    pending_generation_tasks = [
+        email_task
+        for email_task in active_email_tasks
+        if email_task.status
+        in {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+        }
+    ]
+    queued_generation_count = sum(
+        1
+        for email_task in pending_generation_tasks
+        if batch_item_is_ready_for_llm_generation(email_task)
+    )
     canceled_send_count = sum(
         1
         for email_task in visible_email_tasks
         if email_task.batch_send_canceled_at is not None
     )
     completed_count = count_completed_batch_task_items(task)
-    status = task.status
-
-    pending_generation_count = sum(
-        status_counter.get(item, 0)
-        for item in [
-            EmailTaskStatus.DISCOVERED.value,
-            EmailTaskStatus.MATCHED.value,
-        ]
+    return BatchTaskCardMetrics(
+        completed_count=completed_count,
+        pending_generation_count=(
+            status_counter.get(EmailTaskStatus.DISCOVERED.value, 0)
+            + status_counter.get(EmailTaskStatus.MATCHED.value, 0)
+        ),
+        queued_generation_count=queued_generation_count,
+        blocked_generation_count=(
+            len(pending_generation_tasks) - queued_generation_count
+        ),
+        generating_draft_count=status_counter.get(EmailTaskStatus.GENERATING_DRAFT.value, 0),
+        draft_failed_count=status_counter.get(EmailTaskStatus.DRAFT_FAILED.value, 0),
+        review_required_count=status_counter.get(EmailTaskStatus.REVIEW_REQUIRED.value, 0),
+        approved_count=status_counter.get(EmailTaskStatus.APPROVED.value, 0),
+        scheduled_count=status_counter.get(EmailTaskStatus.SCHEDULED.value, 0),
+        sent_count=status_counter.get(EmailTaskStatus.SENT.value, 0),
+        failed_count=status_counter.get(EmailTaskStatus.SEND_FAILED.value, 0),
+        replied_count=status_counter.get(EmailTaskStatus.REPLY_DETECTED.value, 0),
+        canceled_send_count=canceled_send_count,
     )
 
+
+def _serialize_batch_task(
+    task: BatchTask,
+    *,
+    metrics: BatchTaskCardMetrics | None = None,
+) -> BatchTaskCardRead:
+    resolved_metrics = metrics or _batch_task_card_metrics_from_email_tasks(task)
     return BatchTaskCardRead(
         id=task.id,
         name=task.name,
-        status=status,
+        status=task.status,
         schedule_type=task.schedule_type,
         window_start_time=task.window_start_time,
         window_end_time=task.window_end_time,
@@ -1290,19 +1642,21 @@ def _serialize_batch_task(task: BatchTask) -> BatchTaskCardRead:
         outreach_template_snapshot_version=task.outreach_template_snapshot_version,
         outreach_generation_mode=task.outreach_generation_mode,
         target_count=task.target_count,
-        completed_count=completed_count,
+        completed_count=resolved_metrics.completed_count,
         identity_id=task.identity_id,
         llm_profile_id=task.llm_profile_id,
-        pending_generation_count=pending_generation_count,
-        generating_draft_count=status_counter.get(EmailTaskStatus.GENERATING_DRAFT.value, 0),
-        draft_failed_count=status_counter.get(EmailTaskStatus.DRAFT_FAILED.value, 0),
-        review_required_count=status_counter.get(EmailTaskStatus.REVIEW_REQUIRED.value, 0),
-        approved_count=status_counter.get(EmailTaskStatus.APPROVED.value, 0),
-        scheduled_count=status_counter.get(EmailTaskStatus.SCHEDULED.value, 0),
-        sent_count=status_counter.get(EmailTaskStatus.SENT.value, 0),
-        failed_count=status_counter.get(EmailTaskStatus.SEND_FAILED.value, 0),
-        replied_count=status_counter.get(EmailTaskStatus.REPLY_DETECTED.value, 0),
-        canceled_send_count=canceled_send_count,
+        pending_generation_count=resolved_metrics.pending_generation_count,
+        queued_generation_count=resolved_metrics.queued_generation_count,
+        blocked_generation_count=resolved_metrics.blocked_generation_count,
+        generating_draft_count=resolved_metrics.generating_draft_count,
+        draft_failed_count=resolved_metrics.draft_failed_count,
+        review_required_count=resolved_metrics.review_required_count,
+        approved_count=resolved_metrics.approved_count,
+        scheduled_count=resolved_metrics.scheduled_count,
+        sent_count=resolved_metrics.sent_count,
+        failed_count=resolved_metrics.failed_count,
+        replied_count=resolved_metrics.replied_count,
+        canceled_send_count=resolved_metrics.canceled_send_count,
         created_at=task.created_at,
         updated_at=task.updated_at,
         deleted_at=task.deleted_at,

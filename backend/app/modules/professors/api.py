@@ -19,6 +19,7 @@ from app.models import (
     ProfessorTag,
     ProfessorTagLink,
 )
+from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from .schemas import (
     ProfessorActionResult,
     ProfessorBulkArchivePayload,
@@ -125,10 +126,7 @@ async def list_professors(
                 EmailTask.identity_id == identity_id,
                 EmailTask.professor_id.in_(professor_ids),
                 EmailTask.batch_send_canceled_at.is_(None),
-                ~(
-                    (EmailTask.status == EmailTaskStatus.CANCELED.value)
-                    & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
-                ),
+                email_task_is_not_user_removed_expression(),
             )
             .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
         )

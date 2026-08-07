@@ -7,6 +7,10 @@ import {
   hasRenderablePreviewContent,
   sanitizeTemplateHtmlForPreview,
 } from '@/lib/htmlPreview';
+import {
+  isCommunicationMessage,
+  isFailedSentMessage,
+} from '@/features/workspace/client/workspaceMessageDelivery';
 import type {
   WorkspaceIdentityDTO,
   WorkspaceMessageDTO,
@@ -45,12 +49,18 @@ const buildPreview = (content: string, contentHtml: string | null) => {
   return normalized || '（这条记录没有正文）';
 };
 
-const getMessageLabel = (direction: WorkspaceMessageDTO['direction']) =>
-  direction === 'received' ? '老师回复' : '已发送';
+const getMessageLabel = (message: WorkspaceMessageDTO) => {
+  if (message.direction === 'received') {
+    return '老师回复';
+  }
+  return isFailedSentMessage(message) ? '发送失败' : '已发送';
+};
 
-const getMessageBubbleClassName = (direction: WorkspaceMessageDTO['direction']) =>
-  direction === 'received'
+const getMessageBubbleClassName = (message: WorkspaceMessageDTO) =>
+  message.direction === 'received'
     ? 'border-stone-200 bg-white text-stone-900 shadow-[0_18px_38px_-30px_rgba(41,37,36,0.26)]'
+    : isFailedSentMessage(message)
+      ? 'border-red-200 bg-red-50 text-red-950 shadow-[0_22px_42px_-28px_rgba(127,29,29,0.22)]'
     : 'border-primary/15 bg-[linear-gradient(180deg,rgba(153,27,27,0.96),rgba(127,29,29,0.96))] text-white shadow-[0_22px_42px_-28px_rgba(127,29,29,0.38)]';
 
 const getSourceIdentityLabel = (
@@ -79,6 +89,8 @@ const getMessageSourceLabel = (
     .join('、');
   return message.direction === 'received'
     ? `由 ${identityNames} 收取`
+    : isFailedSentMessage(message)
+      ? `由 ${identityNames} 尝试发送`
     : `由 ${identityNames} 发出`;
 };
 
@@ -111,6 +123,8 @@ export const WorkspaceMessageThread = ({
 
   const showJumpToReply = newReceivedCount > 0 && !shouldStickToBottom;
   const isEmpty = realMessages.length === 0;
+  const communicationMessageCount = realMessages.filter(isCommunicationMessage).length;
+  const failedAttemptCount = realMessages.filter(isFailedSentMessage).length;
 
   return (
     <div
@@ -168,8 +182,13 @@ export const WorkspaceMessageThread = ({
               </button>
             ) : null}
             <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs font-medium text-stone-600">
-              {realMessages.length} 条
+              {communicationMessageCount} 条
             </span>
+            {failedAttemptCount > 0 ? (
+              <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+                {failedAttemptCount} 次失败尝试
+              </span>
+            ) : null}
             {onRefresh ? (
               <button
                 type="button"
@@ -221,6 +240,7 @@ export const WorkspaceMessageThread = ({
         ) : (
           realMessages.map((message) => {
             const isReceived = message.direction === 'received';
+            const isFailed = isFailedSentMessage(message);
             const isExpanded =
               expandedMessageId === message.id &&
               realMessages.some((item) => item.id === expandedMessageId);
@@ -246,7 +266,7 @@ export const WorkspaceMessageThread = ({
                   }
                   className={clsx(
                     'w-full max-w-[86%] rounded-[28px] border px-5 py-4 text-left transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
-                    getMessageBubbleClassName(message.direction),
+                    getMessageBubbleClassName(message),
                   )}
                 >
                   <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -255,23 +275,25 @@ export const WorkspaceMessageThread = ({
                         'rounded-full px-2.5 py-1 font-semibold',
                         isReceived
                           ? 'bg-stone-100 text-stone-700'
-                          : 'bg-white/14 text-white',
+                          : isFailed
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-white/14 text-white',
                       )}
                     >
-                      {getMessageLabel(message.direction)}
+                      {getMessageLabel(message)}
                     </span>
-                    <span className={isReceived ? 'text-stone-400' : 'text-white/70'}>
+                    <span className={isReceived || isFailed ? 'text-stone-500' : 'text-white/70'}>
                       {formatApiDateTime(message.created_at)}
                     </span>
                     {sourceLabel ? (
-                      <span className={isReceived ? 'text-stone-500' : 'text-white/80'}>
+                      <span className={isReceived || isFailed ? 'text-stone-600' : 'text-white/80'}>
                         {sourceLabel}
                       </span>
                     ) : null}
                     <span
                       className={clsx(
                         'ml-auto inline-flex items-center gap-1 font-medium',
-                        isReceived ? 'text-stone-500' : 'text-white/75',
+                        isReceived || isFailed ? 'text-stone-500' : 'text-white/75',
                       )}
                     >
                       {isExpanded ? '收起' : '展开'}
@@ -282,6 +304,13 @@ export const WorkspaceMessageThread = ({
                       )}
                     </span>
                   </div>
+
+                  {isFailed ? (
+                    <div role="alert" className="mt-3 rounded-2xl border border-red-200 bg-white/80 px-4 py-3 text-sm leading-6 text-red-800">
+                      <span className="font-semibold">发送失败：</span>
+                      {message.failure_summary?.trim() || '邮件未成功发出，请检查发件配置后重试。'}
+                    </div>
+                  ) : null}
 
                   {message.subject ? (
                     <div className="mt-3 text-sm font-semibold leading-6">
@@ -295,7 +324,9 @@ export const WorkspaceMessageThread = ({
                         'mt-3 overflow-x-auto rounded-2xl px-4 py-4 text-sm leading-7 shadow-inner',
                         isReceived
                           ? 'border border-stone-100 bg-white text-stone-900 shadow-stone-200/60'
-                          : 'border border-white/20 bg-white/10 text-white/92 shadow-black/10 [&_*]:!text-inherit',
+                          : isFailed
+                            ? 'border border-red-100 bg-white text-red-950 shadow-red-100/60'
+                            : 'border border-white/20 bg-white/10 text-white/92 shadow-black/10 [&_*]:!text-inherit',
                       )}
                       data-message-html
                       dangerouslySetInnerHTML={{ __html: expandedHtml }}
@@ -304,7 +335,7 @@ export const WorkspaceMessageThread = ({
                     <div
                       className={clsx(
                         'mt-3 whitespace-pre-wrap break-words text-sm leading-7',
-                        isReceived ? 'text-stone-700' : 'text-white/92',
+                        isReceived ? 'text-stone-700' : isFailed ? 'text-red-900' : 'text-white/92',
                       )}
                     >
                       {displayText}
@@ -313,7 +344,7 @@ export const WorkspaceMessageThread = ({
                     <div
                       className={clsx(
                         'mt-3 text-sm leading-7',
-                        isReceived ? 'text-stone-600' : 'text-white/82',
+                        isReceived ? 'text-stone-600' : isFailed ? 'text-red-800' : 'text-white/82',
                       )}
                       style={previewStyle}
                     >

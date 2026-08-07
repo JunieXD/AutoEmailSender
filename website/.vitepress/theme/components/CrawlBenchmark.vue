@@ -106,7 +106,7 @@ function statusLabel(status: BenchmarkPublicStatus): string {
 
 function versionLabel(record: CrawlBenchmarkRecord): string {
   if (record.appVersion) return `Auto Email Sender v${record.appVersion}`;
-  return record.runtimeVersion ? `抓取引擎 ${record.runtimeVersion}` : "早期版本记录";
+  return "早期版本记录";
 }
 
 function enrichmentDetailLabel(record: CrawlBenchmarkRecord): string | null {

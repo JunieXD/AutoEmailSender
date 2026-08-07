@@ -96,6 +96,13 @@ class ProfessorInformationEnrichmentItemRead(ApiSchema):
     updated_at: datetime
 
 
+class ProfessorInformationEnrichmentItemsPageRead(ApiSchema):
+    items: list[ProfessorInformationEnrichmentItemRead]
+    total_count: int
+    next_cursor: int | None
+    has_more: bool
+
+
 class ProfessorInformationEnrichmentActiveRead(ApiSchema):
     active: bool
     job: ProfessorInformationEnrichmentJobRead | None = None

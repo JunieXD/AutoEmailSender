@@ -902,7 +902,7 @@ backend/app/modules/llm/
 外扩散。第 6 批只迁移 crawler 的 DTO、UI/Agent adapter、worker/scheduler、页面策略与运行时持久化，
 不混入 campaign/workspace 状态机重构。
 
-### 第 6A 批：`crawler` 合同与运行基础（已完成）
+### 第 6A 批：`crawler` 合同与运行基础（历史迁移记录）
 
 开始日期：2026-08-06
 完成日期：2026-08-06
@@ -948,8 +948,8 @@ backend/app/modules/crawler/
   profile extraction，形成可供 6B 编排层调用的闭合基础。
 - `crawler.public` 暴露领域外真正需要的 DTO、record use cases、只读投影、调试路径、安全 URL 合同、
   run/token 合同和 profile text cache；Agent API、automation、professors enrichment、diagnostics 改走该入口。
-- 对应旧 schema/service 路径保留纯 re-export，并新增完整公共符号对象一致性测试；尚未迁移的
-  API/Agent/job runtime/scheduler/workers 可在 6A 内继续通过兼容入口调用，6B 完成后生产旧路径审计必须归零。
+- 当时对应旧 schema/service 路径保留纯 re-export，并新增完整公共符号对象一致性测试；这些临时入口
+  已在后续批次清理，当前生产代码只使用 crawler 领域入口和唯一 scheduler/workers 实现。
 
 本批不变量：
 
@@ -963,9 +963,8 @@ backend/app/modules/crawler/
 v2 routing/profile policies/cache/token、Agent/diagnostics/professors enrichment 关联流程、架构/兼容门禁，
 以及 Backend 完整 unittest 和相关 CLI/Frontend 合同。
 
-第 6B 预定边界：迁移 `api/crawl_jobs.py`、`agents/faculty_crawler_agent.py`、
-`services/crawl_job_runtime.py`、`crawler_v2_scheduler.py` 及 page/chunk/enrichment workers；组合根与
-RuntimeManager 改走新入口后再做生产旧路径归零审计。
+第 6B 预定边界是迁移 UI/Agent adapters、scheduler 及 page/chunk/enrichment workers；组合根与
+RuntimeManager 改走领域入口后再做生产旧路径归零审计。
 
 实际结果：
 
@@ -977,8 +976,8 @@ RuntimeManager 改走新入口后再做生产旧路径归零审计。
   对象一致性测试及关键模块独立进程导入测试。
 - 已偿还 `schemas.crawl_job -> crawler_tools/url_utils` 两条 legacy layer 门禁例外；SSRF、防抓取绕过、
   ledger、chunk、候选保存、wire、路由、缓存、retry 和 token 行为均保持原样。
-- 尚未迁移的 UI API、Agent、job runtime、scheduler/workers 继续经兼容入口调用这些基础能力；该临时
-  同领域旧路径只保留到 6B，不作为新的跨领域边界或门禁例外。
+- 当时尚未迁移的 UI API、Agent API adapter、scheduler/workers 经临时兼容入口调用这些基础能力；
+  这些入口已在后续批次移除，不再是当前架构的一部分。
 
 验证结果：
 
@@ -986,17 +985,17 @@ RuntimeManager 改走新入口后再做生产旧路径归零审计。
 |---|---|---|
 | Backend 门禁与兼容 | 架构/API import boundary、21 类完整公共符号、门面与独立导入 | 7 tests passed |
 | Backend crawler 基础 | records/runs/events/metrics、tools/chunk/ledger/debug、LLM wire、v2 policies/routing/cache/token | 233 tests passed |
-| Backend 关联流程 | Agent/UI API、professors enrichment、旧编排器、scheduler 与三类 worker | 356 tests passed |
+| Backend 关联流程 | Agent/UI API、professors enrichment、scheduler 与三类 worker | 356 tests passed |
 | Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1734 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
 | CLI 合同 | Agent CLI 与 client | 81 tests passed |
 | Frontend 合同 | Tasks/Professors crawler、enrichment API、notifications 与页面布局 | 9 files，115 tests passed |
 | Repository | CodeGraph 同步；新模块旧路径闭包审计；6B 剩余路径审计；`git diff --check` | 通过 |
 
-停止点：crawler DTO、持久化和运行基础已形成闭合模块，外部领域调用已走公共入口。第 6B 只迁移
-HTTP/Agent adapters、job runtime、scheduler 和 page/chunk/enrichment workers，并在完成后将全部生产
-crawler 旧路径依赖归零；不迁移 benchmark publication 或 ORM。
+停止点：crawler DTO、持久化和运行基础已形成闭合模块，外部领域调用已走公共入口。第 6B 继续迁移
+HTTP/Agent adapters、scheduler 和 page/chunk/enrichment workers，并在完成后将全部生产旧路径依赖归零；
+不迁移 benchmark publication 或 ORM。
 
-### 第 6B 批：`crawler` adapters、编排与 workers（已完成）
+### 第 6B 批：`crawler` adapters、编排与 workers（历史迁移记录）
 
 开始日期：2026-08-06
 完成日期：2026-08-06
@@ -1006,8 +1005,7 @@ crawler 旧路径依赖归零；不迁移 benchmark publication 或 ORM。
 ```text
 backend/app/modules/crawler/
 ├── api.py
-├── agent.py
-├── jobs/runtime.py
+├── jobs/recovery.py
 └── v2/
     ├── scheduler.py
     ├── page_worker.py
@@ -1017,37 +1015,33 @@ backend/app/modules/crawler/
 
 计划范围：
 
-- 迁移 `/api/crawl-jobs` UI adapter 与 Faculty crawler Agent adapter，组合根直接注册新 router。
-- 迁移 v1/兼容 job runtime 编排，以及 v2 claim/finalize scheduler 与 page/chunk/enrichment workers；
-  域内统一通过相对路径调用 6A 基础模块，不经旧 service shim。
-- `crawler.public` 增补恢复/worker 入口，RuntimeManager 改走公共入口；其他领域保持只依赖 6A 门面合同。
-- 旧 API/Agent/service 路径保留纯 re-export；测试的 patch、私有 helper 与模块状态访问全部指向新所有者，
-  兼容测试覆盖 6B 公共符号和独立导入。
+- 迁移 `/api/crawl-jobs` UI adapter，并让 Agent API 通过 crawler 公共入口调用领域能力。
+- 迁移 claim/finalize scheduler 与 page/chunk/enrichment workers；域内统一通过相对路径调用 6A 基础模块。
+- `crawler.public` 增补恢复和 scheduler 入口，RuntimeManager 改走公共入口；其他领域保持只依赖门面合同。
+- 当时的旧 API/service 路径仅用于迁移期兼容，后续已删除；测试的 patch 和模块状态访问指向真实所有者。
 - `crawl_benchmark_publication.py` 属于公开 benchmark/reporting 发布流程，ORM 仍属 `app.models`，均不迁移。
 
 本批不变量：
 
 - UI/Agent 路径、DTO、revision/幂等、创建/暂停/恢复/重试/取消/删除/恢复/审核/补全语义不变。
 - worker claim 优先级、lease/reclaim、并发/域限流、idle finalize、恢复和 RuntimeManager 启停语义不变。
-- Agent tool allowlist、prompt、context budget、trace 截断，page/chunk/enrichment LLM 与持久化时序不变。
+- worker prompt、trace 截断，page/chunk/enrichment LLM 与持久化时序不变。
 - 不修改 ORM、Alembic、runtime settings 默认值、HTTP/Agent/CLI/Frontend 合同、依赖或锁文件；
   不重写约 4300 行编排/worker 算法，不新增门禁例外。
 
-计划验证：UI/Agent 全生命周期、job runtime/恢复、Agent middleware、scheduler claim/finalize/reclaim、
+计划验证：UI/Agent 全生命周期、恢复、scheduler claim/finalize/reclaim、
 三类 workers、并发与持久化、professors enrichment 协作、架构/兼容门禁、CLI/Frontend 合同，以及
 Backend 完整 unittest；结束前 CodeGraph 和生产旧 crawler 路径审计必须归零。
 
 实际结果：
 
-- UI HTTP adapter、Faculty crawler Agent、job runtime、v2 scheduler 与 page/chunk/enrichment workers
-  已迁入 crawler 领域；7 个实现文件全部通过域内相对路径使用 6A 基础能力。
-- 组合根直接注册 `crawler.api.router`，RuntimeManager 只经 `crawler.public.run_crawler_v2_once` 启动
-  worker；公共门面同时暴露兼容恢复/queued job 入口。
-- 旧 API/Agent/service 路径仅保留纯 re-export；28 类新旧所有者的完整本地公共符号保持对象一致，
-  所有 private helper、patch 和模块状态测试均已改指向新真实所有者。
-- 已偿还 `crawl_job_runtime -> faculty_crawler_agent` legacy layer 门禁例外；生产代码对全部旧 crawler
-  API/Agent/schema/service 路径的审计结果为零。
-- claim 优先级、lease/reclaim、并发/域限流、idle finalize、Agent allowlist/prompt/context budget、
+- UI HTTP adapter、scheduler 与 page/chunk/enrichment workers 已迁入 crawler 领域；实现文件全部通过
+  域内相对路径使用 6A 基础能力，Agent API 通过公共入口调用这些能力。
+- 组合根直接注册 `crawler.api.router`，RuntimeManager 经 crawler 公共入口启动 worker；公共门面暴露
+  当前中断恢复和 scheduler 能力。
+- 迁移期兼容入口和旧所有者路径已在后续清理中删除，所有 patch 和模块状态测试均指向真实所有者。
+- 生产代码对旧 crawler API/schema/service 路径的审计结果为零。
+- claim 优先级、lease/reclaim、并发/域限流、idle finalize、worker prompt、
   page/chunk/enrichment 行为与持久化时序均保持原样；benchmark publication 与 ORM 按计划未迁移。
 
 验证结果：
@@ -1055,7 +1049,7 @@ Backend 完整 unittest；结束前 CodeGraph 和生产旧 crawler 路径审计�
 | 范围 | 验证 | 结果 |
 |---|---|---|
 | Backend 门禁与兼容 | 架构/API import boundary、28 类完整公共符号、门面与独立导入 | 7 tests passed |
-| Backend 定向 | UI/Agent 生命周期、job runtime、恢复、scheduler、三类 workers、RuntimeManager 与 enrichment | 299 tests passed |
+| Backend 定向 | UI/Agent 生命周期、恢复、scheduler、三类 workers、RuntimeManager 与 enrichment | 299 tests passed |
 | Backend 完整套件 | `uv run python -m unittest discover test` | Ran 1734 tests；OK（1 skipped）；packaged document/runtime self-check 通过 |
 | CLI 合同 | Agent CLI 与 client | 81 tests passed |
 | Frontend 合同 | Tasks/Professors crawler、enrichment API、notifications 与页面布局 | 9 files，115 tests passed |
@@ -1064,6 +1058,15 @@ Backend 完整 unittest；结束前 CodeGraph 和生产旧 crawler 路径审计�
 停止点：crawler 的 DTO、持久化、页面/LLM 策略、UI/Agent adapters、job 编排、scheduler 与 workers
 均已归位，领域外只通过公共入口交互。第 7 批开始前必须分别定界 campaigns、communications、workspace，
 按单领域子批迁移，不把三个状态机一次性混在同一提交中。
+
+#### 当前状态
+
+6A/6B 记录的是模块迁移过程，不代表当前存在双运行时。智能抓取现在只有 scheduler/work item 运行模型；
+旧 Agent 编排、旧 chunk 工具协议、运行时选择和相关配置均已删除。中断恢复由 `jobs.recovery` 负责，
+创建、补全、重试、暂停和取消统一操作当前工作项。
+
+`v2` 目录和函数名仅是当前运行时的历史内部命名，不对应用户可选版本，也不得重新引入运行时分支或
+旧 Agent 工具协议。
 
 ### 第 7A 批：`campaigns` 活动、模板与批量草稿规则（已完成）
 
@@ -1511,9 +1514,8 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9B 将脚本实现与同类测试归入 `scripts/{build,packaging,quality,data,release}`，同步 workflow、package、
   docs、AGENTS 和仓库 skills。已写入开发/发布流程的 build/release/Playwright 根命令保留薄转发入口，
   其余调用方直接使用 owner；包装入口只转发参数，不复制逻辑。
-- 9C 将历史规格与实施记录整体迁入 `docs/archive/superpowers`，把根目录文档归入 product、
-  development、operations，并更新代码、测试、网站、skills 与文档链接。新增文档地图，明确活动文档、
-  机器校验资产、release notes 与 archive 的所有权。
+- 9C 将根目录文档归入 product、development、operations，并更新代码、测试、网站、skills 与文档链接。
+  新增文档地图，明确活动文档、机器校验资产、release notes 与 screenshots 的所有权。
 - 9D 按 Backend、Frontend、Desktop 分组删除已确认无调用的兼容 shim，移除只验证旧入口的测试，
   保留并加强 owner/public façade/边界测试。任何仍有生产或工具调用的入口必须先迁移调用方；无法证明
   安全删除的入口记录为显式保留项，不以目录整洁为由强删。
@@ -1545,10 +1547,9 @@ application bootstrap 已分离，两个 Electron 分发入口保持稳定。当
 - 9B 已完成：脚本实现与实现级测试已归入 build、packaging、quality、data、release 五个 owner；
   已公开的 backend/CLI build、Playwright 安装和 release 根命令保留薄 wrapper，CI、打包配置、工作区测试、
   active docs 与仓库 skills 均直接使用 owner 路径。`scripts/README.md` 和自动化拓扑测试明确并保护该边界。
-- 9C 已完成：当前产品、开发与运维文档已按 owner 归入 `docs/{product,development,operations}`；
-  历史规格/实施记录整体迁入 `docs/archive/superpowers`，正文作为历史快照保留。`docs/README.md`、archive
-  说明和文档拓扑门禁明确活动来源、机器校验资产、release notes、screenshots 与归档边界，并验证活动
-  Markdown 本地链接可解析。
+- 9C 已完成：当前产品、开发与运维文档已按 owner 归入 `docs/{product,development,operations}`。
+  历史规格与实施记录已于 2026-08 按确认清理；`docs/README.md` 和文档拓扑门禁明确活动来源、机器校验
+  资产、release notes 与 screenshots，并验证活动 Markdown 本地链接可解析。
 - 9D Backend 已完成：删除 96 个纯迁移 shim（17 个 API、14 个 schema、64 个 service、1 个 agent），
   清理 `app.services` 中无调用的领域聚合导出；生产入口、普通测试和活动文档均已改用 owner/public
   façade。只验证旧入口的断言已移除，模块测试保留并加强 owner、公共 façade、schema 聚合与组合根

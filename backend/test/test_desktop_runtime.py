@@ -354,10 +354,7 @@ class DesktopRuntimeTests(unittest.TestCase):
         from desktop_entry import PACKAGED_RUNTIME_SELF_CHECK_MODULES
 
         for module_name in [
-            "tiktoken",
-            "tiktoken_ext.openai_public",
             "socksio",
-            "langchain_openai",
             "openai",
             "httpx",
             "tldextract",

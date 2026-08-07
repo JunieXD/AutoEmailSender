@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -816,6 +816,48 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
         self.assertEqual(result.buckets[-1].bucket_label, "10:00")
         self.assertEqual(result.buckets[-1].input_tokens, 100)
         self.assertEqual(result.buckets[-1].output_tokens, 10)
+
+    def test_daily_chart_uses_local_calendar_days(self) -> None:
+        shanghai = timezone(timedelta(hours=8))
+        now = datetime(2026, 8, 7, 1, 0, tzinfo=UTC)
+        record = TokenUsageRecordRead(
+            id="match_analysis:1",
+            feature_type="match_analysis",
+            feature_label="匹配分析",
+            title="李老师 - 匹配分析",
+            input_tokens=100,
+            output_tokens=10,
+            cached_tokens=5,
+            total_tokens=110,
+            model_name="gpt-test",
+            identity_name="博士申请邮箱",
+            created_at=datetime(2026, 8, 6, 16, 30, tzinfo=UTC),
+            status="success",
+        )
+
+        async def run_query():
+            async with self.session_factory() as session:
+                with patch(
+                    "app.services.token_usage_records._list_all_candidate_records",
+                    AsyncMock(return_value=[record]),
+                ), patch(
+                    "app.services.token_usage_records.local_now",
+                    return_value=now.astimezone(shanghai),
+                ):
+                    from app.services.token_usage_records import build_token_usage_chart
+
+                    return await build_token_usage_chart(
+                        session,
+                        feature_type="all",
+                        preset="last_7_days",
+                        now=now,
+                    )
+
+        result = self._run_async(run_query())
+
+        self.assertEqual(result.buckets[-1].bucket_start, datetime(2026, 8, 7, tzinfo=shanghai))
+        self.assertEqual(result.buckets[-1].bucket_label, "08-07")
+        self.assertEqual(result.buckets[-1].total_tokens, 110)
 
     def test_builds_chart_filtered_by_model_name(self) -> None:
         self._run_async(self._seed_records())

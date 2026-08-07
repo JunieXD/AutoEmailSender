@@ -4,6 +4,7 @@ import {
   createProfessorInformationEnrichmentJob,
   createSingleProfessorInformationEnrichment,
   listProfessorInformationEnrichmentItems,
+  listProfessorInformationEnrichmentItemsPage,
   listProfessorInformationEnrichmentJobs,
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
@@ -56,6 +57,11 @@ describe("professorInformationEnrichmentApi", () => {
   it("lists current jobs and job items from the dedicated endpoints", async () => {
     await listProfessorInformationEnrichmentJobs({ view: "current" });
     await listProfessorInformationEnrichmentItems(23);
+    await listProfessorInformationEnrichmentItemsPage(23, {
+      cursor: 20,
+      limit: 10,
+      status: "failed",
+    });
 
     expect(mockedApiFetch).toHaveBeenNthCalledWith(
       1,
@@ -66,6 +72,12 @@ describe("professorInformationEnrichmentApi", () => {
     expect(mockedApiFetch).toHaveBeenNthCalledWith(
       2,
       "/api/professor-information-enrichment-jobs/23/items",
+    );
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(
+      3,
+      "/api/professor-information-enrichment-jobs/23/items/page",
+      undefined,
+      { cursor: 20, limit: 10, status: "failed" },
     );
   });
 

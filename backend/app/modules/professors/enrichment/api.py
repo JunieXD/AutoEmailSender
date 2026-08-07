@@ -15,6 +15,7 @@ from .schemas import (
     CreateProfessorInformationEnrichmentRequest,
     ProfessorInformationEnrichmentActiveRead,
     ProfessorInformationEnrichmentItemRead,
+    ProfessorInformationEnrichmentItemsPageRead,
     ProfessorInformationEnrichmentJobActionRead,
     ProfessorInformationEnrichmentJobRead,
 )
@@ -24,6 +25,7 @@ from .service import (
     get_active_professor_information_enrichment_job,
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
+    list_professor_information_enrichment_items_page,
     list_professor_information_enrichment_jobs,
     request_professor_information_enrichment_cancel,
     restore_professor_information_enrichment_job_record,
@@ -151,6 +153,32 @@ async def list_information_enrichment_job_items(
     if items is None:
         raise HTTPException(status_code=404, detail="信息补全任务不存在")
     return items
+
+
+@router.get(
+    "/{job_id}/items/page",
+    response_model=ProfessorInformationEnrichmentItemsPageRead,
+)
+async def list_information_enrichment_job_items_page(
+    job_id: int,
+    cursor: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    status_filter: str | None = Query(default=None, alias="status"),
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorInformationEnrichmentItemsPageRead:
+    try:
+        page = await list_professor_information_enrichment_items_page(
+            session,
+            job_id,
+            cursor=cursor,
+            limit=limit,
+            status_filter=status_filter,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if page is None:
+        raise HTTPException(status_code=404, detail="信息补全任务不存在")
+    return page
 
 
 @router.post(

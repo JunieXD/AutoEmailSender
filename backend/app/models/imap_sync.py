@@ -32,6 +32,31 @@ class ImapFolderRole(str, Enum):
     SENT = "sent"
 
 
+class ImapIdentitySyncLease(Base):
+    __tablename__ = "imap_identity_sync_leases"
+    __table_args__ = (
+        Index("ix_imap_identity_sync_lease_expires", "lease_expires_at"),
+    )
+
+    identity_id: Mapped[int] = mapped_column(
+        ForeignKey("identity_profiles.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claim_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=utc_now,
+    )
+
+
 class ImapMailboxSyncState(Base):
     __tablename__ = "imap_mailbox_sync_states"
     __table_args__ = (
@@ -41,6 +66,10 @@ class ImapMailboxSyncState(Base):
             "history_scan_status",
             "updated_at",
             "id",
+        ),
+        Index(
+            "ix_imap_mailbox_history_lease_recovery",
+            "history_lease_expires_at",
         ),
         UniqueConstraint(
             "identity_id",
@@ -125,6 +154,11 @@ class ImapMailboxSyncState(Base):
         server_default=text("'folder-v1'"),
     )
     history_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    history_claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    history_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,
@@ -156,6 +190,10 @@ class ImapProfessorSyncState(Base):
             "available_at",
             "priority",
             "id",
+        ),
+        Index(
+            "ix_imap_professor_history_lease_recovery",
+            "history_lease_expires_at",
         ),
         UniqueConstraint(
             "identity_id",
@@ -212,6 +250,11 @@ class ImapProfessorSyncState(Base):
     history_start_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     trigger_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    history_claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    history_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
     available_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     priority: Mapped[int] = mapped_column(
         Integer,

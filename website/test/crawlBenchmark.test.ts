@@ -37,7 +37,6 @@ const recordFields = [
   "publicStatus",
   "recordId",
   "researchDirectionCount",
-  "runtimeVersion",
   "school",
   "sourceKind",
   "startUrl",
@@ -57,7 +56,6 @@ function makeRecord(overrides: Partial<CrawlBenchmarkRecord> = {}): CrawlBenchma
     entryType: "list",
     testedAt: "2026-08-01T00:00:00Z",
     appVersion: "2.3.7",
-    runtimeVersion: "v2",
     modelName: "test-model",
     publicStatus: "verified",
     candidateCount: 10,
@@ -80,7 +78,7 @@ function makeRecord(overrides: Partial<CrawlBenchmarkRecord> = {}): CrawlBenchma
 
 describe("public crawl benchmark data", () => {
   it("contains only the documented aggregate fields", () => {
-    expect(publicData.schemaVersion).toBe(2);
+    expect(publicData.schemaVersion).toBe(3);
     expect(Number.isNaN(Date.parse(publicData.generatedAt))).toBe(false);
     expect(Object.keys(publicData).sort()).toEqual([
       "generatedAt",
@@ -97,7 +95,7 @@ describe("public crawl benchmark data", () => {
     for (const record of publicData.records) {
       expect(Object.keys(record).sort()).toEqual(recordFields);
     }
-    expect(publicSchema.properties.schemaVersion.const).toBe(2);
+    expect(publicSchema.properties.schemaVersion.const).toBe(3);
     expect([...publicSchema.$defs.record.required].sort()).toEqual(recordFields);
     expect(Object.keys(publicSchema.$defs.record.properties).sort()).toEqual(recordFields);
 

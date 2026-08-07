@@ -25,6 +25,7 @@ class CreateBatchTaskRequest(BaseModel):
     outreach_template_body_text: str | None = None
     outreach_template_body_html: str | None = None
     outreach_template_id: int | None = None
+    resend_source_batch_task_id: int | None = Field(default=None, gt=0)
 
 
 class BatchTaskCardRead(ApiSchema):
@@ -46,6 +47,8 @@ class BatchTaskCardRead(ApiSchema):
     identity_id: int
     llm_profile_id: int
     pending_generation_count: int
+    queued_generation_count: int
+    blocked_generation_count: int
     generating_draft_count: int
     draft_failed_count: int
     review_required_count: int
@@ -136,6 +139,8 @@ class BatchTaskResendItemRead(ApiSchema):
     default_selected: bool
     selectable: bool
     unavailable_reason: str | None
+    content_reuse_kind: str
+    content_requires_review: bool
     updated_at: datetime
 
 class BatchTaskResendSummaryRead(ApiSchema):

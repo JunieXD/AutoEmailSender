@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,7 @@ from .schemas import (
     CreateMatchAnalysisJobRequest,
     MatchAnalysisJobActionResponse,
     MatchAnalysisJobItemRead,
+    MatchAnalysisJobItemsPageRead,
     MatchAnalysisJobRead,
 )
 from .job_runtime import (
@@ -80,14 +81,23 @@ async def get_match_analysis_job(
     return serialize_match_analysis_job(job)
 
 
-@router.get("/{job_id}/items", response_model=list[MatchAnalysisJobItemRead])
+@router.get("/{job_id}/items", response_model=MatchAnalysisJobItemsPageRead)
 async def list_match_analysis_job_items(
     job_id: int,
+    cursor: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    status_filter: str | None = Query(default=None, alias="status"),
     session: AsyncSession = Depends(get_async_session),
-) -> list[MatchAnalysisJobItemRead]:
+) -> MatchAnalysisJobItemsPageRead:
     job_exists = await session.scalar(select(MatchAnalysisJob.id).where(MatchAnalysisJob.id == job_id))
     if job_exists is None:
         raise HTTPException(status_code=404, detail="匹配分析任务不存在")
+    filters = [MatchAnalysisJobItem.job_id == job_id]
+    if status_filter is not None:
+        filters.append(MatchAnalysisJobItem.status == status_filter)
+    total_count = await session.scalar(
+        select(func.count()).select_from(MatchAnalysisJobItem).where(*filters)
+    )
     items = list(
         await session.scalars(
             select(MatchAnalysisJobItem)
@@ -111,11 +121,20 @@ async def list_match_analysis_job_items(
                     MatchAnalysisRun.match_score,
                 ),
             )
-            .where(MatchAnalysisJobItem.job_id == job_id)
-            .order_by(MatchAnalysisJobItem.id.asc()),
+            .where(*filters)
+            .order_by(MatchAnalysisJobItem.id.asc())
+            .offset(cursor)
+            .limit(limit + 1),
         ),
     )
-    return [serialize_match_analysis_job_item(item) for item in items]
+    has_more = len(items) > limit
+    page = items[:limit]
+    return MatchAnalysisJobItemsPageRead(
+        items=[serialize_match_analysis_job_item(item) for item in page],
+        total_count=total_count or 0,
+        next_cursor=cursor + limit if has_more else None,
+        has_more=has_more,
+    )
 
 
 @router.post("/{job_id}/cancel", response_model=MatchAnalysisJobActionResponse)

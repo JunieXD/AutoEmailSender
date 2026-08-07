@@ -14,10 +14,7 @@ from app.core.startup_logging import write_startup_phase_log
 PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
     "main",
     "aiosqlite",
-    "tiktoken",
-    "tiktoken_ext.openai_public",
     "socksio",
-    "langchain_openai",
     "openai",
     "httpx",
     "tldextract",
@@ -57,10 +54,6 @@ def build_uvicorn_options(argv: Sequence[str] | None = None) -> dict[str, Any]:
 def run_packaged_runtime_self_check() -> int:
     for module_name in PACKAGED_RUNTIME_SELF_CHECK_MODULES:
         importlib.import_module(module_name)
-
-    import tiktoken
-
-    tiktoken.get_encoding("o200k_base").encode("packaged runtime self check")
     print("packaged runtime self-check ok")
     return 0
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import Field
 
@@ -105,6 +106,7 @@ class WorkspaceMessageRead(ApiSchema):
     content_html: str | None
     rfc_message_id: str | None
     failure_summary: str | None
+    delivery_status: Literal["succeeded", "failed"] | None = None
     reply_headers: dict[str, object] | None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None

@@ -56,6 +56,12 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
 vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs: vi.fn().mockResolvedValue([]),
   listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
+  listProfessorInformationEnrichmentItemsPage: vi.fn().mockResolvedValue({
+    items: [],
+    total_count: 0,
+    next_cursor: null,
+    has_more: false,
+  }),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),
@@ -83,6 +89,8 @@ const runningTask = {
   identity_id: 1,
   llm_profile_id: 2,
   pending_generation_count: 2,
+  queued_generation_count: 1,
+  blocked_generation_count: 1,
   generating_draft_count: 1,
   draft_failed_count: 1,
   review_required_count: 1,

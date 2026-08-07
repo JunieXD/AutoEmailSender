@@ -118,6 +118,11 @@ class MatchAnalysisJob(Base):
         UTCDateTime(),
         nullable=True,
     )
+    item_last_dispatched_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        index=True,
+        nullable=True,
+    )
     started_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
@@ -159,6 +164,12 @@ class MatchAnalysisJob(Base):
 
 class MatchAnalysisJobItem(Base):
     __tablename__ = "match_analysis_job_items"
+    __table_args__ = (
+        Index(
+            "ix_match_analysis_job_items_lease_recovery",
+            "lease_expires_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(
@@ -186,6 +197,17 @@ class MatchAnalysisJobItem(Base):
         ForeignKey("match_analysis_runs.id"),
         index=True,
         nullable=True,
+    )
+    claim_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

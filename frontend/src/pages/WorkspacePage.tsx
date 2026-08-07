@@ -18,6 +18,11 @@ import { getEmailSendFailureMessage } from '@/features/email/client/getEmailSend
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
 import { bootstrapWorkspaceThread } from '@/features/workspace/client/openWorkspaceThread';
 import {
+  isCommunicationMessage,
+  isFailedSentMessage,
+  isSuccessfulSentMessage,
+} from '@/features/workspace/client/workspaceMessageDelivery';
+import {
   approveAndSchedule,
   approveAndSend,
   calculateMatch,
@@ -165,7 +170,7 @@ const getStatusLabel = (
   if (messages.some((message) => message.direction === 'received')) {
     return PROFESSOR_STATUS_LABELS.reply_detected;
   }
-  if (messages.some((message) => message.direction === 'sent')) {
+  if (messages.some(isSuccessfulSentMessage)) {
     return PROFESSOR_STATUS_LABELS.sent;
   }
   if (!currentTask?.status) {
@@ -797,11 +802,15 @@ export const WorkspacePage = () => {
     Boolean(currentTask?.primary_material_id) &&
     hasProfessorResearchDirection(thread?.professor);
   const canSubmitDraft = Boolean(currentTaskId) && !blocksDirectDraftActions;
-  const realMessageCount = useMemo(
-    () => thread?.messages.filter((message) => message.direction !== 'draft').length ?? 0,
+  const communicationMessageCount = useMemo(
+    () => thread?.messages.filter(isCommunicationMessage).length ?? 0,
     [thread?.messages],
   );
-  const hasRealMessages = realMessageCount > 0;
+  const failedAttemptCount = useMemo(
+    () => thread?.messages.filter(isFailedSentMessage).length ?? 0,
+    [thread?.messages],
+  );
+  const hasVisibleMessages = communicationMessageCount + failedAttemptCount > 0;
   const handleRefreshThread = useCallback(() => {
     setNewReceivedCount(0);
     void loadThread({ refreshReplies: true, silent: true });
@@ -1467,8 +1476,13 @@ export const WorkspacePage = () => {
 
             <div className="flex flex-wrap gap-2">
               <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1 text-xs font-medium text-stone-600">
-                通信 {realMessageCount} 条
+                通信 {communicationMessageCount} 条
               </span>
+              {failedAttemptCount > 0 ? (
+                <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
+                  {failedAttemptCount} 次失败尝试
+                </span>
+              ) : null}
               {communicationScope.length > 1 ? (
                 <span className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-medium text-teal-800">
                   共享通信 · {communicationScope.length} 个身份
@@ -1489,7 +1503,7 @@ export const WorkspacePage = () => {
           <section
             className={clsx(
               'order-2 flex min-h-0 flex-col overflow-hidden rounded-[36px] border border-stone-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(255,252,247,0.98))] shadow-[0_24px_54px_-36px_rgba(41,37,36,0.34)] lg:order-1',
-              !hasRealMessages && 'lg:self-start',
+              !hasVisibleMessages && 'lg:self-start',
             )}
           >
             {currentTask ? (

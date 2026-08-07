@@ -50,6 +50,7 @@ class CrawlPageChunk(Base):
     split_depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     split_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)

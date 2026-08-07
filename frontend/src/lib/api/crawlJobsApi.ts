@@ -5,6 +5,7 @@ import type {
   CrawlJobEnrichResultDTO,
   CrawlJobApproveResultDTO,
   CrawlJobCreatePayloadDTO,
+  CrawlJobDetailsDTO,
   CrawlJobDTO,
   CrawlJobEventDTO,
   CrawlJobRetryPayloadDTO,
@@ -27,6 +28,9 @@ export const listCrawlJobs = (params: { limit?: number; view?: TaskListView } = 
 
 export const getCrawlJob = (jobId: number) =>
   apiFetch<CrawlJobSummaryDTO>(`/api/crawl-jobs/${jobId}`);
+
+export const getCrawlJobDetails = (jobId: number) =>
+  apiFetch<CrawlJobDetailsDTO>(`/api/crawl-jobs/${jobId}/details`);
 
 export const listCrawlCandidates = (jobId: number) =>
   apiFetch<CrawlCandidateDTO[]>(`/api/crawl-jobs/${jobId}/candidates`);

@@ -36,7 +36,7 @@ uv run python ../scripts/data/update_crawl_benchmark.py \
 
 ## 多台电脑更新
 
-公开数据使用 Schema 2 保存稳定记录 ID，并按记录 ID 合并：
+公开数据使用 Schema 3，并按稳定记录 ID 合并：
 
 - 不同电脑即使本地任务 ID 相同，只要任务来源或创建时间不同，也会保留为不同记录。
 - 从一台电脑复制数据库到另一台电脑并继续补全同一任务时，会识别为同一记录并更新原统计。
@@ -44,9 +44,9 @@ uv run python ../scripts/data/update_crawl_benchmark.py \
 
 推荐顺序是：先同步远端最新代码，再运行更新脚本、测试、提交和推送。如果推送因另一台电脑抢先更新而被拒绝，先获取远端最新文件，再重新运行更新脚本；不要直接选择任意一边的 JSON，也不要手工删掉冲突记录。
 
-Schema 1 的数据库记录没有可安全跨电脑合并的稳定 ID。第一次升级到 Schema 2 时，应先在保存主要抓取记录的电脑上完整重建一次；其他电脑以后再基于这份 Schema 2 数据继续合并。
+稳定记录 ID 从 Schema 2 开始提供。Schema 3 删除了已经失去区分意义的 `runtimeVersion` 字段；更新脚本会在重新发布时自动清理旧记录中的该字段。Schema 1 数据仍应先在保存主要抓取记录的电脑上完整重建一次。
 
-## Schema 2 补全字段
+## Schema 3 补全字段
 
 - `enrichmentSelectedCount`：已经发起过补全的候选人数。
 - `enrichmentSucceededCount`：成功补全人数。

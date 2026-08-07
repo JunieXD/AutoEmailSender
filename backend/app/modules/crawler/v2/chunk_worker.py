@@ -23,6 +23,8 @@ from ..pages.debug import append_crawler_v2_debug_event
 from .retry import mark_crawler_v2_failed
 from .scheduler import ensure_job_active
 from .token_usage import record_crawler_v2_token_usage
+from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from .models import CrawlerV2WorkKind
 from .profile_url_policy import extract_normalized_markdown_links
 from .url_utils import is_same_domain, normalize_url
 from ..jobs.runs import extract_token_usage_from_llm_response
@@ -233,6 +235,11 @@ async def run_crawler_v2_chunk_worker_once(
                 output_tokens=usage.get("output_tokens") or 0,
                 cached_tokens=usage.get("cached_tokens") or 0,
                 raw_usage=dict(usage),
+                claim=CrawlerV2ClaimFence(
+                    kind=CrawlerV2WorkKind.CHUNK,
+                    work_item_id=chunk_id,
+                    worker_id=worker_id,
+                ),
             )
         append_crawler_v2_debug_event(
             job.id,
@@ -410,58 +417,92 @@ async def complete_current_chunk(
         job = await session.get(CrawlJob, chunk.job_id)
         if job is None:
             return {"status": "missing_job", "saved_count": 0, "url_count": 0, "enrichment_count": 0}
+        job_id = chunk.job_id
+        chunk_content = chunk.content
+        source_url = chunk.source_url
+        start_url = job.start_url
+        university = job.university
+        school = job.school
 
-        derived_chunk_status = _derive_chunk_status(candidate_count)
-        ctx = CrawlToolContext(
-            job_id=chunk.job_id,
-            start_url=job.start_url,
-            university=job.university,
-            school=job.school,
-            session_factory=session_factory,
-        )
-        enriched_candidates = _fill_candidate_profile_urls_from_chunk(
-            candidates,
-            chunk_content=chunk.content,
-            source_url=chunk.source_url,
-        )
-        save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
-        enrichment_count = 0
-        url_count = 0
+    derived_chunk_status = _derive_chunk_status(candidate_count)
+    claim_fence = CrawlerV2ClaimFence(
+        kind=CrawlerV2WorkKind.CHUNK,
+        work_item_id=chunk_id,
+        worker_id=worker_id,
+    )
+    ctx = CrawlToolContext(
+        job_id=job_id,
+        start_url=start_url,
+        university=university,
+        school=school,
+        session_factory=session_factory,
+        claim_fence=claim_fence,
+    )
+    enriched_candidates = _fill_candidate_profile_urls_from_chunk(
+        candidates,
+        chunk_content=chunk_content,
+        source_url=source_url,
+    )
+    save_result = await save_candidate_payloads_shared(ctx, enriched_candidates)
+    enrichment_count = 0
+    url_count = 0
 
-        if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
-            split_result = await split_page_chunk_for_retry(
-                session_factory,
-                job_id=chunk.job_id,
-                chunk_pk=chunk.id,
-                reason="candidate_count_exceeded",
-            )
+    if derived_chunk_status == CrawlPageChunkStatus.SPLIT_REQUIRED.value:
+        split_result = await split_page_chunk_for_retry(
+            session_factory,
+            job_id=job_id,
+            chunk_pk=chunk_id,
+            reason="candidate_count_exceeded",
+            claim_fence=claim_fence,
+        )
+        return {
+            "status": split_result["status"],
+            "saved_count": save_result["saved_count"],
+            "url_count": 0,
+            "enrichment_count": 0,
+            "rejected_count": save_result["rejected_count"],
+            "merged_count": save_result["merged_count"],
+            "skipped_duplicate_count": save_result["skipped_duplicate_count"],
+            "child_count": split_result["child_count"],
+            "derived_chunk_status": derived_chunk_status,
+        }
+
+    async with session_factory() as session:
+        if not await fence_crawler_v2_claim(
+            session,
+            claim_fence,
+        ):
+            await session.rollback()
             return {
-                "status": split_result["status"],
+                "status": "claim_lost",
                 "saved_count": save_result["saved_count"],
                 "url_count": 0,
                 "enrichment_count": 0,
-                "rejected_count": save_result["rejected_count"],
-                "merged_count": save_result["merged_count"],
-                "skipped_duplicate_count": save_result["skipped_duplicate_count"],
-                "child_count": split_result["child_count"],
-                "derived_chunk_status": derived_chunk_status,
             }
-
+        chunk = await session.get(CrawlPageChunk, chunk_id)
+        if chunk is None:
+            await session.rollback()
+            return {
+                "status": "missing",
+                "saved_count": save_result["saved_count"],
+                "url_count": 0,
+                "enrichment_count": 0,
+            }
         chunk.status = derived_chunk_status
         chunk.worker_id = None
         chunk.claimed_at = None
         chunk.lease_expires_at = None
         await session.commit()
-        return {
-            "status": "saved",
-            "saved_count": save_result["saved_count"],
-            "url_count": url_count,
-            "enrichment_count": enrichment_count,
-            "rejected_count": save_result["rejected_count"],
-            "merged_count": save_result["merged_count"],
-            "skipped_duplicate_count": save_result["skipped_duplicate_count"],
-            "derived_chunk_status": derived_chunk_status,
-        }
+    return {
+        "status": "saved",
+        "saved_count": save_result["saved_count"],
+        "url_count": url_count,
+        "enrichment_count": enrichment_count,
+        "rejected_count": save_result["rejected_count"],
+        "merged_count": save_result["merged_count"],
+        "skipped_duplicate_count": save_result["skipped_duplicate_count"],
+        "derived_chunk_status": derived_chunk_status,
+    }
 
 
 def _lease_expired(lease_expires_at: datetime | None) -> bool:

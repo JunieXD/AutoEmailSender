@@ -45,10 +45,6 @@ class CrawlJobTriggerMode(str, Enum):
     BATCH = "batch"
 
 
-class CrawlRuntimeVersion(str, Enum):
-    V1 = "v1"
-    V2 = "v2"
-
 class CrawlPageTaskStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
@@ -134,12 +130,6 @@ class CrawlJob(Base):
         server_default=text("1"),
     )
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    runtime_version: Mapped[str] = mapped_column(
-        String(16),
-        nullable=False,
-        server_default=text("'v2'"),
-        index=True,
-    )
     llm_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("llm_profiles.id", ondelete="SET NULL"),
         nullable=True,
@@ -342,6 +332,11 @@ class CrawlCandidate(Base):
     source_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
     boundary_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
     identity_key: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)
+    merged_into_candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("crawl_candidates.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     merge_history: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
     field_sources: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     conflicts: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
@@ -364,6 +359,43 @@ class CrawlCandidate(Base):
 
     job: Mapped["CrawlJob"] = relationship(back_populates="candidates")
     professor: Mapped["Professor | None"] = relationship()
+    merged_into: Mapped["CrawlCandidate | None"] = relationship(
+        remote_side="CrawlCandidate.id",
+        foreign_keys=[merged_into_candidate_id],
+    )
+
+
+class CrawlCandidateIdentityKey(Base):
+    __tablename__ = "crawl_candidate_identity_keys"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "key_type",
+            "normalized_value",
+            name="uq_crawl_candidate_identity_keys_job_type_value",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("crawl_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("crawl_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    key_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    normalized_value: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    candidate: Mapped["CrawlCandidate"] = relationship()
 
 class CrawlPageTask(Base):
     __tablename__ = "crawl_page_tasks"
@@ -394,6 +426,7 @@ class CrawlPageTask(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     fetch_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     direct_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -436,6 +469,7 @@ class CrawlCandidateEnrichmentTask(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     enriched_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -450,11 +484,26 @@ class CrawlCandidateEnrichmentTask(Base):
 
 class CrawlWorkerTokenUsage(Base):
     __tablename__ = "crawl_worker_token_usages"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "worker_kind",
+            "work_item_id",
+            "claim_id",
+            name="uq_crawl_worker_token_usage_claim",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("crawl_job_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     worker_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     work_item_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    claim_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))

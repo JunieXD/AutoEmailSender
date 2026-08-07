@@ -35,6 +35,13 @@ export const BatchTaskResendDialog = ({
   const generationModeLabel = getOutreachGenerationModeLabel(
     context?.defaults.outreach_generation_mode,
   );
+  const selectedItems = selectableItems.filter(
+    (item) => item.professor_id !== null && selectedProfessorIds.includes(item.professor_id),
+  );
+  const reusableCount = selectedItems.filter(
+    (item) => item.content_reuse_kind !== 'regenerate',
+  ).length;
+  const regenerateCount = selectedItems.length - reusableCount;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/35 p-4">
@@ -77,7 +84,10 @@ export const BatchTaskResendDialog = ({
                 </div>
               </dl>
               <p className="mt-3 text-xs leading-5 text-stone-600">
-                进入创建页后仍可选择其他模板或直接修改编辑器；新任务以创建页中看到的内容为准。
+                将优先沿用每位老师上次已审核或 AI 改写后的邮件。当前模板和模型只用于没有可复用草稿的邮件。
+              </p>
+              <p className="mt-2 text-xs font-medium text-stone-700">
+                可直接沿用 {reusableCount} 封 · 需要重新生成 {regenerateCount} 封
               </p>
             </section>
           ) : null}
@@ -133,6 +143,17 @@ export const BatchTaskResendDialog = ({
                       </div>
                       <p className="mt-1 text-xs text-stone-500">
                         {item.professor_email ?? '暂无邮箱'} · 更新 {formatApiDateTime(item.updated_at)}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-primary">
+                        {item.content_reuse_kind === 'approved'
+                          ? item.content_requires_review
+                            ? '沿用上次保存内容，仍需审核'
+                            : '沿用上次已批准内容'
+                          : item.content_reuse_kind === 'generated'
+                            ? '沿用上次 AI 草稿，仍需审核'
+                            : item.content_reuse_kind === 'rewrite_source'
+                              ? '沿用改写前草稿，仍需审核'
+                              : '没有可用草稿，将重新生成'}
                       </p>
                     </div>
                   </label>

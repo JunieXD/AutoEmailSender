@@ -87,6 +87,11 @@ class BatchTask(Base):
         nullable=False,
         server_default=text("0"),
     )
+    draft_last_dispatched_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        index=True,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

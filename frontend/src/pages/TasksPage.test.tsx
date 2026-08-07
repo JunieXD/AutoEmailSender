@@ -10,9 +10,11 @@ import type {
   CrawlJobSummaryDTO,
   MatchAnalysisJobDTO,
   MatchAnalysisJobItemDTO,
+  MatchAnalysisJobItemsPageDTO,
   ProfessorDTO,
   ProfessorManagementItemDTO,
   ProfessorInformationEnrichmentItemDTO,
+  ProfessorInformationEnrichmentItemsPageDTO,
   ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
 } from "@/types";
@@ -48,6 +50,7 @@ const apiMocks = vi.hoisted(() => ({
   restoreBatchTaskItemSend: vi.fn(),
   listCrawlJobs: vi.fn(),
   getCrawlJob: vi.fn(),
+  getCrawlJobDetails: vi.fn(),
   getCrawlJobEvents: vi.fn(),
   listCrawlCandidates: vi.fn(),
   listCrawlPages: vi.fn(),
@@ -69,6 +72,7 @@ const apiMocks = vi.hoisted(() => ({
   restoreMatchAnalysisJob: vi.fn(),
   listProfessorInformationEnrichmentJobs: vi.fn(),
   listProfessorInformationEnrichmentItems: vi.fn(),
+  listProfessorInformationEnrichmentItemsPage: vi.fn(),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
   retryFailedProfessorInformationEnrichmentJob: vi.fn(),
   deleteProfessorInformationEnrichmentJob: vi.fn(),
@@ -159,6 +163,7 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
 vi.mock("@/lib/api/crawlJobsApi", () => ({
   listCrawlJobs: apiMocks.listCrawlJobs,
   getCrawlJob: apiMocks.getCrawlJob,
+  getCrawlJobDetails: apiMocks.getCrawlJobDetails,
   getCrawlJobEvents: apiMocks.getCrawlJobEvents,
   listCrawlCandidates: apiMocks.listCrawlCandidates,
   listCrawlPages: apiMocks.listCrawlPages,
@@ -188,6 +193,8 @@ vi.mock("@/entities/professor/api/informationEnrichment", () => ({
     apiMocks.listProfessorInformationEnrichmentJobs,
   listProfessorInformationEnrichmentItems:
     apiMocks.listProfessorInformationEnrichmentItems,
+  listProfessorInformationEnrichmentItemsPage:
+    apiMocks.listProfessorInformationEnrichmentItemsPage,
   cancelProfessorInformationEnrichmentJob:
     apiMocks.cancelProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob:
@@ -560,6 +567,8 @@ const buildBatchTask = (
   identity_id: 1,
   llm_profile_id: 2,
   pending_generation_count: 0,
+  queued_generation_count: 0,
+  blocked_generation_count: 0,
   generating_draft_count: 0,
   draft_failed_count: 0,
   review_required_count: 0,
@@ -628,6 +637,17 @@ const buildMatchAnalysisJobItem = (
   ...overrides,
 });
 
+const buildMatchAnalysisJobItemsPage = (
+  items: MatchAnalysisJobItemDTO[] = [],
+  overrides: Partial<MatchAnalysisJobItemsPageDTO> = {},
+): MatchAnalysisJobItemsPageDTO => ({
+  items,
+  total_count: items.length,
+  next_cursor: null,
+  has_more: false,
+  ...overrides,
+});
+
 const buildInformationEnrichmentJob = (
   overrides: Partial<ProfessorInformationEnrichmentJobDTO> = {},
 ): ProfessorInformationEnrichmentJobDTO => ({
@@ -684,6 +704,17 @@ const buildInformationEnrichmentItem = (
   finished_at: "2026-05-08T00:00:30",
   created_at: "2026-05-08T00:00:00",
   updated_at: "2026-05-08T00:00:30",
+  ...overrides,
+});
+
+const buildInformationEnrichmentItemsPage = (
+  items: ProfessorInformationEnrichmentItemDTO[] = [],
+  overrides: Partial<ProfessorInformationEnrichmentItemsPageDTO> = {},
+): ProfessorInformationEnrichmentItemsPageDTO => ({
+  items,
+  total_count: items.length,
+  next_cursor: null,
+  has_more: false,
   ...overrides,
 });
 
@@ -879,10 +910,21 @@ beforeEach(() => {
   apiMocks.getCrawlJobEvents.mockResolvedValue([]);
   apiMocks.listCrawlCandidates.mockResolvedValue([]);
   apiMocks.listCrawlPages.mockResolvedValue([]);
+  apiMocks.getCrawlJobDetails.mockImplementation(async (jobId: number) => ({
+    job: await apiMocks.getCrawlJob(jobId),
+    pages: await apiMocks.listCrawlPages(jobId),
+    candidates: await apiMocks.listCrawlCandidates(jobId),
+    events: await apiMocks.getCrawlJobEvents(jobId),
+  }));
   apiMocks.listMatchAnalysisJobs.mockResolvedValue([]);
-  apiMocks.listMatchAnalysisJobItems.mockResolvedValue([]);
+  apiMocks.listMatchAnalysisJobItems.mockResolvedValue(
+    buildMatchAnalysisJobItemsPage(),
+  );
   apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([]);
   apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([]);
+  apiMocks.listProfessorInformationEnrichmentItemsPage.mockResolvedValue(
+    buildInformationEnrichmentItemsPage(),
+  );
   apiMocks.getProfessor.mockResolvedValue(buildProfessor());
   apiMocks.updateProfessor.mockResolvedValue(buildProfessorManagementItem());
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
@@ -1022,9 +1064,15 @@ describe("TasksPage match analysis token usage", () => {
       total_tokens: 1333,
     });
     apiMocks.listMatchAnalysisJobs.mockResolvedValue([job]);
-    apiMocks.listMatchAnalysisJobItems.mockResolvedValue([
-      buildMatchAnalysisJobItem(),
-    ]);
+    apiMocks.listMatchAnalysisJobItems.mockResolvedValue(
+      buildMatchAnalysisJobItemsPage([
+        buildMatchAnalysisJobItem({
+          professor_title: null,
+          professor_university: null,
+          professor_school: null,
+        }),
+      ]),
+    );
 
     render(
       <MemoryRouter>
@@ -1066,13 +1114,14 @@ describe("TasksPage match analysis token usage", () => {
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
     const detailHeaders = within(dialog).getAllByRole("columnheader");
+    expect(within(dialog).getByRole("table")).toHaveClass("w-full", "min-w-max", "table-auto");
     detailHeaders.forEach((header) => {
       expect(header).toHaveClass("align-middle");
       expect(header.parentElement?.parentElement).toHaveClass("text-center");
     });
     expect(
       within(dialog).getByRole("columnheader", { name: "Token 明细" }),
-    ).toHaveClass("w-44");
+    ).not.toHaveClass("w-52");
 
     const itemSummary = await within(dialog).findByLabelText(
       "张老师 Token 使用明细",
@@ -1082,16 +1131,59 @@ describe("TasksPage match analysis token usage", () => {
     expect(itemRow).not.toBeNull();
     const itemCells = within(itemRow as HTMLTableRowElement).getAllByRole("cell");
     expect(itemCells[0]).toHaveClass("align-middle");
-    expect(
-      within(itemCells[0]).getByText("教授 / 测试大学 / 计算机学院"),
-    ).toBeInTheDocument();
-    [1, 2, 4, 5].forEach((index) => {
+    expect(itemCells[0]).not.toHaveTextContent("暂无补充信息");
+    expect(itemCells[0].querySelector(".mt-1")).toBeNull();
+    [1, 2, 3, 4, 5].forEach((index) => {
       expect(itemCells[index]).toHaveClass("text-center", "align-middle");
     });
     expect(within(itemSummary).getByText("900")).toBeInTheDocument();
     expect(within(itemSummary).getByText("100")).toBeInTheDocument();
     expect(within(itemSummary).getByText("700")).toBeInTheDocument();
     expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
+  });
+
+  it("loads a server-side page and prefetches the next match detail page", async () => {
+    const job = buildMatchAnalysisJob({ target_count: 20 });
+    apiMocks.listMatchAnalysisJobs.mockResolvedValue([job]);
+    apiMocks.listMatchAnalysisJobItems.mockImplementation(
+      (_jobId: number, params?: { cursor?: number; limit?: number }) =>
+        Promise.resolve(
+          buildMatchAnalysisJobItemsPage(
+            params?.cursor === 0 ? [buildMatchAnalysisJobItem()] : [],
+            {
+              total_count: 20,
+              has_more: params?.cursor === 0,
+              next_cursor: params?.cursor === 0 ? params.limit : null,
+            },
+          ),
+        ),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "匹配分析" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看匹配分析任务 批量匹配分析",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listMatchAnalysisJobItems).toHaveBeenCalledWith(31, {
+        cursor: 0,
+        limit: 10,
+        status: null,
+      });
+      expect(apiMocks.listMatchAnalysisJobItems).toHaveBeenCalledWith(31, {
+        cursor: 10,
+        limit: 10,
+        status: null,
+      });
+    });
   });
 });
 
@@ -1128,18 +1220,23 @@ describe("TasksPage information enrichment", () => {
     apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([
       buildInformationEnrichmentJob(),
     ]);
-    apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([
-      buildInformationEnrichmentItem(),
-      buildInformationEnrichmentItem({
-        id: 62,
-        professor_name: "李老师",
-        status: "failed",
-        enriched_fields: [],
-        error_message: "browser fallback failed: net::ERR_CONNECTION_RESET",
-        total_tokens: 300,
-        attempt_count: 3,
-      }),
-    ]);
+    apiMocks.listProfessorInformationEnrichmentItemsPage.mockResolvedValue(
+      buildInformationEnrichmentItemsPage(
+        [
+          buildInformationEnrichmentItem(),
+          buildInformationEnrichmentItem({
+            id: 62,
+            professor_name: "李老师",
+            status: "failed",
+            enriched_fields: [],
+            error_message: "browser fallback failed: net::ERR_CONNECTION_RESET",
+            total_tokens: 300,
+            attempt_count: 3,
+          }),
+        ],
+        { total_count: 2 },
+      ),
+    );
 
     render(
       <MemoryRouter>
@@ -1178,6 +1275,7 @@ describe("TasksPage information enrichment", () => {
     expect(within(detailSummary).getByText("总 Token")).toBeInTheDocument();
 
     const detailHeaders = within(dialog).getAllByRole("columnheader");
+    expect(within(dialog).getByRole("table")).toHaveClass("w-full", "min-w-max", "table-auto");
     detailHeaders.forEach((header) => {
       expect(header).toHaveClass("align-middle");
       expect(header.parentElement?.parentElement).toHaveClass("text-center");
@@ -1186,7 +1284,7 @@ describe("TasksPage information enrichment", () => {
       within(dialog).getByRole("columnheader", {
         name: "Token 明细 / 尝试",
       }),
-    ).toHaveClass("w-44");
+    ).not.toHaveClass("w-52");
 
     const itemSummary = within(dialog).getByLabelText("张老师 Token 使用明细");
     expect(itemSummary).toHaveClass("inline-grid", "gap-x-3", "text-left");
@@ -1194,7 +1292,7 @@ describe("TasksPage information enrichment", () => {
     expect(itemRow).not.toBeNull();
     const itemCells = within(itemRow as HTMLTableRowElement).getAllByRole("cell");
     expect(itemCells[0]).toHaveClass("align-middle");
-    [1, 2, 4, 5].forEach((index) => {
+    [1, 2, 3, 4, 5].forEach((index) => {
       expect(itemCells[index]).toHaveClass("text-center", "align-middle");
     });
     expect(within(itemSummary).getByText("1,000")).toBeInTheDocument();
@@ -1208,6 +1306,56 @@ describe("TasksPage information enrichment", () => {
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByText("尝试 3 次")).toBeInTheDocument();
+  });
+
+  it("loads a server-side page and prefetches the next information enrichment page", async () => {
+    const job = buildInformationEnrichmentJob({ target_count: 20 });
+    apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([job]);
+    apiMocks.listProfessorInformationEnrichmentItemsPage.mockImplementation(
+      (_jobId: number, params?: { cursor?: number; limit?: number }) =>
+        Promise.resolve(
+          buildInformationEnrichmentItemsPage(
+            params?.cursor === 0 ? [buildInformationEnrichmentItem()] : [],
+            {
+              total_count: 20,
+              has_more: params?.cursor === 0,
+              next_cursor: params?.cursor === 0 ? params.limit : null,
+            },
+          ),
+        ),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "查看信息补全任务 导师信息补全 2026-05-08",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listProfessorInformationEnrichmentItemsPage).toHaveBeenCalledWith(
+        51,
+        {
+          cursor: 0,
+          limit: 10,
+          status: null,
+        },
+      );
+      expect(apiMocks.listProfessorInformationEnrichmentItemsPage).toHaveBeenCalledWith(
+        51,
+        {
+          cursor: 10,
+          limit: 10,
+          status: null,
+        },
+      );
+    });
   });
 
   it("supports canceling and retrying failed information enrichment items", async () => {
@@ -1455,6 +1603,7 @@ describe("TasksPage batch draft review", () => {
   });
 
   it("shows and confirms the original template when relaunching failed items", async () => {
+    window.sessionStorage.clear();
     const task = buildBatchTask({
       name: "需要重新发起的任务",
       status: "completed",
@@ -1501,6 +1650,8 @@ describe("TasksPage batch draft review", () => {
           default_selected: true,
           selectable: true,
           unavailable_reason: null,
+          content_reuse_kind: "approved",
+          content_requires_review: false,
           updated_at: "2026-05-08T00:00:00",
         },
       ],
@@ -1529,6 +1680,8 @@ describe("TasksPage batch draft review", () => {
     });
     expect(within(resendDialog).getByText("机器人方向申请模板")).toBeInTheDocument();
     expect(within(resendDialog).getByText("AI 辅助写信")).toBeInTheDocument();
+    expect(within(resendDialog).getByText("可直接沿用 1 封 · 需要重新生成 0 封")).toBeInTheDocument();
+    expect(within(resendDialog).getByText("沿用上次已批准内容")).toBeInTheDocument();
 
     fireEvent.click(
       within(resendDialog).getByRole("button", { name: "去创建新任务" }),
@@ -1545,6 +1698,13 @@ describe("TasksPage batch draft review", () => {
         description: expect.stringContaining("写信方式：AI 辅助写信"),
       }),
     );
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/create-task"));
+    expect(
+      JSON.parse(window.sessionStorage.getItem("batch_resend_prefill_context") ?? "{}"),
+    ).toEqual(expect.objectContaining({
+      professorIds: [21],
+      requiresRegeneration: false,
+    }));
   });
 
   it("cancels and restores a scheduled professor on the original card", async () => {
@@ -1731,6 +1891,47 @@ describe("TasksPage batch draft review", () => {
       behavior: "auto",
       block: "start",
     });
+  });
+
+  it("paginates large generating draft lists in batch task details", async () => {
+    const task = buildBatchTask({
+      name: "大量生成中草稿",
+      target_count: 2000,
+      generating_draft_count: 2000,
+      approved_count: 0,
+    });
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      buildBatchItem({
+        id: index + 1,
+        professor_id: index + 1,
+        professor_name: `生成中导师 ${index + 1}`,
+        status: "generating_draft",
+        next_action: "waiting_draft_generation",
+      }),
+    );
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue(items);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    expect(await screen.findByText("生成中导师 1")).toBeInTheDocument();
+    expect(screen.getByText("生成中导师 20")).toBeInTheDocument();
+    expect(screen.queryByText("生成中导师 21")).not.toBeInTheDocument();
+
+    const pagination = screen.getByRole("navigation", {
+      name: "正在生成草稿分页",
+    });
+    fireEvent.click(
+      within(pagination).getByRole("button", { name: "下一页" }),
+    );
+
+    expect(await screen.findByText("生成中导师 21")).toBeInTheDocument();
   });
 
   it("preserves batch list and detail pagination when Activity hides and shows the page again", async () => {
@@ -2865,12 +3066,25 @@ describe("batch task send queue copy", () => {
 
     expect(text).toBe("发送窗口已过期");
   });
+
+  it("keeps legacy canceled items without a reason understandable", () => {
+    const text = getBatchTaskItemCancellationText(
+      buildBatchItem({
+        status: "canceled",
+        cancellation_reason: null,
+        next_action: null,
+      }),
+    );
+
+    expect(text).toBe("任务已取消");
+  });
 });
 
 describe("batch task expiration display", () => {
   it("opens professor profile completion inline instead of workspace fallback", async () => {
     const task = buildBatchTask({
       pending_generation_count: 1,
+      blocked_generation_count: 1,
       approved_count: 0,
       scheduled_count: 0,
     });

@@ -22,9 +22,15 @@ from .schemas import (
     BatchTaskResendSummaryRead,
 )
 from app.modules.identities.public import material_can_be_primary
+from app.services.rich_text import normalize_email_html
 
 SUCCESS_STATUSES = {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
 EXCLUDED_RUNNING_STATUSES = {EmailTaskStatus.SENDING.value}
+
+RESEND_CONTENT_APPROVED = "approved"
+RESEND_CONTENT_GENERATED = "generated"
+RESEND_CONTENT_REWRITE_SOURCE = "rewrite_source"
+RESEND_CONTENT_REGENERATE = "regenerate"
 
 REASON_LABELS: dict[tuple[str, str | None], str] = {
     (EmailTaskStatus.CANCELED.value, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value): "发送窗口已过期",
@@ -52,6 +58,72 @@ class BatchTaskResendContextError(ValueError):
     def __init__(self, status_code: int, message: str) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def classify_resend_content(email_task: EmailTask) -> str:
+    has_approved_snapshot = any(
+        (value or "").strip()
+        for value in (
+            email_task.approved_subject,
+            email_task.approved_body_text,
+            email_task.approved_body_html,
+        )
+    )
+    if has_approved_snapshot and _has_sendable_content(
+        email_task.approved_subject or email_task.generated_subject,
+        email_task.approved_body_text or email_task.generated_content_text,
+        email_task.approved_body_html or email_task.generated_content_html,
+    ):
+        return RESEND_CONTENT_APPROVED
+    if _has_sendable_content(
+        email_task.generated_subject,
+        email_task.generated_content_text,
+        email_task.generated_content_html,
+    ):
+        return RESEND_CONTENT_GENERATED
+    if _has_sendable_content(
+        email_task.draft_rewrite_source_subject,
+        email_task.draft_rewrite_source_body_text,
+        email_task.draft_rewrite_source_body_html,
+    ):
+        return RESEND_CONTENT_REWRITE_SOURCE
+    return RESEND_CONTENT_REGENERATE
+
+
+def _has_sendable_content(
+    subject: str | None,
+    body_text: str | None,
+    body_html: str | None,
+) -> bool:
+    normalized_body_text, _ = normalize_resend_body(body_text, body_html)
+    return bool((subject or "").strip() and (normalized_body_text or "").strip())
+
+
+def normalize_resend_body(
+    body_text: str | None,
+    body_html: str | None,
+) -> tuple[str | None, str | None]:
+    if (body_text or "").strip():
+        return body_text, body_html
+    if not (body_html or "").strip():
+        return body_text, body_html
+    try:
+        rendered = normalize_email_html(body_html or "")
+    except ValueError:
+        return body_text, body_html
+    return rendered.text, rendered.html
+
+
+def reused_content_requires_review(email_task: EmailTask) -> bool:
+    if classify_resend_content(email_task) != RESEND_CONTENT_APPROVED:
+        return True
+    if email_task.status in {
+        EmailTaskStatus.APPROVED.value,
+        EmailTaskStatus.SCHEDULED.value,
+        EmailTaskStatus.SEND_FAILED.value,
+    }:
+        return False
+    return True
 
 
 def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
@@ -197,6 +269,8 @@ async def build_batch_task_resend_context(
                 default_selected=decision.default_selected,
                 selectable=decision.selectable,
                 unavailable_reason=decision.unavailable_reason,
+                content_reuse_kind=classify_resend_content(email_task),
+                content_requires_review=reused_content_requires_review(email_task),
                 updated_at=email_task.updated_at,
             ),
         )
@@ -225,5 +299,5 @@ async def build_batch_task_resend_context(
             default_selected_count=sum(1 for item in items if item.default_selected),
             unavailable_count=sum(1 for item in items if not item.selectable),
         ),
-        warnings=warnings,
+        warnings=list(dict.fromkeys(warnings)),
     )

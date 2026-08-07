@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -42,6 +43,33 @@ class ProfessorImportMutationResult:
     updated_count: int
     created_tag_count: int
     failed_count: int
+
+
+async def get_or_create_professor_by_email(
+    session: AsyncSession,
+    email: str,
+    *,
+    name: str,
+) -> tuple[Professor, bool]:
+    professor = await session.scalar(
+        select(Professor).where(Professor.email == email),
+    )
+    if professor is not None:
+        return professor, False
+
+    try:
+        async with session.begin_nested():
+            professor = Professor(name=name, email=email)
+            session.add(professor)
+            await session.flush()
+    except IntegrityError:
+        professor = await session.scalar(
+            select(Professor).where(Professor.email == email),
+        )
+        if professor is None:
+            raise
+        return professor, False
+    return professor, True
 
 
 async def create_professor_record(

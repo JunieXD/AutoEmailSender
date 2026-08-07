@@ -51,6 +51,15 @@ from ..v2.routing import (
 )
 from ..v2.url_utils import normalize_url
 from app.services.operation_logs import record_operation_log
+from ..candidate_identity import (
+    candidate_identity_values,
+    canonical_candidate_clause,
+    canonicalize_candidate_ids,
+    consolidate_candidate_identity,
+    mark_candidate_fields_manual,
+    rebuild_candidate_identity_keys,
+    resolve_canonical_candidate,
+)
 
 
 CRAWL_JOB_DELETABLE_STATUSES = {
@@ -86,7 +95,6 @@ async def create_faculty_crawl_job_record(
         job_kind=CrawlJobKind.FACULTY_CRAWL.value,
         llm_profile_id=payload.llm_profile_id,
         status=CrawlJobStatus.QUEUED.value,
-        runtime_version="v2",
         progress_current=0,
         progress_total=0,
     )
@@ -200,7 +208,10 @@ async def list_faculty_crawl_candidates(
     candidates = list(
         await session.scalars(
             select(CrawlCandidate)
-            .where(CrawlCandidate.job_id == job_id)
+            .where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            )
             .order_by(
                 CrawlCandidate.confidence.desc(),
                 CrawlCandidate.created_at.asc(),
@@ -222,6 +233,13 @@ async def update_faculty_crawl_candidate_record(
     actor: str | None = None,
 ) -> CrawlCandidateRead:
     candidate = await get_faculty_crawl_candidate_or_raise(session, candidate_id)
+    candidate = await resolve_canonical_candidate(session, candidate)
+    previous_identities = set(
+        candidate_identity_values(
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
+    )
     candidate.name = payload.name
     candidate.email = payload.email.lower() if payload.email else None
     candidate.title = payload.title
@@ -233,7 +251,33 @@ async def update_faculty_crawl_candidate_record(
     candidate.profile_url = payload.profile_url
     candidate.source_url = payload.source_url
     candidate.review_status = payload.review_status
+    mark_candidate_fields_manual(
+        candidate,
+        (
+            "name",
+            "email",
+            "title",
+            "university",
+            "school",
+            "department",
+            "research_direction",
+            "recent_papers",
+            "profile_url",
+            "source_url",
+        ),
+    )
     candidate.updated_at = utc_now()
+    current_identities = set(
+        candidate_identity_values(
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
+    )
+    candidate = await rebuild_candidate_identity_keys(
+        session,
+        candidate,
+        exclude_identities=previous_identities - current_identities,
+    )
     metadata: dict[str, object] = {
         "job_id": candidate.job_id,
         "review_status": candidate.review_status,
@@ -262,12 +306,6 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
     actor: str | None = None,
 ) -> CrawlJobEnrichResult:
     job = await get_faculty_crawl_job_or_raise(session, job_id)
-    if job.runtime_version != "v2":
-        raise CrawlJobRecordError(
-            status_code=409,
-            code="CRAWL_CANDIDATE_ENRICHMENT_LEGACY_UNSUPPORTED",
-            message="旧版抓取任务的候选补全暂不支持通过 Agent 启动。",
-        )
     if job.status == CrawlJobStatus.RUNNING.value:
         raise CrawlJobRecordError(
             status_code=409,
@@ -289,17 +327,11 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             code="CRAWL_CANDIDATE_ENRICHMENT_REQUIRED",
             message="请至少选择一位候选导师。",
         )
-    candidates = list(
-        await session.scalars(
-            select(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job.id,
-                CrawlCandidate.id.in_(candidate_ids),
-            )
-            .order_by(CrawlCandidate.created_at.asc(), CrawlCandidate.id.asc()),
-        ),
+    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+        session,
+        job_id=job.id,
+        candidate_ids=candidate_ids,
     )
-    missing_candidate_ids = sorted(set(candidate_ids) - {candidate.id for candidate in candidates})
     if missing_candidate_ids:
         raise CrawlJobRecordError(
             status_code=404,
@@ -439,7 +471,7 @@ async def get_faculty_crawl_candidate_or_raise(
             code="CRAWL_CANDIDATE_NOT_FOUND",
             message="未找到候选导师",
         )
-    return candidate
+    return await resolve_canonical_candidate(session, candidate)
 
 
 def _candidate_has_missing_enrichment_fields(candidate: CrawlCandidate) -> bool:
@@ -472,7 +504,7 @@ async def cancel_faculty_crawl_job_record(
     now = utc_now()
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
-    await _release_processing_v2_work(session, job.id, reason="任务已取消，释放处理中工作项")
+    await _release_processing_work(session, job.id, reason="任务已取消，释放处理中工作项")
     await mark_crawl_job_run_finished(
         session,
         job,
@@ -509,7 +541,7 @@ async def pause_faculty_crawl_job_record(
     now = utc_now()
     job.status = CrawlJobStatus.PAUSED.value
     job.updated_at = now
-    await _release_processing_v2_work(session, job.id, reason="任务已暂停，释放处理中工作项")
+    await _release_processing_work(session, job.id, reason="任务已暂停，释放处理中工作项")
     await mark_crawl_job_run_paused(session, job, now=now)
     await _record_job_event(
         session,
@@ -575,17 +607,16 @@ async def retry_faculty_crawl_job_record(
             message="仅允许重试状态为“失败”或“已取消”的抓取任务",
         )
 
-    if job.runtime_version == "v2":
+    await session.execute(
+        delete(CrawlCandidateEnrichmentTask).where(
+            CrawlCandidateEnrichmentTask.job_id == job.id,
+        ),
+    )
+    await session.execute(delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id))
+    if payload.clear_existing_data:
         await session.execute(
-            delete(CrawlCandidateEnrichmentTask).where(
-                CrawlCandidateEnrichmentTask.job_id == job.id,
-            ),
+            delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
         )
-        await session.execute(delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id))
-        if payload.clear_existing_data:
-            await session.execute(
-                delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
-            )
 
     if payload.clear_existing_data:
         await session.execute(delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id))
@@ -602,22 +633,21 @@ async def retry_faculty_crawl_job_record(
             actor=actor,
         )
 
-    if job.runtime_version == "v2":
-        for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
-            session.add(
-                CrawlPageTask(
-                    job_id=job.id,
-                    normalized_url=normalized_url,
-                    original_url=start_url,
-                    parent_url=None,
-                    discovery_reason=START_DISCOVERY_REASON,
-                    expansion_mode=(
-                        NO_EXPANSION_MODE if job.entry_type == "profile" else ENTRY_EXPANSION_MODE
-                    ),
-                    depth=0,
-                    status=CrawlPageTaskStatus.PENDING.value,
+    for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
+        session.add(
+            CrawlPageTask(
+                job_id=job.id,
+                normalized_url=normalized_url,
+                original_url=start_url,
+                parent_url=None,
+                discovery_reason=START_DISCOVERY_REASON,
+                expansion_mode=(
+                    NO_EXPANSION_MODE if job.entry_type == "profile" else ENTRY_EXPANSION_MODE
                 ),
-            )
+                depth=0,
+                status=CrawlPageTaskStatus.PENDING.value,
+            ),
+        )
 
     now = utc_now()
     job.status = CrawlJobStatus.QUEUED.value
@@ -660,7 +690,10 @@ async def resume_faculty_crawl_job_review_record(
         await session.scalar(
             select(func.count())
             .select_from(CrawlCandidate)
-            .where(CrawlCandidate.job_id == job_id),
+            .where(
+                CrawlCandidate.job_id == job_id,
+                canonical_candidate_clause(),
+            ),
         )
         or 0
     )
@@ -674,8 +707,7 @@ async def resume_faculty_crawl_job_review_record(
     job.status = CrawlJobStatus.NEEDS_REVIEW.value
     job.error_message = None
     job.updated_at = now
-    if job.runtime_version == "v2":
-        await _freeze_unfinished_v2_discovery_work_for_review(session, job.id)
+    await _freeze_unfinished_discovery_work_for_review(session, job.id)
     if job.current_run is not None:
         job.current_run.status = CrawlJobStatus.NEEDS_REVIEW.value
         job.current_run.updated_at = now
@@ -799,7 +831,15 @@ async def _build_crawl_job_summaries(
         return []
     job_ids = [job.id for job in jobs]
     page_counts = await _count_by_job_id(session, CrawlPage.job_id, job_ids)
-    candidate_counts = await _count_by_job_id(session, CrawlCandidate.job_id, job_ids)
+    candidate_count_rows = await session.execute(
+        select(CrawlCandidate.job_id, func.count())
+        .where(
+            CrawlCandidate.job_id.in_(job_ids),
+            canonical_candidate_clause(),
+        )
+        .group_by(CrawlCandidate.job_id)
+    )
+    candidate_counts = dict(candidate_count_rows.all())
     return [
         CrawlJobSummaryRead.model_validate(job).model_copy(
             update={
@@ -920,7 +960,7 @@ async def _resolve_and_refresh_llm_profile(
     return llm_profile
 
 
-async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
+async def _freeze_unfinished_discovery_work_for_review(session: AsyncSession, job_id: int) -> None:
     terminal_values = {
         "status": "failed_terminal",
         "last_error": "任务已转入待审核，停止继续发现新候选",
@@ -959,7 +999,7 @@ async def _freeze_unfinished_v2_discovery_work_for_review(session: AsyncSession,
     )
 
 
-async def _release_processing_v2_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
+async def _release_processing_work(session: AsyncSession, job_id: int, *, reason: str) -> None:
     clear_values = {
         "status": "pending",
         "last_error": reason,

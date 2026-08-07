@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -20,15 +21,18 @@ from app.models import (
     LLMProfile,
     Professor,
 )
+from app.modules.crawler.jobs.recovery import recover_interrupted_crawl_jobs
 from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
-from app.modules.crawler.v2.enrichment_worker import run_crawler_v2_enrichment_worker_once
+from app.modules.crawler.v2.enrichment_worker import (
+    run_crawler_v2_enrichment_worker_once,
+)
 from app.modules.crawler.v2.scheduler import finalize_idle_jobs
-from app.modules.crawler.jobs.runtime import recover_interrupted_crawl_jobs
 from app.modules.professors.public import (
     create_professor_information_enrichment_job,
     finalize_professor_information_enrichment_job,
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
+    list_professor_information_enrichment_items_page,
 )
 from app.services.token_usage_records import list_token_usage_records
 from test.schema_database import create_schema_sqlite_database
@@ -102,6 +106,87 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[1].skip_reason, "缺少有效的导师主页链接")
         self.assertEqual(items[2].skip_reason, "资料已完整，无需补全")
         self.assertEqual(items[3].skip_reason, "导师已在回收站")
+
+    async def test_batch_items_page_filters_and_counts_without_loading_all_items(self) -> None:
+        active_id = await self._create_professor(
+            name="可补全导师",
+            profile_url="https://example.edu/active",
+        )
+        missing_url_id = await self._create_professor(name="缺少主页导师")
+        complete_id = await self._create_professor(
+            name="资料完整导师",
+            email="complete@example.edu",
+            title="教授",
+            department="计算机系",
+            research_direction="人工智能",
+            recent_papers=["Paper A"],
+            profile_url="https://example.edu/complete",
+        )
+        archived_id = await self._create_professor(
+            name="回收站导师",
+            profile_url="https://example.edu/archived",
+            archived=True,
+        )
+        job_id = await create_professor_information_enrichment_job(
+            self.session_factory,
+            professor_ids=[active_id, missing_url_id, complete_id, archived_id],
+            llm_profile_id=self.llm_profile_id,
+            trigger_mode="batch",
+        )
+
+        async with self.session_factory() as session:
+            first_page = await list_professor_information_enrichment_items_page(
+                session,
+                job_id,
+                cursor=0,
+                limit=1,
+            )
+            skipped_page = await list_professor_information_enrichment_items_page(
+                session,
+                job_id,
+                cursor=0,
+                limit=1,
+                status_filter="skipped",
+            )
+
+        assert first_page is not None and skipped_page is not None
+        self.assertEqual(first_page.total_count, 4)
+        self.assertEqual(len(first_page.items), 1)
+        self.assertTrue(first_page.has_more)
+        self.assertEqual(first_page.next_cursor, 1)
+        self.assertEqual(skipped_page.total_count, 3)
+        self.assertEqual([item.status for item in skipped_page.items], ["skipped"])
+        self.assertTrue(skipped_page.has_more)
+
+    async def test_batch_creation_uses_local_time_in_default_name(self) -> None:
+        professor_id = await self._create_professor(
+            name="可补全导师",
+            profile_url="https://example.edu/active",
+        )
+        utc_time = datetime(2026, 8, 7, 0, 15, tzinfo=UTC)
+        local_time = utc_time.astimezone(timezone(timedelta(hours=8)))
+
+        with (
+            patch(
+                "app.modules.professors.enrichment.service.utc_now",
+                return_value=utc_time,
+            ),
+            patch(
+                "app.modules.professors.enrichment.service.local_now",
+                return_value=local_time,
+            ),
+        ):
+            job_id = await create_professor_information_enrichment_job(
+                self.session_factory,
+                professor_ids=[professor_id],
+                llm_profile_id=self.llm_profile_id,
+                trigger_mode="batch",
+            )
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+        assert job is not None
+        self.assertEqual(job.display_name, "信息补全 2026-08-07 08:15")
 
     async def test_successes_and_skips_finalize_as_completed(self) -> None:
         active_id = await self._create_professor(
@@ -239,7 +324,11 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             llm_profile_id=self.llm_profile_id,
             trigger_mode="single",
         )
-        task_id = await self._claim_only_task(job_id, attempt_count=4)
+        task_id = await self._claim_only_task(
+            job_id,
+            attempt_count=4,
+            failure_count=3,
+        )
 
         with patch(
             "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
@@ -343,7 +432,13 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
             return professor.id
 
-    async def _claim_only_task(self, job_id: int, *, attempt_count: int = 1) -> int:
+    async def _claim_only_task(
+        self,
+        job_id: int,
+        *,
+        attempt_count: int = 1,
+        failure_count: int = 0,
+    ) -> int:
         async with self.session_factory() as session:
             task = await session.scalar(
                 select(CrawlCandidateEnrichmentTask).where(
@@ -357,6 +452,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             task.status = CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
             task.worker_id = "test-worker"
             task.attempt_count = attempt_count
+            task.failure_count = failure_count
             await session.commit()
             return task.id
 

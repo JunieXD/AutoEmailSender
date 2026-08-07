@@ -5,6 +5,7 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from sqlalchemy import select
@@ -15,7 +16,7 @@ from app.core.config import get_settings
 from app.models import AppSetting
 from app.modules.campaigns.public import (
     BatchDraftGenerationCoordinator,
-    run_queued_batch_drafts_once,
+    BatchDraftScheduler,
 )
 from app.modules.crawler.public import run_crawler_v2_once
 from app.modules.matching.public import run_queued_match_analysis_jobs_once
@@ -29,11 +30,11 @@ from app.modules.workspace.public import (
 
 
 logger = logging.getLogger(__name__)
+CRAWLER_WORK_ITEM_WORKER_COUNT = 8
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeWorkerStartupSettings:
-    crawler_worker_count: int
     match_analysis_job_worker_count: int
     match_analysis_job_interval_seconds: int
 
@@ -57,16 +58,16 @@ class RuntimeManager:
         self._tasks: list[asyncio.Task[None]] = []
         self._stopped = asyncio.Event()
         self._batch_draft_coordinator = BatchDraftGenerationCoordinator()
+        self._batch_draft_scheduler = BatchDraftScheduler(
+            session_factory,
+            coordinator=self._batch_draft_coordinator,
+        )
 
     async def _resolve_worker_startup_settings(
         self,
         settings: object,
     ) -> RuntimeWorkerStartupSettings:
         fallback = RuntimeWorkerStartupSettings(
-            crawler_worker_count=_positive_int(
-                getattr(settings, "crawler_worker_count", 8),
-                8,
-            ),
             match_analysis_job_worker_count=_positive_int(
                 getattr(settings, "match_analysis_job_worker_count", 1),
                 1,
@@ -89,10 +90,6 @@ class RuntimeManager:
 
         try:
             return RuntimeWorkerStartupSettings(
-                crawler_worker_count=_positive_int(
-                    runtime_settings.crawler_worker_count,
-                    fallback.crawler_worker_count,
-                ),
                 match_analysis_job_worker_count=_positive_int(
                     runtime_settings.match_analysis_job_worker_count,
                     fallback.match_analysis_job_worker_count,
@@ -116,12 +113,15 @@ class RuntimeManager:
             asyncio.create_task(
                 self._loop(
                     f"crawler-worker-{index}",
-                    10,
-                    run_crawler_v2_once,
-                    processed_jitter_seconds=(2, 10),
+                    5,
+                    partial(
+                        run_crawler_v2_once,
+                        worker_id=f"crawler-worker-{index}",
+                    ),
+                    processed_jitter_seconds=(2, 5),
                 ),
             )
-            for index in range(1, worker_settings.crawler_worker_count + 1)
+            for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1)
         ]
         match_analysis_tasks = [
             asyncio.create_task(
@@ -133,15 +133,6 @@ class RuntimeManager:
             )
             for index in range(1, worker_settings.match_analysis_job_worker_count + 1)
         ]
-
-        async def run_batch_draft_worker(session_factory: async_sessionmaker[AsyncSession]) -> int:
-            async with session_factory() as session:
-                runtime_settings = await get_runtime_settings(session)
-            return await run_queued_batch_drafts_once(
-                session_factory,
-                concurrency=runtime_settings.batch_draft_generation_concurrency,
-                coordinator=self._batch_draft_coordinator,
-            )
 
         dispatcher_startup_recovered = False
 
@@ -184,11 +175,7 @@ class RuntimeManager:
                 ),
             ),
             asyncio.create_task(
-                self._loop(
-                    "batch-draft-worker",
-                    settings.dispatcher_interval_seconds,
-                    run_batch_draft_worker,
-                ),
+                self._batch_draft_scheduler.run_forever(self._stopped),
             ),
             *match_analysis_tasks,
             *crawler_tasks,
