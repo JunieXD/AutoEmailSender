@@ -59,12 +59,15 @@ tag 触发的 workflow 会：
 1. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布。
 2. macOS 打包在签名后清理应用包中的扩展属性，并重新校验签名，避免 Sparkle 无法生成差分包。
 3. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
+   从 v2.5.3 干净基线开始，脚本必须为最新的旧版本生成 delta；缺少该 delta 时会直接终止发布，不能静默退化为仅全量更新。
 4. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
 5. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`，全部成功后再发布为稳定 Release。
 
 工作流失败后可以在 Release 仍为 draft 时重跑；一旦 Release 已公开，重跑必须在上传任何资产前失败。已公开版本不得用 `--clobber` 替换安装包、Skill ZIP 或 appcast，修复后应发布新版本。
 
 首个集成 Sparkle 的版本没有旧 appcast，因此只生成当前 DMG 的 appcast，不会生成差分包。这是正常结果。尚未集成 Sparkle 的旧 macOS 客户端必须手动覆盖安装这个过渡版本一次；之后才能使用原生更新。
+
+v2.4.0 和 v2.4.1 的 DMG 含有旧式代码签名扩展属性，Sparkle 无法把它们作为差分源；v2.5.3 是首个经过签名后清理并验证的公开基线。ad-hoc 构建之间可能出现签名 identity 不一致警告，但已验证这不会阻止从干净基线生成 delta。后续版本必须至少包含从最新干净基线生成的差分包，否则 workflow 失败。
 
 ## 发布后检查
 

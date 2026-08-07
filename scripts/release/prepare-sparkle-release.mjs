@@ -5,11 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateSparklePublicKey } from "../packaging/configure-sparkle-info.mjs";
+import { compareVersions } from "./check-release-version.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDirectory, "..", "..");
 const DEFAULT_REPOSITORY = "JunieXD/AutoEmailSender";
 const MAXIMUM_DELTAS = 3;
+const REQUIRED_DELTA_BASELINE_VERSION = "2.5.3";
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
 export function normalizeReleaseTag(tag) {
@@ -22,6 +24,13 @@ export function normalizeReleaseTag(tag) {
 
 export function getMacDmgName(version) {
   return `AutoEmailSender-${version}-arm64.dmg`;
+}
+
+export function getMacDmgVersion(name) {
+  return (
+    /^AutoEmailSender-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-arm64\.dmg$/i.exec(name)?.[1] ??
+    null
+  );
 }
 
 export function deriveSparklePublicKey(privateKey) {
@@ -65,11 +74,9 @@ export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_
     // generate_appcast rewrites every retained item's download prefix to the
     // newest release tag. Recover the original release from our canonical DMG
     // filename so older delta sources are downloaded from the correct release.
-    const canonicalName = /^AutoEmailSender-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-arm64\.dmg$/i.exec(
-      asset.name,
-    );
-    if (canonicalName !== null) {
-      asset.tag = `v${canonicalName[1]}`;
+    const canonicalVersion = getMacDmgVersion(asset.name);
+    if (canonicalVersion !== null) {
+      asset.tag = `v${canonicalVersion}`;
     }
 
     const key = `${asset.tag}\0${asset.name}`;
@@ -84,6 +91,56 @@ export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_
   }
 
   return assets;
+}
+
+export function extractDeltaSourceVersions(appcast, currentVersion) {
+  const itemBlocks = appcast.match(/<item\b[\s\S]*?<\/item>/gi) ?? [];
+  const currentItem = itemBlocks.find((itemBlock) => {
+    const match = /<sparkle:version>\s*([^<]+?)\s*<\/sparkle:version>/i.exec(itemBlock);
+    return match !== null && decodeXmlAttribute(match[1].trim()) === currentVersion;
+  });
+  if (currentItem === undefined) {
+    return [];
+  }
+
+  const deltas = /<sparkle:deltas\b[\s\S]*?<\/sparkle:deltas>/i.exec(currentItem)?.[0] ?? "";
+  return [
+    ...new Set(
+      [...deltas.matchAll(/\bsparkle:deltaFrom=(?:"([^"]+)"|'([^']+)')/gi)].map(
+        (match) => decodeXmlAttribute(match[1] ?? match[2]),
+      ),
+    ),
+  ];
+}
+
+export function assertRequiredDelta(
+  appcast,
+  currentVersion,
+  previousAssets,
+  baselineVersion = REQUIRED_DELTA_BASELINE_VERSION,
+) {
+  const newestPreviousVersion = previousAssets
+    .map((asset) => getMacDmgVersion(asset.name))
+    .filter((version) => version !== null)
+    .reduce(
+      (newest, version) =>
+        newest === undefined || compareVersions(version, newest) > 0 ? version : newest,
+      undefined,
+    );
+  if (
+    newestPreviousVersion === undefined ||
+    compareVersions(newestPreviousVersion, baselineVersion) < 0
+  ) {
+    return null;
+  }
+
+  const deltaSourceVersions = extractDeltaSourceVersions(appcast, currentVersion);
+  if (!deltaSourceVersions.includes(newestPreviousVersion)) {
+    throw new Error(
+      `Sparkle 未生成从干净基线 ${newestPreviousVersion} 到 ${currentVersion} 的差分包，拒绝发布仅含全量更新的版本。`,
+    );
+  }
+  return newestPreviousVersion;
 }
 
 function decodeXmlAttribute(value) {
@@ -237,7 +294,7 @@ async function downloadPreviousUpdates(workDirectory, repository) {
   const hasAppcast = latestRelease.assets?.some((asset) => asset.name === "appcast.xml");
   if (!hasAppcast) {
     console.log("上一版 Release 没有 appcast.xml，本次将生成首个 Sparkle feed。 ");
-    return 0;
+    return [];
   }
 
   runInherited("gh", [
@@ -271,7 +328,7 @@ async function downloadPreviousUpdates(workDirectory, repository) {
       "--skip-existing",
     ]);
   }
-  return previousAssets.length;
+  return previousAssets;
 }
 
 async function prepareSparkleRelease(options) {
@@ -305,7 +362,7 @@ async function prepareSparkleRelease(options) {
       path.join(workDirectory, currentDmgName.replace(/\.dmg$/i, ".md")),
     );
 
-    const previousUpdateCount = await downloadPreviousUpdates(
+    const previousUpdates = await downloadPreviousUpdates(
       workDirectory,
       options.repository,
     );
@@ -335,6 +392,11 @@ async function prepareSparkleRelease(options) {
     if (!new RegExp(`<sparkle:version>\\s*${escapedVersion}\\s*</sparkle:version>`).test(generatedAppcast)) {
       throw new Error(`生成的 appcast.xml 不包含当前版本 ${version}。`);
     }
+    const requiredDeltaSource = assertRequiredDelta(
+      generatedAppcast,
+      version,
+      previousUpdates,
+    );
 
     await copyFile(currentDmgPath, path.join(options.outputDirectory, currentDmgName));
     await writeFile(
@@ -354,7 +416,10 @@ async function prepareSparkleRelease(options) {
     }
 
     console.log(
-      `Sparkle 发布产物已准备完成：读取 ${previousUpdateCount} 个旧版本，生成 ${deltaFiles.length} 个差分包。`,
+      `Sparkle 发布产物已准备完成：读取 ${previousUpdates.length} 个旧版本，生成 ${deltaFiles.length} 个差分包。` +
+        (requiredDeltaSource === null
+          ? ""
+          : ` 已验证最新干净基线 ${requiredDeltaSource} 的差分更新。`),
     );
   } finally {
     await rm(workDirectory, { recursive: true, force: true });
