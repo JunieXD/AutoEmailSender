@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Bot, Loader2, Terminal } from "lucide-react";
+import { Bot, Check, Loader2, Terminal } from "lucide-react";
 import type { DesktopAgentSupportStatus } from "@/types/desktop";
 
 export function AgentSupportOnboarding() {
   const api = window.autoEmailSender;
   const [status, setStatus] = useState<DesktopAgentSupportStatus | null>(null);
+  const [installCodex, setInstallCodex] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +36,10 @@ export function AgentSupportOnboarding() {
     return null;
   }
 
+  const codex = status.agents.find((agent) => agent.id === "codex");
+  const codexDetected = codex?.detected === true;
+  const canInstallCodex = codexDetected && codex.state === "not_installed";
+
   const dismiss = async () => {
     setWorking(true);
     setError(null);
@@ -58,7 +63,9 @@ export function AgentSupportOnboarding() {
     setWorking(true);
     setError(null);
     try {
-      setStatus(await api.enableAgentSupport());
+      setStatus(await api.enableAgentSupport({
+        installDetectedAgents: canInstallCodex && installCodex,
+      }));
     } catch (enableError) {
       setError(getErrorMessage(enableError));
     } finally {
@@ -79,8 +86,39 @@ export function AgentSupportOnboarding() {
           启用后，Codex、Claude Code、Cursor 等本地 Agent 可以按照你的要求查询数据、生成草稿并操作 Auto Email Sender。真实发送仍必须先展示计划并得到你的明确确认。
         </p>
         <p className="mt-3 text-sm leading-6 text-stone-500">
-          软件会先安装命令行。随后可在个人中心选择要接入的 Agent；已安装的官方使用说明会随软件升级自动更新。
+          {canInstallCodex
+            ? "已检测到 Codex。保持下方选项开启，即可在启用命令行的同时完成接入。"
+            : "软件会先安装命令行。随后可在个人中心选择要接入的 Agent；已安装的官方使用说明会随软件升级自动更新。"}
         </p>
+        {canInstallCodex ? (
+          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl border border-primary/20 bg-primary/[0.045] px-4 py-3.5 transition hover:border-primary/35 hover:bg-primary/[0.07]">
+            <input
+              type="checkbox"
+              className="peer sr-only"
+              checked={installCodex}
+              disabled={working}
+              onChange={(event) => setInstallCodex(event.target.checked)}
+            />
+            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-stone-300 bg-white text-transparent shadow-sm transition peer-checked:border-primary peer-checked:bg-primary peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30 peer-focus-visible:ring-offset-2">
+              <Check className="h-3.5 w-3.5" strokeWidth={3} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-stone-900">
+                同时接入 Codex
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                  推荐
+                </span>
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-stone-500">
+                安装官方 Skill，让 Codex 可以按你的指令操作 Auto Email Sender。
+              </span>
+            </span>
+          </label>
+        ) : codexDetected && codex?.state === "conflict" ? (
+          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+            已检测到 Codex，但 Skill 目录中已有其他文件。软件不会覆盖它；启用命令行后可在个人中心查看详情。
+          </div>
+        ) : null}
         {error ? (
           <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
@@ -92,7 +130,11 @@ export function AgentSupportOnboarding() {
           </button>
           <button type="button" className="ui-btn-primary" disabled={working} onClick={() => void enable()}>
             {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-            启用命令行
+            {canInstallCodex && installCodex
+              ? "启用并接入 Codex"
+              : canInstallCodex
+                ? "仅启用命令行"
+                : "启用命令行"}
           </button>
         </div>
       </div>

@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import type {
   DesktopAgentIntegrationId as AgentIntegrationId,
   DesktopAgentIntegrationStatus as AgentIntegrationStatus,
+  DesktopAgentSupportEnableOptions as AgentSupportEnableOptions,
   DesktopAgentSupportStatus as AgentSupportStatus,
 } from "../../../../contracts/desktop-ipc.js";
 
@@ -148,6 +149,7 @@ export type AgentSupportServiceOptions = {
   readWindowsUserPath?: () => Promise<string>;
   writeWindowsUserPath?: (value: string) => Promise<void>;
   broadcastWindowsEnvironmentChange?: () => Promise<void>;
+  detectAgentInstallation?: (agentId: AgentIntegrationId) => Promise<boolean>;
   now?: () => Date;
 };
 
@@ -193,10 +195,12 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
   const processEnvironment = options.processEnvironment ?? process.env;
   const broadcastWindowsChange = options.broadcastWindowsEnvironmentChange
     ?? broadcastWindowsEnvironmentChange;
+  const detectAgentInstallation = options.detectAgentInstallation
+    ?? ((agentId: AgentIntegrationId) => detectInstalledAgent(agentId, options));
 
   const getStatus = async (): Promise<AgentSupportStatus> => {
     const manifest = await readManifest(paths.manifestPath);
-    const agents = await getAgentStatuses(paths, manifest);
+    const agents = await getAgentStatuses(paths, manifest, detectAgentInstallation);
     const unsupportedReason = getUnsupportedReason(options);
     if (unsupportedReason !== null) {
       return buildStatus("unsupported", unsupportedReason, false, agents);
@@ -253,12 +257,21 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     );
   };
 
-  const enable = async (): Promise<AgentSupportStatus> => {
+  const enable = async (request: AgentSupportEnableOptions = {}): Promise<AgentSupportStatus> => {
     const previousManifest = await readManifest(paths.manifestPath);
     if (previousManifest?.enabled) {
       throw new Error("命令行已启用；如需重新安装，请使用“重新安装”。");
     }
-    return installCliSupport(previousManifest);
+    const status = await installCliSupport(previousManifest);
+    const codex = status.agents.find((agent) => agent.id === "codex");
+    if (
+      request.installDetectedAgents !== true
+      || codex?.detected !== true
+      || codex.state !== "not_installed"
+    ) {
+      return status;
+    }
+    return installAgentSkill("codex");
   };
 
   const repair = async (): Promise<AgentSupportStatus> => {
@@ -613,6 +626,7 @@ async function isInstallationHealthy(input: {
 async function getAgentStatuses(
   paths: AgentSupportPaths,
   manifest: AgentSupportManifest | null,
+  detectAgentInstallation: (agentId: AgentIntegrationId) => Promise<boolean>,
 ): Promise<AgentIntegrationStatus[]> {
   const sourceSha256 = await sha256Directory(paths.skillSource).catch(() => null);
   const statuses: AgentIntegrationStatus[] = [];
@@ -620,6 +634,7 @@ async function getAgentStatuses(
   for (const agent of AGENT_INTEGRATIONS) {
     const target = paths.agentSkillTargets[agent.id];
     const record = manifest?.agents[agent.id];
+    const detected = await detectAgentInstallation(agent.id);
     if (isManagedAgentSkillTarget(record, target)) {
       const healthy = manifest?.schema_version === MANIFEST_SCHEMA_VERSION
         && sourceSha256 !== null
@@ -628,6 +643,7 @@ async function getAgentStatuses(
       statuses.push({
         id: agent.id,
         name: agent.name,
+        detected,
         state: healthy ? "installed" : "needs_update",
         skillPath: target,
         message: healthy ? "已安装官方 Skill" : "需要更新为当前官方 Skill",
@@ -638,6 +654,7 @@ async function getAgentStatuses(
       statuses.push({
         id: agent.id,
         name: agent.name,
+        detected,
         state: "conflict",
         skillPath: target,
         message: "发现同名目录，未覆盖",
@@ -647,6 +664,7 @@ async function getAgentStatuses(
     statuses.push({
       id: agent.id,
       name: agent.name,
+      detected,
       state: "not_installed",
       skillPath: target,
       message: "可单独安装",
@@ -1061,6 +1079,53 @@ function compareOrdinal(left: string, right: string): number {
 
 function isSha256(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
+}
+
+async function detectInstalledAgent(
+  agentId: AgentIntegrationId,
+  options: AgentSupportServiceOptions,
+): Promise<boolean> {
+  if (agentId !== "codex") {
+    return false;
+  }
+  if (await pathExists(path.join(options.homePath, ".codex"))) {
+    return true;
+  }
+  if (options.platform === "win32") {
+    const localAppDataPath = options.localAppDataPath
+      ?? path.join(options.homePath, "AppData", "Local");
+    const knownWindowsPaths = [
+      path.join(localAppDataPath, "Microsoft", "WindowsApps", "codex.exe"),
+      path.join(localAppDataPath, "Programs", "Codex", "Codex.exe"),
+    ];
+    if ((await Promise.all(knownWindowsPaths.map(pathExists))).some(Boolean)) {
+      return true;
+    }
+    const systemRoot = options.processEnvironment?.SystemRoot
+      ?? process.env.SystemRoot
+      ?? "C:\\Windows";
+    return commandSucceeds(path.join(systemRoot, "System32", "where.exe"), ["codex"]);
+  }
+  if (options.platform === "darwin") {
+    const knownMacPaths = [
+      "/Applications/Codex.app",
+      path.join(options.homePath, "Applications", "Codex.app"),
+    ];
+    if ((await Promise.all(knownMacPaths.map(pathExists))).some(Boolean)) {
+      return true;
+    }
+    return commandSucceeds("/usr/bin/which", ["codex"]);
+  }
+  return false;
+}
+
+async function commandSucceeds(command: string, args: string[]): Promise<boolean> {
+  try {
+    await execFileAsync(command, args, { windowsHide: true, timeout: 3_000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function writeJsonAtomic(targetPath: string, value: object): Promise<void> {

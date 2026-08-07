@@ -4,6 +4,7 @@ export type {
   DesktopAgentIntegrationId,
   DesktopAgentIntegrationState,
   DesktopAgentIntegrationStatus,
+  DesktopAgentSupportEnableOptions,
   DesktopAgentSupportState,
   DesktopAgentSupportStatus,
   DesktopBackendConnection,

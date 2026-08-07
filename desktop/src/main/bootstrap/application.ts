@@ -471,8 +471,8 @@ export function bootstrapDesktopApplication(): void {
     },
     getAgentSupportStatus: async () =>
       publishAgentSupportStatus(await agentSupportService.getStatus()),
-    enableAgentSupport: () =>
-      runAgentSupportAction("installing", agentSupportService.enable),
+    enableAgentSupport: (request) =>
+      runAgentSupportAction("installing", () => agentSupportService.enable(request)),
     repairAgentSupport: () =>
       runAgentSupportAction("installing", agentSupportService.repair),
     disableAgentSupport: () =>

@@ -16,6 +16,7 @@ const notEnabledStatus: DesktopAgentSupportStatus = {
     {
       id: "codex",
       name: "Codex",
+      detected: true,
       state: "not_installed",
       skillPath: "/Users/alice/.agents/skills/auto-email-sender",
       message: "可单独安装",
@@ -23,6 +24,7 @@ const notEnabledStatus: DesktopAgentSupportStatus = {
     {
       id: "claude_code",
       name: "Claude Code",
+      detected: false,
       state: "not_installed",
       skillPath: "/Users/alice/.claude/skills/auto-email-sender",
       message: "可单独安装",
@@ -30,6 +32,7 @@ const notEnabledStatus: DesktopAgentSupportStatus = {
     {
       id: "cursor",
       name: "Cursor",
+      detected: false,
       state: "not_installed",
       skillPath: "/Users/alice/.cursor/skills/auto-email-sender",
       message: "可单独安装",
@@ -163,6 +166,35 @@ describe("Agent support UI", () => {
     await waitFor(() => {
       expect(window.autoEmailSender?.dismissAgentSupportOnboarding).toHaveBeenCalledOnce();
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  it("defaults to installing Codex support when Codex is detected", async () => {
+    render(<AgentSupportOnboarding />);
+
+    const codexOption = await screen.findByRole("checkbox", { name: /同时接入 Codex/ });
+    expect(codexOption).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "启用并接入 Codex" }));
+
+    await waitFor(() => {
+      expect(window.autoEmailSender?.enableAgentSupport).toHaveBeenCalledWith({
+        installDetectedAgents: true,
+      });
+    });
+  });
+
+  it("allows enabling only the CLI when the Codex option is cleared", async () => {
+    render(<AgentSupportOnboarding />);
+
+    const codexOption = await screen.findByRole("checkbox", { name: /同时接入 Codex/ });
+    fireEvent.click(codexOption);
+    expect(codexOption).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "仅启用命令行" }));
+
+    await waitFor(() => {
+      expect(window.autoEmailSender?.enableAgentSupport).toHaveBeenCalledWith({
+        installDetectedAgents: false,
+      });
     });
   });
 });

@@ -1,6 +1,7 @@
 import { ipcMain, type BrowserWindow } from "electron";
 import type {
   DesktopAgentIntegrationId,
+  DesktopAgentSupportEnableOptions,
   DesktopAgentSupportStatus,
   DesktopStartupAtLoginStatus,
 } from "../../../../contracts/desktop-ipc.js";
@@ -22,7 +23,7 @@ export type DesktopIpcRegistrationOptions = {
   getStartupAtLoginStatus: () => Promise<DesktopStartupAtLoginStatus>;
   setStartupAtLoginEnabled: (enabled: boolean) => Promise<DesktopStartupAtLoginStatus>;
   getAgentSupportStatus: () => Promise<DesktopAgentSupportStatus>;
-  enableAgentSupport: () => Promise<DesktopAgentSupportStatus>;
+  enableAgentSupport: (options: DesktopAgentSupportEnableOptions) => Promise<DesktopAgentSupportStatus>;
   repairAgentSupport: () => Promise<DesktopAgentSupportStatus>;
   disableAgentSupport: () => Promise<DesktopAgentSupportStatus>;
   installAgentSkill: (agentId: DesktopAgentIntegrationId) => Promise<DesktopAgentSupportStatus>;
@@ -43,7 +44,12 @@ export function registerDesktopIpc(options: DesktopIpcRegistrationOptions): void
     return options.setStartupAtLoginEnabled(enabled);
   });
   ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportGetStatus, options.getAgentSupportStatus);
-  ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportEnable, options.enableAgentSupport);
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportEnable, (_event, request: unknown) => {
+    if (!isAgentSupportEnableOptions(request)) {
+      throw new Error("无效的 Agent 支持启用选项。");
+    }
+    return options.enableAgentSupport(request ?? {});
+  });
   ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportRepair, options.repairAgentSupport);
   ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportDisable, options.disableAgentSupport);
   ipcMain.handle(DESKTOP_IPC_CHANNELS.agentSupportInstallSkill, (_event, agentId: unknown) => {
@@ -75,4 +81,21 @@ export function isAgentIntegrationId(value: unknown): value is DesktopAgentInteg
     || value === "claude_code"
     || value === "cursor"
     || value === "copilot_cli";
+}
+
+export function isAgentSupportEnableOptions(
+  value: unknown,
+): value is DesktopAgentSupportEnableOptions | undefined {
+  if (value === undefined) {
+    return true;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return Object.keys(candidate).every((key) => key === "installDetectedAgents")
+    && (
+      candidate.installDetectedAgents === undefined
+      || typeof candidate.installDetectedAgents === "boolean"
+    );
 }

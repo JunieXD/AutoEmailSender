@@ -123,10 +123,15 @@ export type DesktopAgentIntegrationState =
 export type DesktopAgentIntegrationStatus = {
   id: DesktopAgentIntegrationId;
   name: string;
+  detected: boolean;
   state: DesktopAgentIntegrationState;
   skillPath: string;
   message: string;
   sharedBy?: DesktopAgentIntegrationId;
+};
+
+export type DesktopAgentSupportEnableOptions = {
+  installDetectedAgents?: boolean;
 };
 
 export type DesktopAgentSupportStatus = {
@@ -153,7 +158,7 @@ export type DesktopBridge = {
   getBackendBaseUrl?: () => string | undefined;
   getBackendAccessToken?: () => string | null | undefined;
   getAgentSupportStatus?: () => Promise<DesktopAgentSupportStatus>;
-  enableAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
+  enableAgentSupport?: (options?: DesktopAgentSupportEnableOptions) => Promise<DesktopAgentSupportStatus>;
   repairAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
   disableAgentSupport?: () => Promise<DesktopAgentSupportStatus>;
   installAgentSkill?: (agentId: DesktopAgentIntegrationId) => Promise<DesktopAgentSupportStatus>;

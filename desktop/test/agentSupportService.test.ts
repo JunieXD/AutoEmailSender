@@ -34,6 +34,7 @@ async function createFixture(
     environmentPath: platform === "darwin" ? "/usr/bin:/bin" : undefined,
     processEnvironment: { PATH: platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin" },
     broadcastWindowsEnvironmentChange: async () => {},
+    detectAgentInstallation: async () => false,
     now: () => new Date("2026-08-04T00:00:00.000Z"),
   };
   const paths = resolveAgentSupportPaths(options);
@@ -126,6 +127,67 @@ describe("Agent support installation", () => {
     });
     await service.uninstallAgentSkill("cursor");
     expect(await exists(paths.agentSkillTargets.cursor)).toBe(false);
+  });
+
+  it("detects Codex from its local application data", async () => {
+    const { options } = await createFixture("darwin");
+    const { detectAgentInstallation: _detectAgentInstallation, ...realDetectionOptions } = options;
+    await mkdir(path.join(options.homePath, ".codex"), { recursive: true });
+    const service = createAgentSupportService(realDetectionOptions);
+
+    await expect(service.getStatus()).resolves.toMatchObject({
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: "codex", detected: true }),
+        expect.objectContaining({ id: "claude_code", detected: false }),
+      ]),
+    });
+  });
+
+  it("installs the official Codex Skill when detected Agent installation is requested", async () => {
+    const { options, paths } = await createFixture("win32");
+    let userPath = "C:\\Windows\\System32";
+    const service = createAgentSupportService({
+      ...options,
+      readWindowsUserPath: async () => userPath,
+      writeWindowsUserPath: async (value) => {
+        userPath = value;
+      },
+      detectAgentInstallation: async (agentId) => agentId === "codex",
+    });
+
+    await expect(service.enable({ installDetectedAgents: true })).resolves.toMatchObject({
+      state: "enabled",
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: "codex", detected: true, state: "installed" }),
+      ]),
+    });
+    expect(await readFile(path.join(paths.agentSkillTargets.codex, "SKILL.md"), "utf8")).toContain(
+      "auto-email-sender",
+    );
+  });
+
+  it("does not overwrite a conflicting Codex Skill during detected Agent setup", async () => {
+    const { options, paths } = await createFixture("win32");
+    let userPath = "C:\\Windows\\System32";
+    await mkdir(paths.agentSkillTargets.codex, { recursive: true });
+    const conflictPath = path.join(paths.agentSkillTargets.codex, "SKILL.md");
+    await writeFile(conflictPath, "user-owned-skill", "utf8");
+    const service = createAgentSupportService({
+      ...options,
+      readWindowsUserPath: async () => userPath,
+      writeWindowsUserPath: async (value) => {
+        userPath = value;
+      },
+      detectAgentInstallation: async (agentId) => agentId === "codex",
+    });
+
+    await expect(service.enable({ installDetectedAgents: true })).resolves.toMatchObject({
+      state: "enabled",
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: "codex", detected: true, state: "conflict" }),
+      ]),
+    });
+    expect(await readFile(conflictPath, "utf8")).toBe("user-owned-skill");
   });
 
   it("never overwrites an unmanaged command or Agent Skill", async () => {

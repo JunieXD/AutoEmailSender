@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
+  DesktopAgentSupportEnableOptions,
   DesktopAgentSupportStatus,
   DesktopBackendConnection,
   DesktopBackendStatus,
@@ -67,8 +68,8 @@ export function installDesktopBridge(): void {
     getBackendAccessToken: () => backendConnection?.accessToken ?? null,
     getAgentSupportStatus: () =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.agentSupportGetStatus) as Promise<DesktopAgentSupportStatus>,
-    enableAgentSupport: () =>
-      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.agentSupportEnable) as Promise<DesktopAgentSupportStatus>,
+    enableAgentSupport: (options?: DesktopAgentSupportEnableOptions) =>
+      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.agentSupportEnable, options) as Promise<DesktopAgentSupportStatus>,
     repairAgentSupport: () =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.agentSupportRepair) as Promise<DesktopAgentSupportStatus>,
     disableAgentSupport: () =>
