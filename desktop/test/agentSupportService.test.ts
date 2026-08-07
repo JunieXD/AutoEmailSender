@@ -14,6 +14,8 @@ import {
 } from "../src/main/agent-support/service.js";
 
 const temporaryDirectories: string[] = [];
+const portableInstallPlatform: NodeJS.Platform = process.platform === "darwin" ? "darwin" : "win32";
+const macOSSymlinkIt = process.platform === "darwin" ? it : it.skip;
 
 async function createFixture(
   platform: NodeJS.Platform = "darwin",
@@ -21,6 +23,7 @@ async function createFixture(
 ) {
   const root = await mkdtemp(path.join(tmpdir(), "auto-email-sender-agent-support-"));
   temporaryDirectories.push(root);
+  let windowsUserPath = "C:\\Windows\\System32";
   const options: AgentSupportServiceOptions = {
     platform,
     arch: platform === "darwin" ? "arm64" : "x64",
@@ -33,6 +36,10 @@ async function createFixture(
     appVersion: "2.4.1",
     environmentPath: platform === "darwin" ? "/usr/bin:/bin" : undefined,
     processEnvironment: { PATH: platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin" },
+    readWindowsUserPath: async () => windowsUserPath,
+    writeWindowsUserPath: async (value) => {
+      windowsUserPath = value;
+    },
     broadcastWindowsEnvironmentChange: async () => {},
     detectAgentInstallation: async () => false,
     now: () => new Date("2026-08-04T00:00:00.000Z"),
@@ -76,7 +83,7 @@ describe("Agent support installation", () => {
     await expect(service.enable()).rejects.toThrow("开发版命令行尚未构建");
   });
 
-  it("enables a managed macOS CLI without selecting an Agent automatically", async () => {
+  macOSSymlinkIt("enables a managed macOS CLI without selecting an Agent automatically", async () => {
     const { options, paths } = await createFixture("darwin");
     await mkdir(options.homePath, { recursive: true });
     await writeFile(path.join(options.homePath, ".zshrc"), "export EDITOR=vim\n", "utf8");
@@ -105,7 +112,7 @@ describe("Agent support installation", () => {
   });
 
   it("installs each Agent Skill independently and reports shared discovery honestly", async () => {
-    const { options, paths } = await createFixture("darwin");
+    const { options, paths } = await createFixture(portableInstallPlatform);
     const service = createAgentSupportService(options);
     await service.enable();
 
@@ -191,7 +198,7 @@ describe("Agent support installation", () => {
   });
 
   it("never overwrites an unmanaged command or Agent Skill", async () => {
-    const { options, paths } = await createFixture("darwin");
+    const { options, paths } = await createFixture(portableInstallPlatform);
     await mkdir(path.dirname(paths.cliTarget), { recursive: true });
     await writeFile(paths.cliTarget, "user-owned-command", "utf8");
     const service = createAgentSupportService(options);
@@ -280,7 +287,7 @@ describe("Agent support installation", () => {
   });
 
   it("silently overwrites product-managed CLI and Skills after an app update", async () => {
-    const { options, paths } = await createFixture("darwin");
+    const { options, paths } = await createFixture(portableInstallPlatform);
     const firstService = createAgentSupportService(options);
     await firstService.enable();
     await firstService.installAgentSkill("codex");
@@ -299,7 +306,7 @@ describe("Agent support installation", () => {
   });
 
   it("migrates the legacy shared Skill installation to the Codex integration", async () => {
-    const { options, paths } = await createFixture("darwin");
+    const { options, paths } = await createFixture(portableInstallPlatform);
     const service = createAgentSupportService(options);
     await service.enable();
     await service.installAgentSkill("codex");
@@ -320,7 +327,7 @@ describe("Agent support installation", () => {
   });
 
   it("removes every product-managed Agent Skill without backups when support is disabled", async () => {
-    const { options, paths } = await createFixture("darwin");
+    const { options, paths } = await createFixture(portableInstallPlatform);
     const service = createAgentSupportService(options);
     await service.enable();
     await service.installAgentSkill("codex");

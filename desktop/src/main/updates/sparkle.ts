@@ -18,10 +18,10 @@ let loadedBridge: SparkleBridge | null = null;
 
 export function resolveSparkleBridgePath(input: SparkleBridgePathInput): string {
   if (input.isPackaged) {
-    return path.join(input.resourcesPath, "native", "sparkle_bridge.node");
+    return path.posix.join(input.resourcesPath, "native", "sparkle_bridge.node");
   }
 
-  return path.join(
+  return path.posix.join(
     input.appPath,
     "native",
     "sparkle",
