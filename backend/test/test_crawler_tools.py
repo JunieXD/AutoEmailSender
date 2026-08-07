@@ -197,7 +197,9 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(options.wait_until, "load")
         self.assertEqual(options.wait_for_timeout_ms, 15000)
         self.assertEqual(options.page_timeout_ms, 30000)
-        self.assertEqual(options.delay_before_return_html_seconds, 1.5)
+        self.assertEqual(options.delay_before_return_html_seconds, 0)
+        self.assertTrue(options.wait_for_dynamic_profile)
+        self.assertEqual(options.dynamic_profile_ready_timeout_ms, 10000)
         self.assertIn("Chrome/124.0.0.0", options.user_agent)
 
     def test_browser_fetch_options_for_generic_and_directory_use_load_and_wait_for_body(self) -> None:
@@ -1330,6 +1332,81 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ready)
         self.assertEqual(html, empty_html)
         self.assertEqual(page.wait_for_timeout.await_count, 2)
+
+    def test_dynamic_profile_browser_waits_for_meaningful_stable_content(self) -> None:
+        async def run() -> None:
+            shell_html = "<html><body><main id='profile'></main></body></html>"
+            ready_html = """
+            <html><body><main id="profile">
+              <h1>张吉良</h1><p>zhangjiliang@hnu.edu.cn</p>
+            </main></body></html>
+            """
+            page = SimpleNamespace(
+                url="https://example.edu/profile/zhang",
+                content=AsyncMock(
+                    side_effect=[shell_html, ready_html, ready_html, ready_html]
+                ),
+                wait_for_timeout=AsyncMock(),
+            )
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for_dynamic_profile=True,
+                dynamic_profile_ready_timeout_ms=1000,
+                dynamic_profile_ready_poll_ms=200,
+                dynamic_profile_stable_ms=400,
+            )
+
+            html, ready = await crawler_tools._wait_for_dynamic_profile_html(
+                page,
+                absolute_url=page.url,
+                options=options,
+            )
+
+            self.assertTrue(ready)
+            self.assertEqual(html, ready_html)
+            self.assertEqual(page.wait_for_timeout.await_count, 3)
+
+        asyncio.run(run())
+
+    def test_dynamic_profile_timeout_returns_richest_observed_html(self) -> None:
+        async def run() -> None:
+            rich_html = "<html><body><main>张三的个人简介与研究方向</main></body></html>"
+            empty_html = "<html><body><main></main></body></html>"
+            page = SimpleNamespace(
+                url="https://example.edu/profile/zhang",
+                content=AsyncMock(side_effect=[rich_html, empty_html, empty_html]),
+                wait_for_timeout=AsyncMock(),
+            )
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for_dynamic_profile=True,
+                dynamic_profile_ready_timeout_ms=200,
+                dynamic_profile_ready_poll_ms=100,
+                dynamic_profile_stable_ms=100,
+            )
+
+            html, ready = await crawler_tools._wait_for_dynamic_profile_html(
+                page,
+                absolute_url=page.url,
+                options=options,
+            )
+
+            self.assertFalse(ready)
+            self.assertEqual(html, rich_html)
+            self.assertEqual(page.wait_for_timeout.await_count, 2)
+
+        asyncio.run(run())
+
+    def test_profile_meaningful_content_accepts_email_or_substantial_text(self) -> None:
+        self.assertFalse(
+            crawler_tools.profile_text_has_meaningful_content("首页 导航 版权所有")
+        )
+        self.assertTrue(
+            crawler_tools.profile_text_has_meaningful_content(
+                "张三 zhang@example.edu"
+            )
+        )
+        self.assertTrue(
+            crawler_tools.profile_text_has_meaningful_content("个人资料" * 80)
+        )
 
     def test_playwright_dynamic_directory_timeout_keeps_available_page_succeeded(self) -> None:
         async def run() -> None:

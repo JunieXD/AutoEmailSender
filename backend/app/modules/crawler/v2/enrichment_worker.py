@@ -26,6 +26,7 @@ from ..pages.tools import (
     PageSnapshot,
     build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
+    profile_text_has_meaningful_content,
     validate_safe_public_crawl_url,
 )
 from ..pages.debug import append_crawler_v2_debug_event
@@ -216,7 +217,7 @@ async def run_crawler_v2_enrichment_worker_once(
                     )
                 return 0
             candidate = current_candidate
-            _apply_enrichment(candidate, payload)
+            candidate_enriched_fields = _apply_enrichment(candidate, payload)
             await consolidate_candidate_identity(session, candidate)
             enriched_fields: list[str] = []
             skip_reason = None
@@ -226,6 +227,10 @@ async def run_crawler_v2_enrichment_worker_once(
                     task=task,
                     candidate=candidate,
                 )
+            else:
+                enriched_fields = candidate_enriched_fields
+                if not enriched_fields:
+                    skip_reason = "个人主页未提供可补全的新信息"
             append_crawler_v2_debug_event(
                 task.job_id,
                 worker_kind="enrichment",
@@ -255,6 +260,13 @@ async def run_crawler_v2_enrichment_worker_once(
             task.finished_at = utc_now()
             if skip_reason is None:
                 await _append_enrichment_success_event(session, task=task, candidate=candidate)
+            else:
+                await _append_enrichment_unchanged_event(
+                    session,
+                    task=task,
+                    candidate=candidate,
+                    reason=skip_reason,
+                )
             terminal_job_id = task.job_id
             terminal_candidate_id = task.candidate_id
             await session.commit()
@@ -543,7 +555,11 @@ async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str)
             .order_by(CrawlPage.created_at.desc(), CrawlPage.id.desc())
             .limit(1)
         )
-    if page is None or not page.text_excerpt:
+    if (
+        page is None
+        or not page.text_excerpt
+        or not profile_text_has_meaningful_content(page.text_excerpt)
+    ):
         return None
     return page.text_excerpt
 
@@ -609,6 +625,35 @@ async def _append_enrichment_success_event(
     job.agent_trace = trace[-100:]
 
 
+async def _append_enrichment_unchanged_event(
+    session: AsyncSession,
+    *,
+    task: CrawlCandidateEnrichmentTask,
+    candidate: CrawlCandidate,
+    reason: str,
+) -> None:
+    job = await session.get(CrawlJob, task.job_id)
+    if job is None:
+        return
+    candidate_name = candidate.name if candidate.name else "未知导师"
+    trace = list(job.agent_trace or [])
+    trace.append(
+        {
+            "event_type": "enrichment",
+            "message": f"候选导师详情未发现新信息：{candidate_name}",
+            "created_at": utc_now().isoformat(),
+            "raw": {
+                "candidate_id": task.candidate_id,
+                "task_id": task.id,
+                "status": "skipped",
+                "task_status": CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,
+                "reason": reason,
+            },
+        }
+    )
+    job.agent_trace = trace[-100:]
+
+
 def _is_previous_failed_enrichment_event(
     event: object,
     *,
@@ -639,5 +684,21 @@ async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfi
     )
 
 
-def _apply_enrichment(candidate: CrawlCandidate, payload: CandidateEnrichmentPayload) -> None:
+def _apply_enrichment(
+    candidate: CrawlCandidate,
+    payload: CandidateEnrichmentPayload,
+) -> list[str]:
+    field_names = (
+        "email",
+        "title",
+        "department",
+        "research_direction",
+        "recent_papers",
+    )
+    before = {field_name: getattr(candidate, field_name) for field_name in field_names}
     apply_candidate_enrichment_values(candidate, payload.model_dump())
+    return [
+        field_name
+        for field_name in field_names
+        if before[field_name] != getattr(candidate, field_name)
+    ]

@@ -125,6 +125,10 @@ DYNAMIC_DIRECTORY_READY_TIMEOUT_MS = 5000
 DYNAMIC_DIRECTORY_READY_POLL_MS = 200
 DYNAMIC_DIRECTORY_STABLE_MS = 300
 DYNAMIC_DIRECTORY_MAX_RETRIES = 1
+DYNAMIC_PROFILE_READY_TIMEOUT_MS = 10000
+DYNAMIC_PROFILE_READY_POLL_MS = 200
+DYNAMIC_PROFILE_STABLE_MS = 400
+DYNAMIC_PROFILE_MEANINGFUL_TEXT_CHARS = 300
 BROWSER_EXTRA_ARGS = (
     "--disable-features=HttpsUpgrades",
     "--disable-blink-features=AutomationControlled",
@@ -159,6 +163,10 @@ class BrowserFetchOptions:
     dynamic_directory_ready_timeout_ms: int = DYNAMIC_DIRECTORY_READY_TIMEOUT_MS
     dynamic_directory_ready_poll_ms: int = DYNAMIC_DIRECTORY_READY_POLL_MS
     dynamic_directory_stable_ms: int = DYNAMIC_DIRECTORY_STABLE_MS
+    wait_for_dynamic_profile: bool = False
+    dynamic_profile_ready_timeout_ms: int = DYNAMIC_PROFILE_READY_TIMEOUT_MS
+    dynamic_profile_ready_poll_ms: int = DYNAMIC_PROFILE_READY_POLL_MS
+    dynamic_profile_stable_ms: int = DYNAMIC_PROFILE_STABLE_MS
     ignore_https_errors: bool = False
 
 
@@ -1493,6 +1501,13 @@ def _browser_fetch_options_for_intent(
             max_retries=DYNAMIC_DIRECTORY_MAX_RETRIES,
             wait_for_dynamic_directory=True,
         )
+    if intent == "profile":
+        return BrowserFetchOptions(
+            wait_until=wait_until,
+            wait_for=selected_wait_for,
+            delay_before_return_html_seconds=0,
+            wait_for_dynamic_profile=True,
+        )
     return BrowserFetchOptions(wait_until=wait_until, wait_for=selected_wait_for)
 
 
@@ -1923,6 +1938,7 @@ async def _try_playwright_browser_fetch_once(
         )
 
     browser = None
+    profile_ready = True
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
@@ -1946,6 +1962,12 @@ async def _try_playwright_browser_fetch_once(
                 )
             if options.wait_for_dynamic_directory:
                 html, _ = await _wait_for_dynamic_directory_html(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                )
+            elif options.wait_for_dynamic_profile:
+                html, profile_ready = await _wait_for_dynamic_profile_html(
                     page,
                     absolute_url=absolute_url,
                     options=options,
@@ -1977,6 +1999,8 @@ async def _try_playwright_browser_fetch_once(
         final_url=final_url,
         absolute_url=absolute_url,
     )
+    if options.wait_for_dynamic_profile and not profile_ready:
+        snapshot.suspicious_empty = True
     return snapshot
 
 
@@ -2025,6 +2049,74 @@ async def _wait_for_dynamic_directory_html(
             return latest_html, False
         await page.wait_for_timeout(wait_ms)
         elapsed_ms += wait_ms
+
+
+async def _wait_for_dynamic_profile_html(
+    page: Any,
+    *,
+    absolute_url: str,
+    options: BrowserFetchOptions,
+) -> tuple[str, bool]:
+    timeout_ms = max(0, int(options.dynamic_profile_ready_timeout_ms))
+    poll_ms = max(1, int(options.dynamic_profile_ready_poll_ms))
+    stable_ms = max(0, int(options.dynamic_profile_stable_ms))
+    elapsed_ms = 0
+    stable_elapsed_ms = 0
+    ready_signature: str | None = None
+    best_html = ""
+    best_quality: tuple[int, int, int] = (-1, -1, -1)
+
+    while True:
+        latest_html = await page.content()
+        final_url = str(getattr(page, "url", "") or absolute_url)
+        snapshot = _snapshot_from_browser_html(
+            html=latest_html,
+            final_url=final_url,
+            absolute_url=absolute_url,
+        )
+        quality = _dynamic_profile_snapshot_quality(snapshot)
+        if quality > best_quality:
+            best_html = latest_html
+            best_quality = quality
+
+        if profile_text_has_meaningful_content(snapshot.text):
+            signature = _dynamic_directory_render_signature(snapshot)
+            if signature == ready_signature:
+                stable_elapsed_ms += poll_ms
+            else:
+                ready_signature = signature
+                stable_elapsed_ms = 0
+            if stable_elapsed_ms >= stable_ms:
+                return latest_html, True
+        else:
+            ready_signature = None
+            stable_elapsed_ms = 0
+
+        if elapsed_ms >= timeout_ms:
+            return best_html or latest_html, False
+        wait_ms = min(poll_ms, timeout_ms - elapsed_ms)
+        if wait_ms <= 0:
+            return best_html or latest_html, False
+        await page.wait_for_timeout(wait_ms)
+        elapsed_ms += wait_ms
+
+
+def profile_text_has_meaningful_content(text: str | None) -> bool:
+    normalized_text = " ".join((text or "").split())
+    if not normalized_text:
+        return False
+    return bool(extract_first_email_from_text(normalized_text)) or (
+        len(normalized_text) >= DYNAMIC_PROFILE_MEANINGFUL_TEXT_CHARS
+    )
+
+
+def _dynamic_profile_snapshot_quality(snapshot: PageSnapshot) -> tuple[int, int, int]:
+    normalized_text = " ".join((snapshot.text or "").split())
+    return (
+        int(bool(extract_first_email_from_text(normalized_text))),
+        len(normalized_text),
+        len(snapshot.links or []),
+    )
 
 
 def _dynamic_directory_render_signature(snapshot: PageSnapshot) -> str:
