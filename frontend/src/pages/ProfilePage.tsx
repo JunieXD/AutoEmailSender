@@ -38,6 +38,7 @@ import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor"
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
 import { AgentSupportCard } from "@/components/molecules/AgentSupportCard";
+import { ProjectAcknowledgements } from "@/components/molecules/ProjectAcknowledgements";
 import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
 import { CommunicationSharingPanel } from "@/components/organisms/CommunicationSharingPanel";
 import { formatApiDateTime } from "@/lib/dateTime";
@@ -3875,6 +3876,8 @@ export const ProfilePage = () => {
           <AgentSupportCard />
 
           <DiagnosticLogPanel />
+
+          <ProjectAcknowledgements />
         </div>
       )}
       <OutreachTemplateModal

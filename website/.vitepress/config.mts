@@ -13,6 +13,7 @@ export default defineConfig({
       { text: "首页", link: "/" },
       { text: "文档", link: "/docs/getting-started" },
       { text: "实测数据", link: "/crawl-benchmark" },
+      { text: "致谢", link: "/acknowledgements" },
       { text: "下载", link: "https://github.com/JunieXD/AutoEmailSender/releases" },
       { text: "GitHub", link: "https://github.com/JunieXD/AutoEmailSender" }
     ],
@@ -46,7 +47,8 @@ export default defineConfig({
           text: "帮助",
           items: [
             { text: "交流与反馈", link: "/docs/feedback" },
-            { text: "更新与常见问题", link: "/docs/faq" }
+            { text: "更新与常见问题", link: "/docs/faq" },
+            { text: "致谢", link: "/acknowledgements" }
           ]
         },
         {
