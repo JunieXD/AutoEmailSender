@@ -227,8 +227,9 @@ describe("macOS desktop packaging", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
 
     expect(config).toContain("SUFeedURL:");
-    expect(config).toContain("afterPack: ../scripts/packaging/configure-sparkle-info.mjs");
-    expect(config).toContain("afterSign: ../scripts/packaging/sanitize-macos-bundle.mjs");
+    expect(config).toContain("afterPack: build/configure-sparkle-info.mjs");
+    expect(config).toContain("afterSign: build/sanitize-macos-bundle.mjs");
+    expect(config).not.toMatch(/^after(?:Pack|Sign): \.\.\//m);
     expect(config).toContain("SUEnableAutomaticChecks: true");
     expect(config).toContain("SUAllowsAutomaticUpdates: false");
     expect(config).toContain("SURequireSignedFeed: true");
@@ -236,14 +237,14 @@ describe("macOS desktop packaging", () => {
     expect(config).toContain("from: native/sparkle/vendor/Sparkle.framework");
     expect(config).toContain("to: Frameworks/Sparkle.framework");
     const hook = readFileSync(
-      path.resolve("..", "scripts", "packaging", "configure-sparkle-info.mjs"),
+      path.resolve("build", "configure-sparkle-info.mjs"),
       "utf8",
     );
     expect(hook).toContain("process.env.SPARKLE_PUBLIC_ED_KEY");
     expect(hook).toContain('decoded.length !== 32');
     expect(hook).toContain('"-insert", "SUPublicEDKey"');
     const sanitizer = readFileSync(
-      path.resolve("..", "scripts", "packaging", "sanitize-macos-bundle.mjs"),
+      path.resolve("build", "sanitize-macos-bundle.mjs"),
       "utf8",
     );
     expect(sanitizer).toContain('"-cr", appPath');

@@ -31,7 +31,7 @@ function Test-SamePath([string]$Left, [string]$Right) {
 }
 
 function Get-ObjectProperty([object]$Object, [string]$Name) {
-    if ($null -ne $Object -and $Object.PSObject.Properties.Name -contains $Name) {
+    if ($null -ne $Object -and $null -ne $Object.PSObject.Properties[$Name]) {
         return $Object.$Name
     }
     return $null

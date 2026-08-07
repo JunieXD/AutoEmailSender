@@ -14,9 +14,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  assertRequiredDelta,
   deriveSparklePublicKey,
+  extractDeltaSourceVersions,
   extractPreviousDmgAssets,
   getMacDmgName,
+  getMacDmgVersion,
   normalizeReleaseTag,
 } from "./prepare-sparkle-release.mjs";
 
@@ -25,6 +28,8 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 test("normalizes stable release tags and installer names", () => {
   assert.deepEqual(normalizeReleaseTag("v2.4.0"), { tag: "v2.4.0", version: "2.4.0" });
   assert.equal(getMacDmgName("2.4.0"), "AutoEmailSender-2.4.0-arm64.dmg");
+  assert.equal(getMacDmgVersion("AutoEmailSender-2.5.3-arm64.dmg"), "2.5.3");
+  assert.equal(getMacDmgVersion("other.dmg"), null);
   assert.throws(() => normalizeReleaseTag("latest"), /无效的发布标签/);
 });
 
@@ -69,6 +74,65 @@ test("limits delta source downloads to the most recent three unique DMGs", () =>
   const assets = extractPreviousDmgAssets(`<channel>${items.join("")}</channel>`, "JunieXD/AutoEmailSender");
 
   assert.deepEqual(assets.map(({ tag }) => tag), ["v2.3.9", "v2.3.8", "v2.3.7"]);
+});
+
+test("recovers historical release tags after Sparkle rewrites retained download URLs", () => {
+  const appcast = `
+    <channel>
+      <item>
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.1-arm64.dmg" />
+      </item>
+      <item>
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.0-arm64.dmg" />
+      </item>
+    </channel>`;
+
+  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
+    { tag: "v2.4.1", name: "AutoEmailSender-2.4.1-arm64.dmg" },
+    { tag: "v2.4.0", name: "AutoEmailSender-2.4.0-arm64.dmg" },
+  ]);
+});
+
+test("requires a delta from the newest clean Sparkle baseline", () => {
+  const previousAssets = [
+    { tag: "v2.4.1", name: "AutoEmailSender-2.4.1-arm64.dmg" },
+    { tag: "v2.5.3", name: "AutoEmailSender-2.5.3-arm64.dmg" },
+  ];
+  const appcastWithDelta = `
+    <channel>
+      <item>
+        <sparkle:version>2.5.4</sparkle:version>
+        <enclosure url="AutoEmailSender-2.5.4-arm64.dmg" />
+        <sparkle:deltas>
+          <enclosure url="2.5.3-to-2.5.4.delta" sparkle:deltaFrom="2.5.3" />
+        </sparkle:deltas>
+      </item>
+    </channel>`;
+
+  assert.deepEqual(extractDeltaSourceVersions(appcastWithDelta, "2.5.4"), ["2.5.3"]);
+  assert.equal(assertRequiredDelta(appcastWithDelta, "2.5.4", previousAssets), "2.5.3");
+  const appcastWithoutRequiredDelta = appcastWithDelta
+    .replace("2.5.3-to-2.5.4.delta", "missing.delta")
+    .replace('sparkle:deltaFrom="2.5.3"', 'sparkle:deltaFrom="2.4.1"');
+  assert.throws(
+    () => assertRequiredDelta(appcastWithoutRequiredDelta, "2.5.4", previousAssets),
+    /拒绝发布仅含全量更新/,
+  );
+});
+
+test("allows the legacy pre-clean baseline to fall back to a full DMG", () => {
+  const previousAssets = [
+    { tag: "v2.4.1", name: "AutoEmailSender-2.4.1-arm64.dmg" },
+  ];
+
+  assert.equal(
+    assertRequiredDelta(
+      "<item><sparkle:version>2.5.3</sparkle:version></item>",
+      "2.5.3",
+      previousAssets,
+    ),
+    null,
+  );
 });
 
 test("passes the private key through stdin and stages only publishable files", () => {

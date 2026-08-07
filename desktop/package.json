@@ -1,6 +1,6 @@
 {
   "name": "auto-email-sender-desktop",
-  "version": "2.5.0",
+  "version": "2.5.3",
   "private": true,
   "allowScripts": {
     "electron@39.8.10": true,
