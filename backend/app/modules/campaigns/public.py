@@ -10,6 +10,7 @@ from .item_actions import (
 from .status import (
     batch_item_counts_as_completed,
     count_completed_batch_task_items,
+    email_task_is_not_user_removed_expression,
     should_mark_batch_task_completed,
     sync_batch_task_completion,
 )

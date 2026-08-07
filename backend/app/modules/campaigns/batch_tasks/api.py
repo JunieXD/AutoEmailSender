@@ -60,6 +60,7 @@ from app.modules.campaigns.public import (
     count_completed_batch_task_items,
     sync_batch_task_completion,
 )
+from app.modules.campaigns.status import email_task_is_not_user_removed_expression
 from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
@@ -611,10 +612,7 @@ async def list_batch_task_items(
         )
         .where(
             EmailTask.batch_task_id == task_id,
-            ~(
-                (EmailTask.status == EmailTaskStatus.CANCELED.value)
-                & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
-            ),
+            email_task_is_not_user_removed_expression(),
         )
         .order_by(EmailTask.created_at.asc(), EmailTask.id.asc())
     )
@@ -1423,11 +1421,7 @@ async def _load_batch_task_card_metrics(
     if not task_ids:
         return {}
 
-    is_user_removed = (
-        (EmailTask.status == EmailTaskStatus.CANCELED.value)
-        & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
-    )
-    is_visible = ~is_user_removed
+    is_visible = email_task_is_not_user_removed_expression()
     is_active = is_visible & EmailTask.batch_send_canceled_at.is_(None)
     is_completed = EmailTask.status.in_(
         {

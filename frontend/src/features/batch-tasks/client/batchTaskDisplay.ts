@@ -47,7 +47,7 @@ export const getBatchTaskItemCancellationText = (item: BatchTaskItemDTO) => {
   if (item.cancellation_reason === "batch_stopped") {
     return "批量任务已终止";
   }
-  return null;
+  return item.status === "canceled" ? "任务已取消" : null;
 };
 
 export const isBatchTaskItemMissingResearchDirection = (

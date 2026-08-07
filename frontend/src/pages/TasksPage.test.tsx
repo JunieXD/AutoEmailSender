@@ -1883,6 +1883,47 @@ describe("TasksPage batch draft review", () => {
     });
   });
 
+  it("paginates large generating draft lists in batch task details", async () => {
+    const task = buildBatchTask({
+      name: "大量生成中草稿",
+      target_count: 2000,
+      generating_draft_count: 2000,
+      approved_count: 0,
+    });
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      buildBatchItem({
+        id: index + 1,
+        professor_id: index + 1,
+        professor_name: `生成中导师 ${index + 1}`,
+        status: "generating_draft",
+        next_action: "waiting_draft_generation",
+      }),
+    );
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue(items);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    expect(await screen.findByText("生成中导师 1")).toBeInTheDocument();
+    expect(screen.getByText("生成中导师 20")).toBeInTheDocument();
+    expect(screen.queryByText("生成中导师 21")).not.toBeInTheDocument();
+
+    const pagination = screen.getByRole("navigation", {
+      name: "正在生成草稿分页",
+    });
+    fireEvent.click(
+      within(pagination).getByRole("button", { name: "下一页" }),
+    );
+
+    expect(await screen.findByText("生成中导师 21")).toBeInTheDocument();
+  });
+
   it("preserves batch list and detail pagination when Activity hides and shows the page again", async () => {
     const tasks = Array.from({ length: 9 }, (_, index) =>
       buildBatchTask({
@@ -3014,6 +3055,18 @@ describe("batch task send queue copy", () => {
     );
 
     expect(text).toBe("发送窗口已过期");
+  });
+
+  it("keeps legacy canceled items without a reason understandable", () => {
+    const text = getBatchTaskItemCancellationText(
+      buildBatchItem({
+        status: "canceled",
+        cancellation_reason: null,
+        next_action: null,
+      }),
+    );
+
+    expect(text).toBe("任务已取消");
   });
 });
 

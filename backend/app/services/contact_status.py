@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus
+from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from app.modules.communications.public import load_communication_events
 
 
@@ -189,10 +190,7 @@ async def _load_tasks_by_professor(
             EmailTask.identity_id == identity_id,
             EmailTask.professor_id.in_(professor_ids),
             EmailTask.batch_send_canceled_at.is_(None),
-            ~(
-                (EmailTask.status == EmailTaskStatus.CANCELED.value)
-                & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
-            ),
+            email_task_is_not_user_removed_expression(),
         )
         .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
     )

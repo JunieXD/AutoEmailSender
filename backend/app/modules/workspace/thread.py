@@ -23,6 +23,7 @@ from app.models import (
     OutreachTemplate,
     Professor,
 )
+from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from .schemas import (
     WorkspaceDraftRead,
     WorkspaceIdentityRead,
@@ -549,10 +550,7 @@ async def _get_latest_email_task(
             EmailTask.professor_id == professor_id,
             EmailTask.identity_id == identity_id,
             EmailTask.source != EmailTaskSource.BATCH.value,
-            ~(
-                (EmailTask.status == EmailTaskStatus.CANCELED.value)
-                & (EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value)
-            ),
+            email_task_is_not_user_removed_expression(),
         )
         .order_by(EmailTask.created_at.desc(), EmailTask.id.desc()),
     )

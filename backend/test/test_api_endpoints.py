@@ -5282,6 +5282,61 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(row[3])
         self.assertIsNone(row[4])
 
+    def test_batch_task_items_keep_legacy_canceled_items_without_reason_visible(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_profile_id = self._create_llm()
+        self.client.post("/api/professors/import-sample")
+        professor_ids = [
+            item["id"] for item in self.client.get("/api/professors").json()[:2]
+        ]
+        created = self.client.post(
+            "/api/batch-tasks",
+            json={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "name": "历史取消任务",
+                "professor_ids": professor_ids,
+                "schedule_type": "immediate",
+                "primary_material_id": None,
+                "email_subject": "Hello {{导师姓名}}",
+                "email_body": "Body",
+                "selected_material_ids": None,
+                "outreach_generation_mode": "template",
+                "outreach_template_subject": "Hello {{导师姓名}}",
+                "outreach_template_body_text": "Body",
+                "outreach_template_body_html": None,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        task_id = created.json()["id"]
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'canceled',
+                    cancellation_reason = NULL,
+                    batch_send_canceled_at = CURRENT_TIMESTAMP
+                WHERE batch_task_id = ? AND professor_id = ?
+                """,
+                (task_id, professor_ids[0]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        items = self.client.get(f"/api/batch-tasks/{task_id}/items")
+        listed = self.client.get(
+            "/api/batch-tasks",
+            params={"identity_id": identity_id},
+        )
+
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        self.assertEqual(len(items.json()), 2)
+        self.assertEqual(listed.status_code, 200, msg=listed.text)
+        self.assertEqual(listed.json()[0]["canceled_send_count"], 1)
+
     def test_remove_batch_task_item_rejects_sent_item(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()

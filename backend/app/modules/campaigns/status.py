@@ -2,9 +2,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy import or_
+from sqlalchemy.sql.elements import ColumnElement
+
 from app.core.time import as_utc_aware, utc_now
 
-from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskStatus
+from app.models import (
+    BatchTask,
+    BatchTaskStatus,
+    EmailTask,
+    EmailTaskCancellationReason,
+    EmailTaskStatus,
+)
 
 
 BATCH_TASK_COMPLETED_ITEM_STATUSES = {
@@ -16,6 +25,17 @@ BATCH_TASK_COMPLETION_EXCLUDED_STATUSES = {
     BatchTaskStatus.STOPPED.value,
     BatchTaskStatus.EXPIRED.value,
 }
+
+
+def email_task_is_not_user_removed_expression() -> ColumnElement[bool]:
+    """Keep legacy canceled rows with no recorded cancellation reason visible."""
+
+    return or_(
+        EmailTask.status != EmailTaskStatus.CANCELED.value,
+        EmailTask.cancellation_reason.is_(None),
+        EmailTask.cancellation_reason
+        != EmailTaskCancellationReason.USER_REMOVED.value,
+    )
 
 
 def batch_item_counts_as_completed(

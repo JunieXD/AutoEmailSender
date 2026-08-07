@@ -498,6 +498,10 @@ const PAGE_SIZE_STORAGE_KEYS = {
   informationEnrichmentJobs: "tasks:information-enrichment:page-size",
   batchSentItems: "tasks:batch-details:sent:page-size",
   batchPendingItems: "tasks:batch-details:pending:page-size",
+  batchGeneratingItems: "tasks:batch-details:generating:page-size",
+  batchDraftFailedItems: "tasks:batch-details:draft-failed:page-size",
+  batchFailedItems: "tasks:batch-details:failed:page-size",
+  batchReviewItems: "tasks:batch-details:review:page-size",
   matchJobItems: "tasks:match-details:items:page-size",
   informationEnrichmentItems:
     "tasks:information-enrichment-details:items:page-size",
@@ -1145,6 +1149,42 @@ export const TasksPage = () => {
     initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
   });
   const {
+    page: batchGeneratingItemPage,
+    pageSize: batchGeneratingItemPageSize,
+    setPage: setBatchGeneratingItemPage,
+    onChange: handleBatchGeneratingItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchGeneratingItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchDraftFailedItemPage,
+    pageSize: batchDraftFailedItemPageSize,
+    setPage: setBatchDraftFailedItemPage,
+    onChange: handleBatchDraftFailedItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchDraftFailedItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchFailedItemPage,
+    pageSize: batchFailedItemPageSize,
+    setPage: setBatchFailedItemPage,
+    onChange: handleBatchFailedItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchFailedItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
+    page: batchReviewItemPage,
+    pageSize: batchReviewItemPageSize,
+    setPage: setBatchReviewItemPage,
+    onChange: handleBatchReviewItemPaginationChange,
+  } = usePaginationState({
+    storageKey: PAGE_SIZE_STORAGE_KEYS.batchReviewItems,
+    initialPageSize: BATCH_DETAIL_ITEM_PAGE_SIZE,
+  });
+  const {
     page: crawlEventPage,
     pageSize: crawlEventPageSize,
     setPage: setCrawlEventPage,
@@ -1369,15 +1409,12 @@ export const TasksPage = () => {
       selectedBatchTaskItems.filter(
         (item) =>
           item.batch_send_canceled_at !== null ||
-          (item.status === "canceled" &&
-            (item.cancellation_reason === "batch_stopped" ||
-              item.cancellation_reason === "schedule_expired")) ||
+          item.status === "canceled" ||
           (item.status !== "sent" &&
             item.status !== "reply_detected" &&
             item.status !== "generating_draft" &&
             item.status !== "draft_failed" &&
-            item.status !== "send_failed" &&
-            item.status !== "canceled"),
+            item.status !== "send_failed"),
       ),
     [selectedBatchTaskItems],
   );
@@ -1478,6 +1515,25 @@ export const TasksPage = () => {
     batchPendingItemPage,
     getTotalPages(pendingBatchTaskItems.length, batchPendingItemPageSize),
   );
+  const safeBatchGeneratingItemPage = Math.min(
+    batchGeneratingItemPage,
+    getTotalPages(
+      generatingDraftBatchTaskItems.length,
+      batchGeneratingItemPageSize,
+    ),
+  );
+  const safeBatchDraftFailedItemPage = Math.min(
+    batchDraftFailedItemPage,
+    getTotalPages(draftFailedBatchTaskItems.length, batchDraftFailedItemPageSize),
+  );
+  const safeBatchFailedItemPage = Math.min(
+    batchFailedItemPage,
+    getTotalPages(failedBatchTaskItems.length, batchFailedItemPageSize),
+  );
+  const safeBatchReviewItemPage = Math.min(
+    batchReviewItemPage,
+    getTotalPages(batchReviewQueueItems.length, batchReviewItemPageSize),
+  );
   const safeCrawlEventPage = Math.min(
     crawlEventPage,
     getTotalPages(crawlJobEvents.length, crawlEventPageSize),
@@ -1521,6 +1577,50 @@ export const TasksPage = () => {
         batchPendingItemPageSize,
       ),
     [batchPendingItemPageSize, pendingBatchTaskItems, safeBatchPendingItemPage],
+  );
+  const visibleGeneratingDraftBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        generatingDraftBatchTaskItems,
+        safeBatchGeneratingItemPage,
+        batchGeneratingItemPageSize,
+      ),
+    [
+      batchGeneratingItemPageSize,
+      generatingDraftBatchTaskItems,
+      safeBatchGeneratingItemPage,
+    ],
+  );
+  const visibleDraftFailedBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        draftFailedBatchTaskItems,
+        safeBatchDraftFailedItemPage,
+        batchDraftFailedItemPageSize,
+      ),
+    [
+      batchDraftFailedItemPageSize,
+      draftFailedBatchTaskItems,
+      safeBatchDraftFailedItemPage,
+    ],
+  );
+  const visibleFailedBatchTaskItems = useMemo(
+    () =>
+      getPageItems(
+        failedBatchTaskItems,
+        safeBatchFailedItemPage,
+        batchFailedItemPageSize,
+      ),
+    [batchFailedItemPageSize, failedBatchTaskItems, safeBatchFailedItemPage],
+  );
+  const visibleBatchReviewQueueItems = useMemo(
+    () =>
+      getPageItems(
+        batchReviewQueueItems,
+        safeBatchReviewItemPage,
+        batchReviewItemPageSize,
+      ),
+    [batchReviewItemPageSize, batchReviewQueueItems, safeBatchReviewItemPage],
   );
   const visibleBatchTasks = useMemo(
     () => getPageItems(tasks, safeBatchPage, batchPageSize),
@@ -2465,6 +2565,52 @@ export const TasksPage = () => {
   ]);
 
   useEffect(() => {
+    setBatchGeneratingItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(
+          generatingDraftBatchTaskItems.length,
+          batchGeneratingItemPageSize,
+        ),
+      ),
+    );
+    setBatchDraftFailedItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(
+          draftFailedBatchTaskItems.length,
+          batchDraftFailedItemPageSize,
+        ),
+      ),
+    );
+    setBatchFailedItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(failedBatchTaskItems.length, batchFailedItemPageSize),
+      ),
+    );
+    setBatchReviewItemPage((currentPage) =>
+      Math.min(
+        currentPage,
+        getTotalPages(batchReviewQueueItems.length, batchReviewItemPageSize),
+      ),
+    );
+  }, [
+    batchDraftFailedItemPageSize,
+    batchFailedItemPageSize,
+    batchGeneratingItemPageSize,
+    batchReviewItemPageSize,
+    batchReviewQueueItems.length,
+    draftFailedBatchTaskItems.length,
+    failedBatchTaskItems.length,
+    generatingDraftBatchTaskItems.length,
+    setBatchDraftFailedItemPage,
+    setBatchFailedItemPage,
+    setBatchGeneratingItemPage,
+    setBatchReviewItemPage,
+  ]);
+
+  useEffect(() => {
     if (crawlJobsPreloadedRef.current) {
       return;
     }
@@ -2590,10 +2736,37 @@ export const TasksPage = () => {
     previousSelectedBatchTaskIdRef.current = selectedBatchTask?.id;
     setBatchSentItemPage(1);
     setBatchPendingItemPage(1);
+    setBatchGeneratingItemPage(1);
+    setBatchDraftFailedItemPage(1);
+    setBatchFailedItemPage(1);
+    setBatchReviewItemPage(1);
   }, [
     selectedBatchTask?.id,
+    setBatchDraftFailedItemPage,
+    setBatchFailedItemPage,
+    setBatchGeneratingItemPage,
     setBatchPendingItemPage,
+    setBatchReviewItemPage,
     setBatchSentItemPage,
+  ]);
+
+  useEffect(() => {
+    if (batchReviewItemId === null) {
+      return;
+    }
+    const itemIndex = batchReviewQueueItems.findIndex(
+      (item) => item.id === batchReviewItemId,
+    );
+    if (itemIndex >= 0) {
+      setBatchReviewItemPage(
+        Math.floor(itemIndex / batchReviewItemPageSize) + 1,
+      );
+    }
+  }, [
+    batchReviewItemId,
+    batchReviewItemPageSize,
+    batchReviewQueueItems,
+    setBatchReviewItemPage,
   ]);
 
   useEffect(() => {
@@ -5135,7 +5308,7 @@ export const TasksPage = () => {
                       ) : null}
                     </div>
                     <div className="mt-4 space-y-2">
-                      {batchReviewQueueItems.map((item) => {
+                      {visibleBatchReviewQueueItems.map((item) => {
                         const itemGeneratingDraft =
                           item.status === "generating_draft";
                         const itemAction = batchReviewItemActions[item.id] ?? null;
@@ -5202,6 +5375,19 @@ export const TasksPage = () => {
                         </div>
                       )})}
                     </div>
+                    <Pagination
+                      page={safeBatchReviewItemPage}
+                      pageSize={batchReviewItemPageSize}
+                      totalCount={batchReviewQueueItems.length}
+                      onChange={handleBatchReviewItemPaginationChange}
+                      ariaLabel="待审核草稿分页"
+                      pageSizeAriaLabel="待审核草稿每页数量"
+                      variant="compact"
+                      pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                      unitLabel="封"
+                      itemLabel="封草稿"
+                      className="mt-4 border-t border-stone-200 pt-3"
+                    />
                   </aside>
 
                   <section className="min-w-0 rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
@@ -5782,7 +5968,7 @@ export const TasksPage = () => {
                     正在生成草稿
                   </h3>
                   <div className="mt-3 space-y-2">
-                    {generatingDraftBatchTaskItems.map((item) => (
+                    {visibleGeneratingDraftBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-sky-100 bg-sky-50/50 px-4 py-3"
@@ -5812,6 +5998,19 @@ export const TasksPage = () => {
                       </div>
                     ))}
                   </div>
+                  <Pagination
+                    page={safeBatchGeneratingItemPage}
+                    pageSize={batchGeneratingItemPageSize}
+                    totalCount={generatingDraftBatchTaskItems.length}
+                    onChange={handleBatchGeneratingItemPaginationChange}
+                    ariaLabel="正在生成草稿分页"
+                    pageSizeAriaLabel="正在生成草稿每页数量"
+                    variant="compact"
+                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                    unitLabel="封"
+                    itemLabel="封草稿"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
                 </section>
               ) : null}
 
@@ -5821,7 +6020,7 @@ export const TasksPage = () => {
                     草稿生成失败
                   </h3>
                   <div className="mt-3 space-y-2">
-                    {draftFailedBatchTaskItems.map((item) => (
+                    {visibleDraftFailedBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
@@ -5843,6 +6042,19 @@ export const TasksPage = () => {
                       </div>
                     ))}
                   </div>
+                  <Pagination
+                    page={safeBatchDraftFailedItemPage}
+                    pageSize={batchDraftFailedItemPageSize}
+                    totalCount={draftFailedBatchTaskItems.length}
+                    onChange={handleBatchDraftFailedItemPaginationChange}
+                    ariaLabel="草稿生成失败分页"
+                    pageSizeAriaLabel="草稿生成失败每页数量"
+                    variant="compact"
+                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                    unitLabel="封"
+                    itemLabel="封草稿"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
                 </section>
               ) : null}
 
@@ -5852,7 +6064,7 @@ export const TasksPage = () => {
                     发送失败
                   </h3>
                   <div className="mt-3 space-y-2">
-                    {failedBatchTaskItems.map((item) => (
+                    {visibleFailedBatchTaskItems.map((item) => (
                       <div
                         key={item.id}
                         className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
@@ -5869,6 +6081,19 @@ export const TasksPage = () => {
                       </div>
                     ))}
                   </div>
+                  <Pagination
+                    page={safeBatchFailedItemPage}
+                    pageSize={batchFailedItemPageSize}
+                    totalCount={failedBatchTaskItems.length}
+                    onChange={handleBatchFailedItemPaginationChange}
+                    ariaLabel="发送失败分页"
+                    pageSizeAriaLabel="发送失败每页数量"
+                    variant="compact"
+                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
+                    unitLabel="封"
+                    itemLabel="封邮件"
+                    className="mt-3 border-t border-stone-100 pt-3"
+                  />
                 </section>
               ) : null}
 
