@@ -85,6 +85,7 @@ jobs:
           node --test
           scripts/release/check-release-version.test.mjs
           scripts/release/release-candidate.test.mjs
+          scripts/release/release-impact.test.mjs
           scripts/release/release-preflight.test.mjs
           scripts/release/prepare-sparkle-release.test.mjs
           scripts/release/verify-sparkle-draft-assets.test.mjs

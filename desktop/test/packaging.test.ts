@@ -230,6 +230,11 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain(
       'Test-VerifiedStage -Name "backend-release-contracts"',
     );
+    expect(guestRunner).toContain(
+      'Test-VerifiedStage -Name "release-orchestration-contracts"',
+    );
+    expect(guestRunner).toContain("prepare-release.test.ps1");
+    expect(guestRunner).toContain("release-script.test.ps1");
     expect(guestRunner).toContain("test.test_backend_build_script");
     expect(guestRunner).toContain('Invoke-QaStep "Windows installer build"');
     expect(guestRunner).toContain("if ($Mode -eq \"release\")");

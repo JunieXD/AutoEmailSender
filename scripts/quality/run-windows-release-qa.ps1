@@ -314,6 +314,26 @@ $uvVersion = (& uv --version).Trim()
 $pythonPath = (& uv python find 3.12).Trim()
 $toolchainFingerprint = "node=$nodeVersion;npm=$npmVersion;uv=$uvVersion;python=$pythonPath"
 
+$releaseContractInputs = @(
+  "scripts/release",
+  ".github/workflows/release.yml",
+  ".codex/skills/auto-email-sender-release",
+  "scripts/quality/run-windows-release-qa.ps1"
+)
+$releaseContractFingerprint = Get-StageFingerprint -Paths $releaseContractInputs -AdditionalValues @(
+  $toolchainFingerprint,
+  "command=PowerShell prepare and release entrypoint contracts"
+)
+if (-not (Test-VerifiedStage -Name "release-orchestration-contracts" -Fingerprint $releaseContractFingerprint)) {
+  Invoke-QaStep "PowerShell release orchestration contract tests" {
+    & pwsh -NoLogo -NoProfile -File (Join-Path $CheckoutPath "scripts\release\prepare-release.test.ps1")
+    Assert-NativeSuccess "PowerShell prepare-release contract tests"
+    & pwsh -NoLogo -NoProfile -File (Join-Path $CheckoutPath "scripts\release\release-script.test.ps1")
+    Assert-NativeSuccess "PowerShell release contract tests"
+  }
+  Save-VerifiedStage -Name "release-orchestration-contracts" -Fingerprint $releaseContractFingerprint
+}
+
 if ($Mode -eq "release") {
   Invoke-QaStep "Windows packaging prerequisites" {
     & (Join-Path $CheckoutPath "scripts\build\prepare-windows-vc-runtime.ps1")

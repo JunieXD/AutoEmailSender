@@ -28,13 +28,21 @@ VM 已长期配置 Git for Windows 2.55、Node.js 24、npm 11、`C:\Users\junie\
 
 普通前后端逻辑小改动先运行本机聚焦测试和 CI，不要为每次小测试启动 VM。
 
+不确定修改会使哪些证据失效时，先让脚本按 Git 变更生成最小重跑集合：
+
+```bash
+node scripts/release/release-impact.mjs --base <上次已认证SHA> --head HEAD
+```
+
+测试夹具、公告和发布编排分别只触发对应测试；只有 Windows 安装器、打包、运行时或原生依赖输入变化时才立即要求正式模式。对最终冻结候选加 `--candidate`，它会明确要求一次正式 Windows 验收和 macOS 候选认证。
+
 开发过程中确实需要真实 Windows 验证、但还没有进入发布候选阶段时，可运行快速模式：
 
 ```bash
 rtk bash scripts/quality/run-windows-vm-release-qa.sh --quick
 ```
 
-快速模式仍会传输已提交的 `HEAD`，并按输入指纹运行或复用前端、CLI、后端和桌面测试及冻结构建，但会跳过 VC++ 安装器准备、NSIS 构建和打包后的启动/运行身份生命周期。因此它适合日常 Windows 回归，不构成发布前验收结果。准备 tag 时必须重新运行不带 `--quick` 的正式模式。
+快速模式仍会传输已提交的 `HEAD`，并按输入指纹运行或复用发布入口契约、前端、CLI、后端和桌面测试及冻结构建，但会跳过 VC++ 安装器准备、NSIS 构建和打包后的启动/运行身份生命周期。因此它适合日常 Windows 回归，不构成发布前验收结果。最终候选提交后、提升公开前，必须对同一 SHA 运行一次不带 `--quick` 的正式模式。
 
 ## 一键验收
 
@@ -46,7 +54,7 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh
 
 宿主脚本会确认 VM，并让 Windows 更新本地 NTFS checkout：首次运行传输完整 Git bundle，已有基线时只传增量对象，目标提交已经存在时不再传 bundle。随后运行需要更新的依赖与发布构建阶段并删除临时传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
 
-VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；后端全套测试只在 `backend/**` 或工具链变化时重跑，打包脚本和仓库 Skill 变化只重跑对应的聚焦契约测试。任何相关文件或工具版本变化都会自动重跑对应阶段。正式模式的 NSIS 安装器和打包后运行时生命周期每次都重新构建、重新验证，不使用阶段缓存；快速模式明确跳过二者。需要排查缓存或周期性做全新基线时运行：
+VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续运行可复用发布 PowerShell 入口契约、前端构建、CLI/后端测试与冻结包、桌面依赖和测试；后端全套测试只在 `backend/**` 或工具链变化时重跑，发布脚本、打包脚本和仓库 Skill 变化只重跑对应的聚焦契约测试。任何相关文件或工具版本变化都会自动重跑对应阶段。正式模式的 NSIS 安装器和打包后运行时生命周期不使用阶段缓存，但只对冻结后的最终候选运行一次；纯公告修改不应重新运行正式 VM。快速模式明确跳过二者。需要排查缓存或周期性做全新基线时运行：
 
 ```bash
 rtk bash scripts/quality/run-windows-vm-release-qa.sh --force-full
@@ -56,12 +64,13 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh --force-full
 
 Windows 侧会先结束可执行路径位于专用 QA checkout 内的残留应用进程，避免上一次中止的验收锁住冻结包；不会按进程名清理 checkout 外的程序。随后执行：
 
-1. 先下载并校验微软签名的 VC++ x64 Runtime，使环境或 PowerShell 模块问题在昂贵测试前失败；
-2. 前端 `npm ci`、Rolldown 当前架构原生绑定检查和 Vite 生产构建；
-3. CLI 全部测试、干净 PyInstaller 构建和冻结版本校验；
-4. 后端全部测试、Playwright 运行时核对、干净 PyInstaller 构建及自检；
-5. Electron `npm ci`、类型检查、全部桌面测试和 NSIS 安装包构建；
-6. 启动 `win-unpacked`，验证 v3 认证运行握手、重复 CLI 状态查询、进程退出后的安全失效，以及重启后生成新 `runtime_id`。
+1. 先运行 PowerShell prepare/release 入口契约；只要发布脚本、workflow 或 Release Skill 输入不变，后续可复用该结果；
+2. 正式模式下载并校验微软签名的 VC++ x64 Runtime，使环境或 PowerShell 模块问题在昂贵测试前失败；
+3. 前端 `npm ci`、Rolldown 当前架构原生绑定检查和 Vite 生产构建；
+4. CLI 全部测试、干净 PyInstaller 构建和冻结版本校验；
+5. 后端全部测试、Playwright 运行时核对、干净 PyInstaller 构建及自检；
+6. Electron `npm ci`、类型检查、全部桌面测试和 NSIS 安装包构建；
+7. 启动 `win-unpacked`，验证 v3 认证运行握手、重复 CLI 状态查询、进程退出后的安全失效，以及重启后生成新 `runtime_id`。
 
 失败会阻止发布。先判断是产品缺陷、锁文件/打包缺陷还是 VM 环境损坏，不要手工向 `node_modules` 塞包后把结果记为通过。VM runner 为 Electron 与 electron-builder 使用可访问的镜像，但 npm 依赖仍严格来自锁文件；修改镜像不能掩盖校验和或架构错误。
 

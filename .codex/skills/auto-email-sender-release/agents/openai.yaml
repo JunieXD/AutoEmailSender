@@ -1,4 +1,4 @@
 interface:
   display_name: "AutoEmailSender Release"
-  short_description: "Prepare and verify app, Skill, and update releases."
-  default_prompt: "Use $auto-email-sender-release to prepare and publish an AutoEmailSender version, including repository Skills, desktop artifacts, and post-tag verification."
+  short_description: "Prepare, certify, promote, and verify releases."
+  default_prompt: "Use $auto-email-sender-release to prepare, certify, promote, and verify an AutoEmailSender version without rebuilding certified artifacts."

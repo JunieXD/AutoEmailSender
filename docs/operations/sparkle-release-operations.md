@@ -47,24 +47,33 @@ gh secret set SPARKLE_ED_PRIVATE_KEY < /安全路径/auto-email-sender-sparkle-p
 
 ## 发布流程
 
-正常发布仍使用现有脚本准备并推送发布提交：
+发布分为候选认证和公开提升。先准备公告，再构建一次候选：
 
 ```bash
 ./scripts/prepare-release.sh 2.4.0
 ./scripts/release.sh 2.4.0
 ```
 
-脚本会把精确发布提交交给 `Release Desktop` workflow。workflow 先在没有新 tag 的情况下完成双平台构建；只有两个构建都成功后，publish job 才为该提交创建 tag 并公开 Release。为兼容历史操作，手动推送 tag 仍可触发同一 workflow。
+第二条命令会提交并推送精确候选 SHA，以 `publish=false` 启动 `Release Desktop` workflow。workflow 先运行廉价 preflight，再完成双平台构建和签名，生成绑定版本、SHA、run ID、release note hash、资产名、大小与 SHA-256 的 `release-candidate.json`；此阶段不创建 tag 或 Release。
+
+候选 workflow 和同一 SHA 的正式 Windows VM 验收通过、公告得到确认后，按候选 run ID 公开原产物：
+
+```bash
+./scripts/release.sh 2.4.0 --promote-run <candidate-run-id>
+```
+
+提升流程会重新核对候选报告和下载后的每个资产，但不会重新运行产品测试或构建安装包。只有核对通过后，publish job 才创建 tag、暂存 draft 并公开 Release。候选以后出现任何代码、版本元数据或公告变更，都必须形成新 SHA 并重新认证；不同候选的资产不能混用。为兼容历史操作，手动推送 tag 仍可触发同一 workflow，但日常发布使用候选提升流程。
 
 workflow 会：
 
-1. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布，也不提前占用版本 tag。
-2. macOS 打包在签名后清理应用包中的扩展属性，并重新校验签名，避免 Sparkle 无法生成差分包。
-3. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
+1. 廉价 preflight 先检查版本、公告、CLI 和发布脚本契约；通过后才启动 Windows/macOS runner。
+2. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布，也不提前占用版本 tag。
+3. macOS 打包在签名后清理应用包中的扩展属性，并重新校验签名，避免 Sparkle 无法生成差分包。
+4. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
    从 v2.5.3 干净基线开始，脚本必须为最新的旧版本生成 delta；缺少该 delta 时会直接终止发布，不能静默退化为仅全量更新。
-4. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
-5. `generate_appcast` 可能按 `.app` 目录名生成含空格的差分文件名。发布脚本会先把差分包规范化为 GitHub 不会改写的安全文件名，并同步重写 appcast URL；签名覆盖差分包内容，因此文件改名不会改变 enclosure 的 `sparkle:edSignature`。但 feed 签名覆盖整个 XML，脚本必须在完成所有 URL 改写后用 `sign_update` 对最终 appcast 重新签名，并立即使用配置的公钥验签。
-6. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`。公开前必须再次验证最终 feed 签名，并逐项核对 appcast 当前版本引用的文件名、URL、GitHub 实际资产名和非零大小，全部一致后再发布为稳定 Release。
+5. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
+6. `generate_appcast` 可能按 `.app` 目录名生成含空格的差分文件名。发布脚本会先把差分包规范化为 GitHub 不会改写的安全文件名，并同步重写 appcast URL；签名覆盖差分包内容，因此文件改名不会改变 enclosure 的 `sparkle:edSignature`。但 feed 签名覆盖整个 XML，脚本必须在完成所有 URL 改写后用 `sign_update` 对最终 appcast 重新签名，并立即使用配置的公钥验签。
+7. publish job 只下载并核验候选 run 的原产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`。公开前必须再次验证最终 feed 签名，并逐项核对 appcast 当前版本引用的文件名、URL、GitHub 实际资产名和非零大小，全部一致后再发布为稳定 Release。
 
 工作流失败后可以在 Release 仍为 draft 时重跑；一旦 Release 已公开，重跑必须在上传任何资产前失败。已公开版本不得用 `--clobber` 替换安装包、Skill ZIP 或 appcast，修复后应发布新版本。
 
