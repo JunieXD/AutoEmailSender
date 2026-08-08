@@ -389,6 +389,67 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLessEqual(max(per_child_counts), 10)
         self.assertLess(max(draft.token_estimate for draft in drafts), estimate_tokens(content))
 
+    def test_dense_retry_splits_adjacent_generated_links_without_depth_exhaustion(self) -> None:
+        source_url = "https://example.edu/faculty/list.htm"
+        content = "".join(
+            f"[教师{index}](https://example.edu/faculty/{index}.htm)"
+            for index in range(86)
+        )
+        pattern = re.compile(r"https://example\.edu/faculty/(\d+)\.htm")
+        pending = [
+            build_page_chunks(
+                source_url=source_url,
+                html="",
+                text=content,
+                config=ChunkingConfig(single_chunk_max_tokens=5000),
+            )[0]
+        ]
+        completed = []
+
+        while pending:
+            chunk = pending.pop(0)
+            links = set(pattern.findall(chunk.content))
+            if len(links) <= 10:
+                completed.append(chunk)
+                continue
+            self.assertLess(chunk.split_depth, 7)
+            children = split_chunk_content(
+                source_url=source_url,
+                content=chunk.content,
+                parent_chunk_id=chunk.chunk_id,
+                page_fingerprint=chunk.page_fingerprint,
+                split_depth=chunk.split_depth + 1,
+                split_reason="candidate_count_exceeded",
+                config=ChunkingConfig(),
+            )
+            self.assertTrue(children)
+            pending.extend(children)
+
+        represented = {
+            index
+            for chunk in completed
+            for index in pattern.findall(chunk.content)
+        }
+        self.assertEqual(represented, {str(index) for index in range(86)})
+        self.assertLessEqual(
+            max(len(set(pattern.findall(chunk.content))) for chunk in completed),
+            10,
+        )
+
+    def test_link_enriched_text_deduplicates_exact_generated_links(self) -> None:
+        content = html_to_link_enriched_text(
+            "https://example.edu/list.htm",
+            """
+            <a href="/zhang.htm">张三</a>
+            <a href="/zhang.htm">张三</a>
+            <a href="/zhang.htm">个人主页</a>
+            """,
+            "",
+        )
+
+        self.assertEqual(content.count("[张三](https://example.edu/zhang.htm)"), 1)
+        self.assertIn("[个人主页](https://example.edu/zhang.htm)", content)
+
     def test_split_chunk_content_caps_retry_overlap_at_fifteen_tokens(self) -> None:
         from app.modules.crawler.pages.chunking import split_chunk_content
 

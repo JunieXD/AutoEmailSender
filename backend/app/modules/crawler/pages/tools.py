@@ -123,7 +123,7 @@ BROWSER_DELAY_SECONDS = 1.5
 BROWSER_WAIT_SELECTOR = "css:body"
 DYNAMIC_DIRECTORY_READY_TIMEOUT_MS = 5000
 DYNAMIC_DIRECTORY_READY_POLL_MS = 200
-DYNAMIC_DIRECTORY_STABLE_MS = 300
+DYNAMIC_DIRECTORY_STABLE_MS = 500
 DYNAMIC_DIRECTORY_MAX_RETRIES = 1
 DYNAMIC_PROFILE_READY_TIMEOUT_MS = 10000
 DYNAMIC_PROFILE_READY_POLL_MS = 200
@@ -2017,6 +2017,8 @@ async def _wait_for_dynamic_directory_html(
     stable_elapsed_ms = 0
     ready_signature: str | None = None
     latest_html = ""
+    best_html = ""
+    best_quality: tuple[int, int, int] = (-1, -1, -1)
 
     while True:
         latest_html = await page.content()
@@ -2026,6 +2028,10 @@ async def _wait_for_dynamic_directory_html(
             final_url=final_url,
             absolute_url=absolute_url,
         )
+        quality = _dynamic_directory_snapshot_quality(snapshot)
+        if quality > best_quality:
+            best_html = latest_html
+            best_quality = quality
         if (
             snapshot.status == "succeeded"
             and not looks_like_unrendered_dynamic_teacher_directory(snapshot)
@@ -2037,18 +2043,27 @@ async def _wait_for_dynamic_directory_html(
                 ready_signature = signature
                 stable_elapsed_ms = 0
             if stable_elapsed_ms >= stable_ms:
-                return latest_html, True
+                return best_html or latest_html, True
         else:
             ready_signature = None
             stable_elapsed_ms = 0
 
         if elapsed_ms >= timeout_ms:
-            return latest_html, False
+            return best_html or latest_html, False
         wait_ms = min(poll_ms, timeout_ms - elapsed_ms)
         if wait_ms <= 0:
-            return latest_html, False
+            return best_html or latest_html, False
         await page.wait_for_timeout(wait_ms)
         elapsed_ms += wait_ms
+
+
+def _dynamic_directory_snapshot_quality(snapshot: PageSnapshot) -> tuple[int, int, int]:
+    unique_links = set(snapshot.links or [])
+    return (
+        len(unique_links),
+        len(snapshot.links or []),
+        len(" ".join((snapshot.text or "").split())),
+    )
 
 
 async def _wait_for_dynamic_profile_html(

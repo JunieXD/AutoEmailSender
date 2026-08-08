@@ -309,6 +309,40 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         context = fetch_mock.await_args.args[0]
         self.assertEqual(context.start_url, profile_url)
 
+    async def test_encoded_cross_domain_profile_uses_itself_as_single_page_root(self) -> None:
+        profile_url = "https://guanwei49.github.io/"
+        candidate_id, _ = await self._seed_task(profile_url=profile_url)
+        await self._add_source_chunk(
+            candidate_id=candidate_id,
+            content=(
+                "[关威](https://faculty.example.edu/detail?"
+                "home=https%3A%2F%2Fguanwei49.github.io%2F) 教授"
+            ),
+        )
+        payload = CandidateEnrichmentPayload(email="guan_wei@tju.edu.cn")
+
+        with (
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+            ),
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.get_or_fetch_profile_text",
+                new=AsyncMock(return_value="关威"),
+            ) as fetch_mock,
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.enrich_candidate_profile_with_llm_with_usage",
+                new=AsyncMock(return_value=(payload, None, "")),
+            ),
+        ):
+            result = await enrich_candidate_once(
+                self.session_factory,
+                candidate_id=candidate_id,
+            )
+
+        self.assertEqual(result.email, "guan_wei@tju.edu.cn")
+        self.assertEqual(fetch_mock.await_args.args[0].start_url, profile_url)
+
     async def test_unproven_cross_domain_profile_fails_terminal_without_retry(self) -> None:
         _, task_id = await self._seed_task(
             profile_url="https://people.example.net/invented"

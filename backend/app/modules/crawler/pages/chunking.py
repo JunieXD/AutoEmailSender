@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 _STRUCTURE_BOUNDARY_SENTINEL = "\u241eAES_BLOCK_BOUNDARY\u241e"
 _UNLABELED_RECORD_LINK_TEXT = "无文字链接"
+_GENERATED_MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]\n]+\]\([^\s)\n]+\)")
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class _LinkTextHTMLParser(HTMLParser):
         self.skip_depth = 0
         self.current_href: str | None = None
         self.current_anchor: list[str] = []
+        self.seen_labeled_links: set[tuple[str, str]] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._SKIPPED_TAGS:
@@ -93,8 +95,10 @@ class _LinkTextHTMLParser(HTMLParser):
             return
         if tag == "a" and self.current_href:
             label = _normalize_space("".join(self.current_anchor))
-            if label:
+            link_key = (label, self.current_href)
+            if label and link_key not in self.seen_labeled_links:
                 self.parts.append(f"[{label}]({self.current_href})")
+                self.seen_labeled_links.add(link_key)
             self.current_href = None
             self.current_anchor = []
         if tag in self._BLOCK_TAGS:
@@ -439,17 +443,27 @@ def split_chunk_content(
     split_reason: str | None = None,
 ) -> list[PageChunkDraft]:
     selected_config = config or ChunkingConfig()
-    if estimate_tokens(content) <= selected_config.min_split_tokens:
+    candidate_dense_split = _is_candidate_dense_split(split_reason)
+    short_dense_links = (
+        candidate_dense_split
+        and len(_GENERATED_MARKDOWN_LINK_PATTERN.findall(content)) > 1
+    )
+    if (
+        estimate_tokens(content) <= selected_config.min_split_tokens
+        and not short_dense_links
+    ):
         return []
     lines, separator, _strict_overlap = _content_units(content, selected_config)
     if len(lines) < 2:
         lines = content.splitlines()
         separator = "\n"
+    if len(lines) < 2 and candidate_dense_split:
+        lines = _split_generated_markdown_link_line(content)
     if len(lines) < 2:
         return []
     child_groups = (
         _split_retry_candidate_dense_lines(lines, content, selected_config)
-        if _is_candidate_dense_split(split_reason)
+        if candidate_dense_split
         else _split_binary_lines(lines, content, selected_config)
     )
     drafts: list[PageChunkDraft] = []
@@ -539,10 +553,32 @@ def _expand_dominant_dense_split_units(
         inner_lines = [_normalize_lines(line) for line in unit.splitlines()]
         inner_lines = [line for line in inner_lines if line]
         if len(inner_lines) <= 1:
-            expanded.append(unit)
+            markdown_units = _split_generated_markdown_link_line(unit)
+            if len(markdown_units) > 1:
+                expanded.extend(markdown_units)
+            else:
+                expanded.append(unit)
             continue
         expanded.extend(inner_lines)
     return expanded
+
+
+def _split_generated_markdown_link_line(line: str) -> list[str]:
+    matches = list(_GENERATED_MARKDOWN_LINK_PATTERN.finditer(line))
+    if len(matches) <= 1:
+        return [line]
+    units: list[str] = []
+    cursor = 0
+    for match in matches:
+        prefix = _normalize_space(line[cursor:match.start()])
+        if prefix:
+            units.append(prefix)
+        units.append(match.group(0))
+        cursor = match.end()
+    suffix = _normalize_space(line[cursor:])
+    if suffix:
+        units.append(suffix)
+    return units
 
 def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
     content_tokens = estimate_tokens(content)

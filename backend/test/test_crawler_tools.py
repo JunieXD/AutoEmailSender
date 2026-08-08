@@ -1333,6 +1333,34 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(html, empty_html)
         self.assertEqual(page.wait_for_timeout.await_count, 2)
 
+    async def test_dynamic_directory_browser_keeps_richest_rendered_html(self) -> None:
+        rich_html = """
+        <html><body><main>
+          <a href="/zhang">张三</a><a href="/li">李四</a>
+        </main></body></html>
+        """
+        sparse_html = "<html><body><main></main></body></html>"
+        page = SimpleNamespace(
+            url="https://example.edu/faculty",
+            content=AsyncMock(side_effect=[rich_html, sparse_html, sparse_html]),
+            wait_for_timeout=AsyncMock(),
+        )
+        options = crawler_tools.BrowserFetchOptions(
+            wait_for_dynamic_directory=True,
+            dynamic_directory_ready_timeout_ms=200,
+            dynamic_directory_ready_poll_ms=100,
+            dynamic_directory_stable_ms=300,
+        )
+
+        html, ready = await crawler_tools._wait_for_dynamic_directory_html(
+            page,
+            absolute_url=page.url,
+            options=options,
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(html, rich_html)
+
     def test_dynamic_profile_browser_waits_for_meaningful_stable_content(self) -> None:
         async def run() -> None:
             shell_html = "<html><body><main id='profile'></main></body></html>"

@@ -102,11 +102,9 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("只有当前页没有直接人员名单", entry_prompt)
         self.assertIn("只判断当前页是否还有同一份人员名单的下一部分", pagination_prompt)
         self.assertIn("同一份人员名单", pagination_prompt)
-        self.assertIn("有真实分页 URL 就返回 URL", pagination_prompt)
-        self.assertIn("当前页已显示人员记录时", pagination_prompt)
-        self.assertIn("不要求它带 URL", pagination_prompt)
-        self.assertIn("页内位置", pagination_prompt)
-        self.assertIn("具体页码、跳转和返回操作", pagination_prompt)
+        self.assertIn("最多选择一个", pagination_prompt)
+        self.assertIn("恰好向后推进一页", pagination_prompt)
+        self.assertIn("第一页、最后一页、上一页、具体页码跳转", pagination_prompt)
         self.assertIn('"discovered_urls":[]', entry_prompt)
         self.assertIn('"allow_expansion":false', pagination_prompt)
 
@@ -128,6 +126,25 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
                     "主名单",
                     "https://welcome.example.edu/#/teacher/computer?page=1",
                 ),
+            ],
+        )
+
+    def test_extract_page_route_links_keeps_all_labels_for_same_pagination_url(self) -> None:
+        links = extract_page_route_links(
+            "https://example.edu/list.htm",
+            """
+            <a href="list/12.htm">2</a>
+            <a href="list/12.htm">下页</a>
+            <a href="list/1.htm">13</a>
+            <a href="list/1.htm">尾页</a>
+            """,
+        )
+
+        self.assertEqual(
+            [(link.url, link.label) for link in links],
+            [
+                ("https://example.edu/list/12.htm", "2 | 下页"),
+                ("https://example.edu/list/1.htm", "13 | 尾页"),
             ],
         )
 
@@ -227,6 +244,47 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
                     "pagination_control_id": "control-2",
                 }
             )
+        with self.assertRaises(ValidationError):
+            V2PaginationRoutingPayload.model_validate(
+                {
+                    "allow_expansion": True,
+                    "pagination_urls": [
+                        "https://example.edu/p2",
+                        "https://example.edu/p12",
+                    ],
+                    "pagination_control_id": None,
+                }
+            )
+
+    def test_filter_selected_pagination_urls_keeps_only_one_model_choice(self) -> None:
+        page2 = "https://example.edu/p2"
+        last = "https://example.edu/p12"
+        accepted = filter_model_selected_route_urls(
+            [page2, last],
+            links=[
+                PageRouteLink(url=page2, label="下一页", kind="link"),
+                PageRouteLink(url=last, label="末页", kind="link"),
+            ],
+            source_url="https://example.edu/list",
+            start_url="https://example.edu/list",
+            max_results=1,
+        )
+
+        self.assertEqual(accepted, [page2])
+
+    def test_filter_selected_entry_urls_does_not_apply_pagination_cap(self) -> None:
+        urls = [
+            "https://faculty.csu.edu.cn/list-a",
+            "https://faculty.csu.edu.cn/list-b",
+        ]
+        accepted = filter_model_selected_route_urls(
+            urls,
+            links=[PageRouteLink(url=url, label=url, kind="link") for url in urls],
+            source_url="https://cse.csu.edu.cn/faculty",
+            start_url="https://cse.csu.edu.cn/faculty",
+        )
+
+        self.assertEqual(accepted, urls)
 
     async def test_entry_page_runs_entry_selection_then_pagination(self) -> None:
         adaptation = LLMRuntimeAdaptation("chat_completions", None)

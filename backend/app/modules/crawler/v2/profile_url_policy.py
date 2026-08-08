@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 from .url_utils import normalize_url
 
@@ -35,10 +35,39 @@ def has_explicit_markdown_link(
     target_url: str,
 ) -> bool:
     normalized_target = normalize_url(target_url, base_url=base_url)
-    return any(
-        link_url == normalized_target
-        for _label, link_url in extract_normalized_markdown_links(
-            content,
-            base_url=base_url,
-        )
-    )
+    for match in _MARKDOWN_LINK_PATTERN.finditer(content):
+        raw_link_url = urljoin(base_url, match.group(2))
+        if normalize_url(raw_link_url) == normalized_target:
+            return True
+        for embedded_url in _extract_embedded_url_parameters(raw_link_url):
+            if normalize_url(embedded_url) == normalized_target:
+                return True
+    return False
+
+
+def _extract_embedded_url_parameters(link_url: str) -> tuple[str, ...]:
+    parsed = urlsplit(link_url)
+    parameter_sections = [parsed.query]
+    if "=" in parsed.fragment:
+        parameter_sections.append(parsed.fragment)
+    candidates: list[str] = []
+    for section in parameter_sections:
+        for _key, value in parse_qsl(section, keep_blank_values=True):
+            decoded = _decode_url_parameter(value.strip())
+            candidate = urlsplit(decoded)
+            if candidate.scheme in {"http", "https"} and candidate.hostname:
+                candidates.append(decoded)
+    return tuple(candidates)
+
+
+def _decode_url_parameter(value: str) -> str:
+    decoded = value
+    for _ in range(10):
+        parsed = urlsplit(decoded)
+        if parsed.scheme in {"http", "https"} and parsed.hostname:
+            break
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    return decoded

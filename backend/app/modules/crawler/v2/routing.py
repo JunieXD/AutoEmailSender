@@ -41,7 +41,7 @@ class V2PaginationRoutingPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     allow_expansion: bool = Field(strict=True)
-    pagination_urls: list[str]
+    pagination_urls: list[str] = Field(max_length=1)
     pagination_control_id: str | None
 
     @model_validator(mode="after")
@@ -175,6 +175,7 @@ async def invoke_v2_page_routing_agent(
         links=links,
         source_url=source_url,
         start_url=start_url,
+        max_results=1,
     )
     pagination_control = None
     if not pagination_urls:
@@ -215,6 +216,12 @@ def extract_page_route_links(source_url: str, page_html: str) -> list[PageRouteL
         existing = links_by_url.get(normalized_url)
         if existing is None or (existing.kind != "iframe" and kind == "iframe"):
             links_by_url[normalized_url] = record
+        elif existing.kind == kind and label not in existing.label.split(" | "):
+            links_by_url[normalized_url] = PageRouteLink(
+                url=normalized_url,
+                label=" | ".join((existing.label, label))[:240],
+                kind=kind,
+            )
         if len(links_by_url) >= MAX_ROUTING_LINKS:
             break
     return list(links_by_url.values())
@@ -339,9 +346,8 @@ def build_v2_pagination_routing_prompt(
 ) -> str:
     return (
         "你只判断当前页是否还有同一份人员名单的下一部分。\n"
-        "只能从下方候选中选择：有真实分页 URL 就返回 URL；否则只选择能反复逐页向后推进当前名单的一个控件。"
-        "当前页已显示人员记录时，候选控件只要能从文字、标题、无障碍标签或样式明确看出它属于该名单的分页并向后一步，就应选择；不要求它带 URL。"
-        "忽略个人页、分类或筛选、页内位置、具体页码、跳转和返回操作；没有就不扩展。URL 与控件不能同时选择。\n"
+        "最多选择一个能让同一名单恰好向后推进一页的链接；没有这种链接时，才选择一个作用相同的控件。"
+        "不要选择第一页、最后一页、上一页、具体页码跳转、分类或筛选；没有就不扩展。URL 与控件不能同时选择。\n"
         "只输出 JSON：{\"allow_expansion\":false,\"pagination_urls\":[],\"pagination_control_id\":null}。\n"
         f"当前 URL：{source_url}\n"
         f"{routing_context}"
@@ -354,6 +360,7 @@ def filter_model_selected_route_urls(
     links: list[PageRouteLink],
     source_url: str,
     start_url: str,
+    max_results: int | None = None,
 ) -> list[str]:
     available_urls = {link.url for link in links}
     current_url = normalize_url(source_url)
@@ -370,7 +377,7 @@ def filter_model_selected_route_urls(
             continue
         seen.add(normalized)
         accepted.append(normalized)
-    return accepted
+    return accepted if max_results is None else accepted[:max_results]
 
 
 def select_model_pagination_control(

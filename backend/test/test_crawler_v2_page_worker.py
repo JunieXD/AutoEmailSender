@@ -105,8 +105,21 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.routing_mock = self.routing_patcher.start()
+        self.browser_patcher = patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_browser",
+            new=AsyncMock(
+                return_value=PageSnapshot(
+                    url="https://example.edu/faculty",
+                    fetch_method="browser",
+                    status="failed",
+                    error_message="browser unavailable in unit test",
+                )
+            ),
+        )
+        self.browser_patcher.start()
 
     async def asyncTearDown(self) -> None:
+        self.browser_patcher.stop()
         self.routing_patcher.stop()
         self.adaptation_patcher.stop()
         await self.engine.dispose()
@@ -773,12 +786,12 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page_call.kwargs["work_item_id"], task_id)
         self.assertEqual(page_call.kwargs["payload"]["snapshot"]["status"], "succeeded")
 
-    async def test_direct_failure_uses_browser_fallback_without_terminal_failure(self) -> None:
+    async def test_directory_browser_success_skips_direct_fetch(self) -> None:
         _, task_id = await self._seed_page_task()
         direct = PageSnapshot(url="https://example.edu/faculty", text="", html="", links=[], fetch_method="http", status="failed", error_message="403")
         browser = PageSnapshot(url="https://example.edu/faculty", text="张三", html="<p>张三</p>", links=[], fetch_method="browser", status="succeeded")
 
-        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)), patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
+        with patch("app.modules.crawler.v2.page_worker.fetch_page_direct", new=AsyncMock(return_value=direct)) as direct_mock, patch("app.modules.crawler.v2.page_worker.fetch_page_browser", new=AsyncMock(return_value=browser)):
             processed = await run_crawler_v2_page_worker_once(self.session_factory, task_id=task_id, worker_id="w1")
 
         self.assertEqual(processed, 1)
@@ -787,8 +800,83 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             assert task is not None
             self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
             self.assertEqual(task.fetch_mode, "browser")
-            self.assertEqual(task.direct_status, "failed")
-            self.assertIsNotNone(task.fallback_reason)
+            self.assertEqual(task.direct_status, "skipped_for_directory_browser_preference")
+        direct_mock.assert_not_awaited()
+        self.assertIsNotNone(task.fallback_reason)
+
+    async def test_directory_prefers_rendered_browser_snapshot(self) -> None:
+        _, task_id = await self._seed_page_task()
+        direct = PageSnapshot(
+            url="https://example.edu/faculty",
+            text="静态入口",
+            html="<a href='/external'>主页</a>",
+            fetch_method="http",
+            status="succeeded",
+        )
+        browser = PageSnapshot(
+            url="https://example.edu/faculty",
+            text="张三 李四",
+            html="<a href='/zhang'>张三</a><a href='/li'>李四</a>",
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_browser",
+            new=AsyncMock(return_value=browser),
+        ), patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_direct",
+            new=AsyncMock(return_value=direct),
+        ) as direct_mock:
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        direct_mock.assert_not_awaited()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(task.fetch_mode, "browser")
+        self.assertEqual(task.browser_status, "succeeded")
+
+    async def test_directory_falls_back_to_direct_when_browser_fails(self) -> None:
+        _, task_id = await self._seed_page_task()
+        browser = PageSnapshot(
+            url="https://example.edu/faculty",
+            fetch_method="browser",
+            status="failed",
+            error_message="browser failed",
+        )
+        direct = PageSnapshot(
+            url="https://example.edu/faculty",
+            text="张三",
+            html="<a href='/zhang'>张三</a>",
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_browser",
+            new=AsyncMock(return_value=browser),
+        ), patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_direct",
+            new=AsyncMock(return_value=direct),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(task.fetch_mode, "direct")
+        self.assertEqual(task.browser_status, "failed")
 
     async def test_dynamic_webplus_teacher_directory_uses_browser_fallback(self) -> None:
         job_id, task_id = await self._seed_page_task(

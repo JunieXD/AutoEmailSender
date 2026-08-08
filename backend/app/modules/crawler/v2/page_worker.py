@@ -109,6 +109,19 @@ async def run_crawler_v2_page_worker_once(
             browser_status = browser_snapshot.status
             snapshot = browser_snapshot
             fetch_mode = "browser"
+        elif fetch_intent == "directory":
+            direct_status = "skipped_for_directory_browser_preference"
+            fallback_reason = "directory_prefers_rendered_browser"
+            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
+            browser_status = browser_snapshot.status
+            snapshot = browser_snapshot
+            fetch_mode = "browser"
+            if browser_snapshot.status != "succeeded":
+                direct_snapshot = await fetch_page_direct(ctx, target_url)
+                direct_status = direct_snapshot.status
+                if direct_snapshot.status == "succeeded":
+                    snapshot = direct_snapshot
+                    fetch_mode = "direct"
         else:
             direct_snapshot = await fetch_page_direct(ctx, target_url)
             snapshot = direct_snapshot
