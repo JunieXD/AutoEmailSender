@@ -23,7 +23,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--onedir", script)
         self.assertNotIn("--onefile", script)
         self.assertIn("--target-arch arm64", script)
-        self.assertIn("--copy-metadata auto-email-sender-cli", script)
+        self.assertNotIn("--copy-metadata", script)
         self.assertIn("generate_cli_build_identity.py", script)
         self.assertIn('--runtime-hook "$BuildIdentityHook"', script)
         self.assertIn("verify_cli_binary.py", script)
@@ -35,6 +35,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("uv run pyinstaller", script)
         self.assertIn("--onedir", script)
         self.assertNotIn("--onefile", script)
+        self.assertNotIn("--copy-metadata", script)
         self.assertIn('dist\\auto-email-sender\\auto-email-sender.exe', script)
         self.assertIn("auto-email-sender.exe", script)
         self.assertIn("generate_cli_build_identity.py", script)
@@ -176,7 +177,8 @@ class CliBuildScriptTests(unittest.TestCase):
                         "runpy.run_path(sys.argv[1]); "
                         "print(json.dumps({"
                         "'revision': os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION'], "
-                        "'dirty': os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY']"
+                        "'dirty': os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY'], "
+                        "'version': os.environ['AUTO_EMAIL_SENDER_EMBEDDED_CLI_VERSION']"
                         "}))"
                     ),
                     hook.as_posix(),
@@ -188,6 +190,7 @@ class CliBuildScriptTests(unittest.TestCase):
             embedded = json.loads(probe.stdout)
             self.assertEqual(embedded["revision"], revision)
             self.assertIn(embedded["dirty"], {"0", "1"})
+            self.assertEqual(embedded["version"], "2.4.1")
 
 
 def _read_script(name: str) -> str:

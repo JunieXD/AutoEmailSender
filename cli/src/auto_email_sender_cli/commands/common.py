@@ -31,6 +31,31 @@ _MAX_FETCH_PAGES = 10_000
 _MAX_STDOUT_ALL_ITEMS = 10_000
 _MAX_STDOUT_ALL_BYTES = 16 * 1024 * 1024
 
+_SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
+    "communications.threads.list": {
+        "identity_id": "identity_id",
+        "professor_id": "professor_id",
+        "has_sent": "sent",
+        "has_reply": "replied",
+    },
+    "communications.messages.list": {
+        "identity_id": "identity_id",
+        "professor_id": "professor_id",
+        "direction": "direction",
+    },
+    "diagnostics.logs": {
+        "level": "level",
+        "category": "category",
+        "event_name": "event_name",
+        "request_id": "request_id",
+        "entity_type": "entity_type",
+        "entity_id": "entity_id",
+    },
+    "usage.records": {
+        "model_name": "model_name",
+    },
+}
+
 
 def cli_context(ctx: typer.Context) -> CliContext:
     value = ctx.find_root().obj
@@ -112,6 +137,7 @@ def run_read_command(
             supports_output_file=supports_collection_options,
             supports_if_revision=False,
         )
+        request_params = _without_none(params)
         if context.filter_expression:
             # Filter syntax and the command's field/operator whitelist are
             # fully local contracts. Validate them before runtime discovery or
@@ -121,6 +147,10 @@ def run_read_command(
                 {"items": []},
                 context.filter_expression,
                 command=command,
+            )
+            request_params = _merge_server_filter_params(
+                request_params,
+                server_filter_params(context.filter_expression, command=command),
             )
         client = AgentApiClient(timeout=timeout)
         # A structured filter is evaluated locally after the complete
@@ -135,7 +165,7 @@ def run_read_command(
             data, exported_file = stream_collection_pages_to_file(
                 client,
                 path,
-                params=params,
+                params=request_params,
                 context=context,
                 command=command,
                 fields=fields,
@@ -155,12 +185,12 @@ def run_read_command(
             fetch_all_pages(
                 client,
                 path,
-                params=params,
+                params=request_params,
                 max_items=_MAX_STDOUT_ALL_ITEMS,
                 max_bytes=_MAX_STDOUT_ALL_BYTES,
             )
             if fetch_everything
-            else client.request("GET", path, params=_without_none(params))
+            else client.request("GET", path, params=request_params)
         )
         data = normalize_collection_response(data, command=command)
         data = apply_structured_filter(data, context.filter_expression, command=command)
@@ -169,7 +199,7 @@ def run_read_command(
         # ``--fields id,name`` would produce a different revision from the
         # server's full object and a subsequent ``--if-revision`` write would
         # be rejected even when nobody changed the record.
-        data = add_revisions(augment_state_metadata(data, command=command))
+        data = augment_state_metadata(add_revisions(data), command=command)
         data = project_fields(data, fields, command=command)
         data = annotate_collection_limit(
             data,
@@ -239,8 +269,10 @@ def run_write_command(
             idempotency_key=request_id,
             if_revision=cli_context(ctx).if_revision,
         )
-        data = add_revisions(
-            augment_state_metadata(project_fields(data, fields, command=command), command=command),
+        data = project_fields(
+            augment_state_metadata(add_revisions(data), command=command),
+            fields,
+            command=command,
         )
         if use_idempotency_key:
             data = add_mutation_receipt(
@@ -626,6 +658,64 @@ def apply_structured_filter(
     result["next_cursor"] = None
     result["has_more"] = False
     result["fetched_all"] = True
+    return result
+
+
+def server_filter_params(expression: str | None, *, command: str) -> dict[str, object]:
+    """Translate safe native equality filters into backend query parameters.
+
+    The CLI still evaluates the full expression after fetching every returned
+    page. Older desktop versions may ignore an unknown query parameter, while
+    the local pass preserves correctness and acts as the compatibility fallback.
+    """
+
+    mapping = _SERVER_FILTER_PARAMETERS.get(command)
+    if not expression or not mapping:
+        return {}
+    try:
+        parsed = json.loads(expression)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, object] = {}
+    for field, condition in parsed.items():
+        parameter = mapping.get(field) if isinstance(field, str) else None
+        if parameter is None:
+            continue
+        if isinstance(condition, dict):
+            if set(condition) != {"eq"}:
+                continue
+            expected = condition["eq"]
+        else:
+            expected = condition
+        if expected is None or isinstance(expected, dict | list):
+            continue
+        if not _server_filter_value_is_safe(command, field, expected):
+            continue
+        result[parameter] = expected
+    return result
+
+
+def _server_filter_value_is_safe(command: str, field: str, value: object) -> bool:
+    if field in {"identity_id", "professor_id"}:
+        return isinstance(value, int) and not isinstance(value, bool) and value > 0
+    if field in {"has_sent", "has_reply"}:
+        return isinstance(value, bool)
+    if command == "communications.messages.list" and field == "direction":
+        return value in {"sent", "received", "draft"}
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _merge_server_filter_params(
+    request_params: dict[str, object],
+    filter_params: dict[str, object],
+) -> dict[str, object]:
+    result = dict(request_params)
+    for key, value in filter_params.items():
+        existing = result.get(key)
+        if existing is None or existing == value:
+            result[key] = value
     return result
 
 
@@ -1280,8 +1370,9 @@ def stream_collection_pages_to_file(
                     context.filter_expression,
                     command=command,
                 )
-                transformed = add_revisions(
-                    augment_state_metadata(transformed, command=command),
+                transformed = augment_state_metadata(
+                    add_revisions(transformed),
+                    command=command,
                 )
                 transformed = project_fields(transformed, fields, command=command)
                 page_items = transformed.get("items")

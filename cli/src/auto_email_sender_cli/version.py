@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from importlib import metadata
 
 
 PACKAGE_NAME = "auto-email-sender-cli"
@@ -17,10 +16,8 @@ def get_cli_version() -> str:
     override = os.getenv("AUTO_EMAIL_SENDER_CLI_VERSION")
     if override and override.strip():
         return override.strip()
-    try:
-        return metadata.version(PACKAGE_NAME)
-    except metadata.PackageNotFoundError:
-        return FALLBACK_VERSION
+    embedded = os.getenv("AUTO_EMAIL_SENDER_EMBEDDED_CLI_VERSION")
+    return embedded.strip() if embedded and embedded.strip() else FALLBACK_VERSION
 
 
 def get_build_identity() -> dict[str, object]:

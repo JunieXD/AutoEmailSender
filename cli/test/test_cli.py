@@ -669,6 +669,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["data"]["state"], "stopped")
         self.assertIn("手动打开", " ".join(payload["_meta"]["warnings"]))
 
+    def test_status_keeps_the_explicit_ready_probe(self) -> None:
+        descriptor = SimpleNamespace(
+            desktop_pid=12345,
+            app_version="2.4.1",
+            protocol_version="2",
+            base_url="http://127.0.0.1:48120",
+        )
+        with (
+            patch(
+                "auto_email_sender_cli.main.load_runtime_descriptor",
+                return_value=descriptor,
+            ),
+            patch("auto_email_sender_cli.main.process_is_running", return_value=True),
+            patch(
+                "auto_email_sender_cli.main.httpx.get",
+                return_value=SimpleNamespace(is_success=True),
+            ) as ready,
+        ):
+            result = self.runner.invoke(app, ["--format", "json", "status"])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(json.loads(result.stdout)["data"]["state"], "ready")
+        ready.assert_called_once_with("http://127.0.0.1:48120/ready", timeout=1.0)
+
     def test_doctor_recommends_manually_opening_an_app_without_runtime_info(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_path = Path(temp_dir) / "runtime.json"

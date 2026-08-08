@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 
@@ -18,16 +19,27 @@ def main() -> None:
     repo_root = arguments.repo_root.resolve()
     revision = _revision(repo_root)
     dirty = _dirty(repo_root)
+    version = _cli_version(repo_root)
     output = arguments.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         "import os\n"
         f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION'] = {json.dumps(revision)}\n"
         f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_BUILD_DIRTY'] = "
-        f"{json.dumps('1' if dirty else '0')}\n",
+        f"{json.dumps('1' if dirty else '0')}\n"
+        f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_CLI_VERSION'] = {json.dumps(version)}\n",
         encoding="utf-8",
     )
-    print(json.dumps({"revision": revision, "dirty": dirty, "output": output.as_posix()}))
+    print(json.dumps({"revision": revision, "dirty": dirty, "version": version, "output": output.as_posix()}))
+
+
+def _cli_version(repo_root: Path) -> str:
+    with (repo_root / "cli" / "pyproject.toml").open("rb") as source:
+        document = tomllib.load(source)
+    version = document.get("project", {}).get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeError("cli/pyproject.toml does not declare project.version")
+    return version.strip()
 
 
 def _revision(repo_root: Path) -> str:

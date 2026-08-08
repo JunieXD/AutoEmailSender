@@ -29,7 +29,6 @@ try {
     --workpath (Join-Path $CliDir "build\work") `
     --specpath (Join-Path $CliDir "build") `
     --paths (Join-Path $CliDir "src") `
-    --copy-metadata auto-email-sender-cli `
     --runtime-hook $BuildIdentityHook `
     (Join-Path $CliDir "src\auto_email_sender_cli\__main__.py")
 

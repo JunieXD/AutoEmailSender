@@ -42,6 +42,7 @@ from auto_email_sender_cli.commands.common import (
     apply_structured_filter,
     fetch_all_pages,
     normalize_collection_response,
+    server_filter_params,
 )
 from auto_email_sender_cli.commands.wait import _available_actions
 
@@ -1179,6 +1180,97 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(invalid_type.exit_code, 2, msg=invalid_type.output)
         self.assertEqual(json.loads(invalid_type.stdout)["error"]["code"], "INVALID_FILTER")
+
+    def test_native_filter_pushdown_reduces_backend_work_with_local_fallback(self) -> None:
+        self.assertEqual(
+            server_filter_params(
+                '{"identity_id":{"eq":7},"has_reply":true,"professor_name":{"contains":"Li"}}',
+                command="communications.threads.list",
+            ),
+            {"identity_id": 7, "replied": True},
+        )
+        self.assertEqual(
+            server_filter_params(
+                '{"identity_id":{"ne":7}}',
+                command="communications.threads.list",
+            ),
+            {},
+        )
+        self.assertEqual(
+            server_filter_params(
+                '{"identity_id":{"eq":"not-an-id"},"direction":"invalid"}',
+                command="communications.messages.list",
+            ),
+            {},
+        )
+
+        class RecordingClient:
+            descriptor = type("Descriptor", (), {"app_version": "test"})()
+            last_request_id = "request-filter-pushdown"
+            calls: list[dict[str, object]] = []
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                self.calls.append(dict(kwargs.get("params", {})))
+                # Simulate an older backend that ignores the pushed parameter;
+                # the CLI's local pass must still remove the non-matching row.
+                return {
+                    "items": [
+                        {"id": "7:1", "identity_id": 7, "has_reply": True},
+                        {"id": "8:2", "identity_id": 8, "has_reply": False},
+                    ],
+                    "next_cursor": None,
+                    "has_more": False,
+                }
+
+        client = RecordingClient()
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=client,
+        ):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "--filter",
+                    '{"identity_id":{"eq":7}}',
+                    "communications",
+                    "threads",
+                    "list",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(client.calls[0]["identity_id"], 7)
+        items = json.loads(result.stdout)["data"]["items"]
+        self.assertEqual([item["identity_id"] for item in items], [7])
+
+    def test_revision_precedes_derived_action_metadata(self) -> None:
+        record = {"id": 9, "status": "partially_completed", "name": "Campaign"}
+        expected_revision = _with_revision(record)["revision"]
+
+        class StateClient:
+            descriptor = type("Descriptor", (), {"app_version": "test"})()
+            last_request_id = "request-state-revision"
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                return {"items": [record], "next_cursor": None, "has_more": False}
+
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=StateClient(),
+        ):
+            result = CliRunner().invoke(
+                app,
+                ["--format", "json", "campaigns", "list"],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        item = json.loads(result.stdout)["data"]["items"][0]
+        self.assertEqual(item["revision"], expected_revision)
+        self.assertTrue(item["available_actions"])
+        derived_revision = _with_revision(
+            {key: value for key, value in item.items() if key != "revision"},
+        )["revision"]
+        self.assertNotEqual(derived_revision, expected_revision)
 
     def test_usage_filter_recomputes_token_summary_for_filtered_records(self) -> None:
         data = {

@@ -22,12 +22,15 @@ class AgentApiClient:
         descriptor: RuntimeDescriptor | None = None,
         *,
         timeout: float = 30.0,
+        http_client: httpx.Client | None = None,
     ) -> None:
         self._refresh_runtime_on_failure = descriptor is None
         self.descriptor = ensure_runtime_protocol_compatible(
             descriptor or ensure_runtime_descriptor(),
         )
         self.timeout = timeout
+        self._http_client = http_client or httpx.Client(timeout=timeout)
+        self._owns_http_client = http_client is None
         self.last_request_id: str | None = None
         self.last_response_status: int | None = None
         self.last_response_headers: dict[str, str] = {}
@@ -116,7 +119,7 @@ class AgentApiClient:
         for attempt in range(2):
             headers["Authorization"] = f"Bearer {self.descriptor.access_token}"
             try:
-                response = httpx.request(
+                response = self._http_client.request(
                     method,
                     f"{self.descriptor.base_url.rstrip('/')}/{path.lstrip('/')}",
                     params=params,
@@ -171,6 +174,16 @@ class AgentApiClient:
                 "请确认软件已手动打开并完成加载后重试。"
             )
         return response
+
+    def close(self) -> None:
+        if self._owns_http_client:
+            self._http_client.close()
+
+    def __enter__(self) -> AgentApiClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def _record_response_metadata(self, response: httpx.Response) -> None:
         self.last_response_status = response.status_code

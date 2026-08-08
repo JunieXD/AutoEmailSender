@@ -43,7 +43,6 @@ uv run pyinstaller \
   --workpath "$CliDir/build/work" \
   --specpath "$CliDir/build" \
   --paths "$CliDir/src" \
-  --copy-metadata auto-email-sender-cli \
   --runtime-hook "$BuildIdentityHook" \
   "${TargetArchArgs[@]}" \
   "$CliDir/src/auto_email_sender_cli/__main__.py"
