@@ -308,6 +308,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         fetch_mock.assert_awaited_once()
         context = fetch_mock.await_args.args[0]
         self.assertEqual(context.start_url, profile_url)
+        self.assertTrue(context.allow_public_dns_fallback)
 
     async def test_encoded_cross_domain_profile_uses_itself_as_single_page_root(self) -> None:
         profile_url = "https://guanwei49.github.io/"

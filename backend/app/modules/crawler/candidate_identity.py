@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Iterable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CrawlCandidate, CrawlCandidateIdentityKey
+from app.modules.crawler.pages.domain_policy import is_same_registrable_domain
 from app.modules.crawler.v2.url_utils import normalize_url
 from app.modules.professors.public import (
     is_valid_professor_email,
@@ -19,7 +21,12 @@ from app.modules.professors.public import (
 
 EMAIL_IDENTITY_KEY = "email"
 PROFILE_URL_IDENTITY_KEY = "profile_url"
-_IDENTITY_KEY_TYPES = {EMAIL_IDENTITY_KEY, PROFILE_URL_IDENTITY_KEY}
+PROFILE_RELATION_IDENTITY_KEY = "profile_relation"
+_IDENTITY_KEY_TYPES = {
+    EMAIL_IDENTITY_KEY,
+    PROFILE_URL_IDENTITY_KEY,
+    PROFILE_RELATION_IDENTITY_KEY,
+}
 _MERGEABLE_TEXT_FIELDS = (
     "name",
     "email",
@@ -75,8 +82,10 @@ def normalize_candidate_profile_url(value: object) -> str | None:
 
 def candidate_identity_values(
     *,
+    name: object = None,
     email: object = None,
     profile_url: object = None,
+    include_profile_relations: bool = True,
 ) -> tuple[tuple[str, str], ...]:
     values: list[tuple[str, str]] = []
     normalized_email = normalize_candidate_email(email)
@@ -85,7 +94,74 @@ def candidate_identity_values(
     normalized_profile_url = normalize_candidate_profile_url(profile_url)
     if normalized_profile_url:
         values.append((PROFILE_URL_IDENTITY_KEY, normalized_profile_url))
+        normalized_name = _normalize_candidate_name(name)
+        if normalized_name and include_profile_relations:
+            values.extend(
+                (
+                    PROFILE_RELATION_IDENTITY_KEY,
+                    _profile_relation_fingerprint(normalized_name, related_url),
+                )
+                for related_url in _related_profile_urls(str(profile_url))
+            )
     return tuple(values)
+
+
+def _normalize_candidate_name(value: object) -> str:
+    return "".join(str(value or "").split()).casefold()
+
+
+def _profile_relation_fingerprint(name: str, profile_url: str) -> str:
+    return hashlib.sha256(f"{name}\0{profile_url}".encode("utf-8")).hexdigest()
+
+
+def _related_profile_urls(profile_url: str) -> tuple[str, ...]:
+    normalized_primary = normalize_candidate_profile_url(profile_url)
+    if normalized_primary is None:
+        return ()
+    related = [normalized_primary]
+    parsed = urlsplit(profile_url)
+    sections = [parsed.query]
+    if "=" in parsed.fragment:
+        sections.append(parsed.fragment)
+    for section in sections:
+        for _key, value in parse_qsl(section, keep_blank_values=True):
+            decoded = _decode_url_parameter(value.strip())
+            normalized = normalize_candidate_profile_url(decoded)
+            if normalized and normalized not in related:
+                related.append(normalized)
+    return tuple(related)
+
+
+def _decode_url_parameter(value: str) -> str:
+    decoded = value
+    for _ in range(10):
+        parsed = urlsplit(decoded)
+        if parsed.scheme in {"http", "https"} and parsed.hostname:
+            break
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    return decoded
+
+
+def _preferred_related_profile_url(
+    first: CrawlCandidate,
+    second: CrawlCandidate,
+) -> tuple[str, CrawlCandidate] | None:
+    first_url = normalize_candidate_profile_url(first.profile_url)
+    second_url = normalize_candidate_profile_url(second.profile_url)
+    if not first_url or not second_url:
+        return None
+    first_related = set(_related_profile_urls(first.profile_url or ""))
+    second_related = set(_related_profile_urls(second.profile_url or ""))
+    if second_url not in first_related and first_url not in second_related:
+        return None
+    for candidate, profile_url in ((first, first_url), (second, second_url)):
+        source_url = normalize_candidate_profile_url(candidate.source_url)
+        if source_url and is_same_registrable_domain(profile_url, source_url):
+            return profile_url, candidate
+    return first_url, first
 
 
 async def resolve_canonical_candidate(
@@ -111,10 +187,16 @@ async def find_canonical_candidate_for_identity(
     session: AsyncSession,
     *,
     job_id: int,
+    name: object = None,
     email: object = None,
     profile_url: object = None,
 ) -> CrawlCandidate | None:
-    identities = candidate_identity_values(email=email, profile_url=profile_url)
+    identities = candidate_identity_values(
+        name=name,
+        email=email,
+        profile_url=profile_url,
+        include_profile_relations=False,
+    )
     for key_type, normalized_value in identities:
         identity_key = await session.scalar(
             select(CrawlCandidateIdentityKey).where(
@@ -471,12 +553,25 @@ async def merge_candidate_rows(
         return canonical
     if canonical.id > alias.id:
         canonical, alias = alias, canonical
+    preferred_profile = _preferred_related_profile_url(canonical, alias)
 
     merge_candidate_payload(
         canonical,
         candidate_as_merge_payload(alias),
         merged_candidate_id=alias.id,
     )
+    if preferred_profile is not None and canonical.profile_url != preferred_profile[0]:
+        canonical.profile_url = preferred_profile[0]
+        field_sources = (
+            dict(canonical.field_sources)
+            if isinstance(canonical.field_sources, dict)
+            else {}
+        )
+        field_sources["profile_url"] = _stored_field_source(
+            preferred_profile[1],
+            "profile_url",
+        )
+        canonical.field_sources = field_sources
     if canonical.professor_id is None and alias.professor_id is not None:
         canonical.professor_id = alias.professor_id
     if _REVIEW_STATUS_PRIORITY.get(
@@ -556,7 +651,11 @@ async def consolidate_candidate_identity(
             merged_candidate_id=candidate.id,
         )
     identities = set(
-        candidate_identity_values(email=candidate.email, profile_url=candidate.profile_url)
+        candidate_identity_values(
+            name=candidate.name,
+            email=candidate.email,
+            profile_url=candidate.profile_url,
+        )
     )
     identities.update(additional_identities)
     for key_type, normalized_value in sorted(identities):
@@ -638,6 +737,7 @@ async def rebuild_candidate_identity_keys(
         identity
         for row in component
         for identity in candidate_identity_values(
+            name=row.name,
             email=row.email,
             profile_url=row.profile_url,
         )

@@ -424,6 +424,7 @@ async def enrich_candidate_once_with_usage(
             school=job.school,
             start_url=profile_crawl_root,
             llm_adaptation=adaptation,
+            allow_public_dns_fallback=True,
         )
     page_text = await get_or_fetch_profile_text(ctx, candidate.id, profile_url)
     return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)

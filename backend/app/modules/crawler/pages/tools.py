@@ -5,6 +5,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
+from functools import lru_cache
 from html import unescape
 import hashlib
 import ipaddress
@@ -502,6 +503,7 @@ async def _find_existing_candidate_for_payload(
     session: AsyncSession,
     *,
     job_id: int,
+    name: str | None,
     email: str | None,
     profile_url: str | None,
     identity_key: str | None = None,
@@ -509,6 +511,7 @@ async def _find_existing_candidate_for_payload(
     row = await find_canonical_candidate_for_identity(
         session,
         job_id=job_id,
+        name=name,
         email=email,
         profile_url=profile_url,
     )
@@ -541,6 +544,7 @@ class CrawlToolContext:
     )
     entry_type: str | None = None
     claim_fence: CrawlerV2ClaimFence | None = None
+    allow_public_dns_fallback: bool = False
 
     def mark_http_blocked(self, url: str) -> None:
         host = (urlparse(url).hostname or "").lower()
@@ -610,13 +614,24 @@ def is_allowed_crawl_url(start_url: str, candidate_url: str) -> bool:
     return bool(start_domain and start_domain == candidate_domain)
 
 
-def _is_resolved_allowed_crawl_url(start_url: str, candidate_url: str) -> bool:
+def _is_resolved_allowed_crawl_url(
+    start_url: str,
+    candidate_url: str,
+    *,
+    allow_public_dns_fallback: bool = False,
+) -> bool:
     absolute_candidate_url = urljoin(start_url, candidate_url)
     if not is_allowed_crawl_url(start_url, absolute_candidate_url):
         return False
     try:
-        _resolve_safe_public_crawl_url(start_url)
-        _resolve_safe_public_crawl_url(absolute_candidate_url)
+        _resolve_safe_public_crawl_url(
+            start_url,
+            allow_public_dns_fallback=allow_public_dns_fallback,
+        )
+        _resolve_safe_public_crawl_url(
+            absolute_candidate_url,
+            allow_public_dns_fallback=allow_public_dns_fallback,
+        )
     except ValueError:
         return False
     return True
@@ -657,15 +672,22 @@ def _validate_safe_crawl_url_literal(url: str) -> tuple[str, str, int]:
     return normalized_host, parsed.scheme, parsed.port or _default_port_for_scheme(parsed.scheme)
 
 
-def _resolve_safe_public_crawl_url(url: str) -> _SafeCrawlUrl:
+def _resolve_safe_public_crawl_url(
+    url: str,
+    *,
+    allow_public_dns_fallback: bool = False,
+) -> _SafeCrawlUrl:
     normalized_host, _scheme, port = _validate_safe_crawl_url_literal(url)
     try:
         ip_address = ipaddress.ip_address(normalized_host)
     except ValueError:
-        return _SafeCrawlUrl(
-            hostname=normalized_host,
-            resolved_ips=_resolve_system_host_ips(normalized_host, port),
-        )
+        try:
+            resolved_ips = _resolve_system_host_ips(normalized_host, port)
+        except ValueError:
+            if not allow_public_dns_fallback:
+                raise
+            resolved_ips = _resolve_public_dns_host_ips(normalized_host)
+        return _SafeCrawlUrl(hostname=normalized_host, resolved_ips=resolved_ips)
     return _SafeCrawlUrl(hostname=normalized_host, resolved_ips=(str(ip_address),))
 
 
@@ -693,6 +715,41 @@ def _resolve_system_host_ips(host: str, port: int) -> tuple[str, ...]:
         normalized_ip = str(ip_address)
         if normalized_ip not in resolved_ips:
             resolved_ips.append(normalized_ip)
+    return tuple(resolved_ips)
+
+
+@lru_cache(maxsize=256)
+def _resolve_public_dns_host_ips(host: str) -> tuple[str, ...]:
+    resolved_ips: list[str] = []
+    for record_type in ("A", "AAAA"):
+        try:
+            response = httpx.get(
+                "https://cloudflare-dns.com/dns-query",
+                params={"name": host, "type": record_type},
+                headers={"Accept": "application/dns-json"},
+                timeout=5.0,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+        if payload.get("Status") != 0:
+            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+        for answer in payload.get("Answer") or []:
+            if not isinstance(answer, dict) or answer.get("type") not in {1, 28}:
+                continue
+            try:
+                ip_address = ipaddress.ip_address(str(answer.get("data") or ""))
+            except ValueError as exc:
+                raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+            if _is_unsafe_ip_address(ip_address):
+                raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+            normalized_ip = str(ip_address)
+            if normalized_ip not in resolved_ips:
+                resolved_ips.append(normalized_ip)
+    if not resolved_ips:
+        raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
     return tuple(resolved_ips)
 
 
@@ -951,7 +1008,10 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
                 await record_page_snapshot(ctx, snapshot)
                 return snapshot
 
-            safe_url = _resolve_safe_public_crawl_url(current_url)
+            safe_url = _resolve_safe_public_crawl_url(
+                current_url,
+                allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+            )
             transport = _build_safe_crawl_transport(
                 hostname=safe_url.hostname,
                 resolved_ip=safe_url.resolved_ips[0],
@@ -1529,7 +1589,11 @@ async def _crawl_page_with_browser(
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
-    if not _is_resolved_allowed_crawl_url(ctx.start_url, absolute_url):
+    if not _is_resolved_allowed_crawl_url(
+        ctx.start_url,
+        absolute_url,
+        allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+    ):
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
@@ -1547,6 +1611,7 @@ async def _crawl_page_with_browser(
     if snapshot.status == "succeeded" and not _is_resolved_allowed_crawl_url(
         ctx.start_url,
         snapshot.url,
+        allow_public_dns_fallback=ctx.allow_public_dns_fallback,
     ):
         return _failed_snapshot(
             url=snapshot.url,
@@ -1594,7 +1659,11 @@ async def expand_browser_pagination(
     """Replay one model-selected next-page control and collect each changed state."""
 
     absolute_url = urljoin(ctx.start_url, url)
-    if not _is_resolved_allowed_crawl_url(ctx.start_url, absolute_url):
+    if not _is_resolved_allowed_crawl_url(
+        ctx.start_url,
+        absolute_url,
+        allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+    ):
         return BrowserPaginationExpansion(
             status="failed",
             stopped_reason="unsafe_url",
@@ -1624,7 +1693,11 @@ async def expand_browser_pagination(
             max_pages=max_pages,
         )
     for snapshot in result.snapshots:
-        if not _is_resolved_allowed_crawl_url(ctx.start_url, snapshot.url):
+        if not _is_resolved_allowed_crawl_url(
+            ctx.start_url,
+            snapshot.url,
+            allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+        ):
             return BrowserPaginationExpansion(
                 status="failed",
                 snapshots=result.snapshots,
@@ -2349,11 +2422,13 @@ async def _save_normalized_candidate_payloads(
             existing = await _find_existing_candidate_for_payload(
                 session,
                 job_id=ctx.job_id,
+                name=payload.get("name"),
                 email=normalized_email,
                 profile_url=normalized_profile_url,
                 identity_key=identity_key,
             )
             identities = candidate_identity_values(
+                name=payload.get("name"),
                 email=normalized_email,
                 profile_url=normalized_profile_url,
             )
@@ -2391,6 +2466,7 @@ async def _save_normalized_candidate_payloads(
                 existing = await _find_existing_candidate_for_payload(
                     session,
                     job_id=ctx.job_id,
+                    name=payload.get("name"),
                     email=normalized_email,
                     profile_url=normalized_profile_url,
                     identity_key=identity_key,

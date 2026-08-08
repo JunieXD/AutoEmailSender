@@ -423,6 +423,76 @@ class CrawlerToolTests(unittest.TestCase):
             resolved = _resolve_safe_public_crawl_url("https://faculty.example.edu")
             self.assertEqual(resolved.resolved_ips, ("93.184.216.34",))
 
+    def test_resolve_safe_public_crawl_url_can_recheck_explicit_profile_with_public_dns(self) -> None:
+        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        responses = [
+            SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {
+                    "Status": 0,
+                    "Answer": [{"type": 1, "data": "142.251.210.142"}],
+                },
+            ),
+            SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {
+                    "Status": 0,
+                    "Answer": [{"type": 28, "data": "2607:f8b0:4007:805::200e"}],
+                },
+            ),
+        ]
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("2001::1", 443))],
+        ), patch(
+            "app.modules.crawler.pages.tools.httpx.get",
+            side_effect=responses,
+        ) as public_dns_mock:
+            resolved = _resolve_safe_public_crawl_url(
+                "https://sites.google.com/view/example",
+                allow_public_dns_fallback=True,
+            )
+
+        self.assertEqual(
+            resolved.resolved_ips,
+            ("142.251.210.142", "2607:f8b0:4007:805::200e"),
+        )
+        self.assertEqual(public_dns_mock.call_count, 2)
+
+    def test_public_dns_recheck_still_rejects_private_answers(self) -> None:
+        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "Status": 0,
+                "Answer": [{"type": 1, "data": "127.0.0.1"}],
+            },
+        )
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("127.0.0.1", 443))],
+        ), patch(
+            "app.modules.crawler.pages.tools.httpx.get",
+            return_value=response,
+        ):
+            with self.assertRaises(ValueError):
+                _resolve_safe_public_crawl_url(
+                    "https://profiles.example.net/person",
+                    allow_public_dns_fallback=True,
+                )
+
+    def test_public_dns_recheck_never_applies_to_private_ip_literal(self) -> None:
+        with patch(
+            "app.modules.crawler.pages.tools.httpx.get",
+        ) as public_dns_mock:
+            with self.assertRaises(ValueError):
+                _resolve_safe_public_crawl_url(
+                    "http://127.0.0.1/private",
+                    allow_public_dns_fallback=True,
+                )
+
+        public_dns_mock.assert_not_called()
+
     def test_is_safe_public_crawl_url_allows_domain_even_if_system_dns_would_be_private(self) -> None:
         with patch(
             "app.modules.crawler.pages.tools.socket.getaddrinfo",
@@ -2690,6 +2760,60 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             ]
             self.assertEqual(len(canonical), 1)
             self.assertEqual(canonical[0].email.lower(), "zhang@example.edu")
+
+    async def test_related_internal_and_external_profile_payloads_use_existing_merge(self) -> None:
+        listing_url = "https://school.example.edu/faculty"
+        external_url = "https://sites.example.net/view/guo"
+        internal_url = (
+            "https://school.example.edu/detail?name=guo&"
+            "redirect=https%3A%2F%2Fsites.example.net%2Fview%2Fguo"
+        )
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=listing_url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+
+            first = await save_candidate_payloads_shared(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="郭晓杰",
+                        profile_url=external_url,
+                        source_url=listing_url,
+                    )
+                ],
+            )
+            second = await save_candidate_payloads_shared(
+                ctx,
+                [
+                    ProfessorCandidatePayload(
+                        name="郭晓杰",
+                        profile_url=internal_url,
+                        source_url=listing_url,
+                    )
+                ],
+            )
+
+            async with harness.session_factory() as session:
+                rows = list(
+                    await session.scalars(
+                        select(CrawlCandidate)
+                        .where(CrawlCandidate.job_id == job_id)
+                        .order_by(CrawlCandidate.id)
+                    )
+                )
+
+        canonical = [row for row in rows if row.merged_into_candidate_id is None]
+        self.assertEqual(first["saved_count"], 1)
+        self.assertEqual(second["saved_count"], 0)
+        self.assertEqual(second["merged_count"], 1)
+        self.assertEqual(len(canonical), 1)
+        self.assertEqual(canonical[0].profile_url, internal_url)
 
     async def test_save_candidate_payloads_rejects_listing_entry_start_url_without_email(self) -> None:
         listing_url = "https://example.edu/faculty"

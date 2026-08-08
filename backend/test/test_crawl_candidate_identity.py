@@ -58,6 +58,7 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
         name: str,
         email: str | None = None,
         profile_url: str | None = None,
+        source_url: str | None = None,
     ) -> int:
         async with self.session_factory() as session:
             candidate = CrawlCandidate(
@@ -65,6 +66,7 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
                 name=name,
                 email=email,
                 profile_url=profile_url,
+                source_url=source_url,
             )
             session.add(candidate)
             await session.flush()
@@ -127,12 +129,20 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row.id for row in canonical_rows], [first_id])
         self.assertEqual({key.candidate_id for key in keys}, {first_id})
         self.assertEqual(
-            {(key.key_type, key.normalized_value) for key in keys},
+            {
+                (key.key_type, key.normalized_value)
+                for key in keys
+                if key.key_type != "profile_relation"
+            },
             {
                 ("email", "zhang@example.edu"),
                 ("profile_url", "https://example.edu/people/zhang"),
                 ("profile_url", "https://example.edu/lab/zhang-san"),
             },
+        )
+        self.assertEqual(
+            sum(key.key_type == "profile_relation" for key in keys),
+            2,
         )
         self.assertEqual([row.id for row in canonicalized], [first_id])
         self.assertEqual(missing, [])
@@ -175,6 +185,68 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def test_same_name_with_different_emails_does_not_merge(self) -> None:
         await self._create_candidate(name="张三", email="one@example.edu")
         await self._create_candidate(name="张三", email="two@example.edu")
+
+        async with self.session_factory() as session:
+            count = await session.scalar(
+                select(func.count())
+                .select_from(CrawlCandidate)
+                .where(
+                    CrawlCandidate.job_id == self.job_id,
+                    canonical_candidate_clause(),
+                )
+            )
+
+        self.assertEqual(count, 2)
+
+    async def test_related_internal_and_external_profiles_merge_without_backup_field(self) -> None:
+        external_url = "https://sites.example.net/view/guo"
+        external_id = await self._create_candidate(
+            name="郭晓杰",
+            profile_url=external_url,
+            source_url="https://school.example.edu/faculty",
+        )
+        internal_url = (
+            "https://school.example.edu/detail?name=guo&"
+            "target=https%3A%2F%2Fsites.example.net%2Fview%2Fguo"
+        )
+        await self._create_candidate(
+            name="郭晓杰",
+            profile_url=internal_url,
+            source_url="https://school.example.edu/faculty",
+        )
+
+        async with self.session_factory() as session:
+            roots = list(
+                await session.scalars(
+                    select(CrawlCandidate).where(
+                        CrawlCandidate.job_id == self.job_id,
+                        canonical_candidate_clause(),
+                    )
+                )
+            )
+            rows = list(
+                await session.scalars(
+                    select(CrawlCandidate)
+                    .where(CrawlCandidate.job_id == self.job_id)
+                    .order_by(CrawlCandidate.id)
+                )
+            )
+
+        self.assertEqual([row.id for row in roots], [external_id])
+        self.assertEqual(roots[0].profile_url, internal_url)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1].merged_into_candidate_id, external_id)
+
+    async def test_embedded_profile_relation_requires_same_name(self) -> None:
+        external_url = "https://sites.example.net/view/shared"
+        await self._create_candidate(name="张三", profile_url=external_url)
+        await self._create_candidate(
+            name="李四",
+            profile_url=(
+                "https://school.example.edu/detail?"
+                "redirect=https%3A%2F%2Fsites.example.net%2Fview%2Fshared"
+            ),
+        )
 
         async with self.session_factory() as session:
             count = await session.scalar(
@@ -427,7 +499,7 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual([row.id for row in roots], [first_id])
-        self.assertEqual(len(keys), 4)
+        self.assertEqual(len(keys), 7)
         self.assertEqual({key.candidate_id for key in keys}, {first_id})
 
     async def test_same_identity_in_different_jobs_never_merges(self) -> None:

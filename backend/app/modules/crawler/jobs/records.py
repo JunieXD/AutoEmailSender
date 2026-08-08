@@ -246,6 +246,7 @@ async def update_faculty_crawl_candidate_record(
     candidate = await resolve_canonical_candidate(session, candidate)
     previous_identities = set(
         candidate_identity_values(
+            name=candidate.name,
             email=candidate.email,
             profile_url=candidate.profile_url,
         )
@@ -279,6 +280,7 @@ async def update_faculty_crawl_candidate_record(
     candidate.updated_at = utc_now()
     current_identities = set(
         candidate_identity_values(
+            name=candidate.name,
             email=candidate.email,
             profile_url=candidate.profile_url,
         )
