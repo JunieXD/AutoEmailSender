@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/runtimeSettings";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
+import { useNotification } from "@/context/NotificationContext";
 import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
@@ -113,6 +114,7 @@ emptyForm.draft_custom_instruction = "";
 emptyForm.intended_research_direction = "";
 
 export function OtherSettingsCard() {
+  const { notifyError, notifySuccess } = useNotification();
   const [open, setOpen] = useState(false);
   const [renderContent, setRenderContent] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -120,7 +122,6 @@ export function OtherSettingsCard() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [startupStatus, setStartupStatus] = useState<DesktopStartupAtLoginStatus | null>(null);
   const [startupLoading, setStartupLoading] = useState(false);
   const [startupSaving, setStartupSaving] = useState(false);
@@ -205,7 +206,6 @@ export function OtherSettingsCard() {
   };
 
   const handleChange = (key: RuntimeSettingsKey, value: string) => {
-    setSavedMessage(null);
     setForm((current) => ({
       ...current,
       [key]: value,
@@ -216,14 +216,16 @@ export function OtherSettingsCard() {
     const payload = toUpdatePayload(form);
     setSaving(true);
     setError(null);
-    setSavedMessage(null);
     try {
       const saved = await updateRuntimeSettings(payload);
       setForm(toFormState(saved));
       setUpdatedAt(saved.updated_at);
-      setSavedMessage("设置已保存");
+      notifySuccess("设置已保存", "其他设置已更新。");
     } catch (saveError) {
-      setError(getErrorMessage(saveError, "保存其他设置失败"));
+      notifyError(
+        "保存其他设置失败",
+        getErrorMessage(saveError, "请稍后重试"),
+      );
     } finally {
       setSaving(false);
     }
@@ -475,11 +477,6 @@ export function OtherSettingsCard() {
                       {error}
                     </div>
                   ) : null}
-                  {savedMessage ? (
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                      {savedMessage}
-                    </div>
-                  ) : null}
                 </div>
 
                 {open ? (
@@ -488,16 +485,10 @@ export function OtherSettingsCard() {
                     aria-label="其他设置保存栏"
                     className="sticky bottom-0 z-20 -mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 rounded-b-2xl border-t border-stone-200 bg-white/95 px-6 py-4 shadow-sm backdrop-blur"
                   >
-                    <div
-                      className={clsx(
-                        "flex min-w-0 items-center gap-2 text-xs",
-                        savedMessage ? "text-emerald-700" : "text-stone-500",
-                      )}
-                    >
+                    <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500">
                       <Settings className="h-4 w-4 shrink-0" />
                       <span className="truncate">
-                        {savedMessage ??
-                          `最后更新：${updatedAt ? formatApiDateTime(updatedAt) : "尚未加载"}`}
+                        最后更新：{updatedAt ? formatApiDateTime(updatedAt) : "尚未加载"}
                       </span>
                     </div>
                     <button

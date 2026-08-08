@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
+import { NotificationProvider } from "@/context/NotificationContext";
 
 vi.mock("@/lib/api/runtimeSettings", () => ({
   defaultDraftRewritePreferences: {
@@ -37,6 +38,13 @@ vi.mock("@/lib/api/runtimeSettings", () => ({
   })),
 }));
 
+const renderSettings = () =>
+  render(
+    <NotificationProvider>
+      <OtherSettingsCard />
+    </NotificationProvider>,
+  );
+
 describe("OtherSettingsCard", () => {
   beforeEach(() => {
     window.autoEmailSender = undefined;
@@ -46,7 +54,7 @@ describe("OtherSettingsCard", () => {
   it("loads and saves runtime concurrency settings", async () => {
     const api = await import("@/lib/api/runtimeSettings");
 
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     expect(await screen.findByLabelText("每个匹配任务同时分析导师数")).toHaveValue(5);
@@ -84,6 +92,37 @@ describe("OtherSettingsCard", () => {
     });
     expect(screen.getByLabelText("每个匹配任务同时分析导师数")).toHaveValue(4);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(6);
+    expect(screen.getByTestId("notification-title")).toHaveTextContent("设置已保存");
+    expect(screen.getByText("其他设置已更新。")).toBeInTheDocument();
+    expect(screen.getByTestId("notification-card").parentElement).toHaveClass(
+      "fixed",
+      "right-4",
+      "bottom-4",
+    );
+    expect(screen.getByRole("region", { name: "其他设置保存栏" })).not.toHaveTextContent(
+      "设置已保存",
+    );
+  });
+
+  it("shows a bottom-right error notification when saving fails", async () => {
+    const api = await import("@/lib/api/runtimeSettings");
+    vi.mocked(api.updateRuntimeSettings).mockRejectedValueOnce(new Error("服务暂不可用"));
+
+    renderSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    await screen.findByLabelText("每个匹配任务同时分析导师数");
+    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
+
+    expect(await screen.findByTestId("notification-title")).toHaveTextContent(
+      "保存其他设置失败",
+    );
+    expect(screen.getByText("服务暂不可用")).toBeInTheDocument();
+    expect(screen.getByTestId("notification-card").parentElement).toHaveClass(
+      "fixed",
+      "right-4",
+      "bottom-4",
+    );
   });
 
   it("falls back to the default batch draft concurrency when the setting is missing", async () => {
@@ -107,7 +146,7 @@ describe("OtherSettingsCard", () => {
       updated_at: "2026-05-04T00:00:00Z",
     } as Awaited<ReturnType<typeof api.getRuntimeSettings>>);
 
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
 
@@ -119,7 +158,7 @@ describe("OtherSettingsCard", () => {
   it("shows only the AI draft custom instruction in draft rewrite preferences", async () => {
     const api = await import("@/lib/api/runtimeSettings");
 
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     const customInstruction = await screen.findByLabelText("AI 草稿补充要求");
@@ -151,7 +190,7 @@ describe("OtherSettingsCard", () => {
   it("loads and saves the intended research direction", async () => {
     const api = await import("@/lib/api/runtimeSettings");
 
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     const intendedDirection = await screen.findByLabelText("意向研究方向");
@@ -172,7 +211,7 @@ describe("OtherSettingsCard", () => {
   });
 
   it("shows startup at login as unavailable outside the desktop app", async () => {
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
 
@@ -182,7 +221,7 @@ describe("OtherSettingsCard", () => {
   });
 
   it("keeps one global save action available in a sticky footer", async () => {
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
 
@@ -206,7 +245,7 @@ describe("OtherSettingsCard", () => {
     const quitApp = vi.fn(async () => undefined);
     window.autoEmailSender = buildDesktopApi({ quitApp });
 
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     const quitButton = await screen.findByRole("button", { name: "退出桌面应用" });
@@ -227,7 +266,7 @@ describe("OtherSettingsCard", () => {
       setStartupAtLoginEnabled,
     });
 
-    render(<OtherSettingsCard />);
+    renderSettings();
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     const startupCheckbox = await screen.findByRole("checkbox", { name: /开机自启动/ });
