@@ -397,6 +397,15 @@ class ContractTests(unittest.TestCase):
             item for item in wait["parameters"] if item["name"] == "resource_id"
         )
         self.assertTrue(resource_id_parameter["multiple"])
+        wait_properties = wait["output"]["schema"]["properties"]["data"]["properties"]
+        self.assertEqual(wait_properties["settled"]["type"], "boolean")
+        self.assertEqual(wait_properties["timed_out_ids"]["type"], "array")
+
+        crawler = describe_command(app, "crawler.jobs.get")
+        assert crawler is not None
+        self.assertIn("llm_context", crawler["output"]["known_fields"])
+        crawler_properties = crawler["output"]["schema"]["properties"]["data"]["properties"]
+        self.assertEqual(crawler_properties["llm_context"]["type"], ["object", "null"])
         self.assertEqual(
             wait["output"]["schema"]["properties"]["data"]["properties"]["elapsed_seconds"]["type"],
             ["number", "null"],

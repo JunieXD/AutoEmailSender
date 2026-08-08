@@ -28,6 +28,7 @@ from .models import CrawlerV2WorkKind
 from .profile_url_policy import extract_normalized_markdown_links
 from .url_utils import is_same_domain, normalize_url
 from ..jobs.runs import extract_token_usage_from_llm_response
+from ..jobs.llm_context import resolve_crawl_job_runtime_profile
 from app.modules.llm.public import (
     LLMRuntimeAdaptation,
     ensure_llm_runtime_adaptation,
@@ -324,16 +325,7 @@ async def _chunk_task_can_commit(
 
 
 async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob):
-    from app.models import LLMProfile
-
-    if job.llm_profile_id is not None:
-        return await session.get(LLMProfile, job.llm_profile_id)
-    return await session.scalar(
-        select(LLMProfile)
-        .where(LLMProfile.is_default.is_(True))
-        .order_by(LLMProfile.id.asc())
-        .limit(1)
-    )
+    return await resolve_crawl_job_runtime_profile(session, job)
 
 
 

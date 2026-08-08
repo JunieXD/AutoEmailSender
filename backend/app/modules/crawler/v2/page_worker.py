@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, LLMProfile
 from ..pages.chunking import ChunkingConfig, build_page_chunks
+from ..jobs.llm_context import resolve_crawl_job_runtime_profile
 from ..pages.chunk_runtime import create_chunks_for_page
 from ..pages.fetch_ledger import should_prefer_browser_for_fetch_domain
 from ..pages.debug import append_crawler_v2_debug_event
@@ -807,14 +808,7 @@ async def _page_task_can_commit(
 
 
 async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:
-    if job.llm_profile_id is not None:
-        return await session.get(LLMProfile, job.llm_profile_id)
-    return await session.scalar(
-        select(LLMProfile)
-        .where(LLMProfile.is_default.is_(True))
-        .order_by(LLMProfile.id.asc())
-        .limit(1)
-    )
+    return await resolve_crawl_job_runtime_profile(session, job)  # type: ignore[return-value]
 
 
 async def _complete_profile_page_extraction(

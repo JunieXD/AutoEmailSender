@@ -29,6 +29,7 @@ from ..pages.tools import (
     profile_text_has_meaningful_content,
     validate_safe_public_crawl_url,
 )
+from ..jobs.llm_context import resolve_crawl_job_runtime_profile
 from ..pages.debug import append_crawler_v2_debug_event
 from .profile_url_policy import (
     CandidateProfileUrlPolicyError,
@@ -674,14 +675,7 @@ def _is_previous_failed_enrichment_event(
 
 
 async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:
-    if job.llm_profile_id is not None:
-        return await session.get(LLMProfile, job.llm_profile_id)
-    return await session.scalar(
-        select(LLMProfile)
-        .where(LLMProfile.is_default.is_(True))
-        .order_by(LLMProfile.id.asc())
-        .limit(1)
-    )
+    return await resolve_crawl_job_runtime_profile(session, job)  # type: ignore[return-value]
 
 
 def _apply_enrichment(

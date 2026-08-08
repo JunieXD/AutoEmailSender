@@ -127,6 +127,17 @@ class CrawlJobRetryPayload(BaseModel):
 class CrawlJobResumePayload(BaseModel):
     llm_profile_id: int | None = None
 
+
+class CrawlJobLLMContextRead(ApiSchema):
+    profile_source: Literal["explicit", "job", "global_default"]
+    profile_id: int
+    profile_revision: str
+    profile_name: str
+    provider: str
+    model_name: str
+    effective_models: list[str] = Field(default_factory=list)
+
+
 class CrawlJobSummaryRead(CrawlJobRead):
     page_count: int = 0
     candidate_count: int = 0
@@ -136,6 +147,7 @@ class CrawlJobSummaryRead(CrawlJobRead):
     cached_tokens: int = 0
     total_tokens: int = 0
     duration_seconds: int = 0
+    llm_context: CrawlJobLLMContextRead | None = None
 
 
 class CrawlJobDetailsRead(ApiSchema):

@@ -36,6 +36,7 @@ from ..schemas import (
 )
 from .events import normalize_agent_trace_event
 from .metrics import build_crawl_job_metrics
+from .llm_context import public_llm_context, snapshot_crawl_job_llm_profile
 from .runs import (
     create_initial_crawl_job_run,
     create_retry_crawl_job_run,
@@ -117,6 +118,14 @@ async def create_faculty_crawl_job_record(
             ),
         )
     await create_initial_crawl_job_run(session, job)
+    if payload.llm_profile_id is not None:
+        await _resolve_and_refresh_llm_profile(
+            session,
+            job,
+            payload.llm_profile_id,
+            trigger="create",
+            actor=actor,
+        )
     metadata: dict[str, object] = {
         "university": job.university,
         "school": job.school,
@@ -759,15 +768,6 @@ async def retry_faculty_crawl_job_record(
         await session.execute(delete(CrawlPage).where(CrawlPage.job_id == job.id))
         job.agent_trace = []
 
-    if payload.llm_profile_id is not None:
-        await _resolve_and_refresh_llm_profile(
-            session,
-            job,
-            payload.llm_profile_id,
-            trigger="retry",
-            actor=actor,
-        )
-
     for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
         session.add(
             CrawlPageTask(
@@ -791,6 +791,13 @@ async def retry_faculty_crawl_job_record(
     job.error_message = None
     job.updated_at = now
     await create_retry_crawl_job_run(session, job, now=now)
+    await _resolve_and_refresh_llm_profile(
+        session,
+        job,
+        payload.llm_profile_id,
+        trigger="retry",
+        actor=actor,
+    )
     await _record_job_event(
         session,
         job,
@@ -975,6 +982,21 @@ async def _build_crawl_job_summaries(
         .group_by(CrawlCandidate.job_id)
     )
     candidate_counts = dict(candidate_count_rows.all())
+    model_rows = (
+        await session.execute(
+            select(CrawlWorkerTokenUsage.job_id, CrawlWorkerTokenUsage.model_name)
+            .where(
+                CrawlWorkerTokenUsage.job_id.in_(job_ids),
+                CrawlWorkerTokenUsage.model_name.is_not(None),
+            )
+            .distinct()
+            .order_by(CrawlWorkerTokenUsage.job_id.asc(), CrawlWorkerTokenUsage.model_name.asc()),
+        )
+    ).all()
+    effective_models: dict[int, list[str]] = {}
+    for job_id, model_name in model_rows:
+        if isinstance(model_name, str) and model_name:
+            effective_models.setdefault(int(job_id), []).append(model_name)
     return [
         CrawlJobSummaryRead.model_validate(job).model_copy(
             update={
@@ -986,6 +1008,10 @@ async def _build_crawl_job_summaries(
                 "cached_tokens": metrics.cached_tokens,
                 "total_tokens": metrics.total_tokens,
                 "duration_seconds": metrics.duration_seconds,
+                "llm_context": public_llm_context(
+                    job.current_run.llm_runtime_snapshot if job.current_run is not None else None,
+                    effective_models=effective_models.get(job.id, []),
+                ),
             },
         )
         for job in jobs
@@ -1055,6 +1081,7 @@ async def _resolve_and_refresh_llm_profile(
 ) -> LLMProfile:
     old_profile = await session.get(LLMProfile, job.llm_profile_id) if job.llm_profile_id else None
     if requested_llm_profile_id is not None:
+        profile_source = "explicit"
         llm_profile = await session.get(LLMProfile, requested_llm_profile_id)
         if llm_profile is None:
             raise CrawlJobRecordError(
@@ -1063,8 +1090,10 @@ async def _resolve_and_refresh_llm_profile(
                 message="模型配置不存在",
             )
     elif old_profile is not None:
+        profile_source = "job"
         llm_profile = old_profile
     else:
+        profile_source = "global_default"
         llm_profile = await session.scalar(
             select(LLMProfile)
             .where(LLMProfile.is_default.is_(True))
@@ -1092,6 +1121,12 @@ async def _resolve_and_refresh_llm_profile(
             actor=actor,
         )
         job.llm_profile_id = llm_profile.id
+    await snapshot_crawl_job_llm_profile(
+        session,
+        job,
+        llm_profile,
+        source=profile_source,
+    )
     return llm_profile
 
 

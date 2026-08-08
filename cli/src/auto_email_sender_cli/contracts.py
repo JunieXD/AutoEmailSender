@@ -737,13 +737,13 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         return {"type": ["object", "null"]}
     if normalized in {"id", "task_id", "job_id", "plan_id", "professor_id", "identity_id", "llm_profile_id", "template_id", "material_id", "thread_id", "email_task_id", "campaign_id"} or normalized.endswith("_id"):
         return {"type": ["integer", "string", "null"]}
-    if normalized.endswith(("_count", "_tokens", "size_bytes", "_ms")) or normalized in {"count", "record_count", "target_count", "total", "status_code", "duration_ms", "offset", "limit", "page", "page_size", "total_pages", "total_records", "poll_count"}:
+    if normalized.endswith(("_count", "_tokens", "size_bytes", "_ms")) or normalized in {"count", "record_count", "target_count", "total", "status_code", "duration_ms", "offset", "limit", "page", "page_size", "total_pages", "total_records", "poll_count", "poll_rounds"}:
         return {"type": ["integer", "null"]}
     if normalized.endswith("_seconds") or normalized in {"match_score", "score", "temperature", "confidence"}:
         return {"type": ["number", "null"]}
-    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "terminal", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable", "deprecated"}:
+    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "settled", "terminal", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable", "deprecated"}:
         return {"type": "boolean"}
-    if normalized in {"professor", "identity", "llm_profile", "current_task", "draft", "thread", "usage", "summary", "result", "settings", "by_status", "by_identity", "tag", "job", "template", "reference_material", "defaults", "task", "chart", "metadata", "raw", "field_confidence", "evidence", "filters", "next", "replacement", "details_available", "details"}:
+    if normalized in {"professor", "identity", "llm_profile", "llm_context", "current_task", "draft", "thread", "usage", "summary", "result", "settings", "by_status", "by_identity", "tag", "job", "template", "reference_material", "defaults", "task", "chart", "metadata", "raw", "field_confidence", "evidence", "filters", "next", "replacement", "details_available", "details"}:
         return {"type": ["object", "null"]}
     if normalized in {
         "tags",
@@ -758,6 +758,10 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         "attachment_material_ids",
         "enriched_fields",
         "items",
+        "resources",
+        "action_groups",
+        "failures",
+        "effective_models",
         "warnings",
         "checks",
         "material_options",
@@ -780,6 +784,8 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         "records",
         "unit_paths",
     }:
+        return {"type": "array"}
+    if normalized == "ids" or normalized.endswith("_ids"):
         return {"type": "array"}
     if normalized in {"mutation_receipt", "error", "details"}:
         return {"type": ["object", "null"]}

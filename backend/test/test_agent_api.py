@@ -2853,6 +2853,14 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(queued.json()["observation"]["status"], "running")
         self.assertEqual(queued.json(), replayed.json())
 
+        read_job = self.client.get(
+            f"/api/agent/v1/crawler/jobs/{job_id}",
+            headers=self._agent_headers(),
+        )
+        self.assertEqual(read_job.status_code, 200, msg=read_job.text)
+        self.assertEqual(read_job.json()["llm_context"]["profile_source"], "explicit")
+        self.assertEqual(read_job.json()["llm_context"]["model_name"], "test-model")
+
         with sqlite3.connect(self.db_path) as connection:
             enrichment_task = connection.execute(
                 """
@@ -2871,9 +2879,30 @@ class AgentApiTests(unittest.TestCase):
                 WHERE event_name = 'agent_cli.crawl_candidate_enrichment.queued'
                 """,
             ).fetchone()[0]
+            run_id = connection.execute(
+                "SELECT current_run_id FROM crawl_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO crawl_worker_token_usages (
+                    job_id, run_id, worker_kind, work_item_id, model_name
+                ) VALUES (?, ?, 'enrichment', 'effective-model-test', 'test-model')
+                """,
+                (job_id, run_id),
+            )
+            connection.commit()
         self.assertEqual(enrichment_task, (candidate_id, "pending"))
         self.assertEqual(job_status, "running")
         self.assertEqual(log_count, 1)
+        read_with_usage = self.client.get(
+            f"/api/agent/v1/crawler/jobs/{job_id}",
+            headers=self._agent_headers(),
+        )
+        self.assertEqual(
+            read_with_usage.json()["llm_context"]["effective_models"],
+            ["test-model"],
+        )
 
     def test_agent_can_enrich_all_crawl_candidates_with_exclusions(self) -> None:
         llm_profile_id = self._create_llm_profile()
