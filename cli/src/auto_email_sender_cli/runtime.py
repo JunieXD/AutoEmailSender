@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import sys
 
+import httpx
+
 from auto_email_sender_cli.errors import (
     RuntimeProtocolMismatchError,
     RuntimeUnavailableError,
@@ -16,13 +18,33 @@ from auto_email_sender_cli.version import PROTOCOL_VERSION
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeProcessDescriptor:
+    pid: int
+    started_at: str
+
+    @classmethod
+    def from_mapping(cls, value: object, *, field: str) -> RuntimeProcessDescriptor:
+        if not isinstance(value, dict):
+            raise ValueError(f"runtime descriptor field {field} must be an object")
+        pid = value.get("pid")
+        started_at = value.get("started_at")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            raise ValueError(f"runtime descriptor field {field}.pid must be a positive integer")
+        if not isinstance(started_at, str) or not started_at.strip():
+            raise ValueError(f"runtime descriptor field {field}.started_at must be a non-empty string")
+        return cls(pid=pid, started_at=started_at.strip())
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeDescriptor:
     protocol_version: str
     app_version: str
+    runtime_id: str
     base_url: str
     access_token: str
-    desktop_pid: int
-    started_at: str
+    desktop: RuntimeProcessDescriptor
+    backend: RuntimeProcessDescriptor
+    published_at: str
 
     @classmethod
     def from_mapping(cls, value: object) -> RuntimeDescriptor:
@@ -31,9 +53,10 @@ class RuntimeDescriptor:
         string_fields = (
             "protocol_version",
             "app_version",
+            "runtime_id",
             "base_url",
             "access_token",
-            "started_at",
+            "published_at",
         )
         strings: dict[str, str] = {}
         for field in string_fields:
@@ -41,10 +64,30 @@ class RuntimeDescriptor:
             if not isinstance(raw, str) or not raw.strip():
                 raise ValueError(f"runtime descriptor field {field} must be a non-empty string")
             strings[field] = raw.strip()
-        desktop_pid = value.get("desktop_pid")
-        if not isinstance(desktop_pid, int) or isinstance(desktop_pid, bool) or desktop_pid <= 0:
-            raise ValueError("runtime descriptor field desktop_pid must be a positive integer")
-        return cls(desktop_pid=desktop_pid, **strings)
+        return cls(
+            desktop=RuntimeProcessDescriptor.from_mapping(value.get("desktop"), field="desktop"),
+            backend=RuntimeProcessDescriptor.from_mapping(value.get("backend"), field="backend"),
+            **strings,
+        )
+
+    @property
+    def desktop_pid(self) -> int:
+        return self.desktop.pid
+
+    @property
+    def backend_pid(self) -> int:
+        return self.backend.pid
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProbe:
+    desktop_process_running: bool
+    backend_process_running: bool
+    backend_reachable: bool
+    runtime_matches: bool
+    backend_ready: bool
+    backend_state: str | None = None
+    message: str | None = None
 
 
 def get_runtime_file_path() -> Path:
@@ -57,12 +100,7 @@ def get_runtime_file_path() -> Path:
         return Path(data_dir).expanduser().resolve() / "agent" / "runtime.json"
 
     if sys.platform == "darwin":
-        base = (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "auto-email-sender-desktop"
-        )
+        base = Path.home() / "Library" / "Application Support" / "auto-email-sender-desktop"
     elif sys.platform == "win32":
         app_data = os.getenv("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
@@ -81,14 +119,18 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
     base_url = os.getenv("AUTO_EMAIL_SENDER_BASE_URL")
     token = os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN")
     if base_url and token:
+        desktop_pid = _positive_env_pid("AUTO_EMAIL_SENDER_DESKTOP_PID", os.getpid())
+        backend_pid = _positive_env_pid("AUTO_EMAIL_SENDER_BACKEND_PID", os.getpid())
         return RuntimeDescriptor.from_mapping(
             {
                 "protocol_version": os.getenv("AUTO_EMAIL_SENDER_PROTOCOL_VERSION", PROTOCOL_VERSION),
                 "app_version": os.getenv("AUTO_EMAIL_SENDER_APP_VERSION", "development"),
+                "runtime_id": os.getenv("AUTO_EMAIL_SENDER_RUNTIME_ID", "environment"),
                 "base_url": base_url,
                 "access_token": token,
-                "desktop_pid": os.getpid(),
-                "started_at": "environment",
+                "desktop": {"pid": desktop_pid, "started_at": "environment"},
+                "backend": {"pid": backend_pid, "started_at": "environment"},
+                "published_at": "environment",
             },
         )
 
@@ -97,14 +139,24 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise RuntimeUnavailableError(
-            "Auto Email Sender 当前未运行。请先手动打开软件，"
-            "等待本地服务加载完成后再重试。",
+            "Auto Email Sender 当前未运行。请先手动打开软件，等待本地服务加载完成后再重试。",
         ) from exc
     except OSError as exc:
         raise RuntimeUnavailableError(f"无法读取本地运行信息：{exc}") from exc
 
     try:
-        return RuntimeDescriptor.from_mapping(json.loads(raw))
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("runtime descriptor must be an object")
+        protocol_version = payload.get("protocol_version")
+        if isinstance(protocol_version, str) and protocol_version != PROTOCOL_VERSION:
+            raise RuntimeProtocolMismatchError(
+                expected=PROTOCOL_VERSION,
+                actual=protocol_version,
+            )
+        return RuntimeDescriptor.from_mapping(payload)
+    except RuntimeProtocolMismatchError:
+        raise
     except (json.JSONDecodeError, ValueError) as exc:
         raise RuntimeUnavailableError("本地运行信息无效，请在个人中心修复命令行支持。") from exc
 
@@ -127,7 +179,7 @@ def process_is_running(pid: int) -> bool:
 
 
 def _windows_process_is_running(pid: int) -> bool:
-    """Check process liveness without relying on unsupported Windows signal 0."""
+    """Check process liveness without sending a Windows termination signal."""
 
     process_query_limited_information = 0x1000
     still_active = 259
@@ -156,32 +208,102 @@ def _windows_process_is_running(pid: int) -> bool:
         close_handle(handle)
 
 
-def ensure_runtime_descriptor() -> RuntimeDescriptor:
-    """Return a live, protocol-compatible runtime published by the desktop app."""
-
-    if _environment_runtime_configured():
-        return ensure_runtime_protocol_compatible(load_runtime_descriptor())
-
-    descriptor = load_runtime_descriptor()
-    if not process_is_running(descriptor.desktop_pid):
-        raise RuntimeUnavailableError(
-            "Auto Email Sender 当前未运行。请先手动打开软件，"
-            "等待本地服务加载完成后再重试。",
+def probe_runtime_descriptor(
+    descriptor: RuntimeDescriptor,
+    *,
+    timeout: float = 1.0,
+) -> RuntimeProbe:
+    desktop_running = process_is_running(descriptor.desktop_pid)
+    backend_running = process_is_running(descriptor.backend_pid)
+    try:
+        response = httpx.get(
+            f"{descriptor.base_url.rstrip('/')}/api/agent/v1/runtime",
+            headers={"Authorization": f"Bearer {descriptor.access_token}"},
+            timeout=timeout,
         )
-    return ensure_runtime_protocol_compatible(descriptor)
+    except httpx.HTTPError as exc:
+        return RuntimeProbe(
+            desktop_process_running=desktop_running,
+            backend_process_running=backend_running,
+            backend_reachable=False,
+            runtime_matches=False,
+            backend_ready=False,
+            message=str(exc),
+        )
+
+    if not response.is_success:
+        return RuntimeProbe(
+            desktop_process_running=desktop_running,
+            backend_process_running=backend_running,
+            backend_reachable=True,
+            runtime_matches=False,
+            backend_ready=False,
+            message=f"runtime handshake returned HTTP {response.status_code}",
+        )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    matches = bool(
+        isinstance(payload, dict)
+        and payload.get("runtime_id") == descriptor.runtime_id
+        and payload.get("protocol_version") == descriptor.protocol_version
+        and payload.get("app_version") == descriptor.app_version
+        and payload.get("backend_pid") == descriptor.backend_pid
+        and payload.get("desktop_pid") == descriptor.desktop_pid
+    )
+    backend_state = payload.get("state") if isinstance(payload, dict) else None
+    return RuntimeProbe(
+        desktop_process_running=desktop_running,
+        backend_process_running=backend_running,
+        backend_reachable=True,
+        runtime_matches=matches,
+        backend_ready=matches and backend_state == "ready",
+        backend_state=backend_state if isinstance(backend_state, str) else None,
+        message=None if matches else "本地服务身份与运行描述不一致。",
+    )
+
+
+def ensure_runtime_descriptor() -> RuntimeDescriptor:
+    """Return an authenticated, ready runtime published by the desktop app."""
+
+    descriptor = ensure_runtime_protocol_compatible(load_runtime_descriptor())
+    if _environment_runtime_configured():
+        return descriptor
+
+    probe = probe_runtime_descriptor(descriptor)
+    if not probe.desktop_process_running:
+        raise RuntimeUnavailableError(
+            "Auto Email Sender 桌面进程已停止，运行信息已过期。请重新打开软件后重试。",
+        )
+    if not probe.backend_reachable:
+        raise RuntimeUnavailableError(
+            "Auto Email Sender 正在启动或本地服务暂时无法连接。请等待加载完成后重试。",
+        )
+    if not probe.runtime_matches:
+        raise RuntimeUnavailableError(
+            "本地服务身份与运行信息不一致，请等待桌面应用完成恢复后重试。",
+        )
+    if not probe.backend_ready:
+        raise RuntimeUnavailableError(
+            "Auto Email Sender 本地服务尚未就绪。请等待软件加载完成后再重试。",
+        )
+    return descriptor
 
 
 def _environment_runtime_configured() -> bool:
-    return bool(
-        os.getenv("AUTO_EMAIL_SENDER_BASE_URL")
-        and os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN")
-    )
+    return bool(os.getenv("AUTO_EMAIL_SENDER_BASE_URL") and os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN"))
 
 
 def ensure_runtime_protocol_compatible(descriptor: RuntimeDescriptor) -> RuntimeDescriptor:
     if descriptor.protocol_version != PROTOCOL_VERSION:
-        raise RuntimeProtocolMismatchError(
-            expected=PROTOCOL_VERSION,
-            actual=descriptor.protocol_version,
-        )
+        raise RuntimeProtocolMismatchError(expected=PROTOCOL_VERSION, actual=descriptor.protocol_version)
     return descriptor
+
+
+def _positive_env_pid(name: str, fallback: int) -> int:
+    try:
+        value = int(os.getenv(name, ""))
+    except ValueError:
+        return fallback
+    return value if value > 0 else fallback

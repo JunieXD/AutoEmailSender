@@ -19,17 +19,31 @@ export type BackendEnvInput = {
   userDataPath: string;
   appVersion: string;
   electronExecutablePath: string;
+  runtimeId: string;
   uiAccessToken?: string;
   agentAccessToken?: string;
 };
 
 export type BackendController = {
   baseUrl: string;
+  backendPid: number;
+  backendStartedAt: string;
+  runtimeId: string;
   uiAccessToken: string;
   agentAccessToken: string;
+  getRuntimeInfo: () => Promise<BackendRuntimeInfo>;
   ready: Promise<void>;
   onStatus: (handler: (status: DesktopBackendStatus) => void) => () => void;
   stop: () => Promise<void>;
+};
+
+export type BackendRuntimeInfo = {
+  runtime_id: string;
+  protocol_version: string;
+  app_version: string;
+  backend_pid: number;
+  desktop_pid: number;
+  state: "starting" | "ready" | "error";
 };
 
 export type BackendExit = {

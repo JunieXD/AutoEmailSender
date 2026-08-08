@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from typing import Annotated
 
-import httpx
 import typer
 from typer._click.core import ParameterSource
 from typer._click.exceptions import UsageError
@@ -47,7 +46,7 @@ from auto_email_sender_cli.commands import (
 )
 from auto_email_sender_cli.commands.wait import wait_for_resource
 from auto_email_sender_cli.commands.common import validate_context_options
-from auto_email_sender_cli.errors import CliError
+from auto_email_sender_cli.errors import CliError, RuntimeProtocolMismatchError
 from auto_email_sender_cli.describe import (
     DESCRIPTION_VIEWS,
     compact_command_description,
@@ -67,7 +66,7 @@ from auto_email_sender_cli.output import (
 from auto_email_sender_cli.runtime import (
     get_runtime_file_path,
     load_runtime_descriptor,
-    process_is_running,
+    probe_runtime_descriptor,
 )
 from auto_email_sender_cli.version import (
     PROTOCOL_VERSION,
@@ -779,24 +778,28 @@ def status_command(ctx: typer.Context) -> None:
     _validate_system_context(context, "status")
     try:
         descriptor = load_runtime_descriptor()
-        running = process_is_running(descriptor.desktop_pid)
-        ready = False
-        if running:
-            try:
-                response = httpx.get(
-                    f"{descriptor.base_url.rstrip('/')}/ready",
-                    timeout=1.0,
+        probe = probe_runtime_descriptor(descriptor)
+        running = probe.desktop_process_running
+        ready = probe.backend_ready and running
+        state = (
+            "ready"
+            if ready
+            else (
+                "orphaned"
+                if probe.runtime_matches and not running
+                else (
+                    "starting"
+                    if running or probe.backend_process_running
+                    else "stopped"
                 )
-                ready = response.is_success
-            except httpx.HTTPError:
-                ready = False
+            )
+        )
         data = {
-            "state": (
-                "incompatible"
-                if ready and descriptor.protocol_version != PROTOCOL_VERSION
-                else ("ready" if ready else ("starting" if running else "stopped"))
-            ),
+            "state": state,
             "desktop_process_running": running,
+            "backend_process_running": probe.backend_process_running,
+            "backend_reachable": probe.backend_reachable,
+            "runtime_matches": probe.runtime_matches,
             "backend_ready": ready,
             "app_version": descriptor.app_version,
             "protocol_version": descriptor.protocol_version,
@@ -805,11 +808,12 @@ def status_command(ctx: typer.Context) -> None:
         }
         runtime_hint = ""
         warnings: list[str] = []
-        if not data["protocol_compatible"]:
-            warnings.append("命令行与桌面端协议不兼容，不能执行业务命令。")
-        elif data["state"] == "stopped":
+        if data["state"] == "stopped":
             runtime_hint = "\n请先手动打开 Auto Email Sender，等待加载完成后再执行业务命令。"
             warnings.append("Auto Email Sender 当前未运行，请先手动打开软件。")
+        elif data["state"] == "orphaned":
+            runtime_hint = "\n桌面进程已退出，残留后端正在清理；请重新打开软件。"
+            warnings.append("检测到桌面进程已退出的残留后端。")
         elif data["state"] == "starting":
             runtime_hint = "\n请等待 Auto Email Sender 加载完成后再执行业务命令。"
             warnings.append("Auto Email Sender 本地服务尚未就绪。")
@@ -821,16 +825,39 @@ def status_command(ctx: typer.Context) -> None:
             human_text=(
                 f"状态：{data['state']}\n"
                 f"桌面进程：{'运行中' if running else '未运行'}\n"
+                f"后端进程：{'运行中' if probe.backend_process_running else '未运行'}\n"
                 f"本地服务：{'已就绪' if ready else '未就绪'}\n"
-                f"协议：{'兼容' if data['protocol_compatible'] else '不兼容，请在个人中心重新安装命令行与 Agent 支持'}"
+                f"运行身份：{'匹配' if probe.runtime_matches else '未验证'}\n"
+                "协议：兼容"
                 f"{runtime_hint}"
             ),
             warnings=warnings,
+        )
+    except RuntimeProtocolMismatchError as error:
+        emit_success(
+            context,
+            command="status",
+            data={
+                "state": "incompatible",
+                "desktop_process_running": False,
+                "backend_process_running": False,
+                "backend_reachable": False,
+                "runtime_matches": False,
+                "backend_ready": False,
+                "protocol_compatible": False,
+                "runtime_file": get_runtime_file_path().as_posix(),
+                "message": error.message,
+            },
+            human_text=f"状态：incompatible\n{error.message}",
+            warnings=[error.message],
         )
     except CliError as error:
         data = {
             "state": "stopped",
             "desktop_process_running": False,
+            "backend_process_running": False,
+            "backend_reachable": False,
+            "runtime_matches": False,
             "backend_ready": False,
             "runtime_file": get_runtime_file_path().as_posix(),
             "message": error.message,
@@ -904,7 +931,8 @@ def doctor_command(ctx: typer.Context) -> None:
         try:
             descriptor = load_runtime_descriptor()
             app_version = descriptor.app_version
-            desktop_process_running = process_is_running(descriptor.desktop_pid)
+            probe = probe_runtime_descriptor(descriptor)
+            desktop_process_running = probe.desktop_process_running
             manual_open_required = not desktop_process_running
             checks.extend(
                 [
@@ -912,6 +940,25 @@ def doctor_command(ctx: typer.Context) -> None:
                         "id": "desktop_process",
                         "ok": desktop_process_running,
                         "message": f"pid={descriptor.desktop_pid}",
+                    },
+                    {
+                        "id": "backend_process",
+                        "ok": probe.backend_process_running,
+                        "message": f"pid={descriptor.backend_pid}",
+                    },
+                    {
+                        "id": "runtime_handshake",
+                        "ok": probe.runtime_matches,
+                        "message": (
+                            "runtime_id 已认证"
+                            if probe.runtime_matches
+                            else (probe.message or "无法验证本地服务身份")
+                        ),
+                    },
+                    {
+                        "id": "backend_ready",
+                        "ok": probe.backend_ready,
+                        "message": probe.backend_state or "unreachable",
                     },
                     {
                         "id": "protocol",

@@ -270,13 +270,17 @@ class AgentApiClientTests(unittest.TestCase):
 
 
 def _descriptor(**overrides: object) -> RuntimeDescriptor:
+    desktop_pid = int(overrides.pop("desktop_pid", 1234))
+    backend_pid = int(overrides.pop("backend_pid", 5678))
     values: dict[str, object] = {
-        "protocol_version": "2",
+        "protocol_version": "3",
         "app_version": "2.4.1",
+        "runtime_id": "runtime-test",
         "base_url": "http://127.0.0.1:48120",
         "access_token": "agent-token",
-        "desktop_pid": 1234,
-        "started_at": "2026-08-03T00:00:00Z",
+        "desktop": {"pid": desktop_pid, "started_at": "2026-08-03T00:00:00Z"},
+        "backend": {"pid": backend_pid, "started_at": "2026-08-03T00:00:01Z"},
+        "published_at": "2026-08-03T00:00:01Z",
     }
     values.update(overrides)
     return RuntimeDescriptor.from_mapping(values)

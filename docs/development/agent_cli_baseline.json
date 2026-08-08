@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "protocol_version": "2",
+  "protocol_version": "3",
   "source": "cli/src/auto_email_sender_cli/capabilities.py",
   "generated_at": "2026-08-08",
   "counts": {

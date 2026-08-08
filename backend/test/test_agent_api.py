@@ -110,10 +110,39 @@ class AgentApiTests(unittest.TestCase):
         info = self.client.get("/api/agent/v1/info", headers=self._agent_headers())
         self.assertEqual(info.status_code, 200, msg=info.text)
         self.assertEqual(info.json()["authentication_scope"], "agent")
-        self.assertEqual(info.json()["protocol_version"], "2")
+        self.assertEqual(info.json()["protocol_version"], "3")
         self.assertEqual(
             info.json()["guide_command"],
             "auto-email-sender --format json capabilities",
+        )
+
+    def test_runtime_handshake_is_authenticated_and_identifies_the_processes(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AUTO_EMAIL_SENDER_RUNTIME_ID": "runtime-test",
+                "AUTO_EMAIL_SENDER_DESKTOP_PID": "12345",
+                "AUTO_EMAIL_SENDER_APP_VERSION": "2.5.4",
+            },
+        ):
+            missing = self.client.get("/api/agent/v1/runtime")
+            response = self.client.get(
+                "/api/agent/v1/runtime",
+                headers=self._agent_headers(),
+            )
+
+        self.assertEqual(missing.status_code, 401)
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                "runtime_id": "runtime-test",
+                "protocol_version": "3",
+                "app_version": "2.5.4",
+                "backend_pid": os.getpid(),
+                "desktop_pid": 12345,
+                "state": "starting",
+            },
         )
 
     def test_options_and_allowed_local_cors_origin_work_without_a_token(self) -> None:

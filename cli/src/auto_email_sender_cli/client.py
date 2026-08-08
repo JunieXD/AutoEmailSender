@@ -205,11 +205,11 @@ class AgentApiClient:
         self.last_request_id = self.last_response_headers.get("x-request-id")
 
 
-def _runtime_identity(descriptor: RuntimeDescriptor) -> tuple[str, str, int]:
+def _runtime_identity(descriptor: RuntimeDescriptor) -> tuple[str, str, str]:
     return (
         descriptor.base_url,
         descriptor.access_token,
-        descriptor.desktop_pid,
+        descriptor.runtime_id,
     )
 
 def _raise_api_error(response: httpx.Response) -> None:

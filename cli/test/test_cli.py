@@ -1230,15 +1230,26 @@ class CliTests(unittest.TestCase):
     def test_status_tells_user_to_manually_open_a_stopped_desktop_app(self) -> None:
         descriptor = SimpleNamespace(
             desktop_pid=12345,
+            backend_pid=23456,
             app_version="2.4.1",
-            protocol_version="2",
+            protocol_version="3",
         )
         with (
             patch(
                 "auto_email_sender_cli.main.load_runtime_descriptor",
                 return_value=descriptor,
             ),
-            patch("auto_email_sender_cli.main.process_is_running", return_value=False),
+            patch(
+                "auto_email_sender_cli.main.probe_runtime_descriptor",
+                return_value=SimpleNamespace(
+                    desktop_process_running=False,
+                    backend_process_running=False,
+                    backend_reachable=False,
+                    runtime_matches=False,
+                    backend_ready=False,
+                    backend_state=None,
+                ),
+            ),
         ):
             result = self.runner.invoke(app, ["--format", "json", "status"])
 
@@ -1247,11 +1258,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["data"]["state"], "stopped")
         self.assertIn("手动打开", " ".join(payload["_meta"]["warnings"]))
 
-    def test_status_keeps_the_explicit_ready_probe(self) -> None:
+    def test_status_uses_the_authenticated_runtime_probe(self) -> None:
         descriptor = SimpleNamespace(
             desktop_pid=12345,
+            backend_pid=23456,
             app_version="2.4.1",
-            protocol_version="2",
+            protocol_version="3",
             base_url="http://127.0.0.1:48120",
         )
         with (
@@ -1259,17 +1271,23 @@ class CliTests(unittest.TestCase):
                 "auto_email_sender_cli.main.load_runtime_descriptor",
                 return_value=descriptor,
             ),
-            patch("auto_email_sender_cli.main.process_is_running", return_value=True),
             patch(
-                "auto_email_sender_cli.main.httpx.get",
-                return_value=SimpleNamespace(is_success=True),
-            ) as ready,
+                "auto_email_sender_cli.main.probe_runtime_descriptor",
+                return_value=SimpleNamespace(
+                    desktop_process_running=True,
+                    backend_process_running=True,
+                    backend_reachable=True,
+                    runtime_matches=True,
+                    backend_ready=True,
+                    backend_state="ready",
+                ),
+            ) as probe,
         ):
             result = self.runner.invoke(app, ["--format", "json", "status"])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertEqual(json.loads(result.stdout)["data"]["state"], "ready")
-        ready.assert_called_once_with("http://127.0.0.1:48120/ready", timeout=1.0)
+        probe.assert_called_once_with(descriptor)
 
     def test_doctor_recommends_manually_opening_an_app_without_runtime_info(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

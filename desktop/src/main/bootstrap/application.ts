@@ -16,6 +16,7 @@ import type {
 } from "../backend/types.js";
 import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
+  clearAgentRuntimeDescriptor,
   cleanupAgentRuntimeDescriptor,
   writeAgentRuntimeDescriptor,
 } from "../agent-support/runtime.js";
@@ -46,6 +47,7 @@ let backend: BackendController | null = null;
 let restartingBackend = false;
 let isQuitting = false;
 let backendStopPromise: Promise<void> | null = null;
+const desktopStartedAt = new Date().toISOString();
 let currentBackendStatus: BackendStatus = createInitialBackendStatus();
 let currentBackendConnection: BackendConnection | null = null;
 let currentAgentSupportStatus: AgentSupportStatus | null = null;
@@ -315,31 +317,63 @@ async function createWindow(): Promise<void> {
 }
 
 async function startDesktopBackend(): Promise<BackendController> {
+  const userDataPath = app.getPath("userData");
+  await clearAgentRuntimeDescriptor(userDataPath);
   const controller = await startBackend({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     repoRoot,
-    userDataPath: app.getPath("userData"),
+    userDataPath,
     onUnexpectedExit: (exit) => {
       void restartBackendAfterUnexpectedExit(exit);
     },
   });
   try {
-    await writeAgentRuntimeDescriptor({
-      userDataPath: app.getPath("userData"),
-      descriptor: {
-        protocol_version: AGENT_RUNTIME_PROTOCOL_VERSION,
-        app_version: app.getVersion(),
-        base_url: controller.baseUrl,
-        access_token: controller.agentAccessToken,
-        desktop_pid: process.pid,
-        started_at: new Date().toISOString(),
-      },
-    });
+    await publishAgentRuntimeDescriptor(controller, controller.backendPid);
   } catch (error) {
-    console.warn(`Unable to publish Agent runtime descriptor: ${getErrorMessage(error)}`);
+    await controller.stop().catch(() => undefined);
+    throw new Error(`Unable to publish Agent runtime descriptor: ${getErrorMessage(error)}`);
   }
   return controller;
+}
+
+async function publishAgentRuntimeDescriptor(
+  controller: BackendController,
+  backendPid: number,
+): Promise<void> {
+  await writeAgentRuntimeDescriptor({
+    userDataPath: app.getPath("userData"),
+    descriptor: {
+      protocol_version: AGENT_RUNTIME_PROTOCOL_VERSION,
+      app_version: app.getVersion(),
+      runtime_id: controller.runtimeId,
+      base_url: controller.baseUrl,
+      access_token: controller.agentAccessToken,
+      desktop: {
+        pid: process.pid,
+        started_at: desktopStartedAt,
+      },
+      backend: {
+        pid: backendPid,
+        started_at: controller.backendStartedAt,
+      },
+      published_at: new Date().toISOString(),
+    },
+  });
+}
+
+async function finalizeAgentRuntimeDescriptor(controller: BackendController): Promise<void> {
+  const runtime = await controller.getRuntimeInfo();
+  if (
+    runtime.runtime_id !== controller.runtimeId
+    || runtime.protocol_version !== AGENT_RUNTIME_PROTOCOL_VERSION
+    || runtime.app_version !== app.getVersion()
+    || runtime.desktop_pid !== process.pid
+    || runtime.state !== "ready"
+  ) {
+    throw new Error("Backend runtime identity did not match the launched desktop instance.");
+  }
+  await publishAgentRuntimeDescriptor(controller, runtime.backend_pid);
 }
 
 async function restartBackendAfterUnexpectedExit(exit: BackendExit): Promise<void> {
@@ -387,9 +421,14 @@ function publishBackendReady(controller: BackendController): void {
   controller.ready
     .then(() => {
       unsubscribe();
+      void finalizeAgentRuntimeDescriptor(controller).catch(async (error: unknown) => {
+        await removeAgentRuntime(controller);
+        console.warn(`Unable to finalize Agent runtime descriptor: ${getErrorMessage(error)}`);
+      });
     })
     .catch((error: unknown) => {
       unsubscribe();
+      void removeAgentRuntime(controller);
       if (currentBackendStatus.state === "error") {
         return;
       }
@@ -406,8 +445,7 @@ function publishBackendReady(controller: BackendController): void {
 async function removeAgentRuntime(controller: BackendController): Promise<boolean> {
   return cleanupAgentRuntimeDescriptor({
     userDataPath: app.getPath("userData"),
-    desktopPid: process.pid,
-    accessToken: controller.agentAccessToken,
+    runtimeId: controller.runtimeId,
   });
 }
 

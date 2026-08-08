@@ -574,10 +574,19 @@ class AgentTaskMatchCalculationRead(ApiSchema):
 class AgentInfoRead(ApiSchema):
     app_name: str = "Auto Email Sender"
     app_version: str
-    protocol_version: str = "2"
+    protocol_version: str = "3"
     api_version: str = "v1"
     authentication_scope: Literal["agent"] = "agent"
     # Kept under the historical field name for compatible desktop clients.
     # Discovery is now catalog-first; command-specific detail comes from
     # ``describe --command`` rather than a static prose guide.
     guide_command: str = "auto-email-sender --format json capabilities"
+
+
+class AgentRuntimeInfoRead(ApiSchema):
+    runtime_id: str
+    protocol_version: str = "3"
+    app_version: str
+    backend_pid: int
+    desktop_pid: int
+    state: Literal["starting", "ready", "error"]

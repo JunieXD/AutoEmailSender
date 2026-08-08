@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
+  clearAgentRuntimeDescriptor,
   cleanupAgentRuntimeDescriptor,
   getAgentRuntimeFilePath,
   writeAgentRuntimeDescriptor,
@@ -22,10 +23,12 @@ function createDescriptor(overrides: Partial<AgentRuntimeDescriptor> = {}): Agen
   return {
     protocol_version: AGENT_RUNTIME_PROTOCOL_VERSION,
     app_version: "2.4.1",
+    runtime_id: "runtime-1234",
     base_url: "http://127.0.0.1:48120",
     access_token: "agent-token",
-    desktop_pid: 1234,
-    started_at: "2026-08-03T00:00:00.000Z",
+    desktop: { pid: 1234, started_at: "2026-08-03T00:00:00.000Z" },
+    backend: { pid: 5678, started_at: "2026-08-03T00:00:01.000Z" },
+    published_at: "2026-08-03T00:00:01.000Z",
     ...overrides,
   };
 }
@@ -47,6 +50,7 @@ describe("Agent runtime descriptor", () => {
 
     expect(runtimePath).toBe(getAgentRuntimeFilePath(userDataPath));
     expect(JSON.parse(await readFile(runtimePath, "utf8"))).toEqual(descriptor);
+    expect(JSON.parse(await readFile(runtimePath, "utf8"))).not.toHaveProperty("desktop_pid");
     expect(await readdir(path.dirname(runtimePath))).toEqual(["runtime.json"]);
     if (process.platform !== "win32") {
       expect((await stat(path.dirname(runtimePath))).mode & 0o777).toBe(0o700);
@@ -60,14 +64,17 @@ describe("Agent runtime descriptor", () => {
       userDataPath,
       descriptor: createDescriptor({ access_token: "old-token" }),
     });
-    const current = createDescriptor({ access_token: "new-token", base_url: "http://127.0.0.1:48121" });
+    const current = createDescriptor({
+      runtime_id: "runtime-current",
+      access_token: "new-token",
+      base_url: "http://127.0.0.1:48121",
+    });
     await writeAgentRuntimeDescriptor({ userDataPath, descriptor: current });
 
     await expect(
       cleanupAgentRuntimeDescriptor({
         userDataPath,
-        desktopPid: current.desktop_pid,
-        accessToken: "old-token",
+        runtimeId: "runtime-1234",
       }),
     ).resolves.toBe(false);
     expect(JSON.parse(await readFile(getAgentRuntimeFilePath(userDataPath), "utf8"))).toEqual(current);
@@ -75,8 +82,7 @@ describe("Agent runtime descriptor", () => {
     await expect(
       cleanupAgentRuntimeDescriptor({
         userDataPath,
-        desktopPid: current.desktop_pid,
-        accessToken: current.access_token,
+        runtimeId: current.runtime_id,
       }),
     ).resolves.toBe(true);
     await expect(readFile(getAgentRuntimeFilePath(userDataPath), "utf8")).rejects.toMatchObject({
@@ -89,13 +95,32 @@ describe("Agent runtime descriptor", () => {
     const runtimePath = getAgentRuntimeFilePath(userDataPath);
     await writeAgentRuntimeDescriptor({ userDataPath, descriptor: createDescriptor() });
     await expect(
-      cleanupAgentRuntimeDescriptor({ userDataPath, desktopPid: 9999, accessToken: "agent-token" }),
+      cleanupAgentRuntimeDescriptor({ userDataPath, runtimeId: "different-runtime" }),
     ).resolves.toBe(false);
 
     await writeFile(runtimePath, "not-json", "utf8");
     await expect(
-      cleanupAgentRuntimeDescriptor({ userDataPath, desktopPid: 1234, accessToken: "agent-token" }),
+      cleanupAgentRuntimeDescriptor({ userDataPath, runtimeId: "runtime-1234" }),
     ).resolves.toBe(false);
     await expect(readFile(runtimePath, "utf8")).resolves.toBe("not-json");
+  });
+
+  it("removes a legacy v2 descriptor before publishing a new runtime", async () => {
+    const userDataPath = await createTemporaryDirectory();
+    const runtimePath = getAgentRuntimeFilePath(userDataPath);
+    await writeAgentRuntimeDescriptor({ userDataPath, descriptor: createDescriptor() });
+    await writeFile(
+      runtimePath,
+      JSON.stringify({
+        protocol_version: "2",
+        desktop_pid: 1234,
+        access_token: "legacy-token",
+      }),
+      "utf8",
+    );
+
+    await clearAgentRuntimeDescriptor(userDataPath);
+
+    await expect(readFile(runtimePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

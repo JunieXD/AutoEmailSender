@@ -18,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.agent_api_errors import AgentApiError
+from app.core.agent_runtime_descriptor import (
+    RUNTIME_PROTOCOL_VERSION,
+    get_desktop_pid,
+    get_runtime_id,
+)
 from app.core.agent_revisions import ensure_revision, revision_for
 from app.core.config import get_settings
 from app.core.database import get_async_session, get_session_factory
@@ -71,6 +76,7 @@ from app.schemas.agent import (
     AgentIdentityRead,
     AgentIdentitySettingsUpdateRequest,
     AgentInfoRead,
+    AgentRuntimeInfoRead,
     AgentLLMProfileRead,
     AgentLLMProfileSettingsUpdateRequest,
     AgentLLMProfileModelsRead,
@@ -368,6 +374,23 @@ def _cancel_agent_campaign_draft_generation(request: Request, campaign_id: int) 
 async def read_agent_api_info() -> AgentInfoRead:
     return AgentInfoRead(
         app_version=os.getenv("AUTO_EMAIL_SENDER_APP_VERSION", "development"),
+    )
+
+
+@router.get("/runtime", response_model=AgentRuntimeInfoRead)
+async def read_agent_runtime(request: Request) -> AgentRuntimeInfoRead:
+    runtime_error = getattr(request.app.state, "runtime_error", None)
+    runtime_ready = bool(getattr(request.app.state, "runtime_ready", False))
+    state: Literal["starting", "ready", "error"] = (
+        "error" if runtime_error else ("ready" if runtime_ready else "starting")
+    )
+    return AgentRuntimeInfoRead(
+        runtime_id=get_runtime_id(),
+        protocol_version=RUNTIME_PROTOCOL_VERSION,
+        app_version=os.getenv("AUTO_EMAIL_SENDER_APP_VERSION", "development"),
+        backend_pid=os.getpid(),
+        desktop_pid=get_desktop_pid(),
+        state=state,
     )
 
 

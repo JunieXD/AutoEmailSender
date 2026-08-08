@@ -11,6 +11,10 @@ from typing import Any
 
 import uvicorn
 
+from app.core.agent_runtime_descriptor import (
+    cleanup_owned_runtime_descriptor,
+    get_runtime_id,
+)
 from app.core.config import get_settings
 from app.core.instance_lock import (
     BackendInstanceAlreadyRunningError,
@@ -151,7 +155,9 @@ def main() -> None:
         "desktop_entry.start",
         detail=f"host={options['host']} port={options['port']}",
     )
-    instance_lock = BackendInstanceLock(get_settings().data_dir)
+    data_dir = get_settings().data_dir
+    runtime_id = get_runtime_id()
+    instance_lock = BackendInstanceLock(data_dir)
     try:
         instance_lock.acquire()
     except BackendInstanceAlreadyRunningError as exc:
@@ -165,6 +171,7 @@ def main() -> None:
             )
         )
     finally:
+        cleanup_owned_runtime_descriptor(data_dir, runtime_id)
         instance_lock.release()
 
 

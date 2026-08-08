@@ -6,6 +6,7 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
   buildBackendEnv,
+  fetchBackendRuntimeInfo,
   getBackendExecutablePath,
   getFrontendIndexPath,
   generateAccessToken,
@@ -136,6 +137,7 @@ describe("desktop backend helpers", () => {
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
       electronExecutablePath: "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",
+      runtimeId: "runtime-test",
       uiAccessToken: "ui-token",
       agentAccessToken: "agent-token",
     });
@@ -147,6 +149,7 @@ describe("desktop backend helpers", () => {
     expect(env.ENABLE_BACKGROUND_WORKERS).toBe("true");
     expect(env.AUTO_EMAIL_SENDER_APP_VERSION).toBe("2.4.5");
     expect(env.AUTO_EMAIL_SENDER_DESKTOP_PID).toBe(String(process.pid));
+    expect(env.AUTO_EMAIL_SENDER_RUNTIME_ID).toBe("runtime-test");
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\App\\resources", "ms-playwright"));
     expect(env.PLAYWRIGHT_NODEJS_PATH).toBe(
       "C:\\Program Files\\Auto Email Sender\\Auto Email Sender.exe",
@@ -166,6 +169,41 @@ describe("desktop backend helpers", () => {
     expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
+  it("fetches authenticated runtime identity from the backend", async () => {
+    const server = createServer((request, response) => {
+      expect(request.url).toBe("/api/agent/v1/runtime");
+      expect(request.headers.authorization).toBe("Bearer agent-token");
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({
+        runtime_id: "runtime-test",
+        protocol_version: "3",
+        app_version: "2.5.4",
+        backend_pid: 4321,
+        desktop_pid: process.pid,
+        state: "ready",
+      }));
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    try {
+      await expect(
+        fetchBackendRuntimeInfo(`http://127.0.0.1:${address.port}`, "agent-token"),
+      ).resolves.toEqual({
+        runtime_id: "runtime-test",
+        protocol_version: "3",
+        app_version: "2.5.4",
+        backend_pid: 4321,
+        desktop_pid: process.pid,
+        state: "ready",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("uses repo browser cache for dev backend environment", () => {
     const env = buildBackendEnv({
       baseEnv: {},
@@ -175,6 +213,7 @@ describe("desktop backend helpers", () => {
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       appVersion: "2.4.5",
       electronExecutablePath: "C:\\Repo\\desktop\\node_modules\\electron\\dist\\electron.exe",
+      runtimeId: "runtime-dev",
     });
 
     expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(path.join("C:\\Repo", "backend", "ms-playwright"));

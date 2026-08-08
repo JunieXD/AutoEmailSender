@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { app } from "electron";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import type {
   BackendController,
@@ -15,6 +15,7 @@ import type {
   BackendExit,
   BackendExitHandler,
   BackendPathInput,
+  BackendRuntimeInfo,
   BackendDatabaseError,
   BackendStartupPhase,
   BackendStartupStatus,
@@ -58,6 +59,7 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
     AUTO_EMAIL_SENDER_DATA_DIR: input.userDataPath,
     AUTO_EMAIL_SENDER_APP_VERSION: input.appVersion,
     AUTO_EMAIL_SENDER_DESKTOP_PID: String(process.pid),
+    AUTO_EMAIL_SENDER_RUNTIME_ID: input.runtimeId,
     ...(input.uiAccessToken
       ? { AUTO_EMAIL_SENDER_UI_TOKEN: input.uiAccessToken }
       : {}),
@@ -95,6 +97,7 @@ export async function startBackend(options: {
   const baseUrl = `http://127.0.0.1:${port}`;
   const uiAccessToken = generateAccessToken();
   const agentAccessToken = generateAccessToken();
+  const runtimeId = randomUUID();
   const backendPath = getBackendExecutablePath({
     ...options,
     platform: process.platform,
@@ -116,6 +119,7 @@ export async function startBackend(options: {
       userDataPath: options.userDataPath,
       appVersion: app.getVersion(),
       electronExecutablePath: process.execPath,
+      runtimeId,
       uiAccessToken,
       agentAccessToken,
     }),
@@ -133,10 +137,20 @@ export async function startBackend(options: {
     statusHandlers.forEach((handler) => handler(status));
   };
 
+  if (child.pid === undefined) {
+    child.kill();
+    throw new Error("Backend process started without a process id.");
+  }
+  const backendStartedAt = new Date().toISOString();
+
   return {
     baseUrl,
+    backendPid: child.pid,
+    backendStartedAt,
+    runtimeId,
     uiAccessToken,
     agentAccessToken,
+    getRuntimeInfo: () => fetchBackendRuntimeInfo(baseUrl, agentAccessToken),
     ready: waitForReady(baseUrl, child, emitStatus),
     onStatus: (handler) => {
       statusHandlers.add(handler);
@@ -422,6 +436,40 @@ async function fetchStartupStatus(baseUrl: string): Promise<BackendStartupStatus
     request.on("error", reject);
     request.setTimeout(1_000, () => {
       request.destroy(new Error("Startup status request timed out"));
+    });
+  });
+}
+
+export async function fetchBackendRuntimeInfo(
+  baseUrl: string,
+  accessToken: string,
+): Promise<BackendRuntimeInfo> {
+  return new Promise((resolve, reject) => {
+    const request = http.get(
+      `${baseUrl}/api/agent/v1/runtime`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () => {
+          if (response.statusCode !== 200) {
+            reject(new Error(`Runtime identity request failed: ${response.statusCode}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(body) as BackendRuntimeInfo);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    request.on("error", reject);
+    request.setTimeout(1_000, () => {
+      request.destroy(new Error("Runtime identity request timed out"));
     });
   });
 }

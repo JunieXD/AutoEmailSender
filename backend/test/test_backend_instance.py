@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -25,6 +26,22 @@ class ProcessLivenessTests(unittest.TestCase):
 
         self.assertFalse(process_is_running(child.pid))
 
+    def test_windows_liveness_probe_never_calls_os_kill(self) -> None:
+        from app.core.process_liveness import process_is_running
+
+        with (
+            patch("app.core.process_liveness.sys.platform", "win32"),
+            patch(
+                "app.core.process_liveness._windows_process_is_running",
+                return_value=True,
+            ) as windows_probe,
+            patch("app.core.process_liveness.os.kill") as destructive_probe,
+        ):
+            self.assertTrue(process_is_running(12345))
+
+        windows_probe.assert_called_once_with(12345)
+        destructive_probe.assert_not_called()
+
 
 class BackendInstanceLockTests(unittest.TestCase):
     def test_second_lock_for_same_data_dir_is_rejected_until_release(self) -> None:
@@ -45,6 +62,25 @@ class BackendInstanceLockTests(unittest.TestCase):
 
             second.acquire()
             second.release()
+
+
+class AgentRuntimeDescriptorCleanupTests(unittest.TestCase):
+    def test_cleanup_removes_only_the_owned_runtime_descriptor(self) -> None:
+        from app.core.agent_runtime_descriptor import cleanup_owned_runtime_descriptor
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            runtime_path = data_dir / "agent" / "runtime.json"
+            runtime_path.parent.mkdir(parents=True)
+            runtime_path.write_text(
+                json.dumps({"protocol_version": "3", "runtime_id": "runtime-new"}),
+                encoding="utf-8",
+            )
+
+            self.assertFalse(cleanup_owned_runtime_descriptor(data_dir, "runtime-old"))
+            self.assertTrue(runtime_path.is_file())
+            self.assertTrue(cleanup_owned_runtime_descriptor(data_dir, "runtime-new"))
+            self.assertFalse(runtime_path.exists())
 
 
 class DesktopParentWatchdogTests(unittest.IsolatedAsyncioTestCase):

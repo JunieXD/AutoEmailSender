@@ -7,14 +7,17 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from auto_email_sender_cli.errors import RuntimeProtocolMismatchError, RuntimeUnavailableError
 from auto_email_sender_cli.runtime import (
     RuntimeDescriptor,
+    RuntimeProbe,
     ensure_runtime_descriptor,
     get_runtime_file_path,
     load_runtime_descriptor,
+    probe_runtime_descriptor,
     process_is_running,
 )
 from auto_email_sender_cli.version import get_build_identity, get_cli_version
@@ -29,6 +32,20 @@ class RuntimeTests(unittest.TestCase):
         child.wait(timeout=10)
 
         self.assertFalse(process_is_running(child.pid))
+
+    def test_windows_liveness_probe_never_calls_os_kill(self) -> None:
+        with (
+            patch("auto_email_sender_cli.runtime.sys.platform", "win32"),
+            patch(
+                "auto_email_sender_cli.runtime._windows_process_is_running",
+                return_value=True,
+            ) as windows_probe,
+            patch("auto_email_sender_cli.runtime.os.kill") as destructive_probe,
+        ):
+            self.assertTrue(process_is_running(12345))
+
+        windows_probe.assert_called_once_with(12345)
+        destructive_probe.assert_not_called()
 
     def test_build_identity_ignores_blank_explicit_revision_and_uses_embedded(self) -> None:
         with patch.dict(
@@ -112,12 +129,14 @@ class RuntimeTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "protocol_version": "2",
+                        "protocol_version": "3",
                         "app_version": "2.4.1",
+                        "runtime_id": "runtime-test",
                         "base_url": "http://127.0.0.1:48120",
                         "access_token": "token",
-                        "desktop_pid": os.getpid(),
-                        "started_at": "2026-08-03T00:00:00Z",
+                        "desktop": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:00Z"},
+                        "backend": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:01Z"},
+                        "published_at": "2026-08-03T00:00:01Z",
                     },
                 ),
                 encoding="utf-8",
@@ -135,22 +154,26 @@ class RuntimeTests(unittest.TestCase):
         cases: tuple[object, ...] = (
             "{broken",
             [],
-            {"protocol_version": "2"},
+            {"protocol_version": "3"},
             {
-                "protocol_version": "2",
+                "protocol_version": "3",
                 "app_version": "2.4.1",
+                "runtime_id": "runtime-test",
                 "base_url": "http://127.0.0.1:48120",
                 "access_token": "",
-                "desktop_pid": os.getpid(),
-                "started_at": "now",
+                "desktop": {"pid": os.getpid(), "started_at": "now"},
+                "backend": {"pid": os.getpid(), "started_at": "now"},
+                "published_at": "now",
             },
             {
-                "protocol_version": "2",
+                "protocol_version": "3",
                 "app_version": "2.4.1",
+                "runtime_id": "runtime-test",
                 "base_url": "http://127.0.0.1:48120",
                 "access_token": "token",
-                "desktop_pid": True,
-                "started_at": "now",
+                "desktop": {"pid": True, "started_at": "now"},
+                "backend": {"pid": os.getpid(), "started_at": "now"},
+                "published_at": "now",
             },
         )
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -182,6 +205,82 @@ class RuntimeTests(unittest.TestCase):
                     load_runtime_descriptor()
         self.assertIn("手动打开软件", str(raised.exception))
 
+    def test_old_runtime_protocol_is_rejected_before_any_process_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "runtime.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "protocol_version": "2",
+                        "app_version": "2.5.3",
+                        "base_url": "http://127.0.0.1:48120",
+                        "access_token": "old-token",
+                        "desktop_pid": os.getpid(),
+                        "started_at": "now",
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.dict(os.environ, {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()}),
+                patch("auto_email_sender_cli.runtime.process_is_running") as process_probe,
+                self.assertRaises(RuntimeProtocolMismatchError),
+            ):
+                load_runtime_descriptor()
+
+        process_probe.assert_not_called()
+
+    def test_runtime_probe_authenticates_and_matches_the_backend_instance(self) -> None:
+        descriptor = _descriptor()
+        response = SimpleNamespace(
+            is_success=True,
+            status_code=200,
+            json=lambda: {
+                "runtime_id": descriptor.runtime_id,
+                "protocol_version": descriptor.protocol_version,
+                "app_version": descriptor.app_version,
+                "backend_pid": descriptor.backend_pid,
+                "desktop_pid": descriptor.desktop_pid,
+                "state": "ready",
+            },
+        )
+        with (
+            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch("auto_email_sender_cli.runtime.httpx.get", return_value=response) as request,
+        ):
+            probe = probe_runtime_descriptor(descriptor)
+
+        self.assertTrue(probe.runtime_matches)
+        self.assertTrue(probe.backend_ready)
+        request.assert_called_once_with(
+            "http://127.0.0.1:48120/api/agent/v1/runtime",
+            headers={"Authorization": "Bearer agent-token"},
+            timeout=1.0,
+        )
+
+    def test_runtime_probe_rejects_a_reused_port_with_another_runtime_id(self) -> None:
+        descriptor = _descriptor()
+        response = SimpleNamespace(
+            is_success=True,
+            status_code=200,
+            json=lambda: {
+                "runtime_id": "different-runtime",
+                "protocol_version": descriptor.protocol_version,
+                "app_version": descriptor.app_version,
+                "backend_pid": descriptor.backend_pid,
+                "desktop_pid": descriptor.desktop_pid,
+                "state": "ready",
+            },
+        )
+        with (
+            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch("auto_email_sender_cli.runtime.httpx.get", return_value=response),
+        ):
+            probe = probe_runtime_descriptor(descriptor)
+
+        self.assertFalse(probe.runtime_matches)
+        self.assertFalse(probe.backend_ready)
+
     def test_missing_runtime_requires_manual_desktop_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "missing.json"
@@ -203,21 +302,27 @@ class RuntimeTests(unittest.TestCase):
                 "auto_email_sender_cli.runtime.load_runtime_descriptor",
                 return_value=descriptor,
             ),
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=False),
+            patch(
+                "auto_email_sender_cli.runtime.probe_runtime_descriptor",
+                return_value=_probe(desktop_process_running=False, backend_process_running=False),
+            ),
         ):
             with self.assertRaises(RuntimeUnavailableError) as raised:
                 ensure_runtime_descriptor()
 
-        self.assertIn("当前未运行", raised.exception.message)
+        self.assertIn("桌面进程已停止", raised.exception.message)
 
-    def test_live_desktop_runtime_is_returned_without_ready_preflight(self) -> None:
+    def test_authenticated_ready_runtime_is_returned(self) -> None:
         descriptor = _descriptor()
         with (
             patch(
                 "auto_email_sender_cli.runtime.load_runtime_descriptor",
                 return_value=descriptor,
             ),
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch(
+                "auto_email_sender_cli.runtime.probe_runtime_descriptor",
+                return_value=_probe(),
+            ),
         ):
             resolved = ensure_runtime_descriptor()
 
@@ -230,12 +335,13 @@ class RuntimeTests(unittest.TestCase):
                 "auto_email_sender_cli.runtime.load_runtime_descriptor",
                 return_value=descriptor,
             ),
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch("auto_email_sender_cli.runtime.probe_runtime_descriptor") as probe,
         ):
             with self.assertRaises(RuntimeProtocolMismatchError) as raised:
                 ensure_runtime_descriptor()
 
-        self.assertIn("协议 2", str(raised.exception))
+        self.assertIn("协议 3", str(raised.exception))
+        probe.assert_not_called()
 
     def test_environment_runtime_does_not_require_desktop_process(self) -> None:
         with (
@@ -251,20 +357,37 @@ class RuntimeTests(unittest.TestCase):
             descriptor = ensure_runtime_descriptor()
 
         self.assertEqual(descriptor.base_url, "http://127.0.0.1:9999")
-        self.assertEqual(descriptor.protocol_version, "2")
+        self.assertEqual(descriptor.protocol_version, "3")
 
 
 def _descriptor(**overrides: object) -> RuntimeDescriptor:
+    desktop_pid = int(overrides.pop("desktop_pid", os.getpid()))
+    backend_pid = int(overrides.pop("backend_pid", os.getpid()))
     values: dict[str, object] = {
-        "protocol_version": "2",
+        "protocol_version": "3",
         "app_version": "2.4.1",
+        "runtime_id": "runtime-test",
         "base_url": "http://127.0.0.1:48120",
         "access_token": "agent-token",
-        "desktop_pid": os.getpid(),
-        "started_at": "2026-08-03T00:00:00Z",
+        "desktop": {"pid": desktop_pid, "started_at": "2026-08-03T00:00:00Z"},
+        "backend": {"pid": backend_pid, "started_at": "2026-08-03T00:00:01Z"},
+        "published_at": "2026-08-03T00:00:01Z",
     }
     values.update(overrides)
     return RuntimeDescriptor.from_mapping(values)
+
+
+def _probe(**overrides: object) -> RuntimeProbe:
+    values: dict[str, object] = {
+        "desktop_process_running": True,
+        "backend_process_running": True,
+        "backend_reachable": True,
+        "runtime_matches": True,
+        "backend_ready": True,
+        "backend_state": "ready",
+    }
+    values.update(overrides)
+    return RuntimeProbe(**values)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

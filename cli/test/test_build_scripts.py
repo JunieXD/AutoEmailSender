@@ -51,7 +51,7 @@ class CliBuildScriptTests(unittest.TestCase):
             "ok": True,
             "data": {
                 "cli_version": "2.4.1",
-                "protocol_version": "2",
+                "protocol_version": "3",
                 "schema_version": "4",
                 "contract_version": "4",
                 "catalog_version": "4",

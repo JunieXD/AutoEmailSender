@@ -5,8 +5,9 @@ import os
 
 PACKAGE_NAME = "auto-email-sender-cli"
 FALLBACK_VERSION = "2.4.1"
-PROTOCOL_VERSION = "2"
-# The runtime protocol is shared with the desktop descriptor and remains v2.
+PROTOCOL_VERSION = "3"
+# Runtime protocol v3 authenticates a concrete backend instance and keeps
+# process identifiers nested so unsafe legacy Windows CLIs fail closed.
 # Schema v4 makes routine discovery, result metadata, and action links sparse.
 SCHEMA_VERSION = "4"
 DEVELOPMENT_BUILD_REVISION = "development"
