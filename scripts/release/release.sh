@@ -186,7 +186,7 @@ set_npm_version() {
       echo "[dry-run] npm version $version --no-git-tag-version in $directory"
       return 0
     fi
-    npm version "$version" --no-git-tag-version
+    npm version "$version" --no-git-tag-version --allow-same-version
   )
 }
 

@@ -196,6 +196,7 @@ exit /b 0
     }
     $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
     Assert-Contains -Text $uvCalls -Needle "version 9.9.9 --no-sync" -Message "release.ps1 没有同步 CLI 发布版本。`n$uvCalls"
+    Assert-Contains -Text $output -Needle "fake npm version 9.9.9 --no-git-tag-version --allow-same-version" -Message "release.ps1 不支持复用已经同步的 npm 版本。`n$output"
     $ghCalls = Get-Content -Raw -Encoding UTF8 $ghCallsPath
     Assert-Contains -Text $ghCalls -Needle "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true" -Message "release.ps1 没有按精确提交启动延迟发布工作流。`n$ghCalls"
 

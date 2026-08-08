@@ -162,7 +162,7 @@ function Set-NpmVersion {
       Write-Host "[dry-run] npm version $Version --no-git-tag-version in $Directory"
       return
     }
-    npm version $Version --no-git-tag-version
+    npm version $Version --no-git-tag-version --allow-same-version
   } finally {
     Pop-Location
   }
