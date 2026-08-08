@@ -28,8 +28,8 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  preflight:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -37,18 +37,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ env.RELEASE_SHA }}
-
-      - name: Validate deferred release target
-        if: github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: |
-          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
-            throw "Invalid release tag: $env:RELEASE_TAG"
-          }
-          if ((git rev-parse HEAD).Trim() -ne $env:RELEASE_SHA) {
-            throw "Checkout does not match requested release SHA $env:RELEASE_SHA"
-          }
-          node scripts/release/check-release-version.mjs --version $env:RELEASE_TAG.Substring(1) --repo-root .
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,6 +50,93 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            cli/uv.lock
+            backend/uv.lock
+
+      - name: Validate frozen release candidate
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            node scripts/release/check-release-version.mjs --version "${RELEASE_TAG#v}" --repo-root .
+          fi
+          node scripts/release/release-preflight.mjs \
+            --version "${RELEASE_TAG#v}" \
+            --release-sha "$RELEASE_SHA" \
+            --repo-root .
+
+      - name: Test release orchestration contracts
+        run: >-
+          node --test
+          scripts/release/check-release-version.test.mjs
+          scripts/release/release-preflight.test.mjs
+          scripts/release/prepare-sparkle-release.test.mjs
+          scripts/release/verify-sparkle-draft-assets.test.mjs
+          scripts/packaging/configure-sparkle-info.test.mjs
+          scripts/packaging/sanitize-macos-bundle.test.mjs
+          scripts/quality/cli-workflow.test.mjs
+          scripts/quality/script-topology.test.mjs
+          scripts/quality/document-topology.test.mjs
+
+      - name: Test POSIX and PowerShell release entrypoints
+        shell: bash
+        run: |
+          bash scripts/release/prepare-release.test.sh
+          bash scripts/release/release-script.test.sh
+          pwsh -NoProfile -File scripts/release/prepare-release.test.ps1
+          pwsh -NoProfile -File scripts/release/release-script.test.ps1
+
+      - name: Test Agent CLI
+        working-directory: cli
+        run: |
+          uv sync --dev
+          uv run --no-sync python -m unittest discover test
+
+      - name: Test backend release contracts
+        working-directory: backend
+        run: |
+          uv sync --dev
+          uv run --no-sync python -m unittest \
+            test.test_backend_build_script \
+            test.test_crawl_mentors_skill_contract \
+            test.test_crawl_mentors_skill_package
+
+  build-windows:
+    runs-on: windows-latest
+    needs: preflight
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            cli/uv.lock
+            backend/uv.lock
 
       - name: Check time usage
         shell: pwsh
@@ -83,11 +158,9 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Test Agent CLI
+      - name: Install Agent CLI dependencies
         working-directory: cli
-        run: |
-          uv sync --dev
-          uv run python -m unittest discover test
+        run: uv sync --dev
 
       - name: Build Agent CLI
         run: ./scripts/build/build-cli.ps1 -Clean -SkipSync
@@ -107,7 +180,7 @@ jobs:
 
       - name: Build Windows release
         working-directory: desktop
-        run: npm run dist
+        run: npm run dist:prepared
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -121,6 +194,7 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    needs: preflight
 
     steps:
       - name: Checkout
@@ -129,17 +203,14 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.RELEASE_SHA }}
 
-      - name: Validate deferred release target
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-          node scripts/release/check-release-version.mjs --version "${RELEASE_TAG#v}" --repo-root .
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -148,6 +219,11 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            cli/uv.lock
+            backend/uv.lock
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -157,11 +233,9 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Test Agent CLI
+      - name: Install Agent CLI dependencies
         working-directory: cli
-        run: |
-          uv sync --dev
-          uv run python -m unittest discover test
+        run: uv sync --dev
 
       - name: Build Agent CLI
         run: ./scripts/build/build-cli.sh --clean
@@ -176,15 +250,6 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
-
-      - name: Test Sparkle release helpers
-        run: >-
-          node --test
-          scripts/packaging/configure-sparkle-info.test.mjs
-          scripts/packaging/sanitize-macos-bundle.test.mjs
-          scripts/release/prepare-sparkle-release.test.mjs
-          scripts/quality/script-topology.test.mjs
-          scripts/quality/document-topology.test.mjs
 
       - name: Test desktop
         working-directory: desktop

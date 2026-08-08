@@ -41,11 +41,16 @@ test("frozen binaries build only on supported desktop platforms", () => {
   assert.match(binaryWorkflow, /\.\/scripts\/build\/build-cli\.ps1 -Clean/);
 });
 
-test("release tags retain three-platform contract coverage", () => {
+test("release tags gate platform builds on one Ubuntu CLI contract suite", () => {
   assert.match(contractWorkflow, /tags:\n      - "v\*"/);
   assert.equal(
     releaseWorkflow.match(/- name: Test Agent CLI/g)?.length,
-    2,
-    "release workflow must test the CLI on Windows and macOS",
+    1,
+    "release workflow must run the platform-independent CLI suite once",
   );
+  assert.equal(releaseWorkflow.match(/- name: Install Agent CLI dependencies/g)?.length, 2);
+  assert.match(releaseWorkflow, /build-windows:[\s\S]*needs: preflight/);
+  assert.match(releaseWorkflow, /build-macos:[\s\S]*needs: preflight/);
+  assert.match(releaseWorkflow, /\.\/scripts\/build\/build-cli\.ps1 -Clean -SkipSync/);
+  assert.match(releaseWorkflow, /\.\/scripts\/build\/build-cli\.sh --clean/);
 });

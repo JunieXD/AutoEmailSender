@@ -184,6 +184,11 @@ describe("windows installer packaging", () => {
     expect(workflow.indexOf("Prepare Windows packaging prerequisites")).toBeLessThan(
       workflow.indexOf("Install frontend dependencies"),
     );
+    expect(workflow).toContain("preflight:");
+    expect(workflow).toContain("node scripts/release/release-preflight.mjs");
+    expect(workflow).toContain("build-windows:\n    runs-on: windows-latest\n    needs: preflight");
+    expect(workflow).toContain("build-macos:\n    runs-on: macos-latest\n    needs: preflight");
+    expect(workflow).toContain("working-directory: desktop\n        run: npm run dist:prepared");
     expect(workflow).toContain("build-cli.ps1 -Clean -SkipSync");
     expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");
     expect(installerScript).toContain("!macro customInstall");
