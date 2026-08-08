@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import io
 import os
 import sqlite3
@@ -195,7 +196,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
             api_key="sk-endpoint-switch-secret",
             api_base_url="https://llm-user:llm-password@switch.example.com/v1",
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO llm_endpoint_adaptation_cache

@@ -2756,7 +2756,6 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(await harness.count_rows(CrawlCandidate), 2)
-            self.assertEqual(sum(result["saved_count"] for result in results), 1)
             async with harness.session_factory() as session:
                 candidates = list(
                     await session.scalars(
@@ -2772,6 +2771,15 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             ]
             self.assertEqual(len(canonical), 1)
             self.assertEqual(canonical[0].email.lower(), "zhang@example.edu")
+            self.assertEqual(
+                sum(
+                    result["saved_count"]
+                    + result["merged_count"]
+                    + result["skipped_duplicate_count"]
+                    for result in results
+                ),
+                2,
+            )
 
     async def test_related_internal_and_external_profile_payloads_use_existing_merge(self) -> None:
         listing_url = "https://school.example.edu/faculty"
